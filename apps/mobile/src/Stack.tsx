@@ -407,6 +407,12 @@ export const RootStack = createNativeStackNavigator({
       linking: "",
       options: {
         ...GLASS_HEADER_OPTIONS,
+        // Android draws its own in-flow header (AndroidHomeHeader in compact,
+        // the sidebar brand + empty detail in split), so the native stack
+        // header must never mount there — runtime `headerShown` toggling does
+        // not reliably remove an already-shown native header and would leave
+        // a duplicate brand header in the split main pane.
+        headerShown: Platform.OS !== "android",
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
         ...getCompactBrandHeaderOptions(),
@@ -415,17 +421,31 @@ export const RootStack = createNativeStackNavigator({
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,
       linking: THREAD_LINKING_PREFIX,
-      options: GLASS_HEADER_OPTIONS,
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        // Android draws its own in-flow header (AndroidScreenHeader in
+        // ThreadRouteScreen); the native stack header stays iOS-only. Keeping
+        // it disabled statically avoids a stale native header surviving a
+        // fold/unfold layout change (runtime headerShown toggling cannot
+        // reliably unmount an already-shown native header).
+        headerShown: Platform.OS !== "android",
+      },
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
-      options: SOLID_HEADER_OPTIONS,
+      options: {
+        ...SOLID_HEADER_OPTIONS,
+        headerShown: Platform.OS !== "android",
+      },
     }),
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/review`,
-      options: SOLID_HEADER_OPTIONS,
+      options: {
+        ...SOLID_HEADER_OPTIONS,
+        headerShown: Platform.OS !== "android",
+      },
     }),
     ThreadReviewComment: createNativeStackScreen({
       screen: ReviewCommentComposerSheet,
@@ -443,6 +463,10 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/files`,
       options: {
         ...GLASS_HEADER_OPTIONS,
+        // Android draws its own in-flow header (AndroidScreenHeader in
+        // ThreadFilesTreeScreen); keep the native header iOS-only statically
+        // so it cannot survive a fold/unfold layout change.
+        headerShown: Platform.OS !== "android",
         contentStyle:
           SHEET_BACKGROUND_COLOR !== undefined
             ? { backgroundColor: SHEET_BACKGROUND_COLOR }

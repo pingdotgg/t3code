@@ -21,8 +21,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useWindowDimensions, View } from "react-native";
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import { Platform, useWindowDimensions, View } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
@@ -45,9 +51,14 @@ import {
   parseActiveThreadPath,
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
+import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
+import {
+  shouldStartWorkspaceSidebarSwipe,
+  shouldToggleWorkspaceSidebarForSwipe,
+} from "./workspace-sidebar-swipe";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 
 interface AdaptiveWorkspaceContextValue {
@@ -107,6 +118,65 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
   useFocusEffect(
     useCallback(() => activateAuxiliaryPaneRole(role), [activateAuxiliaryPaneRole, role]),
   );
+}
+
+function WorkspaceSidebarSwipeSurface(props: {
+  readonly enabled: boolean;
+  readonly primarySidebarVisible: boolean;
+  readonly onToggleSidebar: () => void;
+  readonly children: ReactNode;
+  readonly contentSettledWidth: number | null;
+}) {
+  const swipeGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(props.enabled)
+        .activeOffsetX([-12, 12])
+        .failOffsetY([-32, 32])
+        // Only swipes that begin inside the left-edge band toggle the sidebar.
+        // Horizontal content elsewhere (terminal, code blocks, diffs) scrolls
+        // on its own; letting this pan stay live across the whole pane would
+        // steal those gestures and flip the sidebar on a mid-screen swipe.
+        .onTouchesDown((event, stateManager) => {
+          if (!shouldStartWorkspaceSidebarSwipe(event.allTouches[0]?.x ?? 0)) {
+            stateManager.fail();
+          }
+        })
+        .onEnd((event) => {
+          if (
+            !shouldToggleWorkspaceSidebarForSwipe({
+              primarySidebarVisible: props.primarySidebarVisible,
+              translationX: event.translationX,
+              velocityX: event.velocityX,
+            })
+          ) {
+            return;
+          }
+          runOnJS(props.onToggleSidebar)();
+        }),
+    [props.enabled, props.onToggleSidebar, props.primarySidebarVisible],
+  );
+
+  const content = (
+    <View
+      className="flex-1 overflow-hidden bg-screen"
+      collapsable={false}
+      style={{ position: "relative" }}
+    >
+      <View
+        collapsable={false}
+        style={
+          props.contentSettledWidth !== null
+            ? { flex: 1, width: props.contentSettledWidth }
+            : { flex: 1 }
+        }
+      >
+        {props.children}
+      </View>
+    </View>
+  );
+
+  return <GestureDetector gesture={swipeGesture}>{content}</GestureDetector>;
 }
 
 /**
@@ -438,6 +508,10 @@ function AdaptiveWorkspaceLayoutContent(
     navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" });
   }, [navigation]);
 
+  const handleStartNewTask = useCallback(() => {
+    navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+  }, [navigation]);
+
   const handleNewThreadInProject = useCallback(
     (project: EnvironmentProject) => {
       navigation.navigate("NewTaskSheet", {
@@ -522,30 +596,32 @@ function AdaptiveWorkspaceLayoutContent(
               pointerEvents={panes.primarySidebarVisible ? "auto" : "none"}
               style={sidebarAnimatedStyle}
             >
-              <ThreadNavigationSidebar
-                width={layout.listPaneWidth}
-                visible={panes.primarySidebarVisible}
-                onRequestVisibility={revealPrimarySidebar}
-                selectedThreadKey={selectedThreadKey}
-                onOpenSettings={handleOpenSettings}
-                onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
-                onNewThreadInProject={handleNewThreadInProject}
-                onSelectThread={handleSelectThread}
-                onSearchQueryChange={setPrimarySidebarSearchQuery}
-                searchQuery={primarySidebarSearchQuery}
-              />
+              <View className="flex-1" style={{ width: layout.listPaneWidth }}>
+                <AndroidHomeFabLayout onStartNewTask={handleStartNewTask}>
+                  <ThreadNavigationSidebar
+                    width={layout.listPaneWidth}
+                    visible={panes.primarySidebarVisible}
+                    onRequestVisibility={revealPrimarySidebar}
+                    selectedThreadKey={selectedThreadKey}
+                    onOpenSettings={handleOpenSettings}
+                    onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
+                    onNewThreadInProject={handleNewThreadInProject}
+                    onSelectThread={handleSelectThread}
+                    onSearchQueryChange={setPrimarySidebarSearchQuery}
+                    searchQuery={primarySidebarSearchQuery}
+                  />
+                </AndroidHomeFabLayout>
+              </View>
             </Animated.View>
           ) : null}
-          <View className="flex-1 overflow-hidden bg-screen" collapsable={false}>
-            <View
-              collapsable={false}
-              style={
-                contentSettledWidth !== null ? { flex: 1, width: contentSettledWidth } : { flex: 1 }
-              }
-            >
-              {props.children}
-            </View>
-          </View>
+          <WorkspaceSidebarSwipeSurface
+            enabled={Platform.OS === "android" && layout.usesSplitView}
+            primarySidebarVisible={panes.primarySidebarVisible}
+            onToggleSidebar={togglePrimarySidebar}
+            contentSettledWidth={contentSettledWidth}
+          >
+            {props.children}
+          </WorkspaceSidebarSwipeSurface>
           <WorkspaceInspectorPane
             active={workspaceInspector?.active ?? false}
             panes={panes}

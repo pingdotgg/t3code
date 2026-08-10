@@ -13,15 +13,15 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from "react-native";
+import type { LayoutChangeEvent } from "react-native";
 import { Platform, Pressable, StyleSheet, TextInput, View, useColorScheme } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SearchBarCommands } from "react-native-screens";
-import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 import { AppText as Text } from "../../components/AppText";
+import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -129,11 +129,6 @@ function SidebarHeaderButtonGroup(props: {
 }
 
 const SIDEBAR_STICKY_HEADER_HEIGHT = 106;
-const SIDEBAR_STICKY_HEADER_FADE_HEIGHT = 44;
-const SIDEBAR_HEADER_WASH_OPACITY = {
-  dark: [0.22, 0.14, 0.04],
-  light: [0.46, 0.3, 0.08],
-} as const;
 
 interface ThreadNavigationSidebarProps {
   readonly width: number;
@@ -195,11 +190,9 @@ function ThreadNavigationSidebarPane(
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
-  const [headerIsOverContent, setHeaderIsOverContent] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
   const searchBarRef = useRef<SearchBarCommands>(null);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
-  const headerIsOverContentRef = useRef(false);
   const sidebarScrollGesture = useMemo(() => Gesture.Native(), []);
   const {
     archiveThread,
@@ -750,8 +743,6 @@ function ThreadNavigationSidebarPane(
   const borderColor = useThemeColor("--color-border");
   const mutedColor = useThemeColor("--color-foreground-muted");
   const placeholderColor = useThemeColor("--color-placeholder");
-  const headerFadeColor = String(backgroundColor);
-  const headerWashOpacity = SIDEBAR_HEADER_WASH_OPACITY[colorScheme];
   const [measuredHeaderHeight, setMeasuredHeaderHeight] = useState<number | null>(null);
   // The sticky header (title row, search field, optional connection status)
   // is measured so the list inset always matches its real height — no
@@ -780,19 +771,10 @@ function ThreadNavigationSidebarPane(
     },
     [props.onSelectThread],
   );
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const next = event.nativeEvent.contentOffset.y > 6;
-    if (headerIsOverContentRef.current === next) {
-      return;
-    }
-    headerIsOverContentRef.current = next;
-    setHeaderIsOverContent(next);
-  }, []);
   const handleScrollBeginDrag = useCallback(() => {
     openSwipeableRef.current?.close();
   }, []);
   const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
-    onScroll: handleScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
   // Project shells load after the first rows draw, so the maps they feed have
@@ -1282,7 +1264,14 @@ function ThreadNavigationSidebarPane(
               contentContainerStyle={[
                 styles.threadListContent,
                 {
-                  paddingBottom: 16 + insets.bottom,
+                  // The last row must clear the Android FAB (56px) plus its
+                  // bottom offset and a gap so nothing sits underneath it.
+                  // The list already sits inside a parent that applies the
+                  // bottom inset, so subtract it here to avoid double-counting.
+                  paddingBottom:
+                    Platform.OS === "android"
+                      ? Math.max(insets.bottom, 16) + 16 + 56 + 16 - insets.bottom
+                      : 16 + insets.bottom,
                   paddingTop: topListInset,
                 },
               ]}
@@ -1301,53 +1290,26 @@ function ThreadNavigationSidebarPane(
 
       <View
         className="absolute inset-x-0 top-0 z-[4]"
+        collapsable={false}
         onLayout={handleStickyHeaderLayout}
         pointerEvents="box-none"
-        style={{ paddingTop: insets.top }}
+        style={{
+          paddingTop: insets.top,
+          backgroundColor,
+        }}
       >
-        <View
-          className="absolute inset-x-0 top-0"
-          pointerEvents="none"
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          style={{ height: stickyHeaderHeight + SIDEBAR_STICKY_HEADER_FADE_HEIGHT }}
-        >
-          <Svg width="100%" height="100%">
-            <Defs>
-              <LinearGradient id="sidebar-header-wash" x1="0%" x2="0%" y1="0%" y2="100%">
-                <Stop
-                  offset="0%"
-                  stopColor={headerFadeColor}
-                  stopOpacity={headerIsOverContent ? headerWashOpacity[0] : 0}
-                />
-                <Stop
-                  offset="58%"
-                  stopColor={headerFadeColor}
-                  stopOpacity={headerIsOverContent ? headerWashOpacity[1] : 0}
-                />
-                <Stop
-                  offset="88%"
-                  stopColor={headerFadeColor}
-                  stopOpacity={headerIsOverContent ? headerWashOpacity[2] : 0}
-                />
-                <Stop offset="100%" stopColor={headerFadeColor} stopOpacity={0} />
-              </LinearGradient>
-            </Defs>
-            <Rect width="100%" height="100%" fill="url(#sidebar-header-wash)" />
-          </Svg>
-        </View>
         <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
           {/* Title slot doubles as the connection status surface: while an
-              environment reconnects, "Threads" fades to a status label in
+              environment reconnects, the brand fades to a status label in
               place (no layout shift in the list below). */}
           <WorkspaceConnectionTitle
             grow
             onPress={props.onOpenEnvironmentSettings}
             size="pageTitle"
             brand={
-              <Text className="flex-1 text-[34px] font-t3-bold text-foreground" numberOfLines={1}>
-                Threads
-              </Text>
+              <View className="h-11 flex-1 justify-center">
+                <CompactBrandTitle allowFontScaling={false} />
+              </View>
             }
           />
           <SidebarHeaderButtonGroup colorScheme={colorScheme}>

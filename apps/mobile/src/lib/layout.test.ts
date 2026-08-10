@@ -66,6 +66,7 @@ describe("deriveLayout", () => {
     { name: "large iPhone landscape", width: 932, height: 430 },
     { name: "short wide window", width: 1_024, height: 599 },
     { name: "narrow tall window", width: 719, height: 1_024 },
+    { name: "narrow split-screen window", width: 680, height: 900 },
   ])("keeps a $name in the compact shell", ({ width, height }) => {
     expect(deriveLayout({ width, height })).toEqual({
       variant: "compact",
@@ -79,7 +80,8 @@ describe("deriveLayout", () => {
     { name: "small tablet portrait", width: 744, height: 1_133 },
     { name: "tablet landscape", width: 1_024, height: 768 },
     { name: "large resizable window", width: 1_366, height: 1_024 },
-    { name: "foldable-sized window", width: 800, height: 700 },
+    { name: "near-square foldable window", width: 800, height: 700 },
+    { name: "tall foldable window", width: 800, height: 1_200 },
   ])("uses the split shell for a $name", ({ width, height }) => {
     expect(deriveLayout({ width, height })).toMatchObject({
       variant: "split",
@@ -91,12 +93,26 @@ describe("deriveLayout", () => {
     expect(
       deriveLayout({ width: SPLIT_LAYOUT_MIN_WIDTH, height: SPLIT_LAYOUT_MIN_HEIGHT }).variant,
     ).toBe("split");
-    expect(
-      deriveLayout({ width: SPLIT_LAYOUT_MIN_WIDTH - 1, height: SPLIT_LAYOUT_MIN_HEIGHT }).variant,
-    ).toBe("compact");
-    expect(
-      deriveLayout({ width: SPLIT_LAYOUT_MIN_WIDTH, height: SPLIT_LAYOUT_MIN_HEIGHT - 1 }).variant,
-    ).toBe("compact");
+    expect(deriveLayout({ width: SPLIT_LAYOUT_MIN_WIDTH - 1, height: 768 }).variant).toBe(
+      "compact",
+    );
+    expect(deriveLayout({ width: 1_024, height: SPLIT_LAYOUT_MIN_HEIGHT - 1 }).variant).toBe(
+      "compact",
+    );
+  });
+
+  it("re-evaluates the shell as the available window changes", () => {
+    const dimensions = [
+      { width: 680, height: 900 },
+      { width: 1_024, height: 768 },
+      { width: 680, height: 900 },
+    ];
+
+    expect(dimensions.map((input) => deriveLayout(input).variant)).toEqual([
+      "compact",
+      "split",
+      "compact",
+    ]);
   });
 
   it("keeps the sidebar within usable native-column bounds", () => {
@@ -310,6 +326,34 @@ describe("deriveWorkspacePaneLayout", () => {
         auxiliaryPanePreferredVisible: false,
       }).auxiliaryPaneVisible,
     ).toBe(false);
+  });
+
+  it("expands and restores the content pane when the sidebar visibility changes", () => {
+    const layout = deriveLayout({ width: 1_024, height: 768 });
+
+    expect(
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: 1_024,
+        primarySidebarPreferredVisible: false,
+        auxiliaryPanePreferredVisible: false,
+      }),
+    ).toMatchObject({
+      primarySidebarVisible: false,
+      contentPaneWidth: 1_024,
+    });
+
+    expect(
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: 1_024,
+        primarySidebarPreferredVisible: true,
+        auxiliaryPanePreferredVisible: false,
+      }),
+    ).toMatchObject({
+      primarySidebarVisible: true,
+      contentPaneWidth: 696,
+    });
   });
 
   it("never exposes workspace panes in compact layouts", () => {

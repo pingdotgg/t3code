@@ -22,6 +22,7 @@ import { vcsEnvironment } from "../../state/vcs";
 
 import { EmptyState } from "../../components/EmptyState";
 import {
+  AndroidHeaderScreen,
   AndroidScreenHeader,
   type AndroidHeaderAction,
 } from "../../components/AndroidScreenHeader";
@@ -97,7 +98,19 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 }
 
 function OpeningThreadLoadingScreen() {
-  return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
+  const navigation = useNavigation();
+  return (
+    <AndroidHeaderScreen
+      title="Threads"
+      onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+    >
+      <LoadingScreen
+        message="Opening thread…"
+        messagePlacement="above-spinner"
+        includeTopInset={Platform.OS !== "android"}
+      />
+    </AndroidHeaderScreen>
+  );
 }
 
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
@@ -111,22 +124,28 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
 }
 
 function ThreadUnavailableScreen() {
+  const navigation = useNavigation();
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{
-        flexGrow: 1,
-        justifyContent: "center",
-        paddingHorizontal: 24,
-        paddingVertical: 32,
-      }}
-      className="bg-screen flex-1"
+    <AndroidHeaderScreen
+      title="Threads"
+      onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
     >
-      <EmptyState
-        title="Thread unavailable"
-        detail="This thread is not available in the current mobile snapshot."
-      />
-    </ScrollView>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: "center",
+          paddingHorizontal: 24,
+          paddingVertical: 32,
+        }}
+        className="bg-screen flex-1"
+      >
+        <EmptyState
+          title="Thread unavailable"
+          detail="This thread is not available in the current mobile snapshot."
+        />
+      </ScrollView>
+    </AndroidHeaderScreen>
   );
 }
 
@@ -715,6 +734,15 @@ function ThreadRouteContent(
         onPress: handleToggleInspector,
       });
     }
+    if (layout.usesSplitView) {
+      actions.push({
+        accessibilityLabel: panes.primarySidebarVisible
+          ? "Hide thread sidebar"
+          : "Show thread sidebar",
+        icon: panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left",
+        onPress: togglePrimarySidebar,
+      });
+    }
     return actions;
   }, [
     fileInspector.supported,
@@ -722,9 +750,12 @@ function ThreadRouteContent(
     handleOpenTerminal,
     handleOpenGitInspector,
     handleToggleInspector,
+    layout.usesSplitView,
+    panes.primarySidebarVisible,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
+    togglePrimarySidebar,
   ]);
 
   // Deep links / cold starts land with Thread as the ONLY route, where the

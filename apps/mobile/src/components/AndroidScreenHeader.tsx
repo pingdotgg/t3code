@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
@@ -63,14 +63,15 @@ export function AndroidScreenHeader(props: {
         paddingTop: props.embedded ? 8 : Math.max(insets.top, 12),
       }}
     >
-      <View className="min-h-12 flex-row items-center gap-2">
+      <View className="min-h-12 flex-row items-center gap-1">
         {props.onBack ? (
           <Pressable
             accessibilityLabel="Navigate up"
             accessibilityRole="button"
-            hitSlop={8}
+            collapsable={false}
+            hitSlop={12}
             onPress={props.onBack}
-            className="-mr-2 size-11 items-center justify-center"
+            className="h-12 w-12 shrink-0 items-center justify-center"
           >
             <SymbolView
               name="chevron.left"
@@ -114,4 +115,27 @@ export function AndroidSheetHeader(
   props: Omit<Parameters<typeof AndroidScreenHeader>[0], "embedded">,
 ) {
   return <AndroidScreenHeader {...props} embedded />;
+}
+
+/**
+ * Android in-flow screen wrapper for routes whose native stack header is
+ * disabled statically. Renders the AndroidScreenHeader above the content on
+ * Android and renders the content unchanged elsewhere (iOS keeps its native
+ * stack header). Used by route early states (loading / unavailable) so they
+ * keep navigation chrome even though the native header never mounts.
+ */
+export function AndroidHeaderScreen(props: {
+  readonly title: string;
+  readonly onBack?: () => void;
+  readonly children: ReactNode;
+}) {
+  if (Platform.OS !== "android") {
+    return <>{props.children}</>;
+  }
+  return (
+    <View className="flex-1">
+      <AndroidScreenHeader title={props.title} onBack={props.onBack} />
+      {props.children}
+    </View>
+  );
 }

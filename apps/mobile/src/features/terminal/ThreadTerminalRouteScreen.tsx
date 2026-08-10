@@ -13,7 +13,11 @@ import {
   useKeyboardState,
 } from "react-native-keyboard-controller";
 
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import {
+  AndroidHeaderIconButton,
+  AndroidHeaderScreen,
+  AndroidScreenHeader,
+} from "../../components/AndroidScreenHeader";
 import {
   ComposerToolbarButton,
   ComposerToolbarRow,
@@ -1050,32 +1054,56 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   if (!selectedThread) {
     if (workspaceState.isLoadingConnections) {
-      return <LoadingScreen message="Opening terminal…" />;
+      return (
+        <AndroidHeaderScreen
+          title="Terminal"
+          onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+        >
+          <LoadingScreen message="Opening terminal…" includeTopInset={Platform.OS !== "android"} />
+        </AndroidHeaderScreen>
+      );
     }
 
     return (
-      <View className="flex-1 bg-screen">
-        <EmptyState
-          title="Thread unavailable"
-          detail="This terminal route needs an active thread and workspace."
-        />
-      </View>
+      <AndroidHeaderScreen
+        title="Terminal"
+        onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+      >
+        <View className="flex-1 bg-screen">
+          <EmptyState
+            title="Thread unavailable"
+            detail="This terminal route needs an active thread and workspace."
+          />
+        </View>
+      </AndroidHeaderScreen>
     );
   }
 
   if (!selectedThreadProject?.workspaceRoot) {
     return (
-      <View className="flex-1 bg-screen">
-        <EmptyState
-          title="Terminal unavailable"
-          detail="This thread does not have a workspace root yet, so there is nowhere to open a shell."
-        />
-      </View>
+      <AndroidHeaderScreen
+        title="Terminal"
+        onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+      >
+        <View className="flex-1 bg-screen">
+          <EmptyState
+            title="Terminal unavailable"
+            detail="This thread does not have a workspace root yet, so there is nowhere to open a shell."
+          />
+        </View>
+      </AndroidHeaderScreen>
     );
   }
 
   if (!environment.isReady && environment.presentation === null) {
-    return <LoadingScreen message="Opening terminal…" />;
+    return (
+      <AndroidHeaderScreen
+        title="Terminal"
+        onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+      >
+        <LoadingScreen message="Opening terminal…" includeTopInset={Platform.OS !== "android"} />
+      </AndroidHeaderScreen>
+    );
   }
 
   return (
@@ -1099,21 +1127,23 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           title="Terminal"
           subtitle={headerSubtitle}
           onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+          actions={
+            layout.usesSplitView
+              ? [
+                  {
+                    accessibilityLabel: panes.primarySidebarVisible
+                      ? "Hide thread sidebar"
+                      : "Show thread sidebar",
+                    icon: panes.primarySidebarVisible
+                      ? "arrow.up.left.and.arrow.down.right"
+                      : "sidebar.left",
+                    onPress: togglePrimarySidebar,
+                  },
+                ]
+              : undefined
+          }
           trailing={
             <>
-              {layout.usesSplitView ? (
-                <AndroidHeaderIconButton
-                  accessibilityLabel={
-                    panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"
-                  }
-                  icon={
-                    panes.primarySidebarVisible
-                      ? "arrow.up.left.and.arrow.down.right"
-                      : "sidebar.left"
-                  }
-                  onPress={togglePrimarySidebar}
-                />
-              ) : null}
               {isEnvironmentReady ? (
                 <ControlPillMenu
                   actions={androidTerminalMenuActions}

@@ -11,7 +11,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import {
+  AndroidHeaderScreen,
+  AndroidScreenHeader,
+  type AndroidHeaderAction,
+} from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
@@ -340,11 +344,29 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         />
       );
     }
-    return <LoadingScreen message="Opening files..." messagePlacement="above-spinner" />;
+    return (
+      <AndroidHeaderScreen
+        title="Files"
+        onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+      >
+        <LoadingScreen
+          message="Opening files..."
+          messagePlacement="above-spinner"
+          includeTopInset={Platform.OS !== "android"}
+        />
+      </AndroidHeaderScreen>
+    );
   }
 
   if (cwd === null) {
-    return <FilesUnavailable />;
+    return (
+      <AndroidHeaderScreen
+        title="Files"
+        onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+      >
+        <FilesUnavailable />
+      </AndroidHeaderScreen>
+    );
   }
 
   if (fileInspector.supported) {
@@ -402,6 +424,19 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
             subtitle={projectName}
             onBack={handleReturnToThread}
             actions={[
+              ...(layout.usesSplitView
+                ? [
+                    {
+                      accessibilityLabel: panes.primarySidebarVisible
+                        ? "Hide thread sidebar"
+                        : "Show thread sidebar",
+                      icon: panes.primarySidebarVisible
+                        ? "arrow.up.left.and.arrow.down.right"
+                        : "sidebar.left",
+                      onPress: togglePrimarySidebar,
+                    } satisfies AndroidHeaderAction,
+                  ]
+                : []),
               {
                 accessibilityLabel: "Refresh files",
                 icon: "arrow.clockwise",

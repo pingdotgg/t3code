@@ -2,6 +2,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useMemo, useState } from "react";
+import { Platform } from "react-native";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -24,7 +25,7 @@ import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export function HomeRouteScreen() {
-  const { layout } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -104,7 +105,11 @@ export function HomeRouteScreen() {
     return (
       <>
         <NativeStackScreenOptions
-          options={{ title: "", headerTitle: "", unstable_headerLeftItems: () => [] }}
+          options={
+            Platform.OS === "android"
+              ? { headerShown: false }
+              : { title: "", headerTitle: "", unstable_headerLeftItems: () => [] }
+          }
         />
         <WorkspaceSidebarToolbar
           afterSidebarButton={
@@ -117,6 +122,8 @@ export function HomeRouteScreen() {
         />
         <WorkspaceEmptyDetail
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          onToggleSidebar={Platform.OS === "android" ? togglePrimarySidebar : undefined}
+          primarySidebarVisible={panes.primarySidebarVisible}
         />
       </>
     );
@@ -127,15 +134,19 @@ export function HomeRouteScreen() {
       onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
     >
       <>
-        {/* Restore the compact title after the split branch blanks the detail
-            header. The brand slot doubles as the connection status surface:
-            while an environment reconnects, the lockup fades to a status label
-            in place (no layout shift in the list below). */}
+        {/* Restore the header after leaving split view; screen options are
+            shallow-merged. Android never mounts the native Home header (it
+            draws its own in-flow header in compact and the sidebar brand in
+            split), so only iOS re-enables it here. The brand slot also doubles
+            as the connection status surface while an environment reconnects. */}
         <NativeStackScreenOptions
-          options={getConnectionAwareBrandHeaderOptions({
-            onOpenEnvironments: () =>
-              navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" }),
-          })}
+          options={{
+            ...getConnectionAwareBrandHeaderOptions({
+              onOpenEnvironments: () =>
+                navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" }),
+            }),
+            headerShown: Platform.OS !== "android",
+          }}
         />
         <HomeHeader
           environments={environments}
