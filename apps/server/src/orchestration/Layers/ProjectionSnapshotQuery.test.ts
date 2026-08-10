@@ -82,6 +82,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           interaction_mode,
           branch,
           worktree_path,
+          session_flags_json,
           latest_turn_id,
           latest_user_message_at,
           pending_approval_count,
@@ -102,6 +103,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'default',
           NULL,
           NULL,
+          '{"version":1,"provider":"codex","config":{"features.hooks":true,"bypass_hook_trust":true,"hooks.SessionStart":[],"hooks.PreCompact":[],"hooks.UserPromptSubmit":[]}}',
           'turn-1',
           '2026-02-24T00:00:04.000Z',
           1,
@@ -262,6 +264,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }
 
       const snapshot = yield* snapshotQuery.getSnapshot();
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
 
       assert.equal(snapshot.snapshotSequence, 5);
       assert.equal(snapshot.updatedAt, "2026-02-24T00:00:09.000Z");
@@ -304,6 +307,17 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          sessionFlags: {
+            version: 1,
+            provider: "codex",
+            config: {
+              "features.hooks": true,
+              bypass_hook_trust: true,
+              "hooks.SessionStart": [],
+              "hooks.PreCompact": [],
+              "hooks.UserPromptSubmit": [],
+            },
+          },
           latestTurn: {
             turnId: asTurnId("turn-1"),
             state: "completed",
@@ -382,6 +396,17 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         },
       ]);
+      assert.deepEqual(commandReadModel.threads[0]?.sessionFlags, {
+        version: 1,
+        provider: "codex",
+        config: {
+          "features.hooks": true,
+          bypass_hook_trust: true,
+          "hooks.SessionStart": [],
+          "hooks.PreCompact": [],
+          "hooks.UserPromptSubmit": [],
+        },
+      });
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.snapshotSequence, 5);
@@ -697,6 +722,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.equal(thread?.settledOverride, "settled");
       assert.equal(thread?.settledAt, "2026-04-06T00:00:04.000Z");
+      assert.equal("sessionFlags" in (thread ?? {}), false);
     }),
   );
 
