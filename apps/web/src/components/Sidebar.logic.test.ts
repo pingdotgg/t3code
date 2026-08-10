@@ -20,7 +20,13 @@ import {
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
-  searchSidebarThreadsByTitle,
+  applyProjectSuggestionToQuery,
+  filterProjectSuggestions,
+  getTrailingProjectOperatorToken,
+  hasSidebarSearchCriteria,
+  parseSidebarSearchQuery,
+  resolveProjectFilterKeys,
+  searchSidebarThreads,
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
@@ -697,23 +703,258 @@ describe("resolveSidebarThreadStatus", () => {
   });
 });
 
-describe("searchSidebarThreadsByTitle", () => {
-  const threads = [
-    { id: "thread-1", title: "Fix workspace search", project: "Alpha" },
-    { id: "thread-2", title: "Review providers", project: "Workspace" },
-    { id: "thread-3", title: "WORKTREE cleanup", project: "Beta" },
-  ];
+describe("parseSidebarSearchQuery", () => {
+  // Local-time construction on purpose: the day operators resolve against
+  // the user's calendar, not UTC.
+  const now = new Date(2026, 7, 9, 12, 30, 0);
+  const DAY_MS = 86_400_000;
 
-  it("matches thread titles case-insensitively and preserves their order", () => {
-    expect(searchSidebarThreadsByTitle(threads, "work")).toEqual([threads[0], threads[2]]);
+  it("treats a plain query as lowercased title text with no filters", () => {
+    const parsed = parseSidebarSearchQuery("  Fix Bug ", now);
+    expect(parsed).toEqual({
+      text: "fix bug",
+      projectQueries: [],
+      agentQueries: [],
+      updatedStartMs: null,
+      updatedEndMs: null,
+    });
   });
 
-  it("does not match project metadata", () => {
-    expect(searchSidebarThreadsByTitle(threads, "workspace")).toEqual([threads[0]]);
+  it("extracts in: values, including quoted multi-word names", () => {
+    const parsed = parseSidebarSearchQuery('in:Icarus in:"My Project" fix', now);
+    expect(parsed.projectQueries).toEqual(["icarus", "my project"]);
+    expect(parsed.text).toBe("fix");
+  });
+
+  it("extracts agent: values", () => {
+    const parsed = parseSidebarSearchQuery("agent:Claude retry", now);
+    expect(parsed.agentQueries).toEqual(["claude"]);
+    expect(parsed.text).toBe("retry");
+  });
+
+  it("resolves relative before:/after: values against now", () => {
+    const parsed = parseSidebarSearchQuery("after:7d before:2d", now);
+    expect(parsed.updatedStartMs).toBe(now.getTime() - 7 * DAY_MS);
+    expect(parsed.updatedEndMs).toBe(now.getTime() - 2 * DAY_MS);
+  });
+
+  it("resolves week-relative values", () => {
+    const parsed = parseSidebarSearchQuery("after:2w", now);
+    expect(parsed.updatedStartMs).toBe(now.getTime() - 14 * DAY_MS);
+  });
+
+  it("resolves on: to a local calendar day", () => {
+    const parsed = parseSidebarSearchQuery("on:2026-08-01", now);
+    expect(parsed.updatedStartMs).toBe(new Date(2026, 7, 1).getTime());
+    expect(parsed.updatedEndMs).toBe(new Date(2026, 7, 2).getTime());
+  });
+
+  it("resolves on:today and on:yesterday", () => {
+    const today = parseSidebarSearchQuery("on:today", now);
+    expect(today.updatedStartMs).toBe(new Date(2026, 7, 9).getTime());
+    expect(today.updatedEndMs).toBe(new Date(2026, 7, 10).getTime());
+    const yesterday = parseSidebarSearchQuery("on:yesterday", now);
+    expect(yesterday.updatedStartMs).toBe(new Date(2026, 7, 8).getTime());
+    expect(yesterday.updatedEndMs).toBe(new Date(2026, 7, 9).getTime());
+  });
+
+  it("excludes the named day from before: and after: bounds", () => {
+    const parsed = parseSidebarSearchQuery("after:2026-08-01 before:2026-08-05", now);
+    expect(parsed.updatedStartMs).toBe(new Date(2026, 7, 2).getTime());
+    expect(parsed.updatedEndMs).toBe(new Date(2026, 7, 5).getTime());
+  });
+
+  it("degrades unparseable and rolled-over dates to plain text", () => {
+    expect(parseSidebarSearchQuery("before:banana", now).text).toBe("before:banana");
+    expect(parseSidebarSearchQuery("on:2026-02-31", now).text).toBe("on:2026-02-31");
+    expect(parseSidebarSearchQuery("on:7d", now).text).toBe("on:7d");
+  });
+
+  it("ignores a half-typed operator with no value", () => {
+    const parsed = parseSidebarSearchQuery("in:", now);
+    expect(hasSidebarSearchCriteria(parsed)).toBe(false);
+  });
+
+  it("leaves unknown operator-shaped tokens as text", () => {
+    expect(parseSidebarSearchQuery("re: meeting notes", now).text).toBe("re: meeting notes");
+  });
+});
+
+describe("searchSidebarThreads", () => {
+  const now = new Date(2026, 7, 9, 12, 30, 0);
+  const makeThread = (input: {
+    id: string;
+    title: string;
+    updatedAt?: string;
+    providerName?: string | null;
+    instanceId?: string;
+  }) => ({
+    id: input.id,
+    title: input.title,
+    updatedAt: input.updatedAt ?? "2026-08-09T10:00:00.000Z",
+    modelSelection: { instanceId: input.instanceId ?? "claude-code" },
+    session: input.providerName === undefined ? null : { providerName: input.providerName },
+  });
+
+  it("matches thread titles case-insensitively and preserves their order", () => {
+    const threads = [
+      makeThread({ id: "thread-1", title: "Fix workspace search" }),
+      makeThread({ id: "thread-2", title: "Review providers" }),
+      makeThread({ id: "thread-3", title: "WORKTREE cleanup" }),
+    ];
+    const results = searchSidebarThreads(threads, parseSidebarSearchQuery("work", now));
+    expect(results).toEqual([threads[0], threads[2]]);
   });
 
   it("returns no results for an empty query", () => {
-    expect(searchSidebarThreadsByTitle(threads, "   ")).toEqual([]);
+    const threads = [makeThread({ id: "thread-1", title: "Anything" })];
+    expect(searchSidebarThreads(threads, parseSidebarSearchQuery("   ", now))).toEqual([]);
+  });
+
+  it("filters by agent against provider name and instance id", () => {
+    const threads = [
+      makeThread({ id: "thread-1", title: "One", providerName: "claude", instanceId: "cc" }),
+      makeThread({ id: "thread-2", title: "Two", providerName: "codex", instanceId: "codex-cli" }),
+      makeThread({ id: "thread-3", title: "Three", instanceId: "claude-code" }),
+    ];
+    const results = searchSidebarThreads(threads, parseSidebarSearchQuery("agent:claude", now));
+    expect(results).toEqual([threads[0], threads[2]]);
+  });
+
+  it("filters by the updatedAt window", () => {
+    const threads = [
+      makeThread({ id: "old", title: "Old", updatedAt: "2026-07-01T00:00:00.000Z" }),
+      makeThread({ id: "recent", title: "Recent", updatedAt: "2026-08-08T00:00:00.000Z" }),
+    ];
+    const results = searchSidebarThreads(threads, parseSidebarSearchQuery("after:7d", now));
+    expect(results).toEqual([threads[1]]);
+    const older = searchSidebarThreads(threads, parseSidebarSearchQuery("before:7d", now));
+    expect(older).toEqual([threads[0]]);
+  });
+
+  it("excludes threads with malformed timestamps from date-filtered results", () => {
+    const threads = [makeThread({ id: "bad", title: "Bad", updatedAt: "not-a-date" })];
+    expect(searchSidebarThreads(threads, parseSidebarSearchQuery("after:7d", now))).toEqual([]);
+  });
+
+  it("ANDs operators together", () => {
+    const threads = [
+      makeThread({ id: "thread-1", title: "Fix search", providerName: "claude", instanceId: "cc" }),
+      makeThread({
+        id: "thread-2",
+        title: "Fix search",
+        providerName: "codex",
+        instanceId: "codex-cli",
+      }),
+    ];
+    const results = searchSidebarThreads(threads, parseSidebarSearchQuery("agent:claude fix", now));
+    expect(results).toEqual([threads[0]]);
+  });
+});
+
+describe("resolveProjectFilterKeys", () => {
+  const groups = [
+    {
+      projectKey: "group-icarus",
+      displayName: "Icarus",
+      workspaceRoot: "/Users/dev/icarus",
+      memberProjectRefs: [
+        { environmentId: "env-1", projectId: "proj-1" },
+        { environmentId: "env-2", projectId: "proj-9" },
+      ],
+    },
+    {
+      projectKey: "group-daedalus",
+      displayName: "Daedalus",
+      workspaceRoot: "/Users/dev/daedalus",
+      memberProjectRefs: [{ environmentId: "env-1", projectId: "proj-2" }],
+    },
+  ];
+
+  it("returns null when there is no in: filter", () => {
+    expect(resolveProjectFilterKeys(groups, [])).toBeNull();
+  });
+
+  it("expands matching groups into every member project key", () => {
+    expect(resolveProjectFilterKeys(groups, ["icarus"])).toEqual(
+      new Set(["env-1:proj-1", "env-2:proj-9"]),
+    );
+  });
+
+  it("matches by workspace path and ORs multiple values", () => {
+    expect(resolveProjectFilterKeys(groups, ["dev/daedalus", "icarus"])).toEqual(
+      new Set(["env-1:proj-1", "env-2:proj-9", "env-1:proj-2"]),
+    );
+  });
+
+  it("returns an empty set (zero results, not all) when nothing matches", () => {
+    expect(resolveProjectFilterKeys(groups, ["zeus"])).toEqual(new Set());
+  });
+});
+
+describe("sidebar search project autocomplete", () => {
+  it("detects a trailing partial in: token", () => {
+    expect(getTrailingProjectOperatorToken("fix in:ica")).toEqual({
+      start: 4,
+      partialValue: "ica",
+    });
+    expect(getTrailingProjectOperatorToken("in:")).toEqual({ start: 0, partialValue: "" });
+  });
+
+  it("detects an unterminated quoted value", () => {
+    expect(getTrailingProjectOperatorToken('in:"my pro')).toEqual({
+      start: 0,
+      partialValue: "my pro",
+    });
+  });
+
+  it("returns null once the operator is committed or absent", () => {
+    expect(getTrailingProjectOperatorToken("in:icarus ")).toBeNull();
+    expect(getTrailingProjectOperatorToken("fix in:alpha beta")).toBeNull();
+    expect(getTrailingProjectOperatorToken("fix")).toBeNull();
+  });
+
+  it("replaces the trailing token with a quoted committed filter", () => {
+    const token = getTrailingProjectOperatorToken("fix in:ica");
+    expect(applyProjectSuggestionToQuery("fix in:ica", token, "Icarus")).toBe('fix in:"Icarus" ');
+  });
+
+  it("replaces the whole query for a bare-text project match", () => {
+    expect(applyProjectSuggestionToQuery("icarus", null, "Icarus")).toBe('in:"Icarus" ');
+  });
+
+  it("ranks suggestions: name prefix, then name substring, then path", () => {
+    const groups = [
+      { displayName: "Tools", workspaceRoot: "/dev/icarus-tools" },
+      { displayName: "My Icarus Fork", workspaceRoot: "/dev/fork" },
+      { displayName: "Icarus", workspaceRoot: "/dev/icarus" },
+      { displayName: "Unrelated", workspaceRoot: "/dev/other" },
+    ];
+    expect(filterProjectSuggestions(groups, "ica").map((group) => group.displayName)).toEqual([
+      "Icarus",
+      "My Icarus Fork",
+      "Tools",
+    ]);
+  });
+
+  it("skips workspace-path matches when matchWorkspaceRoot is false", () => {
+    const groups = [
+      { displayName: "Icarus", workspaceRoot: "/dev/icarus" },
+      { displayName: "Tools", workspaceRoot: "/dev/icarus-tools" },
+    ];
+    expect(
+      filterProjectSuggestions(groups, "ica", { matchWorkspaceRoot: false }).map(
+        (group) => group.displayName,
+      ),
+    ).toEqual(["Icarus"]);
+  });
+
+  it("lists every project for an empty partial value", () => {
+    const groups = [
+      { displayName: "Alpha", workspaceRoot: "/a" },
+      { displayName: "Beta", workspaceRoot: "/b" },
+    ];
+    expect(filterProjectSuggestions(groups, "")).toEqual(groups);
   });
 });
 
