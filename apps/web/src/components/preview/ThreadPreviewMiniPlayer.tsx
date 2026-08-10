@@ -2,7 +2,7 @@
 
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { PanelRight, PictureInPicture2, X } from "lucide-react";
+import { Grip, PanelRight, PictureInPicture2, X } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
@@ -207,52 +207,70 @@ export function ThreadPreviewMiniPlayer(props: {
           : { right: 16, top: 16, width: size.width, height: size.height }
       }
     >
-      <div
-        className="pointer-events-auto absolute right-2 top-2 z-[34] flex cursor-grab gap-0.5 rounded-lg border bg-popover/95 p-0.5 shadow-lg active:cursor-grabbing"
-        onPointerDown={startDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={(event) => endPointer(event, dragRef)}
-        onPointerCancel={(event) => endPointer(event, dragRef)}
-      >
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Open preview in panel"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={() => {
-            usePreviewMiniPlayerStore.getState().close(threadRef);
-            useRightPanelStore.getState().openBrowser(threadRef, tabId);
-          }}
+      <div className="pointer-events-auto absolute right-2 top-2 z-[34] flex items-center gap-1">
+        <span
+          aria-label={overlay === null ? "Preview reconnecting" : "Preview active"}
+          className={`size-2 rounded-full border border-background/70 shadow-sm ${
+            overlay === null ? "animate-status-pulse bg-amber-400" : "bg-emerald-400"
+          }`}
+        />
+        <div
+          className="group flex cursor-grab items-center gap-0.5 rounded-md border border-border/70 bg-popover/75 p-0.5 shadow-md backdrop-blur-md transition-[padding,background-color] hover:bg-popover/90 focus-within:bg-popover/90 active:cursor-grabbing"
+          onPointerDown={startDrag}
+          onPointerMove={moveDrag}
+          onPointerUp={(event) => endPointer(event, dragRef)}
+          onPointerCancel={(event) => endPointer(event, dragRef)}
         >
-          <PanelRight />
-        </Button>
-        <Button
-          variant={overlay?.pictureInPicture ? "secondary" : "ghost"}
-          size="icon-xs"
-          aria-label={
-            overlay?.pictureInPicture
-              ? "Close popped-out preview"
-              : "Pop preview into separate window"
-          }
-          title={overlay?.pictureInPicture ? "Close separate window" : "Pop into separate window"}
-          disabled={overlay === null}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={toggleNativePictureInPicture}
-        >
-          <PictureInPicture2 />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Close floating preview"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={() => usePreviewMiniPlayerStore.getState().close(threadRef)}
-        >
-          <X />
-        </Button>
+          <Grip
+            aria-hidden
+            className="size-3 text-muted-foreground/70 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0"
+          />
+          <div className="flex w-0 overflow-hidden opacity-0 transition-[width,opacity] group-hover:w-[84px] group-hover:opacity-100 group-focus-within:w-[84px] group-focus-within:opacity-100 pointer-coarse:w-[84px] pointer-coarse:opacity-100">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Open preview in panel"
+              title="Open in panel"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => {
+                usePreviewMiniPlayerStore.getState().close(threadRef);
+                useRightPanelStore.getState().openBrowser(threadRef, tabId);
+              }}
+            >
+              <PanelRight />
+            </Button>
+            <Button
+              variant={overlay?.pictureInPicture ? "secondary" : "ghost"}
+              size="icon-xs"
+              aria-label={
+                overlay?.pictureInPicture
+                  ? "Close popped-out preview"
+                  : "Pop preview into separate window"
+              }
+              title={
+                overlay?.pictureInPicture ? "Close separate window" : "Pop into separate window"
+              }
+              disabled={overlay === null}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={toggleNativePictureInPicture}
+            >
+              <PictureInPicture2 />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Close floating preview"
+              title="Close floating preview"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => usePreviewMiniPlayerStore.getState().close(threadRef)}
+            >
+              <X />
+            </Button>
+          </div>
+        </div>
       </div>
       <div className="relative h-full min-h-0">
-        <div className="absolute inset-0 z-[29] rounded-xl bg-muted shadow-2xl" />
+        <div className="absolute inset-0 z-[29] rounded-xl bg-muted shadow-xl" />
         <BrowserSurfaceSlot
           tabId={runtimeTabId}
           visible={overlay !== null}
@@ -274,12 +292,16 @@ export function ThreadPreviewMiniPlayer(props: {
         <button
           type="button"
           aria-label="Resize floating preview"
-          className="pointer-events-auto absolute bottom-0 right-0 z-[33] size-5 cursor-nwse-resize rounded-br-xl"
+          className="pointer-events-auto absolute bottom-0 right-0 z-[33] grid size-5 cursor-nwse-resize place-items-end rounded-br-xl p-0.5 text-muted-foreground/80"
           onPointerDown={startResize}
           onPointerMove={moveResize}
           onPointerUp={(event) => endPointer(event, resizeRef)}
           onPointerCancel={(event) => endPointer(event, resizeRef)}
-        />
+        >
+          <svg aria-hidden viewBox="0 0 8 8" className="size-2.5 fill-current">
+            <path d="M8 2v2L4 8H2L8 2Zm0 4v2H6l2-2Z" />
+          </svg>
+        </button>
       </div>
     </section>
   );

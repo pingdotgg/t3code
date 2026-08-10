@@ -2029,6 +2029,15 @@ function ChatViewBody(
       state.close(activeThreadRef);
       return;
     }
+    const floatingPreview = selectThreadPreviewMiniPlayer(
+      usePreviewMiniPlayerStore.getState().byThreadKey,
+      activeThreadRef,
+    );
+    if (floatingPreview) {
+      state.openBrowser(activeThreadRef, floatingPreview.tabId);
+      usePreviewMiniPlayerStore.getState().close(activeThreadRef);
+      return;
+    }
     state.open(activeThreadRef, "preview");
     planSidebarDismissedForTurnRef.current =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
@@ -2145,6 +2154,27 @@ function ChatViewBody(
       .getState()
       .reconcileBrowserSurfaces(activeThreadRef, Object.keys(previewState.sessions));
   }, [activeThreadRef, previewState.sessions]);
+  useEffect(() => {
+    if (!activeThreadRef || !activePreviewMiniPlayer) return;
+    const floatingTabId = activePreviewMiniPlayer.tabId;
+    if (!previewState.sessions[floatingTabId]) {
+      usePreviewMiniPlayerStore.getState().close(activeThreadRef);
+      return;
+    }
+    if (
+      browserPanel.isOpen &&
+      activeBrowserSurface?.kind === "preview" &&
+      activeBrowserSurface.resourceId === floatingTabId
+    ) {
+      usePreviewMiniPlayerStore.getState().close(activeThreadRef);
+    }
+  }, [
+    activePreviewMiniPlayer,
+    activeThreadRef,
+    activeBrowserSurface,
+    browserPanel.isOpen,
+    previewState.sessions,
+  ]);
   const activateRightPanelSurface = useCallback(
     (surface: (typeof browserPanel.surfaces)[number]) => {
       if (!activeThreadRef) return;

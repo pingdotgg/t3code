@@ -46,6 +46,10 @@ interface Props {
   deviceToolbarVisible: boolean;
   /** Switches between fill-panel mode and a fixed responsive viewport. */
   onToggleDeviceToolbar: () => void;
+  /** Opens or closes the native always-on-top preview window. */
+  onToggleNativePictureInPicture: () => void;
+  nativePictureInPicture: boolean;
+  nativePictureInPictureDisabled: boolean;
 }
 
 /**
@@ -60,6 +64,9 @@ export function PreviewMoreMenu({
   colorScheme,
   deviceToolbarVisible,
   onToggleDeviceToolbar,
+  onToggleNativePictureInPicture,
+  nativePictureInPicture,
+  nativePictureInPictureDisabled,
 }: Props) {
   if (!previewBridge) return null;
   const bridge = previewBridge;
@@ -95,6 +102,13 @@ export function PreviewMoreMenu({
         </MenuItem>
         <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
           {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
+        </MenuItem>
+        <MenuItem
+          onClick={onToggleNativePictureInPicture}
+          disabled={nativePictureInPictureDisabled}
+          aria-pressed={nativePictureInPicture}
+        >
+          {nativePictureInPicture ? "Close separate window" : "Open in separate window"}
         </MenuItem>
         <MenuSub>
           <MenuSubTrigger disabled={tabDisabled}>Appearance</MenuSubTrigger>

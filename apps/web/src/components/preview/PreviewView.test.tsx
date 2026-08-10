@@ -1,4 +1,5 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -12,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   submittedUrl: null as ((url: string) => void) | null,
   capture: null as ((record: boolean) => void) | null,
   pictureInPicture: null as (() => void) | null,
+  nativePictureInPicture: null as (() => void) | null,
+  openNativePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
+  closeNativePictureInPicture: vi.fn(async (_tabId: string): Promise<void> => undefined),
   emptyStateUrl: null as ((url: string) => void) | null,
   showEmptyState: false,
 }));
@@ -106,6 +110,10 @@ vi.mock("./previewBridge", () => ({
     captureScreenshot: mocks.captureScreenshot,
     revealArtifact: mocks.revealArtifact,
     copyArtifactToClipboard: mocks.copyArtifactToClipboard,
+    pictureInPicture: {
+      open: mocks.openNativePictureInPicture,
+      close: mocks.closeNativePictureInPicture,
+    },
   },
 }));
 
@@ -114,11 +122,12 @@ vi.mock("./PreviewChromeRow", () => ({
     onSubmit: (url: string) => void;
     onCapture?: (record: boolean) => void;
     onPictureInPicture?: () => void;
+    trailingActions?: ReactNode;
   }) => {
     mocks.submittedUrl = props.onSubmit;
     mocks.capture = props.onCapture ?? null;
     mocks.pictureInPicture = props.onPictureInPicture ?? null;
-    return null;
+    return <>{props.trailingActions}</>;
   },
 }));
 
@@ -128,7 +137,12 @@ vi.mock("./PreviewEmptyState", () => ({
     return null;
   },
 }));
-vi.mock("./PreviewMoreMenu", () => ({ PreviewMoreMenu: () => null }));
+vi.mock("./PreviewMoreMenu", () => ({
+  PreviewMoreMenu: (props: { onToggleNativePictureInPicture: () => void }) => {
+    mocks.nativePictureInPicture = props.onToggleNativePictureInPicture;
+    return null;
+  },
+}));
 vi.mock("./PreviewUnreachable", () => ({ PreviewUnreachable: () => null }));
 vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
 vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
@@ -155,6 +169,9 @@ describe("PreviewView navigation", () => {
     mocks.submittedUrl = null;
     mocks.capture = null;
     mocks.pictureInPicture = null;
+    mocks.nativePictureInPicture = null;
+    mocks.openNativePictureInPicture.mockClear();
+    mocks.closeNativePictureInPicture.mockClear();
     mocks.emptyStateUrl = null;
     mocks.showEmptyState = false;
     usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
@@ -311,5 +328,25 @@ describe("PreviewView navigation", () => {
         threadId: ThreadId.make("thread-1"),
       }),
     ).toMatchObject({ tabId: "tab-1" });
+  });
+
+  it("opens the native separate window from the More menu", async () => {
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={{
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        }}
+        tabId="tab-1"
+        visible
+      />,
+    );
+
+    expect(mocks.nativePictureInPicture).not.toBeNull();
+    mocks.nativePictureInPicture?.();
+
+    await vi.waitFor(() =>
+      expect(mocks.openNativePictureInPicture).toHaveBeenCalledWith(runtimeTabId),
+    );
   });
 });

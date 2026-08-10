@@ -259,6 +259,20 @@ export function PreviewView({
     onClose?.();
   }, [miniPlayerTabId, onClose, tabId, threadRef]);
 
+  const handleToggleNativePictureInPicture = useCallback(() => {
+    if (!previewBridge || !runtimeTabId) return;
+    const action = desktopOverlay?.pictureInPicture
+      ? previewBridge.pictureInPicture.close
+      : previewBridge.pictureInPicture.open;
+    void action(runtimeTabId).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to update popped-out preview",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, [desktopOverlay?.pictureInPicture, runtimeTabId]);
+
   const handleCapture = useCallback(
     (record: boolean) => {
       if (!previewBridge || !runtimeTabId || !tabId) return;
@@ -628,6 +642,9 @@ export function PreviewView({
                 colorScheme={desktopOverlay?.colorScheme ?? "system"}
                 deviceToolbarVisible={viewport._tag !== "fill"}
                 onToggleDeviceToolbar={handleToggleDeviceToolbar}
+                onToggleNativePictureInPicture={handleToggleNativePictureInPicture}
+                nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
+                nativePictureInPictureDisabled={!desktopOverlay || isUnreachable}
               />
             ) : null}
             {onClose ? (

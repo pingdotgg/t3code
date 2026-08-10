@@ -27,6 +27,7 @@ import {
 import { ensureLocalApi } from "~/localApi";
 import { collectActiveTerminalThreadIds } from "~/lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
+import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { projectQueryKeys } from "~/lib/projectReactQuery";
 import { providerQueryKeys } from "~/lib/providerReactQuery";
 import { getPrimaryKnownEnvironment } from "../primary";
@@ -686,10 +687,10 @@ function applyRecoveredEventBatch(
     markPromotedDraftThreadByRef(scopeThreadRef(environmentId, threadId));
   }
   for (const threadId of batchEffects.clearDeletedThreadIds) {
-    draftStore.clearDraftThread(scopeThreadRef(environmentId, threadId));
-    useUiStateStore
-      .getState()
-      .clearThreadUi(scopedThreadKey(scopeThreadRef(environmentId, threadId)));
+    const threadRef = scopeThreadRef(environmentId, threadId);
+    draftStore.clearDraftThread(threadRef);
+    usePreviewMiniPlayerStore.getState().removeThread(threadRef);
+    useUiStateStore.getState().clearThreadUi(scopedThreadKey(threadRef));
   }
   for (const event of events) {
     if (event.type === "project.deleted") {
@@ -752,6 +753,7 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
       if (threadRef) {
         disposeThreadDetailSubscriptionByKey(scopedThreadKey(threadRef));
         useComposerDraftStore.getState().clearDraftThread(threadRef);
+        usePreviewMiniPlayerStore.getState().removeThread(threadRef);
         useUiStateStore.getState().clearThreadUi(scopedThreadKey(threadRef));
         useTerminalStateStore.getState().removeTerminalState(threadRef);
       }

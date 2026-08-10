@@ -40,6 +40,17 @@ describe("previewMiniPlayerStore", () => {
     ]);
   });
 
+  it("removes only the deleted thread's floating preview", () => {
+    const store = usePreviewMiniPlayerStore.getState();
+    store.open(first, "tab-a");
+    store.open(second, "tab-b");
+    store.removeThread(first);
+
+    expect(Object.values(usePreviewMiniPlayerStore.getState().byThreadKey)).toEqual([
+      { tabId: "tab-b", position: null, size: null },
+    ]);
+  });
+
   it("no-ops equal move and resize values", () => {
     const store = usePreviewMiniPlayerStore.getState();
     store.open(first, "tab-a");
