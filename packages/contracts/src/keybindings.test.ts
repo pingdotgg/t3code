@@ -126,6 +126,17 @@ it.effect("accepts dynamic script run commands", () =>
   }),
 );
 
+it.effect("accepts the configurable thread settle command", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(KeybindingRule, {
+      key: "mod+shift+s",
+      command: "thread.settle",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsed.command, "thread.settle");
+  }),
+);
+
 it.effect("parses keybindings array payload", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(KeybindingsConfig, [

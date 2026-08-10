@@ -480,6 +480,31 @@ describe("model picker navigation helpers", () => {
 });
 
 describe("chat/editor shortcuts", () => {
+  it("matches a configured thread settle shortcut", () => {
+    const bindings = compile([
+      {
+        shortcut: modShortcut("s", { shiftKey: true }),
+        command: "thread.settle",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), bindings, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.settle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), bindings, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      null,
+    );
+  });
+
   it("matches chat.new shortcut", () => {
     assert.isTrue(
       isChatNewShortcut(event({ key: "o", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
