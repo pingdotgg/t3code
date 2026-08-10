@@ -126,10 +126,14 @@ export const stopCopilotClient = Effect.fn("stopCopilotClient")(function* (
     }),
   );
 
+  if (forceStopAttempt._tag === "Resolved") {
+    return;
+  }
+
   return yield* new CopilotClientStopError({
     cleanupErrors: stopAttempt._tag === "Resolved" ? stopAttempt.cleanupErrors : [],
     ...(stopAttempt._tag === "Rejected" ? { stopCause: stopAttempt.cause } : {}),
-    ...(forceStopAttempt._tag === "Rejected" ? { forceStopCause: forceStopAttempt.cause } : {}),
+    forceStopCause: forceStopAttempt.cause,
   });
 });
 

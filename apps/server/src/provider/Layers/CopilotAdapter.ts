@@ -90,6 +90,8 @@ type SessionStartedEvent = Extract<SessionEvent, { type: "session.start" }>;
 type SessionResumedEvent = Extract<SessionEvent, { type: "session.resume" }>;
 type SessionUserMessageEvent = Extract<SessionEvent, { type: "user.message" }>;
 type SessionUserInputCompletedEvent = Extract<SessionEvent, { type: "user_input.completed" }>;
+type SessionSubagentCompletedEvent = Extract<SessionEvent, { type: "subagent.completed" }>;
+type SessionSubagentFailedEvent = Extract<SessionEvent, { type: "subagent.failed" }>;
 type SessionPermissionRequest = PermissionRequest;
 type SessionUserInputRequestedData = CopilotUserInputRequest & { readonly requestId: string };
 type SessionApprovalDecision = Extract<PermissionRequestResult, { kind: "approve-for-session" }>;
@@ -403,6 +405,54 @@ function appendTurnItem(
 
 function detailFromCause(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback;
+}
+
+function copilotProcessError(
+  threadId: ThreadId,
+  detail: string,
+  cause: unknown,
+): ProviderAdapterProcessError {
+  return new ProviderAdapterProcessError({
+    provider: PROVIDER,
+    threadId,
+    detail: detailFromCause(cause, detail),
+    cause,
+  });
+}
+
+function copilotRequestError(
+  method: string,
+  detail: string,
+  cause: unknown,
+): ProviderAdapterRequestError {
+  return new ProviderAdapterRequestError({
+    provider: PROVIDER,
+    method,
+    detail: detailFromCause(cause, detail),
+    cause,
+  });
+}
+
+function tryCopilotProcess<A>(
+  threadId: ThreadId,
+  detail: string,
+  try_: () => PromiseLike<A>,
+): Effect.Effect<A, ProviderAdapterProcessError> {
+  return Effect.tryPromise({
+    try: try_,
+    catch: (cause) => copilotProcessError(threadId, detail, cause),
+  });
+}
+
+function tryCopilotRequest<A>(
+  method: string,
+  detail: string,
+  try_: () => PromiseLike<A>,
+): Effect.Effect<A, ProviderAdapterRequestError> {
+  return Effect.tryPromise({
+    try: try_,
+    catch: (cause) => copilotRequestError(method, detail, cause),
+  });
 }
 
 function isCopilotSessionNotFoundError(error: ProviderAdapterProcessError, sessionId: string) {
@@ -772,6 +822,19 @@ function copilotTaskCompletionSummary(task: CopilotTaskInfo): string | undefined
     return task.description;
   }
   return task.error ?? task.result ?? task.latestResponse ?? task.description;
+}
+
+function copilotSubagentUsage(
+  data: Pick<
+    SessionSubagentCompletedEvent["data"] | SessionSubagentFailedEvent["data"],
+    "durationMs" | "totalTokens" | "totalToolCalls"
+  >,
+): Record<string, number> {
+  return {
+    ...(data.durationMs === undefined ? {} : { durationMs: data.durationMs }),
+    ...(data.totalTokens === undefined ? {} : { totalTokens: data.totalTokens }),
+    ...(data.totalToolCalls === undefined ? {} : { totalToolCalls: data.totalToolCalls }),
+  };
 }
 
 function isStringRecord(value: unknown): value is Record<string, unknown> {
@@ -1258,26 +1321,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
   const copilotSdk = {
     startClient: (threadId: ThreadId, client: CopilotClient) =>
-      Effect.tryPromise({
-        try: () => client.start(),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId,
-            detail: detailFromCause(cause, "Failed to start Copilot client."),
-            cause,
-          }),
-      }),
+      tryCopilotProcess(threadId, "Failed to start Copilot client.", () => client.start()),
     stopClient: (threadId: ThreadId, client: CopilotClient) =>
       stopCopilotClient(client).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId,
-              detail: detailFromCause(cause, "Failed to stop Copilot client."),
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          copilotProcessError(threadId, "Failed to stop Copilot client.", cause),
         ),
       ),
     createSession: (
@@ -1285,157 +1333,81 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       client: CopilotClient,
       config: SessionConfig,
     ): Effect.Effect<CopilotSession, ProviderAdapterProcessError> =>
-      Effect.tryPromise({
-        try: () => client.createSession(config),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId,
-            detail: detailFromCause(cause, "Failed to create Copilot session."),
-            cause,
-          }),
-      }),
+      tryCopilotProcess(threadId, "Failed to create Copilot session.", () =>
+        client.createSession(config),
+      ),
     resumeSession: (
       threadId: ThreadId,
       client: CopilotClient,
       sessionId: string,
       config: SessionConfig,
     ): Effect.Effect<CopilotSession, ProviderAdapterProcessError> =>
-      Effect.tryPromise({
-        try: () => client.resumeSession(sessionId, config),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId,
-            detail: detailFromCause(cause, "Failed to resume Copilot session."),
-            cause,
-          }),
-      }),
+      tryCopilotProcess(threadId, "Failed to resume Copilot session.", () =>
+        client.resumeSession(sessionId, config),
+      ),
     setMode: (
       context: CopilotSessionContext,
       mode: CopilotMode,
     ): Effect.Effect<void, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: () => context.sdkSession.rpc.mode.set({ mode }),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.mode.set",
-            detail: detailFromCause(cause, "Failed to update Copilot mode."),
-            cause,
-          }),
-      }),
+      tryCopilotRequest("session.mode.set", "Failed to update Copilot mode.", () =>
+        context.sdkSession.rpc.mode.set({ mode }),
+      ),
     truncateHistory: (
       context: CopilotSessionContext,
       eventId: string,
     ): Effect.Effect<void, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: () => context.sdkSession.rpc.history.truncate({ eventId }),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.history.truncate",
-            detail: detailFromCause(cause, "Failed to truncate Copilot history."),
-            cause,
-          }),
-      }).pipe(Effect.asVoid),
+      tryCopilotRequest("session.history.truncate", "Failed to truncate Copilot history.", () =>
+        context.sdkSession.rpc.history.truncate({ eventId }),
+      ).pipe(Effect.asVoid),
     getHistoryEvents: (
       context: CopilotSessionContext,
     ): Effect.Effect<ReadonlyArray<SessionEvent>, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: () => context.sdkSession.getEvents(),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.getEvents",
-            detail: detailFromCause(cause, "Failed to read Copilot history."),
-            cause,
-          }),
-      }),
+      tryCopilotRequest("session.getEvents", "Failed to read Copilot history.", () =>
+        context.sdkSession.getEvents(),
+      ),
     readPlan: (
       context: CopilotSessionContext,
     ): Effect.Effect<string, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: async () => (await context.sdkSession.rpc.plan.read()).content ?? "",
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.plan.read",
-            detail: detailFromCause(cause, "Failed to read Copilot plan."),
-            cause,
-          }),
-      }),
+      tryCopilotRequest(
+        "session.plan.read",
+        "Failed to read Copilot plan.",
+        async () => (await context.sdkSession.rpc.plan.read()).content ?? "",
+      ),
     readBackgroundTasks: (
       context: CopilotSessionContext,
     ): Effect.Effect<CopilotTaskList, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: () => context.sdkSession.rpc.tasks.list(),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.tasks.list",
-            detail: detailFromCause(cause, "Failed to read Copilot background tasks."),
-            cause,
-          }),
-      }),
+      tryCopilotRequest("session.tasks.list", "Failed to read Copilot background tasks.", () =>
+        context.sdkSession.rpc.tasks.list(),
+      ),
     setModel: (
       context: CopilotSessionContext,
       model: string,
       reasoningEffort?: CopilotReasoningEffort | undefined,
       contextTier?: CopilotContextTier | undefined,
     ): Effect.Effect<void, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: () =>
-          context.sdkSession.setModel(model, {
-            ...(reasoningEffort ? { reasoningEffort } : {}),
-            ...(contextTier ? { contextTier } : {}),
-          }),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.setModel",
-            detail: detailFromCause(cause, "Failed to update Copilot model."),
-            cause,
-          }),
-      }),
+      tryCopilotRequest("session.setModel", "Failed to update Copilot model.", () =>
+        context.sdkSession.setModel(model, {
+          ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(contextTier ? { contextTier } : {}),
+        }),
+      ),
     send: (
       context: CopilotSessionContext,
       messageOptions: MessageOptions,
     ): Effect.Effect<string, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: () => context.sdkSession.send(messageOptions),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.send",
-            detail: detailFromCause(cause, "Failed to send Copilot turn."),
-            cause,
-          }),
-      }),
+      tryCopilotRequest("session.send", "Failed to send Copilot turn.", () =>
+        context.sdkSession.send(messageOptions),
+      ),
     abort: (context: CopilotSessionContext): Effect.Effect<void, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: () => context.sdkSession.abort(),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.abort",
-            detail: detailFromCause(cause, "Failed to abort Copilot turn."),
-            cause,
-          }),
-      }),
+      tryCopilotRequest("session.abort", "Failed to abort Copilot turn.", () =>
+        context.sdkSession.abort(),
+      ),
     disconnect: (
       context: CopilotSessionContext,
     ): Effect.Effect<void, ProviderAdapterRequestError> =>
-      Effect.tryPromise({
-        try: () => context.sdkSession.disconnect(),
-        catch: (cause) =>
-          new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "session.disconnect",
-            detail: detailFromCause(cause, "Failed to disconnect Copilot session."),
-            cause,
-          }),
-      }),
+      tryCopilotRequest("session.disconnect", "Failed to disconnect Copilot session.", () =>
+        context.sdkSession.disconnect(),
+      ),
   } as const;
 
   const enqueueSdkEvent = (context: CopilotSessionContext, event: SessionEvent) => {
@@ -2293,6 +2265,35 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
     });
   };
 
+  const emitSubagentTaskCompleted = async (input: {
+    readonly context: CopilotSessionContext;
+    readonly event: SessionSubagentCompletedEvent | SessionSubagentFailedEvent;
+    readonly status: "completed" | "failed";
+    readonly summary: string;
+  }): Promise<void> => {
+    const agentId = trimOrUndefined(input.event.agentId);
+    const turnId =
+      input.context.turnIdByProviderItemId.get(input.event.data.toolCallId) ??
+      (agentId ? input.context.turnIdByProviderItemId.get(agentId) : undefined);
+    if (!turnId || !agentId) {
+      return;
+    }
+    await emitAsync({
+      ...createBaseEvent({
+        threadId: input.context.threadId,
+        turnId,
+        raw: input.event,
+      }),
+      type: "task.completed",
+      payload: {
+        taskId: RuntimeTaskId.make(agentId),
+        status: input.status,
+        summary: input.summary,
+        usage: copilotSubagentUsage(input.event.data),
+      },
+    });
+  };
+
   const handleSdkEvent = async (
     context: CopilotSessionContext,
     event: SessionEvent,
@@ -2878,66 +2879,20 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         return;
       }
       case "subagent.completed": {
-        const agentId = trimOrUndefined(event.agentId);
-        const turnId =
-          context.turnIdByProviderItemId.get(event.data.toolCallId) ??
-          (agentId ? context.turnIdByProviderItemId.get(agentId) : undefined);
-        if (!turnId || !agentId) {
-          return;
-        }
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            turnId,
-            raw: event,
-          }),
-          type: "task.completed",
-          payload: {
-            taskId: RuntimeTaskId.make(agentId),
-            status: "completed",
-            summary: `${event.data.agentDisplayName} completed`,
-            usage: {
-              ...(event.data.durationMs === undefined ? {} : { durationMs: event.data.durationMs }),
-              ...(event.data.totalTokens === undefined
-                ? {}
-                : { totalTokens: event.data.totalTokens }),
-              ...(event.data.totalToolCalls === undefined
-                ? {}
-                : { totalToolCalls: event.data.totalToolCalls }),
-            },
-          },
+        await emitSubagentTaskCompleted({
+          context,
+          event,
+          status: "completed",
+          summary: `${event.data.agentDisplayName} completed`,
         });
         return;
       }
       case "subagent.failed": {
-        const agentId = trimOrUndefined(event.agentId);
-        const turnId =
-          context.turnIdByProviderItemId.get(event.data.toolCallId) ??
-          (agentId ? context.turnIdByProviderItemId.get(agentId) : undefined);
-        if (!turnId || !agentId) {
-          return;
-        }
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-            turnId,
-            raw: event,
-          }),
-          type: "task.completed",
-          payload: {
-            taskId: RuntimeTaskId.make(agentId),
-            status: "failed",
-            summary: trimOrUndefined(event.data.error) ?? `${event.data.agentDisplayName} failed`,
-            usage: {
-              ...(event.data.durationMs === undefined ? {} : { durationMs: event.data.durationMs }),
-              ...(event.data.totalTokens === undefined
-                ? {}
-                : { totalTokens: event.data.totalTokens }),
-              ...(event.data.totalToolCalls === undefined
-                ? {}
-                : { totalToolCalls: event.data.totalToolCalls }),
-            },
-          },
+        await emitSubagentTaskCompleted({
+          context,
+          event,
+          status: "failed",
+          summary: trimOrUndefined(event.data.error) ?? `${event.data.agentDisplayName} failed`,
         });
         return;
       }
@@ -3255,14 +3210,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         platform,
         logLevel: "error",
       }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-              detail: detailFromCause(cause, "Failed to configure Copilot client."),
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          copilotProcessError(input.threadId, "Failed to configure Copilot client.", cause),
         ),
       );
 
@@ -3416,14 +3365,8 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
         enqueueSdkEvent(context, event);
       }
       yield* Effect.promise(() => context.eventChain).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-              detail: detailFromCause(cause, "Failed to process Copilot startup events."),
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          copilotProcessError(input.threadId, "Failed to process Copilot startup events.", cause),
         ),
       );
       updateProviderSession(context, {
@@ -3568,12 +3511,11 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
                     errorMessage: error.detail,
                   }),
                 catch: (cause) =>
-                  new ProviderAdapterProcessError({
-                    provider: PROVIDER,
-                    threadId: input.threadId,
-                    detail: detailFromCause(cause, "Failed to emit Copilot turn completion."),
+                  copilotProcessError(
+                    input.threadId,
+                    "Failed to emit Copilot turn completion.",
                     cause,
-                  }),
+                  ),
               });
               return yield* error;
             }),
@@ -3654,12 +3596,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
                 diffText: writeDiff,
               }),
             catch: (cause) =>
-              new ProviderAdapterProcessError({
-                provider: PROVIDER,
-                threadId,
-                detail: detailFromCause(cause, "Failed to emit Copilot write diff update."),
-                cause,
-              }),
+              copilotProcessError(threadId, "Failed to emit Copilot write diff update.", cause),
           });
         }
       }
