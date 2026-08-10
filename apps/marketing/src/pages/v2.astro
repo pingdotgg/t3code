@@ -168,7 +168,11 @@ const endorsementRows = [
                         rel="noreferrer"
                         aria-label="Open T3 Code in the App Store"
                       >
-                        <img src={surface.image} alt="T3 Code on iPhone" loading="lazy" />
+                        <img
+                          src="/mobile-states/ios-review.png"
+                          alt="Reviewing changes in T3 Code on iPhone"
+                          loading="lazy"
+                        />
                         <span class="v2-device-store-link">
                           <img src="/store-logos/appstore.svg" alt="" width="18" height="18" />
                           Open in App Store <span aria-hidden="true">↗</span>
@@ -182,8 +186,8 @@ const endorsementRows = [
                         aria-label="Open T3 Code in Google Play"
                       >
                         <img
-                          src="/mobile-states/android-thread.png"
-                          alt="T3 Code on Android"
+                          src="/mobile-states/android-review.png"
+                          alt="Reviewing changes in T3 Code on Android"
                           loading="lazy"
                         />
                         <span class="v2-device-store-link">
@@ -790,8 +794,8 @@ const endorsementRows = [
   .v2-phone-pair {
     display: flex;
     width: 100%;
-    height: 100%;
-    align-items: center;
+    height: min(92%, 520px);
+    align-items: stretch;
     justify-content: center;
     gap: 18px;
   }
@@ -799,8 +803,8 @@ const endorsementRows = [
   .v2-phone-device {
     position: relative;
     display: grid;
-    height: min(92%, 520px);
-    aspect-ratio: 1320 / 2868;
+    width: min(42%, 250px);
+    height: 100%;
     place-items: center;
     border-radius: 14px;
     overflow: hidden;
