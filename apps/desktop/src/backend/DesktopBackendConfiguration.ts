@@ -239,8 +239,10 @@ const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
-  readonly windowsSourcePath: string;
-  readonly runtimeSource: DesktopWslEnvironment.WslRuntimeSource;
+  readonly windowsEntryPath: string;
+  readonly windowsAppRoot: string;
+  readonly windowsRuntimeArchivePath: string | null;
+  readonly runtimeId: string;
   readonly allowBuild: boolean;
 }): Effect.fn.Return<
   WslPreflightSuccess | WslPreflightFailure,
@@ -289,28 +291,45 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     } as const;
   }
 
-  const sourceExists = yield* fileSystem
-    .exists(input.windowsSourcePath)
+  const entryExists = yield* fileSystem
+    .exists(input.windowsEntryPath)
     .pipe(Effect.orElseSucceed(() => false));
-  if (!sourceExists) {
+  if (!entryExists) {
     return {
       _tag: "Failed",
-      reason: `missing WSL runtime source at ${input.windowsSourcePath}`,
+      reason: `missing server entry at ${input.windowsEntryPath}`,
       fatal: true,
     } as const;
   }
 
-  const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeSource);
-  if (!runtime.ok) {
+  const mountedAppRoot = yield* wslEnv.windowsToWslPath(runningDistro, input.windowsAppRoot);
+  if (Option.isNone(mountedAppRoot)) {
     return {
       _tag: "Failed",
-      reason: runtime.reason,
-      fatal: runtime.fatal,
+      reason: `wslpath conversion failed for ${input.windowsAppRoot}`,
+      fatal: false,
     } as const;
   }
-  const linuxEntryPath = `${runtime.linuxAppRoot}/apps/server/dist/bin.mjs`;
 
-  const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, runtime.linuxAppRoot, {
+  let linuxAppRoot = mountedAppRoot.value;
+  if (input.windowsRuntimeArchivePath !== null) {
+    const runtime = yield* wslEnv.prepareRuntime(
+      runningDistro,
+      input.windowsRuntimeArchivePath,
+      input.runtimeId,
+    );
+    if (runtime.ok) {
+      linuxAppRoot = runtime.linuxAppRoot;
+    } else {
+      yield* Effect.logWarning(
+        "Could not stage the WSL runtime; launching from the mounted application instead.",
+        { reason: runtime.reason },
+      );
+    }
+  }
+  const linuxEntryPath = `${linuxAppRoot}/apps/server/dist/bin.mjs`;
+
+  const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, linuxAppRoot, {
     allowBuild: input.allowBuild,
     nodeEngineRange: serverPackageJson.engines.node,
   });
@@ -483,19 +502,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const hasWslRuntimeArchive = environment.isPackaged
     ? yield* fileSystem.exists(wslRuntimeArchivePath).pipe(Effect.orElseSucceed(() => false))
     : false;
-  const runtimeSource: DesktopWslEnvironment.WslRuntimeSource = hasWslRuntimeArchive
-    ? {
-        _tag: "Archive",
-        windowsArchivePath: wslRuntimeArchivePath,
-        runtimeId: `${environment.appVersion}-${environment.processArch}`,
-      }
-    : { _tag: "MountedDirectory", windowsAppRoot: wslAppRoot };
-  const windowsSourcePath = hasWslRuntimeArchive ? wslRuntimeArchivePath : wslEntryPath;
-
   const preflight = yield* runWslPreflight({
     distro: input.distro,
-    windowsSourcePath,
-    runtimeSource,
+    windowsEntryPath: wslEntryPath,
+    windowsAppRoot: wslAppRoot,
+    windowsRuntimeArchivePath: hasWslRuntimeArchive ? wslRuntimeArchivePath : null,
+    runtimeId: `${environment.appVersion}-${environment.processArch}`,
     // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
     // attached to the Windows artifact — see build-desktop-artifact.ts), so the
     // WSL backend never needs a compiler, node-gyp, or network on first launch.
@@ -550,9 +562,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   const baseConfig = {
     executablePath: "wsl.exe",
-    // DesktopBackendManager validates this Windows-side path before spawning.
-    // The actual Linux entry is supplied in args after runtime preparation.
-    entryPath: windowsSourcePath,
+    entryPath: wslEntryPath,
     cwd: environment.backendCwd,
     env: {
       ...parentEnvWithoutT3Home,

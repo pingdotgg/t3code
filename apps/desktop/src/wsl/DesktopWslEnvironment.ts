@@ -32,17 +32,6 @@ export interface EnsureWslNodePtyOptions {
   readonly nodeEngineRange?: string | null;
 }
 
-export type WslRuntimeSource =
-  | {
-      readonly _tag: "MountedDirectory";
-      readonly windowsAppRoot: string;
-    }
-  | {
-      readonly _tag: "Archive";
-      readonly windowsArchivePath: string;
-      readonly runtimeId: string;
-    };
-
 export type PrepareWslRuntimeResult =
   | {
       readonly ok: true;
@@ -51,7 +40,6 @@ export type PrepareWslRuntimeResult =
   | {
       readonly ok: false;
       readonly reason: string;
-      readonly fatal: boolean;
     };
 
 export type EnsureWslNodePtyResult =
@@ -104,7 +92,8 @@ export class DesktopWslEnvironment extends Context.Service<
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     readonly prepareRuntime: (
       distro: string | null,
-      source: WslRuntimeSource,
+      windowsArchivePath: string,
+      runtimeId: string,
     ) => Effect.Effect<PrepareWslRuntimeResult>;
     readonly ensureNodePty: (
       distro: string | null,
@@ -696,36 +685,24 @@ const ensureNodePtyImpl = (
 
 const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(function* (
   distro: string | null,
-  source: WslRuntimeSource,
+  windowsArchivePath: string,
+  runtimeId: string,
   windowsToWslPath: (
     distro: string | null,
     windowsPath: string,
   ) => Effect.Effect<Option.Option<string>>,
 ): Effect.fn.Return<PrepareWslRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> {
-  if (source._tag === "MountedDirectory") {
-    const linuxAppRoot = yield* windowsToWslPath(distro, source.windowsAppRoot);
-    return Option.match(linuxAppRoot, {
-      onNone: () => ({
-        ok: false,
-        reason: `wslpath conversion failed for ${source.windowsAppRoot}`,
-        fatal: false,
-      }),
-      onSome: (resolved) => ({ ok: true, linuxAppRoot: resolved }),
-    });
-  }
-
-  const linuxArchivePath = yield* windowsToWslPath(distro, source.windowsArchivePath);
+  const linuxArchivePath = yield* windowsToWslPath(distro, windowsArchivePath);
   if (Option.isNone(linuxArchivePath)) {
     return {
       ok: false,
-      reason: `wslpath conversion failed for ${source.windowsArchivePath}`,
-      fatal: false,
+      reason: `wslpath conversion failed for ${windowsArchivePath}`,
     } as const;
   }
 
   const install = yield* runWslShell(
     distro,
-    buildWslRuntimeInstallScript(linuxArchivePath.value, source.runtimeId),
+    buildWslRuntimeInstallScript(linuxArchivePath.value, runtimeId),
     RUNTIME_INSTALL_TIMEOUT,
     { resolveNode: false },
   );
@@ -736,7 +713,6 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
         install.transportFailure === "timeout"
           ? "WSL runtime installation timed out. Check that the distro has free disk space, then retry."
           : "WSL runtime installation lost communication with wsl.exe. Retry, or check that the distro is healthy.",
-      fatal: false,
     } as const;
   }
   if (install.exitCode !== 0) {
@@ -744,7 +720,6 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
     return {
       ok: false,
       reason: `WSL runtime installation failed (exit ${install.exitCode}): ${trimmedTail || "no stderr captured"}`,
-      fatal: true,
     } as const;
   }
 
@@ -753,7 +728,6 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
     ? {
         ok: false,
         reason: "WSL runtime installation completed without reporting its cache path.",
-        fatal: true,
       }
     : { ok: true, linuxAppRoot };
 });
@@ -954,7 +928,8 @@ export interface DesktopWslEnvironmentTestStub {
   readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
   readonly prepareRuntime?: (
     distro: string | null,
-    source: WslRuntimeSource,
+    windowsArchivePath: string,
+    runtimeId: string,
   ) => PrepareWslRuntimeResult;
   readonly ensureNodePty?: (
     distro: string | null,
@@ -978,26 +953,12 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
         Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
       getDistroIp: (distro) => Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>()),
-      prepareRuntime: (distro, source) =>
+      prepareRuntime: (distro, windowsArchivePath, runtimeId) =>
         Effect.succeed(
-          stub.prepareRuntime?.(distro, source) ??
-            (source._tag === "MountedDirectory"
-              ? Option.match(
-                  stub.windowsToWslPath?.(distro, source.windowsAppRoot) ?? Option.none(),
-                  {
-                    onNone: () => ({
-                      ok: false as const,
-                      reason: "prepareRuntime stub not configured",
-                      fatal: true,
-                    }),
-                    onSome: (linuxAppRoot) => ({ ok: true as const, linuxAppRoot }),
-                  },
-                )
-              : {
-                  ok: false,
-                  reason: "prepareRuntime stub not configured",
-                  fatal: true,
-                }),
+          stub.prepareRuntime?.(distro, windowsArchivePath, runtimeId) ?? {
+            ok: false,
+            reason: "prepareRuntime stub not configured",
+          },
         ),
       ensureNodePty: (distro, linuxAppRoot, options) =>
         Effect.succeed(
@@ -1081,10 +1042,10 @@ export const layer = Layer.effect(
       windowsToWslPath,
       getUserHome,
       getDistroIp,
-      prepareRuntime: (distro, source) =>
-        provideSpawner(prepareWslRuntimeImpl(distro, source, windowsToWslPath)).pipe(
-          Effect.withSpan("desktop.wsl.prepareRuntime"),
-        ),
+      prepareRuntime: (distro, windowsArchivePath, runtimeId) =>
+        provideSpawner(
+          prepareWslRuntimeImpl(distro, windowsArchivePath, runtimeId, windowsToWslPath),
+        ).pipe(Effect.withSpan("desktop.wsl.prepareRuntime")),
       ensureNodePty: (distro, linuxAppRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options)).pipe(
           Effect.withSpan("desktop.wsl.ensureNodePty"),

@@ -193,9 +193,9 @@ describe("DesktopBackendConfiguration", () => {
                   { name: "Debian", isDefault: false, version: 2 },
                   { name: "Ubuntu", isDefault: true, version: 2 },
                 ],
-                prepareRuntime: (distro) => {
+                windowsToWslPath: (distro) => {
                   observedDistros.push(distro);
-                  return { ok: true, linuxAppRoot: "/repo" };
+                  return Option.some("/repo");
                 },
                 ensureNodePty: (distro) => {
                   observedDistros.push(distro);
@@ -233,9 +233,12 @@ describe("DesktopBackendConfiguration", () => {
         prefix: "t3-desktop-backend-config-test-",
       });
       const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
       yield* fileSystem.writeFileString(archivePath, "archive");
 
-      const observedSources: DesktopWslEnvironment.WslRuntimeSource[] = [];
+      const observedArchives: Array<{ windowsArchivePath: string; runtimeId: string }> = [];
       const observedNodePtyRoots: string[] = [];
       const linuxAppRoot = "/home/test/.t3/runtime/1.2.3-x64";
       const config = yield* Effect.gen(function* () {
@@ -250,8 +253,9 @@ describe("DesktopBackendConfiguration", () => {
               DesktopWslEnvironment.layerTest({
                 isAvailable: true,
                 distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
-                prepareRuntime: (_distro, source) => {
-                  observedSources.push(source);
+                windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
+                prepareRuntime: (_distro, windowsArchivePath, runtimeId) => {
+                  observedArchives.push({ windowsArchivePath, runtimeId });
                   return { ok: true, linuxAppRoot };
                 },
                 ensureNodePty: (_distro, root) => {
@@ -272,16 +276,69 @@ describe("DesktopBackendConfiguration", () => {
         ),
       );
 
-      assert.deepEqual(observedSources, [
+      assert.deepEqual(observedArchives, [
         {
-          _tag: "Archive",
           windowsArchivePath: archivePath,
           runtimeId: "1.2.3-x64",
         },
       ]);
       assert.deepEqual(observedNodePtyRoots, [linuxAppRoot]);
-      assert.equal(config.entryPath, archivePath);
+      assert.equal(config.entryPath, entryPath);
       assert.include(config.args, `${linuxAppRoot}/apps/server/dist/bin.mjs`);
+      assert.isTrue(Option.isNone(config.preflightFailure));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl falls back to the mounted runtime when archive staging fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(archivePath, "corrupt archive");
+
+      const mountedAppRoot = "/mnt/c/app.asar.unpacked";
+      const observedNodePtyRoots: string[] = [];
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                windowsToWslPath: () => Option.some(mountedAppRoot),
+                prepareRuntime: () => ({ ok: false, reason: "archive is corrupt" }),
+                ensureNodePty: (_distro, root) => {
+                  observedNodePtyRoots.push(root);
+                  return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+                },
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(observedNodePtyRoots, [mountedAppRoot]);
+      assert.equal(config.entryPath, entryPath);
+      assert.include(config.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
       assert.isTrue(Option.isNone(config.preflightFailure));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -316,7 +373,7 @@ describe("DesktopBackendConfiguration", () => {
                 DesktopWslEnvironment.layerTest({
                   isAvailable: true,
                   distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
-                  prepareRuntime: () => ({ ok: true, linuxAppRoot }),
+                  windowsToWslPath: () => Option.some(linuxAppRoot),
                   ensureNodePty: () => ({ ok: true, nodePath, resolvedPath }),
                   getDistroIp: () => Option.some("172.27.0.99"),
                 }),
@@ -683,7 +740,7 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("resolveWsl marks a missing packaged runtime source as fatal", () =>
+  it.effect("resolveWsl marks a missing packaged server entry as fatal", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -696,7 +753,7 @@ describe("DesktopBackendConfiguration", () => {
         const failure = Option.getOrThrow(config.preflightFailure);
 
         assert.isTrue(failure.fatal);
-        assert.include(failure.reason, "missing WSL runtime source");
+        assert.include(failure.reason, "missing server entry");
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(
