@@ -245,4 +245,23 @@ struct ComposerDraftStoreTests {
         #expect(await eventIterator.next() == "write finished")
         #expect(await eventIterator.next() == "draft removed")
     }
+
+    @Test func incomingSharePersistenceWaitsForTheMatchingRestore() {
+        #expect(!NewTaskIncomingSharePersistencePolicy.canPersist(
+            pendingShareID: "share-a",
+            restoredShareID: nil
+        ))
+        #expect(!NewTaskIncomingSharePersistencePolicy.canPersist(
+            pendingShareID: "share-a",
+            restoredShareID: "share-b"
+        ))
+        #expect(NewTaskIncomingSharePersistencePolicy.canPersist(
+            pendingShareID: "share-a",
+            restoredShareID: "share-a"
+        ))
+        #expect(!NewTaskIncomingSharePersistencePolicy.canPersist(
+            pendingShareID: nil,
+            restoredShareID: "share-a"
+        ))
+    }
 }
