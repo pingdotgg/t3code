@@ -1270,7 +1270,7 @@ export default function ThreadTerminalDrawer({
       >
         {!isPanel ? (
           <div
-            className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+            className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-ns-resize"
             onPointerDown={handleResizePointerDown}
             onPointerMove={handleResizePointerMove}
             onPointerUp={handleResizePointerEnd}
@@ -1304,7 +1304,7 @@ export default function ThreadTerminalDrawer({
     >
       {!isPanel ? (
         <div
-          className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+          className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-ns-resize"
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}
           onPointerUp={handleResizePointerEnd}
