@@ -16,6 +16,7 @@ import {
 } from "@t3tools/shared/usageFormat";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
+import { WorkspaceBreadcrumb } from "../WorkspaceBreadcrumb";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
@@ -71,7 +72,7 @@ export function UsagePage() {
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
-            <h1 className="text-sm font-medium text-foreground">Usage</h1>
+            <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" current="Usage" />
           </header>
         )}
 
@@ -82,7 +83,7 @@ export function UsagePage() {
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
-            <h1 className="text-sm font-medium text-foreground">Usage</h1>
+            <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" current="Usage" />
           </div>
         )}
 
