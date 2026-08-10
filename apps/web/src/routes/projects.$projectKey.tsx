@@ -2,11 +2,6 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 
 import { ProjectSettingsPage } from "../components/settings/ProjectSettingsPanel";
 
-function ProjectSettingsRoute() {
-  const { projectKey } = Route.useParams();
-  return <ProjectSettingsPage projectKey={projectKey} />;
-}
-
 export const Route = createFileRoute("/projects/$projectKey")({
   beforeLoad: async ({ context }) => {
     if (
@@ -16,5 +11,5 @@ export const Route = createFileRoute("/projects/$projectKey")({
       throw redirect({ to: "/pair", replace: true });
     }
   },
-  component: ProjectSettingsRoute,
+  component: () => <ProjectSettingsPage projectKey={Route.useParams().projectKey} />,
 });

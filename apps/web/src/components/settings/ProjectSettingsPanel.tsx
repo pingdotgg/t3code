@@ -23,7 +23,7 @@ import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -80,6 +80,15 @@ import { cn } from "../../lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -126,10 +135,6 @@ function memberKey(member: { environmentId: string; id: string }): string {
   return `${member.environmentId}:${member.id}`;
 }
 
-/**
- * Standalone project settings page: the main app sidebar stays, and the page
- * brings its own topbar like /usage. Escape returns to the previous view.
- */
 export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
@@ -176,7 +181,7 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
-            <ProjectSettingsBreadcrumb projectKey={projectKey} compact />
+            <ProjectSettingsBreadcrumb projectKey={projectKey} />
           </div>
         )}
         <ProjectSettingsPanel projectKey={projectKey} />
@@ -185,53 +190,35 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
   );
 }
 
-function ProjectSettingsBreadcrumb({
-  projectKey,
-  compact = false,
-}: {
-  projectKey: string;
-  compact?: boolean;
-}) {
+function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
-
-  const selectProject = useCallback(
-    (nextProjectKey: string) => {
-      void navigate({
-        to: "/projects/$projectKey",
-        params: { projectKey: nextProjectKey },
-        replace: true,
-        hashScrollIntoView: false,
-      });
-    },
-    [navigate],
-  );
 
   return (
     <nav
       aria-label="Project settings breadcrumb"
       className="flex min-w-0 items-center gap-2 overflow-hidden [-webkit-app-region:no-drag] sm:gap-3"
     >
-      <span
-        className={cn(
-          "shrink-0 font-medium text-muted-foreground",
-          compact ? "text-xs tracking-wide" : "text-sm",
-        )}
-      >
-        Projects
-      </span>
+      <span className="shrink-0 text-sm font-medium text-muted-foreground">Projects</span>
       <span aria-hidden="true" className="shrink-0 text-icon-muted">
         /
       </span>
       {selected ? (
-        <Select value={selected.projectKey} onValueChange={(value) => selectProject(String(value))}>
+        <Select
+          value={selected.projectKey}
+          onValueChange={(value) =>
+            void navigate({
+              to: "/projects/$projectKey",
+              params: { projectKey: String(value) },
+              replace: true,
+              hashScrollIntoView: false,
+            })
+          }
+        >
           <SelectTrigger
             aria-label="Switch project"
-            className={cn(
-              "h-auto min-h-0 min-w-0 max-w-64 gap-1 border-0 px-0 py-0 font-medium text-foreground sm:h-auto sm:min-h-0",
-              compact ? "text-xs tracking-wide sm:text-xs" : "text-sm sm:text-sm",
-            )}
+            className="h-auto min-h-0 min-w-0 max-w-64 gap-1 border-0 px-0 py-0 text-sm font-medium text-foreground sm:h-auto sm:min-h-0 sm:text-sm"
             size="xs"
             variant="ghost"
           >
@@ -246,9 +233,7 @@ function ProjectSettingsBreadcrumb({
           </SelectPopup>
         </Select>
       ) : (
-        <span className={cn("truncate text-muted-foreground", compact ? "text-xs" : "text-sm")}>
-          Unavailable project
-        </span>
+        <span className="truncate text-sm text-muted-foreground">Unavailable project</span>
       )}
     </nav>
   );
@@ -1013,30 +998,66 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               }
             />
           ) : null}
-          <div className="flex min-h-8 items-center justify-between gap-4 border-t border-border/40 px-3 pt-5 sm:px-4">
+          <div className="flex min-h-8 flex-col items-start gap-3 px-3 pt-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4">
             <div className="min-w-0">
               <h3 className="text-base font-semibold text-foreground">Actions</h3>
               <p className="text-pretty text-sm text-muted-foreground">
                 Saved and run only in {selectedCheckoutLabel}.
               </p>
             </div>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={isSavingScripts}
-              onClick={() =>
-                setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })
-              }
-            >
-              <PlusIcon className="size-3.5" />
-              Add action
-            </Button>
+            <div className="flex w-full flex-wrap gap-1.5 sm:w-auto sm:shrink-0 sm:justify-end">
+              {importableScripts.length > 0 ? (
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button size="xs" variant="ghost" disabled={isSavingScripts} type="button" />
+                    }
+                  >
+                    Import scripts
+                    <ChevronDownIcon className="size-3.5" />
+                  </MenuTrigger>
+                  <MenuPopup align="end" className="w-72">
+                    <MenuGroup>
+                      <MenuGroupLabel>Import from t3.json</MenuGroupLabel>
+                      <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">
+                        Add actions declared by this checkout without editing them first.
+                      </p>
+                    </MenuGroup>
+                    <MenuSeparator />
+                    {importableScripts.map((fileScript) => (
+                      <MenuItem
+                        key={`${fileScript.name} ${fileScript.command}`}
+                        onClick={() => void importFileScript(fileScript)}
+                      >
+                        <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{fileScript.name}</div>
+                          <div className="truncate font-mono text-muted-foreground">
+                            {fileScript.command}
+                          </div>
+                        </div>
+                      </MenuItem>
+                    ))}
+                  </MenuPopup>
+                </Menu>
+              ) : null}
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isSavingScripts}
+                onClick={() =>
+                  setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })
+                }
+              >
+                <PlusIcon className="size-3.5" />
+                Add action
+              </Button>
+            </div>
           </div>
           {scripts.length === 0 ? (
-            <SettingsRow
-              title="No scripts yet"
-              description={`Actions for ${selectedCheckout.environmentLabel ?? selectedCheckout.workspaceRoot} run in that checkout's terminal. One can run automatically when a worktree is created.`}
-            />
+            <p className="px-3 py-2 text-base text-muted-foreground sm:px-4 sm:text-sm">
+              No actions configured for this checkout.
+            </p>
           ) : (
             scripts.map((script) => {
               const shortcutLabel = shortcutLabelForCommand(
@@ -1046,14 +1067,17 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               return (
                 <SettingsRow
                   key={script.id}
-                  className="group"
+                  className="group py-2"
                   title={
                     <span className="flex min-w-0 items-center gap-2">
                       <ScriptIcon
                         icon={script.icon}
                         className="size-4 shrink-0 text-muted-foreground"
                       />
-                      <span className="truncate">{script.name}</span>
+                      <span className="max-w-40 shrink-0 truncate">{script.name}</span>
+                      <code className="min-w-0 flex-1 truncate font-mono font-normal text-muted-foreground">
+                        {script.command}
+                      </code>
                       {script.runOnWorktreeCreate ? (
                         <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
                           setup
@@ -1066,7 +1090,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                       ) : null}
                     </span>
                   }
-                  description={<span className="font-mono">{script.command}</span>}
                   control={
                     <>
                       {shortcutLabel ? (
@@ -1095,28 +1118,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               title="t3.json is invalid"
               description="A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."
               className="text-warning"
-            />
-          ) : null}
-          {importableScripts.length > 0 ? (
-            <SettingsRow
-              title="Import from t3.json"
-              description={`${importableScripts.length} action${importableScripts.length === 1 ? "" : "s"} declared in this checkout's t3.json ${importableScripts.length === 1 ? "is" : "are"} not set up yet.`}
-              control={
-                <div className="flex flex-wrap justify-end gap-1.5">
-                  {importableScripts.map((fileScript) => (
-                    <Button
-                      key={`${fileScript.name} ${fileScript.command}`}
-                      size="xs"
-                      variant="outline"
-                      disabled={isSavingScripts}
-                      onClick={() => void importFileScript(fileScript)}
-                    >
-                      <PlusIcon className="size-3.5" />
-                      {fileScript.name}
-                    </Button>
-                  ))}
-                </div>
-              }
             />
           ) : null}
         </SettingsSection>
