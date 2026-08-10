@@ -828,7 +828,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const threadId = ThreadId.make("thread-1");
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-running-marker-first-turn"),
@@ -846,7 +846,7 @@ describe("ProviderCommandReactor", () => {
     );
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-running-marker-existing-session"),
@@ -865,7 +865,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    const secondRequest = await Effect.runPromise(
+    const secondRequest = await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-running-marker-second-turn"),
@@ -898,7 +898,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const threadId = ThreadId.make("thread-1");
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-same-turn-steer-existing-session"),
@@ -917,7 +917,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-same-turn-steer"),
@@ -935,7 +935,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    await harness.drain();
+    await waitFor(async () => (await harness.readPendingTurnStartCount(threadId)) === 0);
     const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
     expect(thread?.latestTurn?.turnId).toBe(asTurnId("turn-1"));
     expect(

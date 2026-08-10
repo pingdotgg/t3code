@@ -197,6 +197,10 @@ esac
 exit 1
 `;
 
+const fakeUnavailableSystemctlSource = `#!/bin/sh
+exit 1
+`;
+
 const stubbornUnavailableOwnerSource = `const net = require("node:net");
 process.on("SIGTERM", () => {});
 const server = net.createServer(() => {});
@@ -956,6 +960,8 @@ server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address()
         const runtimePath = path.join(home, ".t3", "userdata", "server-runtime.json");
         const managedPidPath = path.join(home, "managed.pid");
         const raceServerPath = path.join(home, "post-launch-race-server.cjs");
+        const fakeBin = path.join(home, "fake-bin");
+        const systemctlPath = path.join(fakeBin, "systemctl");
 
         const externalServer = yield* spawner.spawn(
           ChildProcess.make(
@@ -982,6 +988,9 @@ server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address()
         );
         const externalPort = Number.parseInt(Option.getOrThrow(externalPortLine), 10);
         assert.isTrue(Number.isInteger(externalPort));
+        yield* fileSystem.makeDirectory(fakeBin, { recursive: true });
+        yield* fileSystem.writeFileString(systemctlPath, fakeUnavailableSystemctlSource);
+        yield* fileSystem.chmod(systemctlPath, 0o755);
         yield* fileSystem.writeFileString(raceServerPath, postLaunchOwnershipRaceSource);
 
         const shell = yield* spawner.spawn(
@@ -989,6 +998,7 @@ server.listen(0, "127.0.0.1", () => process.stdout.write(String(server.address()
             detached: false,
             env: {
               HOME: home,
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
               RACE_RUNTIME_FILE: runtimePath,
               RACE_MANAGED_PID_FILE: managedPidPath,
               RACE_EXTERNAL_PID: String(externalServer.pid),
