@@ -146,6 +146,68 @@ function buildDirectChildScript() {
   };
 }
 
+function buildOutOfOrderNamingScript() {
+  const rootTurnId = "019fcfd6-1806-7de1-8564-de69fd55bffb";
+  return {
+    rootThreadId: ROOT,
+    notifications: [
+      // Child B speaks before the parent-side fan-out arrives. This makes
+      // provisional registration order differ from receiverThreadIds order.
+      {
+        method: "turn/started",
+        params: {
+          threadId: CHILD_B,
+          turn: {
+            id: `${CHILD_B}-early-turn`,
+            items: [],
+            itemsView: "notLoaded",
+            status: "inProgress",
+            error: null,
+            startedAt: 1785898342,
+            completedAt: null,
+            durationMs: null,
+          },
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "collabAgentToolCall",
+            id: "call_direct_spawn_ordered",
+            tool: "spawnAgent",
+            status: "completed",
+            senderThreadId: ROOT,
+            receiverThreadIds: [CHILD_A, CHILD_B],
+            prompt: "Return one concise result.",
+            agentsStates: {
+              [CHILD_A]: { status: "pendingInit", message: null },
+              [CHILD_B]: { status: "pendingInit", message: null },
+            },
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+      {
+        method: "item/completed",
+        params: {
+          threadId: ROOT,
+          turnId: rootTurnId,
+          item: {
+            type: "agentMessage",
+            id: "root-order-summary",
+            phase: "final_answer",
+            text: "Agents:\n- Alpha\n- Beta",
+          },
+          completedAtMs: 1785898350000,
+        },
+      },
+    ],
+  };
+}
+
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
@@ -208,6 +270,48 @@ describe("CodexSessionRuntime collab integration", () => {
         leakedChildEvents.map((event) => event.method),
         [],
         "child notifications must not be emitted as parent-timeline events",
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("assigns coordinator names in receiver order after child-first registration", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(buildOutOfOrderNamingScript()), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-name-order"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "name the children" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const renamed = events.filter((event) => event.method === "collabAgent/renamed");
+      assert.deepEqual(
+        renamed.map((event) => {
+          const payload = event.payload as { agentThreadId?: string; nickname?: string };
+          return [payload.agentThreadId, payload.nickname];
+        }),
+        [
+          [CHILD_A, "Alpha"],
+          [CHILD_B, "Beta"],
+        ],
       );
 
       yield* runtime.close;

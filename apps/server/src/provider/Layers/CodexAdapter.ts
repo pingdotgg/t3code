@@ -612,7 +612,8 @@ function mapCollabAgentEvent(
           type: "task.updated",
           payload: {
             taskId,
-            ...statusLinkage,
+            ...(nickname ? { title: nickname } : {}),
+            timelineBypass: true,
           },
         },
       ];

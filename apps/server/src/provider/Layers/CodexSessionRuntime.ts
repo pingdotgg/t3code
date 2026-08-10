@@ -631,6 +631,8 @@ interface CollabChildAgentState {
    * "direct:no-turn" CTA (review finding).
    */
   readonly spawnTurnId: TurnId | undefined;
+  /** Position in the provider's receiverThreadIds fan-out order. */
+  readonly spawnIndex: number | undefined;
 }
 
 interface CollabChildRegistrationInput {
@@ -641,6 +643,7 @@ interface CollabChildRegistrationInput {
   readonly depth?: number | undefined;
   readonly parentThreadId?: string | undefined;
   readonly spawnTurnId?: TurnId | undefined;
+  readonly spawnIndex?: number | undefined;
 }
 
 function readThreadSpawnSource(thread: { readonly source: unknown }):
@@ -733,11 +736,6 @@ export function readCoordinatorAgentNames(text: string): ReadonlyArray<string> {
 
     if (readingAgentBulletList && !agentHeader && line.trim().length > 0) {
       readingAgentBulletList = false;
-    }
-
-    const bulletName = line.match(/^\s*(?:[-*]|\d+[.)])\s+(?:\*\*)?([^:*\n]+?)(?:\*\*)?\s*:/)?.[1];
-    if (bulletName) {
-      add(bulletName);
     }
   }
 
@@ -1114,6 +1112,7 @@ export const makeCodexSessionRuntime = (
           agentPath: input.agentPath ?? existing?.agentPath,
           depth: input.depth ?? existing?.depth,
           parentThreadId: input.parentThreadId ?? existing?.parentThreadId,
+          spawnIndex: input.spawnIndex ?? existing?.spawnIndex,
           // Registration-time-only: a late metadata signal must not attach
           // an old child to an unrelated parent turn.
           spawnTurnId: existing
@@ -1140,9 +1139,13 @@ export const makeCodexSessionRuntime = (
           return;
         }
         const renamed = yield* Ref.modify(collabChildAgentsRef, (current) => {
-          const candidates = Array.from(current.values()).filter(
-            (state) => state.spawnTurnId === parentTurnId,
-          );
+          const candidates = Array.from(current.values())
+            .filter((state) => state.spawnTurnId === parentTurnId)
+            .sort(
+              (left, right) =>
+                (left.spawnIndex ?? Number.MAX_SAFE_INTEGER) -
+                (right.spawnIndex ?? Number.MAX_SAFE_INTEGER),
+            );
           if (candidates.length !== names.length) {
             const noUpdates: CollabChildAgentState[] = [];
             return [noUpdates, current] as const;
@@ -1203,7 +1206,7 @@ export const makeCodexSessionRuntime = (
           const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
           const senderIsChild =
             rootProviderThreadId !== undefined && item.senderThreadId !== rootProviderThreadId;
-          for (const receiverThreadId of item.receiverThreadIds) {
+          for (const [spawnIndex, receiverThreadId] of item.receiverThreadIds.entries()) {
             if (!receiverThreadId || receiverThreadId === rootProviderThreadId) {
               continue;
             }
@@ -1213,6 +1216,7 @@ export const makeCodexSessionRuntime = (
                 item.tool === "spawnAgent" ? readCollabPromptNickname(item.prompt) : undefined,
               parentThreadId: senderIsChild ? item.senderThreadId : undefined,
               spawnTurnId: TurnId.make(notification.params.turnId),
+              spawnIndex,
             });
 
             // `agentsStates` is the only terminal signal emitted by some
@@ -1306,6 +1310,7 @@ export const makeCodexSessionRuntime = (
               depth: existing?.depth,
               parentThreadId: existing?.parentThreadId,
               spawnTurnId: existing ? existing.spawnTurnId : activitySpawnTurnId,
+              spawnIndex: existing?.spawnIndex,
             });
             return next;
           });

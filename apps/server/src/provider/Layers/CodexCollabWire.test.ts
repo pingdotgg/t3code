@@ -147,6 +147,7 @@ describe("routeCodexChildNotification", () => {
       ),
       ["Planck", "Parfit", "Avicenna"],
     );
+    assert.deepEqual(readCoordinatorAgentNames("Summary:\n\n- Tests: passed\n- Build: passed"), []);
   });
 
   it("drops only enumerated child chatter", () => {

@@ -555,6 +555,41 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("renames an agent without overwriting its existing identity metadata", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-agent-renamed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/renamed",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          agentThreadId: "child-rename",
+          nickname: "Alpha",
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "task.updated");
+      if (firstEvent.value.type !== "task.updated") {
+        return;
+      }
+      NodeAssert.deepStrictEqual(firstEvent.value.payload, {
+        taskId: "child-rename",
+        title: "Alpha",
+        timelineBypass: true,
+      });
+    }),
+  );
+
   it.effect("labels MCP lifecycle entries with server and tool names", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
