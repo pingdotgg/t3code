@@ -44,6 +44,10 @@
     "additiveMarketingRoots": [
       "apps/auldric-marketing/",
       "apps/auldric-site/",
+      "apps/web/src/marketingRoute.test.tsx",
+      "apps/web/src/productDomain.test.ts",
+      "apps/web/src/productDomain.ts",
+      "apps/web/src/routes/marketing.lazy.tsx",
       "docs/auldric",
       "docs/_archive/auldric-runtime/",
       "docs/internals/identifier-ownership.md",

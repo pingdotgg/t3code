@@ -22,14 +22,15 @@ connection, remote, shell, Git, preview, CI, or release implementation.
 ## Reading order
 
 1. [Current state](./00-current-state.md)
-2. [Desktop operating model](./02-desktop-operating-model.md)
-3. [Marketing data and evidence](./03-marketing-data-and-evidence.md)
-4. [Marketing workflows and artifacts](./04-marketing-workflows-and-artifacts.md)
-5. [Marketing review and claims](./05-marketing-review-and-claims.md)
-6. [Capabilities and boundaries](./08-capabilities-and-boundaries.md)
-7. [Marketing agent contract](./09-agent-operating-contract.md)
-8. [Architecture](../auldric-architecture.md)
-9. [Launch readiness](../auldric-launch-readiness.md)
+2. [Product-domain seam](./01-product-domain-seam.md)
+3. [Desktop operating model](./02-desktop-operating-model.md)
+4. [Marketing data and evidence](./03-marketing-data-and-evidence.md)
+5. [Marketing workflows and artifacts](./04-marketing-workflows-and-artifacts.md)
+6. [Marketing review and claims](./05-marketing-review-and-claims.md)
+7. [Capabilities and boundaries](./08-capabilities-and-boundaries.md)
+8. [Marketing agent contract](./09-agent-operating-contract.md)
+9. [Architecture](../auldric-architecture.md)
+10. [Launch readiness](../auldric-launch-readiness.md)
 
 The [legacy runtime archive index](../_archive/auldric-runtime/README.md) is provenance only. It is
 not part of this reading order and must not steer implementation.

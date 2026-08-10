@@ -1,4 +1,38 @@
 {
   "schemaVersion": 1,
-  "entries": []
+  "entries": [
+    {
+      "path": "apps/web/src/routeTree.gen.ts",
+      "owner": "#4",
+      "reason": "Register the isolated Marketing route while preserving generated T3 routes and lazy-loading its payload.",
+      "expiresOn": "2026-09-10",
+      "upstream": {
+        "status": "proposed",
+        "url": "https://github.com/pingdotgg/t3code/issues/5020"
+      },
+      "test": "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx"
+    },
+    {
+      "path": "apps/web/src/routes/__root.tsx",
+      "owner": "#4",
+      "reason": "Select the isolated Marketing outlet only for its explicit namespace while leaving the native Dev layout branch unchanged.",
+      "expiresOn": "2026-09-10",
+      "upstream": {
+        "status": "proposed",
+        "url": "https://github.com/pingdotgg/t3code/issues/5020"
+      },
+      "test": "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx"
+    },
+    {
+      "path": "packages/client-runtime/src/operations/commands.test.ts",
+      "owner": "#4",
+      "reason": "Capture the native Dev turn command and prove the product-domain seam adds no wrapper, context, or Marketing instruction.",
+      "expiresOn": "2026-09-10",
+      "upstream": {
+        "status": "proposed",
+        "url": "https://github.com/pingdotgg/t3code/issues/5020"
+      },
+      "test": "pnpm --dir packages/client-runtime test src/operations/commands.test.ts"
+    }
+  ]
 }

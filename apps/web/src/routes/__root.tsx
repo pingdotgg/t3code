@@ -3,6 +3,7 @@ import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/envir
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
+  Link,
   createRootRoute,
   type ErrorComponentProps,
   useLocation,
@@ -41,6 +42,7 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { productDomainPath, resolveProductDomainFromPathname } from "../productDomain";
 import { shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -88,6 +90,7 @@ export const Route = createRootRoute({
 
 function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
+  const productDomain = resolveProductDomainFromPathname(pathname);
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
 
@@ -118,13 +121,16 @@ function RootRouteView() {
     );
   }
 
-  const appShell = (
-    <CommandPalette>
-      <AppSidebarLayout>
-        <Outlet />
-      </AppSidebarLayout>
-    </CommandPalette>
-  );
+  const appShell =
+    productDomain === "marketing" ? (
+      <Outlet />
+    ) : (
+      <CommandPalette>
+        <AppSidebarLayout>
+          <Outlet />
+        </AppSidebarLayout>
+      </CommandPalette>
+    );
 
   return (
     <ToastProvider>
@@ -238,6 +244,8 @@ function HostedStaticEnvironmentBootstrap() {
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const productDomain = resolveProductDomainFromPathname(pathname);
   const message = errorMessage(error);
   const details = errorDetails(error);
 
@@ -261,6 +269,11 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
           <Button size="sm" onClick={() => reset()}>
             Try again
           </Button>
+          {productDomain === "marketing" ? (
+            <Button render={<Link to={productDomainPath("dev")} />} size="sm" variant="outline">
+              Return to Dev
+            </Button>
+          ) : null}
           <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
             Reload app
           </Button>

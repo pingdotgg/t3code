@@ -8,6 +8,8 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
+import { createFileRoute } from '@tanstack/react-router'
+
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -28,6 +30,13 @@ import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
+const MarketingLazyRouteImport = createFileRoute('/marketing')()
+
+const MarketingLazyRoute = MarketingLazyRouteImport.update({
+  id: '/marketing',
+  path: '/marketing',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/marketing.lazy').then((d) => d.Route))
 const UsageRoute = UsageRouteImport.update({
   id: '/usage',
   path: '/usage',
@@ -125,6 +134,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/marketing': typeof MarketingLazyRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -143,6 +153,7 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/marketing': typeof MarketingLazyRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -164,6 +175,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/marketing': typeof MarketingLazyRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -186,6 +198,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/marketing'
     | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -204,6 +217,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/marketing'
     | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -224,6 +238,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/marketing'
     | '/connect_/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -245,12 +260,20 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
+  MarketingLazyRoute: typeof MarketingLazyRoute
   ConnectCallbackRoute: typeof ConnectCallbackRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/marketing': {
+      id: '/marketing'
+      path: '/marketing'
+      fullPath: '/marketing'
+      preLoaderRoute: typeof MarketingLazyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/usage': {
       id: '/usage'
       path: '/usage'
@@ -426,6 +449,7 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
+  MarketingLazyRoute: MarketingLazyRoute,
   ConnectCallbackRoute: ConnectCallbackRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }

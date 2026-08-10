@@ -14,22 +14,24 @@ machine-verifiable baseline.
 
 - Native T3 web, desktop, mobile, server, provider, conversation, transport, Git, terminal,
   preview, Connect, collaboration, remote, CI, and release behaviour.
+- The explicit URL-owned `dev | marketing` product-domain boundary selected by issue #4. Its lazy
+  route currently contains only the boundary proof; issue #21 owns the usable Marketing shell.
 - The public app currently present at `apps/marketing`, which is T3 material and is not proof of an
   approved Auldric public surface.
 - This reviewed Marketing-domain authority and requirements spine.
 
-## What is planned, not shipped
+## Capability status
 
-| Capability                                          | Owner                          | Current status              |
-| --------------------------------------------------- | ------------------------------ | --------------------------- | --------------- |
-| Explicit `dev                                       | marketing` product-domain seam | #4                          | Not implemented |
-| Marketing identities and authorization              | #5, #6                         | Not implemented             |
-| Canonical organization-owned Marketing persistence  | #8                             | Not implemented             |
-| Bounded Marketing evidence context                  | #9                             | Not implemented             |
-| Marketing continuity and immutable provenance       | #7, #11                        | Not implemented             |
-| Day 0, Marketing Strategy, GTM, and typed artifacts | #18, #19                       | Not implemented             |
-| Approved Marketing-to-Dev brief handoff             | #20                            | Not implemented             |
-| In-product Marketing UI and public Auldric surface  | #13, #27                       | Not implemented or approved |
+| Capability                                          | Owner    | Current status                       |
+| --------------------------------------------------- | -------- | ------------------------------------ |
+| Explicit `dev \| marketing` product-domain seam     | #4       | Boundary implemented; #21 UI pending |
+| Marketing identities and authorization              | #5, #6   | Not implemented                      |
+| Canonical organization-owned Marketing persistence  | #8       | Not implemented                      |
+| Bounded Marketing evidence context                  | #9       | Not implemented                      |
+| Marketing continuity and immutable provenance       | #7, #11  | Not implemented                      |
+| Day 0, Marketing Strategy, GTM, and typed artifacts | #18, #19 | Not implemented                      |
+| Approved Marketing-to-Dev brief handoff             | #20      | Not implemented                      |
+| In-product Marketing UI and public Auldric surface  | #13, #27 | Not implemented or approved          |
 
 Do not turn a target contract, donor document, mock, generated view, or completed legacy PR into a
 current-state claim. Capability becomes current only after its owning issue supplies implementation,
