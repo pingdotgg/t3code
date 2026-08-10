@@ -161,23 +161,31 @@ jobs:
       # the queued run for a later merge cannot overtake them and lose its OTA.
       # After an errored build, retry via workflow_dispatch mode=build — pushes
       # won't re-trigger it until the app version changes.
-      - name: Ensure store builds exist for the current app version
+      - id: store_builds
+        name: Ensure store builds exist for the current app version
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
+        continue-on-error: true
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
+          failed=0
           version="$(npx expo config --json --type public | jq -r '.version')"
           for platform in ios android; do
-            latest="$(eas build:list --platform "$platform" --buildProfile production --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
+            latest="$(eas build:list --platform "$platform" --build-profile production --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
             if [ "$latest" = "$version" ]; then
               echo "$platform: production build for $version already exists (or is in progress)"
               continue
             fi
             echo "$platform: latest production build is $latest, app.config.ts says $version — building"
-            eas build --platform "$platform" --profile production --auto-submit --non-interactive
-            echo ":building_construction: $platform: cut production build for $version (auto-submitted)" >> "$GITHUB_STEP_SUMMARY"
+            if eas build --platform "$platform" --profile production --auto-submit --non-interactive; then
+              echo ":building_construction: $platform: cut production build for $version (auto-submitted)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              failed=1
+              echo ":x: $platform: production build or submission failed for $version" >> "$GITHUB_STEP_SUMMARY"
+            fi
           done
+          exit "$failed"
 
       - name: Publish fingerprint-gated OTA
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
@@ -201,3 +209,7 @@ jobs:
               echo ":warning: $platform: no finished production build matches fingerprint \`$hash\` — OTA skipped; JS changes reach $platform only once a matching build ships" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
+
+      - name: Propagate store build failure
+        if: steps.store_builds.outcome == 'failure'
+        run: exit 1
