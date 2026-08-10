@@ -780,7 +780,7 @@ export const layer: Layer.Layer<
       startRootRun: (input) =>
         Effect.gen(function* () {
           const assistantStreamingEnabled = yield* serverSettings.getSettings.pipe(
-            Effect.map((settings) => settings.enableAssistantStreaming),
+            Effect.map((settings) => settings.enableLegacyTokenStreaming),
             Effect.mapError(
               (cause) =>
                 new RunExecutionStartError({
