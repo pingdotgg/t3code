@@ -46,6 +46,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
+  ThreadListV2EmptyInbox,
   ThreadListV2SnoozedShelfHeader,
 } from "../threads/thread-list-v2-items";
 import {
@@ -720,8 +721,18 @@ export function HomeScreen(props: HomeScreenProps) {
         settledShelfExpanded,
         settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${nowMinute}:00.000Z`,
+        // Suppressed while searching: no matches is not the same statement
+        // as an empty inbox, and the search states already cover it.
+        emptyInbox: hasSearchQuery ? null : { projectName: v2ScopedProjectGroup?.title ?? null },
       }),
-    [settledShelfExpanded, snoozedShelfExpanded, threadListV2Layout, v2PendingTasks],
+    [
+      hasSearchQuery,
+      settledShelfExpanded,
+      snoozedShelfExpanded,
+      threadListV2Layout,
+      v2PendingTasks,
+      v2ScopedProjectGroup,
+    ],
   );
 
   const renderV2Item = useCallback(
@@ -750,6 +761,16 @@ export function HomeScreen(props: HomeScreenProps) {
             showTrailingDivider={showTrailingDivider}
             onSelectPendingTask={props.onSelectPendingTask}
             onDeletePendingTask={props.onDeletePendingTask}
+          />
+        );
+      }
+      if (item.type === "v2-empty-inbox") {
+        return (
+          <ThreadListV2EmptyInbox
+            headline={item.headline}
+            detail={item.detail}
+            actionLabel={item.actionLabel}
+            onNewThread={props.onStartNewTask}
           />
         );
       }

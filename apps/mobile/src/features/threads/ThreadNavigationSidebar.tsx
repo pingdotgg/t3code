@@ -74,6 +74,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
+  ThreadListV2EmptyInbox,
   ThreadListV2SnoozedShelfHeader,
 } from "./thread-list-v2-items";
 import {
@@ -142,6 +143,9 @@ interface ThreadNavigationSidebarProps {
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
+  /** Opens the new-task flow at its project picker. The empty-inbox block
+   * uses it, since an unfiltered sidebar has no project to target. */
+  readonly onStartNewTask: () => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onRequestVisibility: () => void;
@@ -605,6 +609,12 @@ function ThreadNavigationSidebarPane(
       settledShelfExpanded,
       settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
       snoozeLabelNow: `${nowMinute}:00.000Z`,
+      // Suppressed while searching: no matches is not the same statement as
+      // an empty inbox, and the search states already cover it.
+      emptyInbox:
+        props.searchQuery.trim().length > 0
+          ? null
+          : { projectName: selectedProjectScope?.title ?? null },
     });
     if (settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0) {
       items.push({
@@ -847,17 +857,22 @@ function ThreadNavigationSidebarPane(
       if (previous.type === "v2-settled-shelf" && item.type === "v2-settled-shelf") {
         return previous.count === item.count && previous.expanded === item.expanded;
       }
+      if (previous.type === "v2-empty-inbox" && item.type === "v2-empty-inbox") {
+        return previous.headline === item.headline && previous.detail === item.detail;
+      }
       if (
         previous.type === "v2-thread" ||
         previous.type === "v2-show-more" ||
         previous.type === "v2-pending" ||
         previous.type === "v2-snoozed-shelf" ||
         previous.type === "v2-settled-shelf" ||
+        previous.type === "v2-empty-inbox" ||
         item.type === "v2-thread" ||
         item.type === "v2-show-more" ||
         item.type === "v2-pending" ||
         item.type === "v2-snoozed-shelf" ||
-        item.type === "v2-settled-shelf"
+        item.type === "v2-settled-shelf" ||
+        item.type === "v2-empty-inbox"
       ) {
         return false;
       }
@@ -976,6 +991,16 @@ function ThreadNavigationSidebarPane(
             />
           );
         }
+        case "v2-empty-inbox":
+          return (
+            <ThreadListV2EmptyInbox
+              headline={item.headline}
+              detail={item.detail}
+              actionLabel={item.actionLabel}
+              onNewThread={props.onStartNewTask}
+              pane="sidebar"
+            />
+          );
         case "v2-snoozed-shelf":
           return (
             <ThreadListV2SnoozedShelfHeader
