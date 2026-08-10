@@ -7,7 +7,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
@@ -128,6 +128,14 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
   return cause instanceof Error ? cause.message : "Workspace query failed.";
 }
 
+export function retainProjectEntriesWhilePending(
+  current: ProjectListEntriesResult | null,
+  settled: ProjectListEntriesResult | null,
+  isPending: boolean,
+): ProjectListEntriesResult | null {
+  return current ?? (isPending ? settled : null);
+}
+
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
@@ -137,8 +145,20 @@ export function useProjectEntriesQuery(
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
+  const currentData = Option.getOrNull(AsyncResult.value(result));
+  const settledRef = useRef<{
+    readonly environmentId: EnvironmentId;
+    readonly cwd: string;
+    readonly data: ProjectListEntriesResult;
+  } | null>(null);
+  useEffect(() => {
+    if (currentData !== null) settledRef.current = { environmentId, cwd, data: currentData };
+  }, [currentData, cwd, environmentId]);
+  const settled = settledRef.current;
+  const settledData =
+    settled?.environmentId === environmentId && settled.cwd === cwd ? settled.data : null;
   return {
-    data: Option.getOrNull(AsyncResult.value(result)),
+    data: retainProjectEntriesWhilePending(currentData, settledData, result.waiting),
     error: errorMessage(result),
     isPending: result.waiting,
     refresh,

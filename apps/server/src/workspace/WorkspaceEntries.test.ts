@@ -199,6 +199,24 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           expect(result.truncated).toBe(true);
         }),
     );
+
+    it.effect("reports the directory that failed during ignored-entry discovery", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        const cause = new Error("read failed");
+        vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(cause);
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const error = yield* workspaceEntries.list({ cwd, includeIgnored: true }).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "WorkspaceEntriesIgnoredDirectoryReadError",
+          cwd,
+          directoryPath: cwd,
+          cause,
+        });
+      }),
+    );
   });
 
   describe("search", () => {

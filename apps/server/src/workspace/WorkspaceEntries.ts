@@ -68,6 +68,32 @@ export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedErrorClass<
   }
 }
 
+export class WorkspaceEntriesIgnoredDirectoryReadError extends Schema.TaggedErrorClass<WorkspaceEntriesIgnoredDirectoryReadError>()(
+  "WorkspaceEntriesIgnoredDirectoryReadError",
+  {
+    cwd: Schema.String,
+    directoryPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to read '${this.directoryPath}' while listing ignored entries in '${this.cwd}'.`;
+  }
+}
+
+export class WorkspaceEntriesIgnoreClassificationError extends Schema.TaggedErrorClass<WorkspaceEntriesIgnoreClassificationError>()(
+  "WorkspaceEntriesIgnoreClassificationError",
+  {
+    cwd: Schema.String,
+    pathCount: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to classify ${this.pathCount} paths while listing ignored entries in '${this.cwd}'.`;
+  }
+}
+
 export const WorkspaceEntriesBrowseError = Schema.Union([
   WorkspaceEntriesWindowsPathUnsupportedError,
   WorkspaceEntriesCurrentProjectRequiredError,
@@ -83,6 +109,8 @@ export const WorkspaceEntriesError = Schema.Union([
   WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed,
   WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut,
   WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed,
+  WorkspaceEntriesIgnoredDirectoryReadError,
+  WorkspaceEntriesIgnoreClassificationError,
 ]);
 export type WorkspaceEntriesError = typeof WorkspaceEntriesError.Type;
 
@@ -281,19 +309,11 @@ export const make = Effect.gen(function* () {
   ): Effect.fn.Return<ProjectListEntriesResult, WorkspaceEntriesError> {
     const existingPaths = new Set(indexed.entries.map((entry) => entry.path));
     const candidates: ProjectEntry[] = [];
-    const listFailure = (reason: string, cause: unknown) =>
-      new WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed({
-        cwd,
-        queryLength: 0,
-        pageSize: indexed.entries.length,
-        reason,
-        cause,
-      });
     const vcs = yield* vcsDriverRegistry
       .detect({ cwd })
       .pipe(
-        Effect.mapError((cause) =>
-          listFailure("Failed to classify ignored workspace entries.", cause),
+        Effect.mapError(
+          (cause) => new WorkspaceEntriesIgnoreClassificationError({ cwd, pathCount: 0, cause }),
         ),
       );
 
@@ -311,10 +331,11 @@ export const make = Effect.gen(function* () {
       const readDirectory = Effect.tryPromise({
         try: () => NodeFSP.readdir(absoluteDirectory, { withFileTypes: true }),
         catch: (cause) =>
-          listFailure(
-            `Failed to read '${absoluteDirectory}' while listing ignored workspace entries.`,
+          new WorkspaceEntriesIgnoredDirectoryReadError({
+            cwd,
+            directoryPath: absoluteDirectory,
             cause,
-          ),
+          }),
       });
       const dirents = yield* relativeDirectory
         ? readDirectory.pipe(Effect.orElseSucceed(() => null))
@@ -353,8 +374,13 @@ export const make = Effect.gen(function* () {
             candidates.map((entry) => entry.path),
           )
           .pipe(
-            Effect.mapError((cause) =>
-              listFailure("Failed to classify ignored workspace entries.", cause),
+            Effect.mapError(
+              (cause) =>
+                new WorkspaceEntriesIgnoreClassificationError({
+                  cwd,
+                  pathCount: candidates.length,
+                  cause,
+                }),
             ),
           ),
       );
