@@ -238,13 +238,29 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+// Several accounts on the same provider share one glyph, so the account badge
+// is the only thing telling them apart.
+function hasDuplicateDriverInstances(
+  entries: ReadonlyMap<string, ProviderInstanceEntry>,
+  driverKind: ProviderInstanceEntry["driverKind"],
+): boolean {
+  let seen = false;
+  for (const entry of entries.values()) {
+    if (entry.driverKind !== driverKind) continue;
+    if (seen) return true;
+    seen = true;
+  }
+  return false;
+}
+
 function SidebarThreadTooltip({
   thread,
   projectTitle,
   projectCwd,
   projectFaviconPath,
   environmentLabel,
-  driverKind,
+  providerEntry,
+  showInstanceBadge,
   modelInstanceId,
   modelLabel,
   branchMismatch,
@@ -256,7 +272,8 @@ function SidebarThreadTooltip({
   projectCwd: string | null;
   projectFaviconPath: string | null;
   environmentLabel: string | null;
-  driverKind: ProviderInstanceEntry["driverKind"] | null;
+  providerEntry: ProviderInstanceEntry | null;
+  showInstanceBadge: boolean;
   modelInstanceId: string;
   modelLabel: string;
   branchMismatch: {
@@ -266,6 +283,7 @@ function SidebarThreadTooltip({
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
 }) {
+  const driverKind = providerEntry?.driverKind ?? null;
   return (
     <TooltipPopup
       side="right"
@@ -314,10 +332,22 @@ function SidebarThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
-                displayName={thread.session?.providerName ?? modelInstanceId}
+                displayName={
+                  providerEntry?.displayName ?? thread.session?.providerName ?? modelInstanceId
+                }
+                accentColor={providerEntry?.accentColor}
+                // Initials would swallow a size-3 glyph, so the accent reads as
+                // a plain dot here and the account name lands in the label.
+                showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
+                badgeContent="none"
+                badgeClassName="h-2 min-w-2 px-0"
                 iconClassName="size-3 shrink-0 grayscale opacity-60"
               />
-              <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
+              <div className="min-w-0 truncate text-foreground/75">
+                {showInstanceBadge && providerEntry
+                  ? `${modelLabel} · ${providerEntry.displayName}`
+                  : modelLabel}
+              </div>
             </div>
           ) : null}
           {terminalStatus ? (
@@ -858,6 +888,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
   const driverKind = providerEntry?.driverKind ?? null;
+  const showInstanceBadge =
+    providerEntry !== null &&
+    (Boolean(providerEntry.accentColor) ||
+      hasDuplicateDriverInstances(props.providerEntryByInstanceId, providerEntry.driverKind));
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
@@ -875,7 +909,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       projectCwd={props.projectCwd}
       projectFaviconPath={props.projectFaviconPath}
       environmentLabel={props.environmentLabel}
-      driverKind={driverKind}
+      providerEntry={providerEntry}
+      showInstanceBadge={showInstanceBadge}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
       branchMismatch={branchMismatch}
@@ -1453,11 +1488,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center opacity-60">
+                  <span className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
-                      displayName={thread.session?.providerName ?? modelInstanceId}
-                      iconClassName="size-3.5"
+                      displayName={
+                        providerEntry?.displayName ??
+                        thread.session?.providerName ??
+                        modelInstanceId
+                      }
+                      accentColor={providerEntry?.accentColor}
+                      showBadge={showInstanceBadge}
+                      // Only the glyph dims; the accent badge has to stay
+                      // saturated to read as an account color.
+                      iconClassName="size-3.5 opacity-60"
+                      badgeClassName="h-3 min-w-3 px-0.5 text-[7px]"
                     />
                   </span>
                 ) : null}
@@ -1514,7 +1558,10 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   });
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
-  const driverKind = providerEntry?.driverKind ?? null;
+  const showInstanceBadge =
+    providerEntry !== null &&
+    (Boolean(providerEntry.accentColor) ||
+      hasDuplicateDriverInstances(props.providerEntryByInstanceId, providerEntry.driverKind));
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
@@ -1572,7 +1619,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           projectCwd={props.projectCwd}
           projectFaviconPath={props.projectFaviconPath}
           environmentLabel={props.environmentLabel}
-          driverKind={driverKind}
+          providerEntry={providerEntry}
+          showInstanceBadge={showInstanceBadge}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
           branchMismatch={branchMismatch}
