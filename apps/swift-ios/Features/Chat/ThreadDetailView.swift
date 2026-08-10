@@ -57,6 +57,7 @@ public struct ThreadDetailView: View {
 #if DEBUG
         // Dev-build marker inside a thread: the whole title bar goes orange.
         .t3NavigationChrome(background: T3Colors.warning)
+        .tint(.black)
 #else
         .t3NavigationChrome()
 #endif
@@ -154,7 +155,7 @@ public struct ThreadDetailView: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(currentThread.title)
                 .font(T3Typography.navigationTitle)
-                .foregroundStyle(T3Colors.textPrimary)
+                .foregroundStyle(headerTitleColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(1)
@@ -190,7 +191,7 @@ public struct ThreadDetailView: View {
                 .fixedSize(horizontal: true, vertical: false)
             }
             .font(T3Typography.navigationMetadata)
-            .foregroundStyle(T3Colors.textTertiary)
+            .foregroundStyle(headerMetadataColor)
         }
         // Leave compact-width clearance for the trailing thread menu.
         .padding(.trailing, horizontalSizeClass == .compact ? 10 : 0)
@@ -301,6 +302,11 @@ public struct ThreadDetailView: View {
     }
 
     private var headerStatusColor: Color {
+#if DEBUG
+        // The debug navigation bar uses the warning orange for the current
+        // appearance. Keep every semantic status legible on both variants.
+        return .black
+#else
         switch currentThread.homeStatus {
         case .working: T3Colors.statusRunning
         case .monitoring: T3Colors.statusRunning
@@ -310,6 +316,23 @@ public struct ThreadDetailView: View {
         case .done: T3Colors.success
         case .ready: T3Colors.textTertiary
         }
+#endif
+    }
+
+    private var headerTitleColor: Color {
+#if DEBUG
+        .black
+#else
+        T3Colors.textPrimary
+#endif
+    }
+
+    private var headerMetadataColor: Color {
+#if DEBUG
+        .black.opacity(0.8)
+#else
+        T3Colors.textTertiary
+#endif
     }
 
     private func timeline(_ detail: FeatureThreadDetail) -> some View {
