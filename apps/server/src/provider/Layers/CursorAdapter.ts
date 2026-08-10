@@ -43,6 +43,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { resolveSessionMcpServers } from "../../mcp/resolveSessionMcpServers.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -175,6 +176,32 @@ function parseCursorResume(raw: unknown): { sessionId: string } | undefined {
   if (raw.schemaVersion !== CURSOR_RESUME_VERSION) return undefined;
   if (typeof raw.sessionId !== "string" || !raw.sessionId.trim()) return undefined;
   return { sessionId: raw.sessionId.trim() };
+}
+
+/** Maps enabled user-configured MCP servers into ACP's `McpServer` wire shape. */
+function resolveUserAcpMcpServers(): ReadonlyArray<EffectAcpSchema.McpServer> {
+  return resolveSessionMcpServers().map(({ key, config }): EffectAcpSchema.McpServer => {
+    if (config.transport.type === "stdio") {
+      return {
+        name: key,
+        command: config.transport.command,
+        args: [...config.transport.args],
+        env: (config.transport.env ?? []).map((variable) => ({
+          name: variable.name,
+          value: variable.value,
+        })),
+      };
+    }
+    return {
+      type: config.transport.type,
+      name: key,
+      url: config.transport.url,
+      headers: (config.transport.headers ?? []).map((header) => ({
+        name: header.name,
+        value: header.value,
+      })),
+    };
+  });
 }
 
 function normalizeModeSearchText(mode: AcpSessionMode): string {
@@ -495,6 +522,8 @@ export function makeCursorAdapter(
             });
           }
 
+          // `input.additionalDirectories` is intentionally ignored: Cursor's
+          // agent runs against a single root.
           const cwd = path.resolve(input.cwd.trim());
           const cursorModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
@@ -532,6 +561,24 @@ export function makeCursorAdapter(
             : cursorSettings;
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          const cursorMcpServers: EffectAcpSchema.McpServer[] = [
+            ...(mcpSession
+              ? [
+                  {
+                    type: "http" as const,
+                    name: "t3-code",
+                    url: mcpSession.endpoint,
+                    headers: [
+                      {
+                        name: "Authorization",
+                        value: mcpSession.authorizationHeader,
+                      },
+                    ],
+                  },
+                ]
+              : []),
+            ...resolveUserAcpMcpServers(),
+          ];
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
@@ -539,23 +586,7 @@ export function makeCursorAdapter(
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(mcpSession
-              ? {
-                  mcpServers: [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                  ],
-                }
-              : {}),
+            ...(cursorMcpServers.length > 0 ? { mcpServers: cursorMcpServers } : {}),
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),

@@ -15,7 +15,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
+} from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -31,6 +35,8 @@ import {
 
 const OFFLINE_BRANCH_LIST_LIMIT = 100;
 const VCS_REFS_IDLE_TTL_MS = 30_000;
+const VCS_COMMITS_STALE_TIME_MS = 5_000;
+const VCS_COMMITS_IDLE_TTL_MS = 30_000;
 const VCS_REFS_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, Duration.seconds(30))),
@@ -331,6 +337,30 @@ export function createVcsEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
+    }),
+    // Staging shares the scheduler with commit and push so a `git add` can
+    // never interleave with a commit in the same repository. It does not move
+    // refs, so it skips the ref-cache invalidation the others need.
+    stagePaths: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:stage-paths",
+      tag: WS_METHODS.vcsStagePaths,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    unstagePaths: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:unstage-paths",
+      tag: WS_METHODS.vcsUnstagePaths,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    listCommits: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:list-commits",
+      tag: WS_METHODS.vcsListCommits,
+      // History only moves when the user commits, and the panel refreshes
+      // explicitly after its own actions, so a short stale window is enough to
+      // collapse the burst of reads a mount produces.
+      staleTimeMs: VCS_COMMITS_STALE_TIME_MS,
+      idleTtlMs: VCS_COMMITS_IDLE_TTL_MS,
     }),
   };
 }

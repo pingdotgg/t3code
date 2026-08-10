@@ -18,7 +18,14 @@ export interface NormalizedGitLabMergeRequestRecord {
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
+  readonly author?: string | null;
+  readonly assignees?: ReadonlyArray<string>;
 }
+
+const GitLabUserSchema = Schema.Struct({
+  username: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 const GitLabProjectReferenceSchema = Schema.Struct({
   path_with_namespace: Schema.optional(Schema.String),
@@ -46,6 +53,11 @@ const GitLabMergeRequestSchema = Schema.Struct({
   target_project_id: Schema.optional(Schema.NullOr(Schema.Number)),
   source_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
   target_project: Schema.optional(Schema.NullOr(GitLabProjectReferenceSchema)),
+  author: Schema.optional(Schema.NullOr(GitLabUserSchema)),
+  // GitLab exposes both the legacy single `assignee` and the multi-assignee
+  // `assignees`; older self-hosted instances only send the former.
+  assignee: Schema.optional(Schema.NullOr(GitLabUserSchema)),
+  assignees: Schema.optional(Schema.NullOr(Schema.Array(GitLabUserSchema))),
 });
 
 function trimOptionalString(value: string | null | undefined): string | null {
@@ -88,6 +100,12 @@ function ownerLoginFromPathWithNamespace(pathWithNamespace: string | null): stri
   return trimOptionalString(owner);
 }
 
+function userHandle(
+  user: Schema.Schema.Type<typeof GitLabUserSchema> | null | undefined,
+): string | null {
+  return trimOptionalString(user?.username) ?? trimOptionalString(user?.name);
+}
+
 function normalizeGitLabMergeRequestRecord(
   raw: Schema.Schema.Type<typeof GitLabMergeRequestSchema>,
 ): NormalizedGitLabMergeRequestRecord {
@@ -100,6 +118,14 @@ function normalizeGitLabMergeRequestRecord(
         ? sourceProjectPath.toLowerCase() !== targetProjectPath.toLowerCase()
         : undefined;
   const headRepositoryOwnerLogin = ownerLoginFromPathWithNamespace(sourceProjectPath);
+  const author = userHandle(raw.author);
+  const assignees = [
+    ...new Set(
+      [...(raw.assignees ?? []), raw.assignee]
+        .map(userHandle)
+        .filter((handle): handle is string => handle !== null),
+    ),
+  ];
 
   return {
     number: raw.iid,
@@ -112,6 +138,8 @@ function normalizeGitLabMergeRequestRecord(
     ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
     ...(sourceProjectPath ? { headRepositoryNameWithOwner: sourceProjectPath } : {}),
     ...(headRepositoryOwnerLogin ? { headRepositoryOwnerLogin } : {}),
+    ...(author ? { author } : {}),
+    ...(assignees.length > 0 ? { assignees } : {}),
   };
 }
 

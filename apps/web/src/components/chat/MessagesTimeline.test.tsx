@@ -164,6 +164,8 @@ beforeAll(async () => {
     documentElement: {
       classList,
       offsetHeight: 0,
+      // applyTheme writes the active palette here.
+      dataset: {},
     },
   });
 
@@ -191,6 +193,7 @@ function buildProps() {
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
     markdownCwd: undefined,
     resolvedTheme: "light" as const,
+    palette: "default" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
     anchorMessageId: null,
@@ -240,6 +243,33 @@ describe("MessagesTimeline", () => {
     expect(compactMarkup).not.toContain("chat-timeline-scroll-fade");
     expect(fadedMarkup).toContain('class="h-10 sm:h-12"');
     expect(fadedMarkup).toContain("chat-timeline-scroll-fade");
+  });
+
+  it("renders a review action for proposed plans", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onReviewPlan={() => {}}
+        timelineEntries={[
+          {
+            id: "proposed-plan-1",
+            kind: "proposed-plan",
+            createdAt: MESSAGE_CREATED_AT,
+            proposedPlan: {
+              id: "plan:thread-1:turn:turn-1",
+              turnId: TurnId.make("turn-1"),
+              planMarkdown: "# Review this plan\n\n- Verify the flow",
+              implementedAt: null,
+              implementationThreadId: null,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Review plan");
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {

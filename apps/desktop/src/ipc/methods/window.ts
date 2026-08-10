@@ -230,6 +230,19 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const setChromeBackgroundColor = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_CHROME_BACKGROUND_COLOR_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setChromeBackgroundColor")(function* (color) {
+    // Persisted only. The live window already shows the renderer's own
+    // background; this is so the *next* launch opens in the palette's color
+    // rather than flashing the built-in neutral before the first frame.
+    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    yield* appSettings.setChromeBackgroundColor(color);
+  }),
+});
+
 export const showContextMenu = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,

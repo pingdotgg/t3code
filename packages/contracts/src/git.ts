@@ -1,10 +1,19 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
+const VCS_LIST_COMMITS_MAX_LIMIT = 200;
+export const VCS_LIST_COMMITS_DEFAULT_LIMIT = 50;
 
 // Domain Types
 
@@ -109,6 +118,19 @@ export const VcsPullInput = Schema.Struct({
 });
 export type VcsPullInput = typeof VcsPullInput.Type;
 
+/**
+ * What a commit step should include.
+ *
+ * - `all` stages everything before committing.
+ * - `paths` stages only `filePaths`, discarding whatever was staged before.
+ * - `index` commits the index exactly as the user left it, staging nothing.
+ *
+ * Omitted means the legacy behavior callers already rely on: `paths` when
+ * `filePaths` is present, `all` otherwise. Only the Git panel passes `index`.
+ */
+export const GitCommitScope = Schema.Literals(["all", "paths", "index"]);
+export type GitCommitScope = typeof GitCommitScope.Type;
+
 export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
@@ -118,8 +140,23 @@ export const GitRunStackedActionInput = Schema.Struct({
   filePaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
   ),
+  commitScope: Schema.optional(GitCommitScope),
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
+
+/** Shared by stage and unstage — both take a repo and a non-empty path list. */
+export const VcsStagePathsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  paths: Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
+});
+export type VcsStagePathsInput = typeof VcsStagePathsInput.Type;
+
+export const VcsListCommitsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  cursor: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(VCS_LIST_COMMITS_MAX_LIMIT))),
+});
+export type VcsListCommitsInput = typeof VcsListCommitsInput.Type;
 
 export const VcsListRefsInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -199,6 +236,45 @@ const VcsStatusChangeRequest = Schema.Struct({
   state: VcsStatusChangeRequestState,
 });
 
+/**
+ * One half of a porcelain v2 `XY` code, resolved per side.
+ *
+ * A file carries an index status when it has staged changes and a worktree
+ * status when it has unstaged ones; both present means it is partially staged
+ * and belongs in both sections of the UI.
+ */
+export const VcsFileChangeKind = Schema.Literals([
+  "added",
+  "modified",
+  "deleted",
+  "renamed",
+  "copied",
+  "untracked",
+  "conflicted",
+]);
+export type VcsFileChangeKind = typeof VcsFileChangeKind.Type;
+
+/**
+ * `insertions`/`deletions` are the combined staged + unstaged counts, because
+ * they come from a single `git diff HEAD --numstat`. Untracked files report 0/0.
+ */
+export const VcsWorkingTreeFile = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  insertions: NonNegativeInt,
+  deletions: NonNegativeInt,
+  /** Null when nothing about this file is staged. */
+  indexStatus: Schema.NullOr(VcsFileChangeKind).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Null when the working copy matches the index. */
+  worktreeStatus: Schema.NullOr(VcsFileChangeKind).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Set only for renames and copies. */
+  originalPath: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type VcsWorkingTreeFile = typeof VcsWorkingTreeFile.Type;
+
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
@@ -207,13 +283,7 @@ const VcsStatusLocalShape = {
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
-    files: Schema.Array(
-      Schema.Struct({
-        path: TrimmedNonEmptyStringSchema,
-        insertions: NonNegativeInt,
-        deletions: NonNegativeInt,
-      }),
-    ),
+    files: Schema.Array(VcsWorkingTreeFile),
     insertions: NonNegativeInt,
     deletions: NonNegativeInt,
   }),
@@ -252,6 +322,29 @@ export const VcsStatusStreamEvent = Schema.Union([
   }),
 ]);
 export type VcsStatusStreamEvent = typeof VcsStatusStreamEvent.Type;
+
+export const VcsCommit = Schema.Struct({
+  sha: TrimmedNonEmptyStringSchema,
+  shortSha: TrimmedNonEmptyStringSchema,
+  subject: Schema.String,
+  authorName: Schema.String,
+  committedAt: IsoDateTime,
+  /**
+   * Decoded `%D` — the refs pointing at this commit, e.g. `main`,
+   * `origin/main`. `HEAD -> x` is collapsed to `x` and remote-tracking names
+   * keep their remote prefix.
+   */
+  refNames: Schema.Array(TrimmedNonEmptyStringSchema),
+  isHead: Schema.Boolean,
+});
+export type VcsCommit = typeof VcsCommit.Type;
+
+export const VcsListCommitsResult = Schema.Struct({
+  commits: Schema.Array(VcsCommit),
+  isRepo: Schema.Boolean,
+  nextCursor: NonNegativeInt.pipe(Schema.NullOr),
+});
+export type VcsListCommitsResult = typeof VcsListCommitsResult.Type;
 
 export const VcsListRefsResult = Schema.Struct({
   refs: Schema.Array(VcsRef),

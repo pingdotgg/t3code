@@ -105,6 +105,7 @@ describe("DesktopSettings", () => {
     assert.deepEqual(
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
+        chromeBackgroundColor: null,
         linuxPasswordStore: "auto",
         mainWindowBounds: null,
         mainWindowMaximized: false,
@@ -134,6 +135,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          chromeBackgroundColor: null,
           linuxPasswordStore: "gnome-libsecret",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -208,6 +210,32 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("persists parseable chrome background colors and rejects the rest", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        // This value is handed straight to Electron's `backgroundColor`, which
+        // throws on anything it cannot parse, so only the shapes
+        // getComputedStyle produces (plus hex) may be stored.
+        const rgb = yield* settings.setChromeBackgroundColor("rgb(13, 17, 23)");
+        assert.isTrue(rgb.changed);
+        assert.equal(rgb.settings.chromeBackgroundColor, "rgb(13, 17, 23)");
+
+        const hex = yield* settings.setChromeBackgroundColor("#0d1117");
+        assert.isTrue(hex.changed);
+        assert.equal(hex.settings.chromeBackgroundColor, "#0d1117");
+
+        const repeated = yield* settings.setChromeBackgroundColor("#0d1117");
+        assert.isFalse(repeated.changed);
+
+        const rejected = yield* settings.setChromeBackgroundColor("oklch(0.2 0.03 285)");
+        assert.isTrue(rejected.changed);
+        assert.equal(rejected.settings.chromeBackgroundColor, null);
+      }),
+    ),
+  );
+
   it.effect("falls back to defaults when the settings file is malformed", () =>
     withSettings(
       Effect.gen(function* () {
@@ -241,6 +269,7 @@ describe("DesktopSettings", () => {
         );
 
         assert.deepEqual(yield* settings.load, {
+          chromeBackgroundColor: null,
           linuxPasswordStore: "auto",
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
@@ -297,6 +326,7 @@ describe("DesktopSettings", () => {
           );
 
           assert.deepEqual(yield* settings.load, {
+            chromeBackgroundColor: null,
             linuxPasswordStore: "auto",
             mainWindowBounds: null,
             mainWindowMaximized: false,
@@ -345,6 +375,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          chromeBackgroundColor: null,
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -373,6 +404,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          chromeBackgroundColor: null,
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -400,6 +432,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          chromeBackgroundColor: null,
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,

@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsWorkingTreeFile,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -124,5 +125,70 @@ describe("GitRunStackedActionResult", () => {
     if (parsed.toast.cta.kind === "run_action") {
       expect(parsed.toast.cta.action.kind).toBe("create_pr");
     }
+  });
+});
+
+describe("VcsWorkingTreeFile", () => {
+  const decodeWorkingTreeFile = Schema.decodeUnknownSync(VcsWorkingTreeFile);
+
+  it("decodes a payload from a client that predates the staged/unstaged split", () => {
+    const parsed = decodeWorkingTreeFile({
+      path: "src/demo.ts",
+      insertions: 3,
+      deletions: 1,
+    });
+
+    expect(parsed.indexStatus).toBeNull();
+    expect(parsed.worktreeStatus).toBeNull();
+    expect(parsed.originalPath).toBeUndefined();
+  });
+
+  it("keeps both halves of the code for a partially staged file", () => {
+    const parsed = decodeWorkingTreeFile({
+      path: "src/demo.ts",
+      insertions: 3,
+      deletions: 1,
+      indexStatus: "modified",
+      worktreeStatus: "modified",
+    });
+
+    expect(parsed.indexStatus).toBe("modified");
+    expect(parsed.worktreeStatus).toBe("modified");
+  });
+
+  it("carries the pre-rename path", () => {
+    const parsed = decodeWorkingTreeFile({
+      path: "src/new.ts",
+      insertions: 0,
+      deletions: 0,
+      indexStatus: "renamed",
+      worktreeStatus: null,
+      originalPath: "src/old.ts",
+    });
+
+    expect(parsed.originalPath).toBe("src/old.ts");
+  });
+});
+
+describe("GitRunStackedActionInput commitScope", () => {
+  it("stays undefined when omitted, preserving the legacy stage-then-commit path", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+    });
+
+    expect(parsed.commitScope).toBeUndefined();
+  });
+
+  it("accepts the index scope the Git panel sends", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-1",
+      cwd: "/repo",
+      action: "commit",
+      commitScope: "index",
+    });
+
+    expect(parsed.commitScope).toBe("index");
   });
 });

@@ -13,6 +13,7 @@ import {
   OrchestrationLatestTurn,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
+  OrchestrationProjectShell,
   OrchestrationProposedPlan,
   OrchestrationSession,
   OrchestrationThread,
@@ -41,6 +42,7 @@ const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(Orchestration
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+const decodeOrchestrationProjectShell = Schema.decodeUnknownEffect(OrchestrationProjectShell);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 function getOptionValue(
@@ -704,6 +706,34 @@ it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
       threadId: "thread-1",
       planId: "plan-1",
+      kind: "implementation",
+    });
+  }),
+);
+
+it.effect("round-trips a review source proposed plan reference", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-review-plan",
+      threadId: "thread-review",
+      message: {
+        messageId: "msg-review-plan",
+        role: "user",
+        text: "review this plan",
+        attachments: [],
+      },
+      sourceProposedPlan: {
+        threadId: "thread-source",
+        planId: "plan-source",
+        kind: "review",
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.sourceProposedPlan, {
+      threadId: "thread-source",
+      planId: "plan-source",
+      kind: "review",
     });
   }),
 );
@@ -738,6 +768,7 @@ it.effect("decodes thread.turn-start-requested source proposed plan metadata whe
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
       threadId: "thread-1",
       planId: "plan-1",
+      kind: "implementation",
     });
   }),
 );
@@ -771,6 +802,7 @@ it.effect("decodes latest turn source proposed plan metadata when present", () =
     assert.deepStrictEqual(parsed.sourceProposedPlan, {
       threadId: "thread-1",
       planId: "plan-1",
+      kind: "implementation",
     });
   }),
 );
@@ -911,6 +943,68 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("decodes historical project.created payloads without source folders", () =>
+  Effect.gen(function* () {
+    // Events are immutable and replayed forever: a `project.created` written
+    // before source folders existed must still decode, as an empty list.
+    const parsed = yield* decodeProjectCreatedPayload({
+      projectId: "project-1",
+      title: "Legacy project",
+      workspaceRoot: "/tmp/legacy",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.additionalFolders, []);
+  }),
+);
+
+it.effect("decodes project.created payloads carrying source folders", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectCreatedPayload({
+      projectId: "project-1",
+      title: "Multi folder project",
+      workspaceRoot: "/repo/app",
+      additionalFolders: [{ path: "/repo/design-system" }, { path: "/repo/docs", label: "Docs" }],
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.additionalFolders, [
+      { path: "/repo/design-system" },
+      { path: "/repo/docs", label: "Docs" },
+    ]);
+  }),
+);
+
+it.effect("leaves source folders untouched when a meta update omits them", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      title: "Renamed",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.additionalFolders, undefined);
+  }),
+);
+
+it.effect("decodes project shells without source folders as an empty list", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProjectShell({
+      id: "project-1",
+      title: "Legacy project",
+      workspaceRoot: "/tmp/legacy",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.additionalFolders, []);
   }),
 );
 

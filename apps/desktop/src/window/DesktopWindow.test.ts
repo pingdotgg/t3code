@@ -211,6 +211,7 @@ function makeTestLayer(input: {
         }
         return { settings: desktopSettings, changed };
       }),
+    setChromeBackgroundColor: () => Effect.die("unexpected chrome background color update"),
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
     setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),
@@ -404,6 +405,59 @@ describe("DesktopWindow", () => {
       }),
     );
   });
+
+  it.effect("opens the window on the persisted theme chrome color", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+        desktopSettings: {
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          chromeBackgroundColor: "rgb(38, 38, 36)",
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.activate;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        // Without this the window paints the built-in neutral until the
+        // renderer's first frame, which flashes on a tinted theme palette.
+        assert.equal(createdWindowOptions[0]?.backgroundColor, "rgb(38, 38, 36)");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("falls back to the neutral chrome color when none is persisted", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        createdWindowOptions,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.activate;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        // The test harness reports light mode, so this is the light neutral.
+        assert.equal(createdWindowOptions[0]?.backgroundColor, "#ffffff");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
 
   it.effect("does not open a development window until the backend is ready", () =>
     Effect.gen(function* () {

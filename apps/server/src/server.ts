@@ -41,8 +41,10 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as McpServerRegistry from "./mcp/McpServerRegistry.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as UserMcpServers from "./mcp/UserMcpServers.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -379,7 +381,18 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  // User-configured MCP servers are merged in alongside the provider
+  // instance hydration: `McpServerRegistry` backs the settings-panel
+  // CRUD/testConnection RPCs; `UserMcpServers` keeps a live, synchronously
+  // readable snapshot of enabled servers that every provider adapter merges
+  // into its own session-start MCP wiring.
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ProviderInstanceRegistryHydrationLive,
+      McpServerRegistry.layer,
+      UserMcpServers.layer,
+    ),
+  ),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).

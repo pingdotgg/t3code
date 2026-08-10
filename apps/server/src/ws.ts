@@ -87,6 +87,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as McpServerRegistry from "./mcp/McpServerRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -424,6 +425,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const mcpServerRegistry = yield* McpServerRegistry.McpServerRegistry;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -1686,6 +1688,34 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.mcpServersList]: (_input) =>
+          observeRpcEffect(WS_METHODS.mcpServersList, mcpServerRegistry.list, {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersUpsert]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpServersUpsert, mcpServerRegistry.upsert(input), {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersRemove]: (input) =>
+          observeRpcEffect(WS_METHODS.mcpServersRemove, mcpServerRegistry.remove(input), {
+            "rpc.aggregate": "mcp-servers",
+          }),
+        [WS_METHODS.mcpServersTestConnection]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mcpServersTestConnection,
+            mcpServerRegistry.testConnection(input),
+            {
+              "rpc.aggregate": "mcp-servers",
+            },
+          ),
+        [WS_METHODS.sourceControlListChangeRequests]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlListChangeRequests,
+            sourceControlRepositories.listChangeRequests(input),
+            {
+              "rpc.aggregate": "source-control",
+            },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
@@ -1952,6 +1982,22 @@ const makeWsRpcLayer = (
             gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
+        [WS_METHODS.vcsStagePaths]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsStagePaths,
+            gitWorkflow.stagePaths(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsUnstagePaths]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsUnstagePaths,
+            gitWorkflow.unstagePaths(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsListCommits]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsListCommits, gitWorkflow.listCommits(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsInit]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsInit,

@@ -12,7 +12,7 @@ import type * as PlatformError from "effect/PlatformError";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
-  requireActiveProjectWorkspaceRootAbsent,
+  requireProjectFoldersDistinct,
   requireProject,
   requireProjectAbsent,
   requireThread,
@@ -230,10 +230,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
-      yield* requireActiveProjectWorkspaceRootAbsent({
+      yield* requireProjectFoldersDistinct({
         readModel,
         command,
-        workspaceRoot: command.workspaceRoot,
+        folders: [
+          command.workspaceRoot,
+          ...(command.additionalFolders ?? []).map((folder) => folder.path),
+        ],
         exceptProjectId: command.projectId,
       });
 
@@ -249,6 +252,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
+          additionalFolders: command.additionalFolders ?? [],
           defaultModelSelection: command.defaultModelSelection ?? null,
           faviconPath: null,
           scripts: [],
@@ -259,16 +263,21 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
       });
-      if (command.workspaceRoot !== undefined) {
-        yield* requireActiveProjectWorkspaceRootAbsent({
+      if (command.workspaceRoot !== undefined || command.additionalFolders !== undefined) {
+        // Check the effective folder set the update would produce, so that an
+        // additional folder colliding with an untouched primary is caught here
+        // — the Normalizer has no read model and cannot see it.
+        const nextPrimary = command.workspaceRoot ?? project.workspaceRoot;
+        const nextAdditional = command.additionalFolders ?? project.additionalFolders;
+        yield* requireProjectFoldersDistinct({
           readModel,
           command,
-          workspaceRoot: command.workspaceRoot,
+          folders: [nextPrimary, ...nextAdditional.map((folder) => folder.path)],
           exceptProjectId: command.projectId,
         });
       }
@@ -285,6 +294,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
+          ...(command.additionalFolders !== undefined
+            ? { additionalFolders: command.additionalFolders }
+            : {}),
           ...(command.defaultModelSelection !== undefined
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),

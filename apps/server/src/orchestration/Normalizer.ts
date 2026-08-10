@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,7 +10,9 @@ import {
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type ProjectSourceFolder,
 } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
@@ -79,24 +83,128 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           ),
         );
 
+    /**
+     * Additional folders each get their own workspace search index, and the
+     * indexer scans home and filesystem roots. Indexing `~` or `/` would pin
+     * the server, so those are rejected up front rather than at scan time.
+     */
+    const assertIndexableFolder = (normalizedPath: string) =>
+      Effect.gen(function* () {
+        if (path.dirname(normalizedPath) === normalizedPath) {
+          return yield* new OrchestrationDispatchCommandError({
+            message: `Folder '${normalizedPath}' is a filesystem root and cannot be added to a project.`,
+          });
+        }
+        if (normalizedPath === path.resolve(NodeOS.homedir())) {
+          return yield* new OrchestrationDispatchCommandError({
+            message: `Folder '${normalizedPath}' is the home directory and cannot be added to a project.`,
+          });
+        }
+      });
+
+    const isContainedBy = (candidate: string, ancestor: string) => {
+      const relative = path.relative(ancestor, candidate);
+      return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    };
+
+    /**
+     * Normalize a project's additional folders against its primary.
+     *
+     * Rejects duplicates and folders nested inside one another — either would
+     * produce duplicate file-tree entries and an ambiguous path-to-folder
+     * attribution downstream.
+     *
+     * `primary` is `null` on a meta update that leaves `workspaceRoot` alone;
+     * the decider re-checks against the stored primary in that case.
+     */
+    const normalizeAdditionalFolders = (input: {
+      readonly primary: string | null;
+      readonly folders: ReadonlyArray<ProjectSourceFolder>;
+      readonly createIfMissing: boolean;
+    }) =>
+      Effect.gen(function* () {
+        const resolved: Array<ProjectSourceFolder> = [];
+        const seen: Array<string> = input.primary === null ? [] : [input.primary];
+
+        for (const folder of input.folders) {
+          const normalizedPath = input.createIfMissing
+            ? yield* normalizeProjectWorkspaceRootForCreate(folder.path, true)
+            : yield* normalizeProjectWorkspaceRoot(folder.path);
+          yield* assertIndexableFolder(normalizedPath);
+
+          const key = normalizeProjectPathForComparison(normalizedPath);
+          for (const existing of seen) {
+            const existingKey = normalizeProjectPathForComparison(existing);
+            if (existingKey === key) {
+              return yield* new OrchestrationDispatchCommandError({
+                message:
+                  existing === input.primary
+                    ? `Folder '${normalizedPath}' is already this project's primary folder.`
+                    : `Folder '${normalizedPath}' is listed more than once for this project.`,
+              });
+            }
+            if (
+              isContainedBy(normalizedPath, existing) ||
+              isContainedBy(existing, normalizedPath)
+            ) {
+              return yield* new OrchestrationDispatchCommandError({
+                message: `Folder '${normalizedPath}' overlaps '${existing}'. Project folders must not contain one another.`,
+              });
+            }
+          }
+
+          seen.push(normalizedPath);
+          resolved.push({
+            path: normalizedPath,
+            ...(folder.label !== undefined ? { label: folder.label } : {}),
+          });
+        }
+
+        return resolved as ReadonlyArray<ProjectSourceFolder>;
+      });
+
     if (canonicalCommand.type === "project.create") {
+      const workspaceRoot = yield* normalizeProjectWorkspaceRootForCreate(
+        canonicalCommand.workspaceRoot,
+        canonicalCommand.createWorkspaceRootIfMissing,
+      );
       return {
         ...canonicalCommand,
-        workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
-          canonicalCommand.workspaceRoot,
-          canonicalCommand.createWorkspaceRootIfMissing,
-        ),
+        workspaceRoot,
         createWorkspaceRootIfMissing: canonicalCommand.createWorkspaceRootIfMissing === true,
+        ...(canonicalCommand.additionalFolders !== undefined
+          ? {
+              additionalFolders: yield* normalizeAdditionalFolders({
+                primary: workspaceRoot,
+                folders: canonicalCommand.additionalFolders,
+                createIfMissing: canonicalCommand.createWorkspaceRootIfMissing === true,
+              }),
+            }
+          : {}),
       } satisfies OrchestrationCommand;
     }
 
     if (
       canonicalCommand.type === "project.meta.update" &&
-      canonicalCommand.workspaceRoot !== undefined
+      (canonicalCommand.workspaceRoot !== undefined ||
+        canonicalCommand.additionalFolders !== undefined)
     ) {
+      const workspaceRoot =
+        canonicalCommand.workspaceRoot !== undefined
+          ? yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot)
+          : undefined;
       return {
         ...canonicalCommand,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot),
+        ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
+        ...(canonicalCommand.additionalFolders !== undefined
+          ? {
+              additionalFolders: yield* normalizeAdditionalFolders({
+                primary: workspaceRoot ?? null,
+                folders: canonicalCommand.additionalFolders,
+                createIfMissing: false,
+              }),
+            }
+          : {}),
       } satisfies OrchestrationCommand;
     }
 

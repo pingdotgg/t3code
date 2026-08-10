@@ -22,9 +22,17 @@ import {
   type ThemePreferenceMode,
 } from "../themePalette";
 
+import {
+  DEFAULT_THEME_PALETTE,
+  ThemePaletteSchema,
+  normalizeThemePalette,
+  type ThemePalette,
+} from "../lib/themePalettes";
+
 type Theme = ThemePreference;
 type ThemeSnapshot = {
   theme: Theme;
+  palette: ThemePalette;
   systemDark: boolean;
   followSystem: boolean;
   appearanceMode: ThemePreferenceMode;
@@ -34,9 +42,19 @@ type ThemeSnapshot = {
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 
 const STORAGE_KEY = "t3code:theme";
+/**
+ * The palette is kept in its own flat key rather than in client settings so
+ * the pre-boot script in `index.html` can read it synchronously. Client
+ * settings hydrate asynchronously from a JSON blob, which would show a flash
+ * of the default palette on every load.
+ */
+const PALETTE_STORAGE_KEY = "t3code:theme-palette";
+/** Read by the pre-boot script in `index.html`; format is `palette:mode:color`. */
+const CHROME_COLOR_STORAGE_KEY = "t3code:theme-chrome";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   theme: "system",
+  palette: DEFAULT_THEME_PALETTE,
   systemDark: false,
   followSystem: true,
   appearanceMode: "system",
@@ -70,6 +88,7 @@ export class ThemeStorageError extends Schema.TaggedErrorClass<ThemeStorageError
     operation: Schema.Literals(["read", "write"]),
     storageKey: Schema.String,
     theme: Schema.optional(ThemePreference),
+    palette: Schema.optional(ThemePaletteSchema),
     cause: Schema.Defect(),
   },
 ) {
@@ -98,8 +117,10 @@ let listeners: Array<() => void> = [];
 let lastSnapshot: ThemeSnapshot | null = null;
 let snapshotStale = true;
 let lastDesktopTheme: "light" | "dark" | "system" | null = null;
+let lastDesktopChromeColor: string | null = null;
 let lastAppliedTheme: ThemeSnapshot | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
+let paletteStorageReadFailure: ThemeStorageError | null = null;
 
 function emitChange() {
   snapshotStale = true;
@@ -194,6 +215,60 @@ export function writeThemePreference(theme: Theme): void {
   }
 }
 
+export function readThemePalette(): ThemePalette {
+  if (typeof window === "undefined") return DEFAULT_THEME_PALETTE;
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(PALETTE_STORAGE_KEY);
+  } catch (cause) {
+    throw new ThemeStorageError({
+      operation: "read",
+      storageKey: PALETTE_STORAGE_KEY,
+      cause,
+    });
+  }
+  return normalizeThemePalette(raw);
+}
+
+export function writeThemePalette(palette: ThemePalette): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, palette);
+    paletteStorageReadFailure = null;
+  } catch (cause) {
+    throw new ThemeStorageError({
+      operation: "write",
+      storageKey: PALETTE_STORAGE_KEY,
+      palette,
+      cause,
+    });
+  }
+}
+
+function getStoredPalette(): ThemePalette {
+  if (paletteStorageReadFailure !== null) {
+    return DEFAULT_THEME_PALETTE;
+  }
+  try {
+    return readThemePalette();
+  } catch (cause) {
+    const error = isThemeStorageError(cause)
+      ? cause
+      : new ThemeStorageError({
+          operation: "read",
+          storageKey: PALETTE_STORAGE_KEY,
+          cause,
+        });
+    paletteStorageReadFailure = error;
+    console.error(error.message, {
+      operation: error.operation,
+      storageKey: error.storageKey,
+      ...safeErrorLogAttributes(error),
+    });
+    return DEFAULT_THEME_PALETTE;
+  }
+}
+
 function getStored(): Theme {
   if (themeStorageReadFailure !== null) {
     return DEFAULT_THEME_SNAPSHOT.theme;
@@ -253,6 +328,24 @@ function resolveBrowserChromeSurface(): HTMLElement {
   );
 }
 
+/**
+ * A palette's chrome color can only be known once the stylesheet has applied,
+ * which is after the pre-boot script in `index.html` has already had to paint
+ * something. Cache the resolved value, tagged with the palette and mode it
+ * belongs to, so the next load starts in the right color instead of flashing
+ * the neutral fallback.
+ */
+function cacheBootChromeColor(backgroundColor: string) {
+  if (typeof window === "undefined") return;
+  const palette = document.documentElement.dataset.themePalette ?? DEFAULT_THEME_PALETTE;
+  const mode = document.documentElement.classList.contains("dark") ? "dark" : "light";
+  try {
+    window.localStorage.setItem(CHROME_COLOR_STORAGE_KEY, `${palette}:${mode}:${backgroundColor}`);
+  } catch {
+    // A read-only or full storage only costs a one-frame flash on next boot.
+  }
+}
+
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
   const rootStyles = getComputedStyle(document.documentElement);
@@ -275,14 +368,16 @@ export function syncBrowserChromeTheme() {
   );
   if (themeColorMetas.length === 0) {
     ensureThemeColorMetaTag().setAttribute("content", backgroundColor);
-    return;
+  } else {
+    for (const element of themeColorMetas) {
+      element.setAttribute("content", backgroundColor);
+    }
   }
-  for (const element of themeColorMetas) {
-    element.setAttribute("content", backgroundColor);
-  }
+  cacheBootChromeColor(backgroundColor);
+  syncDesktopChromeColor(backgroundColor);
 }
 
-function applyTheme(theme: Theme, suppressTransitions = false) {
+function applyTheme(theme: Theme, palette: ThemePalette, suppressTransitions = false) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
   const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
@@ -290,6 +385,7 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   const themeHalves = readStoredThemeHalves();
   if (
     lastAppliedTheme?.theme === theme &&
+    lastAppliedTheme.palette === palette &&
     lastAppliedTheme.systemDark === systemDark &&
     lastAppliedTheme.followSystem === followSystem &&
     lastAppliedTheme.appearanceMode === appearanceMode &&
@@ -312,7 +408,14 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
   const isDark = resolvedAppearance === "dark";
   document.documentElement.classList.toggle("dark", isDark);
-  lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  // Must land before syncBrowserChromeTheme so the chrome color is read from
+  // the palette that is actually about to paint. Guarded because this runs at
+  // module load, where a partial DOM would otherwise take the whole app down
+  // over a cosmetic attribute.
+  if (document.documentElement.dataset) {
+    document.documentElement.dataset.themePalette = palette;
+  }
+  lastAppliedTheme = { theme, palette, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
   if (suppressTransitions) {
@@ -337,6 +440,35 @@ export async function syncDesktopThemePreference(
   } catch (cause) {
     throw new DesktopThemeSyncError({ theme, cause });
   }
+}
+
+/**
+ * Hands the resolved chrome color to the Electron shell so it can persist it
+ * and open the next window in the palette's background. Without this the
+ * native window frame paints its hardcoded neutral before the renderer's first
+ * frame, which reads as a flash on any strongly tinted palette.
+ */
+export function syncDesktopChromeColor(backgroundColor: string) {
+  if (typeof window === "undefined") return;
+  const bridge = window.desktopBridge;
+  if (
+    !bridge ||
+    typeof bridge.setChromeBackgroundColor !== "function" ||
+    lastDesktopChromeColor === backgroundColor
+  ) {
+    return;
+  }
+
+  lastDesktopChromeColor = backgroundColor;
+  void bridge.setChromeBackgroundColor(backgroundColor).catch((cause: unknown) => {
+    console.error("Failed to sync the chrome background color to the desktop shell.", {
+      backgroundColor,
+      ...safeErrorLogAttributes(cause),
+    });
+    if (lastDesktopChromeColor === backgroundColor) {
+      lastDesktopChromeColor = null;
+    }
+  });
 }
 
 export function syncDesktopTheme(
@@ -371,7 +503,7 @@ export function syncDesktopTheme(
 
 // Apply immediately on module load to prevent flash
 if (typeof document !== "undefined" && typeof window !== "undefined") {
-  applyTheme(getStored());
+  applyTheme(getStored(), getStoredPalette());
 }
 
 function getSnapshot(): ThemeSnapshot {
@@ -381,6 +513,7 @@ function getSnapshot(): ThemeSnapshot {
   if (!snapshotStale && lastSnapshot) return lastSnapshot;
   snapshotStale = false;
   const theme = getStored();
+  const palette = getStoredPalette();
   const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
@@ -389,6 +522,7 @@ function getSnapshot(): ThemeSnapshot {
   if (
     lastSnapshot &&
     lastSnapshot.theme === theme &&
+    lastSnapshot.palette === palette &&
     lastSnapshot.systemDark === systemDark &&
     lastSnapshot.followSystem === followSystem &&
     lastSnapshot.appearanceMode === appearanceMode &&
@@ -397,7 +531,7 @@ function getSnapshot(): ThemeSnapshot {
     return lastSnapshot;
   }
 
-  lastSnapshot = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  lastSnapshot = { theme, palette, systemDark, followSystem, appearanceMode, themeHalves };
   return lastSnapshot;
 }
 
@@ -407,26 +541,31 @@ function getServerSnapshot() {
 
 function handleSystemAppearanceChange() {
   const storedTheme = getStored();
-  if (readAppearanceModePreference(storedTheme) === "system") applyTheme(storedTheme, true);
+  if (readAppearanceModePreference(storedTheme) === "system")
+    applyTheme(storedTheme, getStoredPalette(), true);
   emitChange();
 }
 
 function handleStorageChange(e: StorageEvent) {
   if (e.key === STORAGE_KEY) {
     themeStorageReadFailure = null;
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), getStoredPalette(), true);
+    emitChange();
+  } else if (e.key === PALETTE_STORAGE_KEY) {
+    paletteStorageReadFailure = null;
+    applyTheme(getStored(), getStoredPalette(), true);
     emitChange();
   } else if (e.key === THEME_FOLLOW_SYSTEM_STORAGE_KEY) {
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), getStoredPalette(), true);
     emitChange();
   } else if (e.key === THEME_APPEARANCE_MODE_STORAGE_KEY || e.key === THEME_HALVES_STORAGE_KEY) {
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), getStoredPalette(), true);
     emitChange();
   } else if (e.key === CUSTOM_THEMES_STORAGE_KEY || e.key === null) {
     if (e.key === null) themeStorageReadFailure = null;
     invalidateCustomThemes();
     lastAppliedTheme = null;
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), getStoredPalette(), true);
     emitChange();
   }
 }
@@ -461,6 +600,7 @@ function subscribe(listener: () => void): () => void {
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const theme = snapshot.theme;
+  const palette = snapshot.palette;
 
   const resolvedTheme: "light" | "dark" = resolveThemeAppearance(
     theme,
@@ -507,7 +647,33 @@ export function useTheme() {
       });
       return false;
     }
-    applyTheme(next, true);
+    applyTheme(next, getStoredPalette(), true);
+    emitChange();
+    return true;
+  }, []);
+
+  const setPalette = useCallback((next: ThemePalette) => {
+    if (typeof window === "undefined") return;
+    try {
+      writeThemePalette(next);
+    } catch (cause) {
+      const error = isThemeStorageError(cause)
+        ? cause
+        : new ThemeStorageError({
+            operation: "write",
+            storageKey: PALETTE_STORAGE_KEY,
+            palette: next,
+            cause,
+          });
+      console.error(error.message, {
+        operation: error.operation,
+        storageKey: error.storageKey,
+        palette: next,
+        ...safeErrorLogAttributes(error),
+      });
+      return;
+    }
+    applyTheme(getStored(), next, true);
     emitChange();
     return true;
   }, []);
@@ -532,7 +698,7 @@ export function useTheme() {
       return false;
     }
     themeStorageReadFailure = null;
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), getStoredPalette(), true);
     emitChange();
     return true;
   }, []);
@@ -576,7 +742,7 @@ export function useTheme() {
         });
         return false;
       }
-      applyTheme(getStored(), true);
+      applyTheme(getStored(), getStoredPalette(), true);
       emitChange();
       return true;
     },
@@ -600,7 +766,7 @@ export function useTheme() {
       });
       return false;
     }
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), getStoredPalette(), true);
     emitChange();
     return true;
   }, []);
@@ -608,18 +774,20 @@ export function useTheme() {
   const refreshTheme = useCallback(() => {
     if (typeof window === "undefined") return;
     lastAppliedTheme = null;
-    applyTheme(getStored(), true);
+    applyTheme(getStored(), getStoredPalette(), true);
     emitChange();
   }, []);
 
   // Keep DOM in sync on mount/change
   useEffect(() => {
-    applyTheme(theme);
-  }, [snapshot.appearanceMode, theme]);
+    applyTheme(theme, palette);
+  }, [palette, snapshot.appearanceMode, theme]);
 
   return {
     theme,
     setTheme,
+    palette,
+    setPalette,
     setAppearanceMode,
     setFollowSystem,
     setThemeHalf,

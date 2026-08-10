@@ -145,6 +145,7 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly projectAdditionalFolders?: ReadonlyArray<{ readonly path: string }>;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -212,6 +213,14 @@ describe("ProviderCommandReactor", () => {
         "cwd" in input &&
         typeof input.cwd === "string"
           ? { cwd: input.cwd }
+          : {}),
+        // Real adapters echo this back so the reactor can detect folder-set
+        // changes; the mock has to as well or every turn looks like a change.
+        ...(typeof input === "object" &&
+        input !== null &&
+        "additionalDirectories" in input &&
+        Array.isArray(input.additionalDirectories)
+          ? { additionalDirectories: input.additionalDirectories as ReadonlyArray<string> }
           : {}),
         ...((inputModelSelection?.model ?? modelSelection.model)
           ? { model: inputModelSelection?.model ?? modelSelection.model }
@@ -430,6 +439,9 @@ describe("ProviderCommandReactor", () => {
         projectId: asProjectId("project-1"),
         title: "Provider Project",
         workspaceRoot: "/tmp/provider-project",
+        ...(input?.projectAdditionalFolders !== undefined
+          ? { additionalFolders: input.projectAdditionalFolders }
+          : {}),
         defaultModelSelection: modelSelection,
         createdAt: now,
       }),
@@ -2043,6 +2055,122 @@ describe("ProviderCommandReactor", () => {
       runtimeMode: "approval-required",
     });
   });
+
+  effectIt.effect("forwards a project's additional source folders to the provider session", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ projectAdditionalFolders: [{ path: "/tmp/provider-design-system" }] }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-folders-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-folders-1"),
+          role: "user",
+          text: "read the design system",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+      expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+        cwd: "/tmp/provider-project",
+        additionalDirectories: ["/tmp/provider-design-system"],
+      });
+    }),
+  );
+
+  effectIt.effect("restarts the provider session when a source folder is added", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-folders-2"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-folders-2"),
+          role: "user",
+          text: "first turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.startSession.mock.calls[0]?.[1]).not.toHaveProperty("additionalDirectories");
+
+      yield* harness.engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-project-add-folder"),
+        projectId: asProjectId("project-1"),
+        additionalFolders: [{ path: "/tmp/provider-design-system" }],
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-folders-3"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-folders-3"),
+          role: "user",
+          text: "second turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      // Without the folder-set check in the restart trigger, the running agent
+      // would keep the folder set it was spawned with.
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 2));
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+      expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+        cwd: "/tmp/provider-project",
+        additionalDirectories: ["/tmp/provider-design-system"],
+      });
+    }),
+  );
+
+  effectIt.effect("does not restart the provider session when the folder set is unchanged", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ projectAdditionalFolders: [{ path: "/tmp/provider-design-system" }] }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      for (const turn of [1, 2]) {
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-folders-stable-${turn}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId(`user-message-folders-stable-${turn}`),
+            role: "user",
+            text: `turn ${turn}`,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === turn));
+      }
+
+      expect(harness.startSession.mock.calls.length).toBe(1);
+    }),
+  );
 
   it("restarts claude sessions when claude effort changes", async () => {
     const harness = await createHarness({

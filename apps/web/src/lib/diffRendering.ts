@@ -1,15 +1,23 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 
-export const DIFF_THEME_NAMES = {
-  light: "pierre-light",
-  dark: "pierre-dark",
-} as const;
+import { DEFAULT_THEME_PALETTE, themePaletteDescriptor, type ThemePalette } from "./themePalettes";
 
-export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
+/**
+ * Widened from the old two-name union now that each theme palette brings its
+ * own syntax theme. Pierre types theme names as `BundledTheme | (string & {})`,
+ * so any registered name is valid here.
+ */
+export type DiffThemeName = string;
 
-export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
-  return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
+export const DIFF_THEME_NAMES = themePaletteDescriptor(DEFAULT_THEME_PALETTE).syntax;
+
+export function resolveDiffThemeName(
+  theme: "light" | "dark",
+  palette: ThemePalette = DEFAULT_THEME_PALETTE,
+): DiffThemeName {
+  const syntax = themePaletteDescriptor(palette).syntax;
+  return theme === "dark" ? syntax.dark : syntax.light;
 }
 
 const FNV_OFFSET_BASIS_32 = 0x811c9dc5;

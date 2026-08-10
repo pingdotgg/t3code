@@ -7,6 +7,7 @@
  * @module ProjectionThreadSessionRepository
  */
 import {
+  RecoverableThreadFailureKind,
   RuntimeMode,
   IsoDateTime,
   OrchestrationSessionStatus,
@@ -29,6 +30,7 @@ export const ProjectionThreadSession = Schema.Struct({
   runtimeMode: RuntimeMode,
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(Schema.String),
+  lastFailureKind: Schema.NullOr(RecoverableThreadFailureKind),
   updatedAt: IsoDateTime,
 });
 export type ProjectionThreadSession = typeof ProjectionThreadSession.Type;

@@ -336,6 +336,8 @@ export const make = (
     );
     const child = yield* spawner
       .spawn(
+        // A project's additional source folders are intentionally not forwarded
+        // here: the ACP transport spawns against a single working directory.
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
           ...(options.spawn.env ? { env: options.spawn.env, extendEnv: true } : {}),

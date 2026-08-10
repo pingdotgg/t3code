@@ -137,7 +137,15 @@ describe("applyGitStatusStreamEvent", () => {
       refName: "feature/demo",
       hasWorkingTreeChanges: true,
       workingTree: {
-        files: [{ path: "src/demo.ts", insertions: 1, deletions: 0 }],
+        files: [
+          {
+            path: "src/demo.ts",
+            insertions: 1,
+            deletions: 0,
+            indexStatus: null,
+            worktreeStatus: "modified",
+          },
+        ],
         insertions: 1,
         deletions: 0,
       },

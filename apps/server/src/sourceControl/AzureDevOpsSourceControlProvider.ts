@@ -58,6 +58,8 @@ function toChangeRequest(summary: {
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
   readonly updatedAt: ChangeRequest["updatedAt"];
+  readonly author?: string | null;
+  readonly assignees?: ReadonlyArray<string>;
 }): ChangeRequest {
   return {
     provider: "azure-devops",
@@ -69,6 +71,8 @@ function toChangeRequest(summary: {
     state: summary.state,
     updatedAt: summary.updatedAt,
     isCrossRepository: false,
+    ...(summary.author !== undefined ? { author: summary.author } : {}),
+    ...(summary.assignees !== undefined ? { assignees: summary.assignees } : {}),
   };
 }
 
@@ -105,6 +109,27 @@ export const make = Effect.gen(function* () {
           ),
         );
     },
+    listRepositoryChangeRequests: (input) =>
+      azure
+        .listRepositoryPullRequests({
+          cwd: input.cwd,
+          state: input.state,
+          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        })
+        .pipe(
+          Effect.map((items) => items.map(toChangeRequest)),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "azure-devops",
+                operation: "listRepositoryChangeRequests",
+                command: error.command,
+                cwd: input.cwd,
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        ),
     getChangeRequest: (input) =>
       azure.getPullRequest(input).pipe(
         Effect.map(toChangeRequest),

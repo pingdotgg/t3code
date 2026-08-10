@@ -2582,6 +2582,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
           sourceProposedPlan: {
             threadId: sourcePlanThreadId,
             planId: sourcePlanId,
+            kind: "implementation",
           },
           runtimeMode: "approval-required",
           createdAt: turnStartedAt,

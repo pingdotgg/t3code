@@ -37,6 +37,7 @@ const readModel: OrchestrationReadModel = {
       deletedAt: null,
       messages: [],
       proposedPlans: [],
+      proposedPlanReviews: [],
       activities: [],
       checkpoints: [],
       session: null,

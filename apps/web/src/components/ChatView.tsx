@@ -106,6 +106,7 @@ import {
   buildPlanImplementationPrompt,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
+import { buildPlanRevisionPrompt } from "../planReview";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -144,7 +145,12 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { projectSourceFolders } from "@t3tools/shared/projectFolders";
+
+import { useGitPanelStore, selectGitPanelFolder } from "~/gitPanelStore";
 import { AgentsPanel } from "./AgentsPanel";
+import { GitPanel, type GitPanelFolder } from "./git/GitPanel";
+import { PullRequestsPanel } from "./pullRequests/PullRequestsPanel";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -174,7 +180,12 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -182,7 +193,12 @@ import {
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
-import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import { useStartPlanReview } from "../hooks/useStartPlanReview";
+import { useFailedSubmissionRecoveryHandler } from "../hooks/useFailedSubmissionRecovery";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionForInstance,
+} from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -196,9 +212,14 @@ import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  type PersistedComposerImageAttachment,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import {
+  useFailedSubmissionRecoverySnapshot,
+  useFailedSubmissionRecoveryStore,
+} from "../failedSubmissionRecoveryStore";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -243,6 +264,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -279,6 +301,7 @@ import {
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  canContinueFailedSubmissionInNewThread,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -313,6 +336,15 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -1272,7 +1304,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, palette } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -1344,6 +1376,11 @@ function ChatViewContent(props: ChatViewProps) {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [planReviewDialogPlanId, setPlanReviewDialogPlanId] = useState<string | null>(null);
+  const [planReviewModelOverride, setPlanReviewModelOverride] = useState<ModelSelection | null>(
+    null,
+  );
+  const { start: startPlanReview, startingPlanId } = useStartPlanReview();
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
@@ -1489,6 +1526,21 @@ function ChatViewContent(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
+  const failedSubmissionSnapshot = useFailedSubmissionRecoverySnapshot(
+    activeServerThread
+      ? scopeThreadRef(activeServerThread.environmentId, activeServerThread.id)
+      : null,
+  );
+  const recoverFailedSubmission = useFailedSubmissionRecoveryHandler();
+  const removeFailedSubmissionSnapshot = useFailedSubmissionRecoveryStore((store) => store.remove);
+  const [recoveringFailedSubmission, setRecoveringFailedSubmission] = useState(false);
+  const canContinueFailedSubmission =
+    threadError === activeServerThread?.session?.lastError &&
+    canContinueFailedSubmissionInNewThread({
+      session: activeServerThread?.session ?? null,
+      snapshotMessageId: failedSubmissionSnapshot?.messageId ?? null,
+      messages: activeServerThread?.messages ?? [],
+    });
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   // Plan mode is legacy (Settings → Beta). With the flag off the effective
   // mode is forced to "default" — even for threads with a stored plan mode —
@@ -2607,6 +2659,49 @@ function ChatViewContent(props: ChatViewProps) {
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
+  // The Git panel works one source folder at a time. A thread on a worktree
+  // shows that worktree instead of the project root, because that is the
+  // checkout its changes actually live in.
+  const gitPanelFolders = useMemo<ReadonlyArray<GitPanelFolder>>(() => {
+    if (!activeProject) return [];
+    const projectFolders = projectSourceFolders(activeProject).map((folder) => ({
+      path: folder.path,
+      label: folder.label ?? folder.path.slice(folder.path.lastIndexOf("/") + 1),
+      isPrimary: folder.isPrimary,
+    }));
+    if (
+      activeThreadWorktreePath &&
+      !projectFolders.some((folder) => folder.path === activeThreadWorktreePath)
+    ) {
+      return [
+        {
+          path: activeThreadWorktreePath,
+          label: activeThreadWorktreePath.slice(activeThreadWorktreePath.lastIndexOf("/") + 1),
+          isPrimary: false,
+        },
+        ...projectFolders,
+      ];
+    }
+    return projectFolders;
+  }, [activeProject, activeThreadWorktreePath]);
+  const gitPanelFolderPaths = useMemo(
+    () => gitPanelFolders.map((folder) => folder.path),
+    [gitPanelFolders],
+  );
+  const selectedGitPanelFolder = useGitPanelStore((state) => state.selectedFolderByThreadKey);
+  const gitPanelCwd = selectGitPanelFolder(
+    selectedGitPanelFolder,
+    activeThreadRef,
+    gitPanelFolderPaths,
+    activeWorkspaceRoot ?? null,
+  );
+  const selectGitPanelFolderPath = useCallback(
+    (folderPath: string) => {
+      if (!activeThreadRef) return;
+      useGitPanelStore.getState().selectFolder(activeThreadRef, folderPath);
+    },
+    [activeThreadRef],
+  );
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const showComposerContextStrip = shouldShowComposerContextStrip({
@@ -3219,6 +3314,42 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const addGitSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().open(activeThreadRef, "git");
+  }, [activeProject, activeThreadRef]);
+  /**
+   * The composer's send context is the only selection guaranteed to name a
+   * real model: a project default or draft thread can carry an empty `model`,
+   * which thread.create rejects.
+   */
+  const resolveReviewModelSelection = useCallback((): ModelSelection | null => {
+    const sendContext = composerRef.current?.getSendContext();
+    return (
+      sendContext?.selectedModelSelection ??
+      activeThread?.modelSelection ??
+      activeProject?.defaultModelSelection ??
+      null
+    );
+  }, [activeProject, activeThread]);
+  const openReviewThread = useCallback(
+    (reviewThreadId: ThreadId) => {
+      if (!activeProject) return;
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: activeProject.environmentId, threadId: reviewThreadId },
+      });
+    },
+    [activeProject, navigate],
+  );
+  const addPullRequestsSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject || !isGitRepo) return;
+    useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
+  }, [activeProject, activeThreadRef, isGitRepo]);
+  const toggleGitSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().toggle(activeThreadRef, "git");
+  }, [activeProject, activeThreadRef]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -4685,6 +4816,13 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "git.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleGitSurface();
+        return;
+      }
+
       if (command === "modelPicker.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -4782,6 +4920,58 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError,
     ],
   );
+
+  // A later successful turn, or a newer user submission, makes the saved
+  // recovery payload stale. Retain it only while it still represents this
+  // terminal failure.
+  useEffect(() => {
+    if (!activeServerThread || !failedSubmissionSnapshot) {
+      return;
+    }
+    const latestUserMessage = activeServerThread.messages.findLast(
+      (message) => message.role === "user",
+    );
+    if (
+      activeServerThread.latestTurn?.state === "completed" ||
+      (latestUserMessage !== undefined &&
+        latestUserMessage.id !== failedSubmissionSnapshot.messageId)
+    ) {
+      removeFailedSubmissionSnapshot(failedSubmissionSnapshot.sourceThreadRef);
+    }
+  }, [activeServerThread, failedSubmissionSnapshot, removeFailedSubmissionSnapshot]);
+
+  const onContinueFailedSubmissionInNewThread = useCallback(async () => {
+    if (!activeServerThread || !failedSubmissionSnapshot || recoveringFailedSubmission) {
+      return;
+    }
+    setRecoveringFailedSubmission(true);
+    try {
+      await recoverFailedSubmission(
+        scopeProjectRef(activeServerThread.environmentId, activeServerThread.projectId),
+        failedSubmissionSnapshot,
+      );
+      // The image Files are now owned by the destination draft. Removing the
+      // source snapshot makes the handoff one-way without touching the
+      // failed thread or any regular unsent draft.
+      removeFailedSubmissionSnapshot(failedSubmissionSnapshot.sourceThreadRef);
+    } catch {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not create recovery draft",
+          description: "The failed submission is still available in this thread.",
+        }),
+      );
+    } finally {
+      setRecoveringFailedSubmission(false);
+    }
+  }, [
+    activeServerThread,
+    failedSubmissionSnapshot,
+    recoverFailedSubmission,
+    recoveringFailedSubmission,
+    removeFailedSubmissionSnapshot,
+  ]);
 
   const onSend = async (
     e?: { preventDefault: () => void },
@@ -4955,6 +5145,10 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
+    const recoverySourceThreadRef = scopeThreadRef(environmentId, threadIdForSend);
+    // A real new send supersedes any older failed submission for this thread,
+    // even when this attempt later fails before the provider is started.
+    useFailedSubmissionRecoveryStore.getState().remove(recoverySourceThreadRef);
     sendInFlightRef.current = true;
     if (isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
@@ -4999,6 +5193,23 @@ function ChatViewContent(props: ChatViewProps) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
+    // Snapshot synchronously while the composer still owns the original
+    // Files. Durable image data is filled in once FileReader finishes below;
+    // until then the live snapshot is still an exact, complete browser-local
+    // copy of the submission.
+    const recoverySnapshotForSend = {
+      sourceThreadRef: recoverySourceThreadRef,
+      messageId: messageIdForSend,
+      prompt: promptForSend,
+      images: composerImagesSnapshot.map(cloneComposerImageForRetry),
+      terminalContexts: composerTerminalContextsSnapshot,
+      elementContexts: composerElementContextsSnapshot,
+      previewAnnotations: composerPreviewAnnotationsSnapshot,
+      reviewComments: composerReviewCommentsSnapshot,
+      runtimeMode,
+      interactionMode,
+    };
+    useFailedSubmissionRecoveryStore.getState().capture(recoverySnapshotForSend, []);
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,
@@ -5126,6 +5337,30 @@ function ChatViewContent(props: ChatViewProps) {
 
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const persistedRecoveryImages = turnAttachmentsResult.value.map((attachment, index) => {
+        const image = composerImagesSnapshot[index];
+        return image
+          ? {
+              id: image.id,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+              dataUrl: attachment.dataUrl,
+            }
+          : null;
+      });
+      // `Promise.all` preserves order, but keep this all-or-nothing guard at
+      // the capture boundary: recovery is never offered with an image missing.
+      if (
+        persistedRecoveryImages.length === composerImagesSnapshot.length &&
+        persistedRecoveryImages.every(
+          (image): image is PersistedComposerImageAttachment => image !== null,
+        )
+      ) {
+        useFailedSubmissionRecoveryStore
+          .getState()
+          .capture(recoverySnapshotForSend, persistedRecoveryImages);
+      }
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -5184,6 +5419,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
+      useFailedSubmissionRecoveryStore.getState().remove(recoverySourceThreadRef);
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
@@ -5530,6 +5766,7 @@ function ChatViewContent(props: ChatViewProps) {
                   sourceProposedPlan: {
                     threadId: activeThread.id,
                     planId: activeProposedPlan.id,
+                    kind: "implementation",
                   },
                 }
               : {}),
@@ -5660,6 +5897,7 @@ function ChatViewContent(props: ChatViewProps) {
           sourceProposedPlan: {
             threadId: activeThread.id,
             planId: activeProposedPlan.id,
+            kind: "implementation",
           },
           createdAt,
         },
@@ -5734,6 +5972,212 @@ function ChatViewContent(props: ChatViewProps) {
     environmentId,
     composerRef,
   ]);
+
+  const planReviewPlan = useMemo(
+    () =>
+      planReviewDialogPlanId === null
+        ? null
+        : (activeThread?.proposedPlans.find((plan) => plan.id === planReviewDialogPlanId) ?? null),
+    [activeThread?.proposedPlans, planReviewDialogPlanId],
+  );
+  const planReviewInstanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+      ),
+    [providerStatuses, settings],
+  );
+  const effectivePlanReviewModelSelection = useMemo(() => {
+    const preferredSelection =
+      planReviewModelOverride ?? settings.planReviewModelSelection ?? activeThread?.modelSelection;
+    if (!preferredSelection) {
+      return null;
+    }
+    const matchingEntry = planReviewInstanceEntries.find(
+      (entry) =>
+        entry.instanceId === preferredSelection.instanceId && entry.enabled && entry.isAvailable,
+    );
+    const selectedEntry =
+      matchingEntry ??
+      planReviewInstanceEntries.find((entry) => entry.enabled && entry.isAvailable) ??
+      null;
+    if (!selectedEntry) {
+      return null;
+    }
+    const model = resolveAppModelSelectionForInstance(
+      selectedEntry.instanceId,
+      settings,
+      providerStatuses,
+      matchingEntry ? preferredSelection.model : null,
+    );
+    return model === null
+      ? null
+      : createModelSelection(
+          selectedEntry.instanceId,
+          model,
+          matchingEntry ? preferredSelection.options : undefined,
+        );
+  }, [
+    activeThread?.modelSelection,
+    planReviewInstanceEntries,
+    planReviewModelOverride,
+    providerStatuses,
+    settings,
+  ]);
+  const planReviewModelOptionsByInstance = useMemo(
+    () =>
+      getCustomModelOptionsByInstance(
+        settings,
+        providerStatuses,
+        effectivePlanReviewModelSelection?.instanceId,
+        effectivePlanReviewModelSelection?.model,
+      ),
+    [effectivePlanReviewModelSelection, providerStatuses, settings],
+  );
+  const openPlanReviewDialog = useCallback(
+    (planId: string) => {
+      if (
+        !activeThread ||
+        !isServerThread ||
+        !activeThread.proposedPlans.some((plan) => plan.id === planId)
+      ) {
+        return;
+      }
+      if (activeEnvironmentUnavailable) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Reconnect before starting a plan review",
+            description:
+              activeEnvironmentUnavailableLabel ?? "The source environment is unavailable.",
+          }),
+        );
+        return;
+      }
+      setPlanReviewModelOverride(null);
+      setPlanReviewDialogPlanId(planId);
+    },
+    [activeEnvironmentUnavailable, activeEnvironmentUnavailableLabel, activeThread, isServerThread],
+  );
+  const closePlanReviewDialog = useCallback(() => {
+    if (startingPlanId !== null) {
+      return;
+    }
+    setPlanReviewDialogPlanId(null);
+    setPlanReviewModelOverride(null);
+  }, [startingPlanId]);
+  const confirmPlanReview = useCallback(async () => {
+    if (
+      !activeThread ||
+      !isServerThread ||
+      !planReviewPlan ||
+      !effectivePlanReviewModelSelection ||
+      activeEnvironmentUnavailable
+    ) {
+      return;
+    }
+    const reviewThreadId = await startPlanReview({
+      environmentId: activeThread.environmentId,
+      sourceThread: activeThread,
+      plan: planReviewPlan,
+      modelSelection: effectivePlanReviewModelSelection,
+      instructions: settings.planReviewInstructions,
+    });
+    if (reviewThreadId !== null) {
+      setPlanReviewDialogPlanId(null);
+      setPlanReviewModelOverride(null);
+    }
+  }, [
+    activeEnvironmentUnavailable,
+    activeThread,
+    effectivePlanReviewModelSelection,
+    isServerThread,
+    planReviewPlan,
+    settings.planReviewInstructions,
+    startPlanReview,
+  ]);
+  const openPlanReviewThread = useCallback(
+    (reviewThreadId: ThreadId) => {
+      if (!activeProject) return;
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: activeProject.environmentId, threadId: reviewThreadId },
+      });
+    },
+    [activeProject, navigate],
+  );
+
+  const revisePlanFromReview = useCallback(
+    async ({ planId, feedback }: { planId: string; feedback: string }) => {
+      if (
+        !activeThread ||
+        !isServerThread ||
+        isWorking ||
+        activeEnvironmentUnavailable ||
+        sendInFlightRef.current
+      ) {
+        return;
+      }
+      const sourcePlan = activeThread.proposedPlans.find((plan) => plan.id === planId);
+      if (!sourcePlan) {
+        return;
+      }
+
+      const createdAt = new Date().toISOString();
+      const messageId = newMessageId();
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(activeThread.id, null);
+      const result = await startThreadTurn({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId: activeThread.id,
+          message: {
+            messageId,
+            role: "user",
+            text: buildPlanRevisionPrompt({
+              planMarkdown: sourcePlan.planMarkdown,
+              reviewFeedback: feedback,
+            }),
+            attachments: [],
+          },
+          modelSelection: activeThread.modelSelection,
+          titleSeed: activeThread.title,
+          runtimeMode: activeThread.runtimeMode,
+          interactionMode: activeThread.interactionMode,
+          createdAt,
+        },
+      });
+      if (result._tag === "Success") {
+        acknowledgeActiveThreadWoke();
+        sendInFlightRef.current = false;
+        return;
+      }
+
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error
+            ? error.message
+            : "Could not revise the plan from review feedback.",
+        );
+      }
+    },
+    [
+      acknowledgeActiveThreadWoke,
+      activeEnvironmentUnavailable,
+      activeThread,
+      beginLocalDispatch,
+      isServerThread,
+      isWorking,
+      resetLocalDispatch,
+      setThreadError,
+      startThreadTurn,
+    ],
+  );
 
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
@@ -5982,6 +6426,26 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
+    ) : activeRightPanelSurface?.kind === "git" ? (
+      <GitPanel
+        environmentId={activeProject?.environmentId ?? null}
+        cwd={gitPanelCwd}
+        folders={gitPanelFolders}
+        threadRef={activeThreadRef}
+        onSelectFolder={selectGitPanelFolderPath}
+        onOpenFile={openFileSurface}
+      />
+    ) : activeRightPanelSurface?.kind === "pull-requests" ? (
+      <PullRequestsPanel
+        environmentId={activeProject?.environmentId ?? null}
+        cwd={activeProject?.workspaceRoot ?? null}
+        threadId={activeThreadRef?.threadId ?? null}
+        projectId={activeProject?.id ?? null}
+        resolveModelSelection={resolveReviewModelSelection}
+        runtimeMode={runtimeMode}
+        onPrepared={handlePreparedPullRequestThread}
+        onOpenThread={openReviewThread}
+      />
     ) : activeRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
@@ -6070,6 +6534,14 @@ function ChatViewContent(props: ChatViewProps) {
         <ThreadErrorBanner
           error={threadError}
           onDismiss={() => setThreadError(activeThread.id, null)}
+          {...(canContinueFailedSubmission
+            ? {
+                onContinueInNewThread: () => {
+                  void onContinueFailedSubmissionInNewThread();
+                },
+                recovering: recoveringFailedSubmission,
+              }
+            : {})}
         />
         {/* Main content area with optional plan sidebar */}
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -6111,6 +6583,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
+                palette={palette}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
@@ -6123,6 +6596,12 @@ function ChatViewContent(props: ChatViewProps) {
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
                 loadEarlier={loadEarlierTurns}
+                planReviews={activeThread.proposedPlanReviews ?? []}
+                reviewStartingPlanId={startingPlanId}
+                sourceBusy={isWorking}
+                onReviewPlan={openPlanReviewDialog}
+                onOpenPlanReview={openPlanReviewThread}
+                onRevisePlan={revisePlanFromReview}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
@@ -6378,6 +6857,82 @@ function ChatViewContent(props: ChatViewProps) {
                 onPrepared={handlePreparedPullRequestThread}
               />
             ) : null}
+
+            <Dialog
+              open={planReviewDialogPlanId !== null}
+              onOpenChange={(open) => {
+                if (!open) {
+                  closePlanReviewDialog();
+                }
+              }}
+            >
+              <DialogPopup className="max-w-xl">
+                <DialogHeader>
+                  <DialogTitle>Review plan</DialogTitle>
+                  <DialogDescription>
+                    A separate background thread will critique this plan. It will not implement
+                    changes or modify files.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogPanel className="space-y-4">
+                  <div className="rounded-xl border border-border/70 bg-muted/24 p-3 text-sm">
+                    <p className="font-medium text-foreground">
+                      {planReviewPlan ? "Reviewing the selected proposed plan" : "Plan unavailable"}
+                    </p>
+                    <p className="mt-1 text-muted-foreground text-xs">
+                      The review stays linked to this plan and can be opened or used to request a
+                      revised plan when it finishes.
+                    </p>
+                  </div>
+                  <label className="grid gap-1.5">
+                    <span className="text-xs font-medium text-foreground">Reviewing agent</span>
+                    {effectivePlanReviewModelSelection ? (
+                      <ProviderModelPicker
+                        activeInstanceId={effectivePlanReviewModelSelection.instanceId}
+                        model={effectivePlanReviewModelSelection.model}
+                        lockedProvider={null}
+                        instanceEntries={planReviewInstanceEntries}
+                        modelOptionsByInstance={planReviewModelOptionsByInstance}
+                        triggerVariant="outline"
+                        triggerClassName="w-full max-w-none text-foreground/90 hover:text-foreground"
+                        triggerAriaLabel="Plan review agent"
+                        disabled={startingPlanId !== null}
+                        onInstanceModelChange={(instanceId, model) => {
+                          setPlanReviewModelOverride(createModelSelection(instanceId, model));
+                        }}
+                      />
+                    ) : (
+                      <p className="text-destructive text-xs">
+                        No configured reviewing agent is currently available.
+                      </p>
+                    )}
+                  </label>
+                </DialogPanel>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={closePlanReviewDialog}
+                    disabled={startingPlanId !== null}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void confirmPlanReview()}
+                    disabled={
+                      planReviewPlan === null ||
+                      effectivePlanReviewModelSelection === null ||
+                      startingPlanId !== null
+                    }
+                  >
+                    {startingPlanId !== null ? "Starting review…" : "Start review"}
+                  </Button>
+                </DialogFooter>
+              </DialogPopup>
+            </Dialog>
           </div>
           {/* end chat column */}
         </div>
@@ -6423,9 +6978,13 @@ function ChatViewContent(props: ChatViewProps) {
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
           onAddAgents={addAgentsSurface}
+          onAddGit={addGitSurface}
+          onAddPullRequests={addPullRequestsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          gitAvailable={activeProject !== null}
+          pullRequestsAvailable={activeProject !== null && isGitRepo}
           liveAgentCount={agentPanelModel.liveCount}
         >
           {rightPanelContent}
@@ -6452,9 +7011,13 @@ function ChatViewContent(props: ChatViewProps) {
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
             onAddAgents={addAgentsSurface}
+            onAddGit={addGitSurface}
+            onAddPullRequests={addPullRequestsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            gitAvailable={activeProject !== null}
+            pullRequestsAvailable={activeProject !== null && isGitRepo}
             liveAgentCount={agentPanelModel.liveCount}
           >
             {rightPanelContent}

@@ -40,6 +40,9 @@ import {
   VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
+  VcsListCommitsInput,
+  VcsListCommitsResult,
+  VcsStagePathsInput,
   VcsStatusInput,
   VcsStatusResult,
   VcsStatusStreamEvent,
@@ -159,12 +162,23 @@ import {
   ResourceTelemetryRetryResult,
   ResourceTelemetrySnapshot,
 } from "./resourceTelemetry.ts";
+import {
+  McpServerRegistryError,
+  McpServerRemoveInput,
+  McpServerTestConnectionInput,
+  McpServerTestConnectionResult,
+  McpServerUpsertInput,
+  McpServerUpsertResult,
+  McpServersListResult,
+} from "./mcpServers.ts";
 import { UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
+  SourceControlListChangeRequestsInput,
+  SourceControlListChangeRequestsResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryError,
@@ -200,6 +214,9 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+  vcsStagePaths: "vcs.stagePaths",
+  vcsUnstagePaths: "vcs.unstagePaths",
+  vcsListCommits: "vcs.listCommits",
 
   // Git workflow methods
   gitRunStackedAction: "git.runStackedAction",
@@ -262,6 +279,13 @@ export const WS_METHODS = {
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
+  sourceControlListChangeRequests: "sourceControl.listChangeRequests",
+
+  // MCP server registry methods
+  mcpServersList: "mcpServers.list",
+  mcpServersUpsert: "mcpServers.upsert",
+  mcpServersRemove: "mcpServers.remove",
+  mcpServersTestConnection: "mcpServers.testConnection",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -455,6 +479,39 @@ export const WsSourceControlPublishRepositoryRpc = Rpc.make(
   },
 );
 
+export const WsMcpServersListRpc = Rpc.make(WS_METHODS.mcpServersList, {
+  payload: Schema.Struct({}),
+  success: McpServersListResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpServersUpsertRpc = Rpc.make(WS_METHODS.mcpServersUpsert, {
+  payload: McpServerUpsertInput,
+  success: McpServerUpsertResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpServersRemoveRpc = Rpc.make(WS_METHODS.mcpServersRemove, {
+  payload: McpServerRemoveInput,
+  success: Schema.Void,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsMcpServersTestConnectionRpc = Rpc.make(WS_METHODS.mcpServersTestConnection, {
+  payload: McpServerTestConnectionInput,
+  success: McpServerTestConnectionResult,
+  error: Schema.Union([McpServerRegistryError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsSourceControlListChangeRequestsRpc = Rpc.make(
+  WS_METHODS.sourceControlListChangeRequests,
+  {
+    payload: SourceControlListChangeRequestsInput,
+    success: SourceControlListChangeRequestsResult,
+    error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
@@ -566,6 +623,22 @@ export const WsVcsCreateRefRpc = Rpc.make(WS_METHODS.vcsCreateRef, {
 export const WsVcsSwitchRefRpc = Rpc.make(WS_METHODS.vcsSwitchRef, {
   payload: VcsSwitchRefInput,
   success: VcsSwitchRefResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsStagePathsRpc = Rpc.make(WS_METHODS.vcsStagePaths, {
+  payload: VcsStagePathsInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsUnstagePathsRpc = Rpc.make(WS_METHODS.vcsUnstagePaths, {
+  payload: VcsStagePathsInput,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsListCommitsRpc = Rpc.make(WS_METHODS.vcsListCommits, {
+  payload: VcsListCommitsInput,
+  success: VcsListCommitsResult,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
@@ -862,6 +935,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsMcpServersListRpc,
+  WsMcpServersUpsertRpc,
+  WsMcpServersRemoveRpc,
+  WsMcpServersTestConnectionRpc,
+  WsSourceControlListChangeRequestsRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,
@@ -882,6 +960,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  WsVcsStagePathsRpc,
+  WsVcsUnstagePathsRpc,
+  WsVcsListCommitsRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
   WsTerminalOpenRpc,

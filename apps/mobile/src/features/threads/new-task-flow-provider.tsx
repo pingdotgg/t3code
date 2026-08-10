@@ -265,6 +265,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       // (branch queries, worktree bootstrap) must skip it, not receive a
       // fabricated path.
       workspaceRoot: creation.projectCwd ?? "",
+      // The enqueue-time snapshot carries no folder list.
+      additionalFolders: [],
       repositoryIdentity: null,
       defaultModelSelection: editingPendingTask.modelSelection ?? null,
       scripts: [],

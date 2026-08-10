@@ -35,6 +35,7 @@ const seedProject = projectEvent(createEmptyReadModel(now), {
     workspaceRoot: "/tmp/import-project",
     defaultModelSelection: null,
     scripts: [],
+    additionalFolders: [],
     createdAt: now,
     updatedAt: now,
   },

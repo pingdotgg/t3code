@@ -12,6 +12,9 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  type GitCommitScope,
+  type VcsListCommitsInput,
+  type VcsListCommitsResult,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -209,7 +212,21 @@ export class GitVcsDriver extends Context.Service<
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
+      scope?: GitCommitScope,
     ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
+    /** Stage the given paths, additions and deletions alike. */
+    readonly stagePaths: (
+      cwd: string,
+      paths: readonly string[],
+    ) => Effect.Effect<void, GitCommandError>;
+    /** Drop the given paths from the index, leaving the working copy alone. */
+    readonly unstagePaths: (
+      cwd: string,
+      paths: readonly string[],
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly listCommits: (
+      input: VcsListCommitsInput,
+    ) => Effect.Effect<VcsListCommitsResult, GitCommandError>;
     readonly commit: (
       cwd: string,
       subject: string,

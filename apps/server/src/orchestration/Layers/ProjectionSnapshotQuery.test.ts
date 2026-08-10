@@ -244,6 +244,43 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         )
       `;
 
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          source_proposed_plan_kind,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-1',
+          'turn-review',
+          NULL,
+          'thread-1',
+          'plan-1',
+          'review',
+          NULL,
+          'completed',
+          '2026-02-24T00:00:08.500Z',
+          '2026-02-24T00:00:08.500Z',
+          '2026-02-24T00:00:08.500Z',
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
       let sequence = 5;
       for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
         yield* sql`
@@ -270,6 +307,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          additionalFolders: [],
           repositoryIdentity: null,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -314,6 +352,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",
+              kind: "implementation",
             },
           },
           createdAt: "2026-02-24T00:00:02.000Z",
@@ -347,6 +386,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               implementationThreadId: ThreadId.make("thread-2"),
               createdAt: "2026-02-24T00:00:05.000Z",
               updatedAt: "2026-02-24T00:00:05.500Z",
+            },
+          ],
+          proposedPlanReviews: [
+            {
+              sourcePlanId: "plan-1",
+              reviewThreadId: ThreadId.make("thread-1"),
+              startedAt: "2026-02-24T00:00:08.500Z",
             },
           ],
           activities: [
@@ -390,6 +436,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
+          additionalFolders: [],
           repositoryIdentity: null,
           defaultModelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
@@ -433,6 +480,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             sourceProposedPlan: {
               threadId: ThreadId.make("thread-1"),
               planId: "plan-1",
+              kind: "implementation",
             },
           },
           createdAt: "2026-02-24T00:00:02.000Z",
@@ -1833,6 +1881,58 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         (yield* snapshotQuery.searchThreads({ query: "user needle" })).matches,
         [],
       );
+    }),
+  );
+
+  it.effect("resolves a project by one of its additional source folders", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          additional_folders_json,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-multi',
+          'Multi Folder',
+          '/repo/app',
+          '[{"path":"/repo/docs"},{"path":"/repo/design-system"}]',
+          NULL,
+          '[]',
+          '2026-03-01T00:00:00.000Z',
+          '2026-03-01T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      const viaPrimary = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/repo/app");
+      assert.equal(viaPrimary._tag, "Some");
+
+      // Auto-bootstrap and the project CLI resolve a path to a project this
+      // way; a secondary folder must map to its owner, not look unclaimed.
+      const viaSecondary = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/repo/docs");
+      assert.equal(viaSecondary._tag, "Some");
+      if (viaSecondary._tag === "Some") {
+        assert.equal(viaSecondary.value.id, asProjectId("project-multi"));
+        assert.equal(viaSecondary.value.workspaceRoot, "/repo/app");
+        assert.deepEqual(viaSecondary.value.additionalFolders, [
+          { path: "/repo/docs" },
+          { path: "/repo/design-system" },
+        ]);
+      }
+
+      const unrelated = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/repo/nope");
+      assert.equal(unrelated._tag, "None");
     }),
   );
 });

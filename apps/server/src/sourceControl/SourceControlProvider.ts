@@ -91,6 +91,17 @@ export class SourceControlProvider extends Context.Service<
       readonly state: ChangeRequestState | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<ChangeRequest>, SourceControlProviderError>;
+    /**
+     * Repo-wide listing, unfiltered by branch. `listChangeRequests` answers
+     * "is there a PR for this branch?"; this answers "what is open on this
+     * repo?" and backs the Code Review & PRs panel.
+     */
+    readonly listRepositoryChangeRequests: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProviderContext;
+      readonly state: ChangeRequestState | "all";
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<ChangeRequest>, SourceControlProviderError>;
     readonly getChangeRequest: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

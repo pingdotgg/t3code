@@ -96,6 +96,8 @@ describe("theme failure handling", () => {
     vi.stubGlobal("document", {
       documentElement: {
         classList: { toggle: vi.fn() },
+        // applyTheme writes the active palette here.
+        dataset: {},
       },
     });
 
@@ -152,17 +154,25 @@ describe("theme failure handling", () => {
     const { useTheme } = await import("./useTheme");
     useTheme();
     readSnapshot?.();
-    readSnapshot?.();
 
-    expect(themeGetItem).toHaveBeenCalledTimes(1);
-    expect(errorLog).toHaveBeenCalledTimes(1);
+    // A snapshot reads the theme and palette keys, then caches each failure.
+    // Counting relative to the first snapshot keeps this about the retry
+    // behavior rather than about how many keys the store happens to have.
+    const readsAfterFirstSnapshot = getItem.mock.calls.length;
+    const logsAfterFirstSnapshot = errorLog.mock.calls.length;
+    expect(readsAfterFirstSnapshot).toBeGreaterThan(0);
+
+    readSnapshot?.();
+    expect(getItem).toHaveBeenCalledTimes(readsAfterFirstSnapshot);
+    expect(errorLog).toHaveBeenCalledTimes(logsAfterFirstSnapshot);
 
     const unsubscribe = subscribeToTheme?.(() => undefined);
     storageHandler?.({ key: "t3code:theme" } as StorageEvent);
     readSnapshot?.();
 
-    expect(themeGetItem).toHaveBeenCalledTimes(2);
-    expect(errorLog).toHaveBeenCalledTimes(2);
+    // The event names the theme key, so only that key's cached failure clears.
+    expect(getItem).toHaveBeenCalledTimes(readsAfterFirstSnapshot + 1);
+    expect(errorLog).toHaveBeenCalledTimes(logsAfterFirstSnapshot + 1);
     unsubscribe?.();
   });
 

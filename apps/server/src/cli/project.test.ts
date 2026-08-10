@@ -3,8 +3,10 @@ import { assert, it } from "@effect/vitest";
 import { EnvironmentInternalError } from "@t3tools/contracts";
 
 import {
+  ProjectFolderMutationNoOpError,
   ProjectLiveServerDeclaredResponseError,
   ProjectLiveServerRequestError,
+  ProjectPrimaryFolderNotListedError,
   projectCommandErrorFromLiveServerRequest,
 } from "./project.ts";
 
@@ -34,4 +36,28 @@ it("preserves unexpected server failures without deriving the message from them"
   assert.strictEqual(error.operation, "callLiveServer");
   assert.strictEqual(error.message, "Failed to call the running server.");
   assert.strictEqual(error.cause, cause);
+});
+
+it("explains that --primary must name one of the given paths", () => {
+  const error = new ProjectPrimaryFolderNotListedError({
+    operation: "addProject",
+    primary: "/repo/docs",
+  });
+
+  assert.strictEqual(error.message, "--primary '/repo/docs' must be one of the given paths.");
+});
+
+it("explains each no-op folder mutation in terms the user can act on", () => {
+  const make = (kind: "add" | "remove" | "promote") =>
+    new ProjectFolderMutationNoOpError({
+      operation: "mutateProjectFolder",
+      kind,
+      folder: "/repo/docs",
+    }).message;
+
+  assert.strictEqual(make("add"), "Project already owns folder '/repo/docs'.");
+  // Removing the primary is refused rather than silently repointing the
+  // project, so the message has to name the way forward.
+  assert.match(make("remove"), /promote another folder first/);
+  assert.match(make("promote"), /already the primary folder/);
 });

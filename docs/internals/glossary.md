@@ -28,6 +28,14 @@ The root filesystem path for a project. In [the orchestration model][1], it is t
 
 A Git worktree used as an isolated workspace for a thread. If a thread has a `worktreePath` in [the contracts][1], it runs there instead of in the main working tree. Git operations live behind the VCS driver contract in `apps/server/src/vcs/VcsDriver.ts`, implemented by [GitVcsDriverCore.ts][3].
 
+#### Board column
+
+A derived grouping of threads on the board view (`/board`). Columns are computed, never stored — a
+thread has no user-settable status. `resolveBoardColumn` in [Board.logic.ts][25] mirrors the sidebar
+partition (snooze outranks a pin, a pin suppresses auto-settle) and then splits the active remainder
+by [the status pill][26]. Only `Done` and `Snoozed` are writable, because only they map to real
+commands (`thread.settle` / `thread.snooze`); the rest are agent-owned. See [board.md][27].
+
 ### Thread timeline
 
 #### Thread
@@ -179,3 +187,6 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/web/src/components/board/Board.logic.ts
+[26]: ../../apps/web/src/components/Sidebar.logic.ts
+[27]: ../user/board.md

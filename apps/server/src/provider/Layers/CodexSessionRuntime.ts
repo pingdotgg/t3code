@@ -101,6 +101,11 @@ export interface CodexSessionRuntimeOptions {
   readonly launchArgs?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly cwd: string;
+  /**
+   * The project's non-primary source folders. Codex has no multi-root thread
+   * parameter, so these reach the agent as the turn sandbox's writable roots.
+   */
+  readonly additionalDirectories?: ReadonlyArray<string>;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
@@ -316,6 +321,12 @@ function buildThreadStartParams(input: {
 
 function runtimeModeToTurnSandboxPolicy(
   input: RuntimeMode,
+  /**
+   * The project's non-primary source folders. Codex sandboxes writes to the
+   * thread's cwd unless the extra roots are named explicitly, so without this
+   * the agent can read but not edit them.
+   */
+  additionalDirectories?: ReadonlyArray<string>,
 ): EffectCodexSchema.V2TurnStartParams__SandboxPolicy {
   switch (input) {
     case "approval-required":
@@ -326,6 +337,9 @@ function runtimeModeToTurnSandboxPolicy(
     case "auto":
       return {
         type: "workspaceWrite",
+        ...(additionalDirectories !== undefined && additionalDirectories.length > 0
+          ? { writableRoots: additionalDirectories }
+          : {}),
       };
     case "full-access":
     default:
@@ -370,6 +384,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly additionalDirectories?: ReadonlyArray<string>;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -397,7 +412,7 @@ export function buildTurnStartParams(input: {
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
     approvalsReviewer: config.approvalsReviewer,
-    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
+    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode, input.additionalDirectories),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
@@ -921,6 +936,11 @@ export const makeCodexSessionRuntime = (
       status: "connecting",
       runtimeMode: options.runtimeMode,
       cwd: options.cwd,
+      // Echoed back so the reactor can tell when the folder set changed and
+      // the session has to restart.
+      ...(options.additionalDirectories !== undefined
+        ? { additionalDirectories: options.additionalDirectories }
+        : {}),
       ...(options.model ? { model: options.model } : {}),
       threadId: options.threadId,
       ...(options.resumeCursor !== undefined ? { resumeCursor: options.resumeCursor } : {}),
@@ -1770,6 +1790,9 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(options.additionalDirectories !== undefined
+              ? { additionalDirectories: options.additionalDirectories }
+              : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
