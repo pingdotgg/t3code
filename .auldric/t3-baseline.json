@@ -73,8 +73,8 @@
       {
         "path": "pnpm-lock.yaml",
         "owner": "#5 and #27",
-        "reason": "Register the additive Auldric public-site and Marketing organization-workspace package importers without changing shared dependency versions.",
-        "contentSha256": "33c8e9d689910930158a36a1781d6d7a85f9de3bda4c05071dc99a26fcea36e8",
+        "reason": "Register the additive Auldric public-site and Marketing organization-workspace package importers, including each package's direct test runner, without changing shared dependency versions.",
+        "contentSha256": "2d39bc3994d710402bc11cc2fc4f2a88361b619b46378aa8adc1f76e607ca679",
         "test": "pnpm --filter=@auldric/public... --filter=@auldric/marketing-domain... install --frozen-lockfile --offline && pnpm --filter @auldric/public --filter @auldric/marketing-domain test"
       }
     ],
