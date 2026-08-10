@@ -92,7 +92,11 @@ import {
   buildSidebarProjectSnapshots,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import {
+  legacyProjectCwdPreferenceKey,
+  type SidebarThreadSection,
+  useUiStateStore,
+} from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -394,22 +398,24 @@ function SnoozePopoverButton(props: {
   );
 }
 
-// Subset of useSortable applied to a pinned card's root <li>. Listeners go
-// on the whole card (no dedicated handle): the pointer sensor's distance
+// Subset of useSortable applied to a thread row's root <li>. Listeners go
+// on the whole row (no dedicated handle): the pointer sensor's distance
 // constraint keeps plain clicks working, and we skip dnd-kit's aria
-// attributes since there is no keyboard sensor and the card body already
+// attributes since there is no keyboard sensor and the row body already
 // carries its own button semantics.
-type SortablePinnedRowBag = Pick<
+type SortableThreadRowBag = Pick<
   ReturnType<typeof useSortable>,
   "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
 >;
 
-function SortablePinnedThreadRow(props: {
+function SortableSidebarThreadRow(props: {
   id: string;
-  children: (bag: SortablePinnedRowBag) => ReactNode;
+  section?: SidebarThreadSection | undefined;
+  children: (bag: SortableThreadRowBag) => ReactNode;
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.id,
+    ...(props.section !== undefined ? { data: { section: props.section } } : {}),
   });
   return props.children({ listeners, setNodeRef, transform, transition, isDragging });
 }
@@ -664,7 +670,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Present only on pinned cards whose server supports reordering: dnd-kit
   // sortable bag applied to the card root so the whole card drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
-  sortable?: SortablePinnedRowBag | undefined;
+  sortable?: SortableThreadRowBag | undefined;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
   // When a snooze ended (timer or early wake); drives the Woke pill until
@@ -1582,6 +1588,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const threadOrderBySection = useUiStateStore((store) => store.threadOrderBySection);
+  const reorderThreads = useUiStateStore((store) => store.reorderThreads);
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1874,9 +1882,9 @@ export default function Sidebar() {
   const {
     pinnedThreads,
     reorderablePinnedKeys,
-    activeThreads,
-    snoozedThreads,
-    settledThreads,
+    activeThreads: defaultActiveThreads,
+    snoozedThreads: defaultSnoozedThreads,
+    settledThreads: defaultSettledThreads,
     snoozeNow,
   } = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
@@ -1965,6 +1973,34 @@ export default function Sidebar() {
     snoozeWakeTick,
     threads,
   ]);
+
+  const activeThreads = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: defaultActiveThreads,
+        preferredIds: threadOrderBySection.active,
+        getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      }),
+    [defaultActiveThreads, threadOrderBySection.active],
+  );
+  const snoozedThreads = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: defaultSnoozedThreads,
+        preferredIds: threadOrderBySection.snoozed,
+        getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      }),
+    [defaultSnoozedThreads, threadOrderBySection.snoozed],
+  );
+  const settledThreads = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: defaultSettledThreads,
+        preferredIds: threadOrderBySection.settled,
+        getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      }),
+    [defaultSettledThreads, threadOrderBySection.settled],
+  );
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -2133,6 +2169,37 @@ export default function Sidebar() {
   );
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
   snoozedThreadKeysRef.current = snoozedThreadKeys;
+
+  const threadKeysBySection = useMemo(
+    () => ({
+      active: activeThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+      snoozed: visibleSnoozedThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+      settled: renderedSettledThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    }),
+    [activeThreads, renderedSettledThreads, visibleSnoozedThreads],
+  );
+  const threadSectionDndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  const handleThreadSectionDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      if (event.over === null) return;
+      const activeSection = event.active.data.current?.section as SidebarThreadSection | undefined;
+      const overSection = event.over.data.current?.section as SidebarThreadSection | undefined;
+      if (activeSection === undefined || activeSection !== overSection) return;
+      const activeKey = String(event.active.id);
+      const overKey = String(event.over.id);
+      if (activeKey === overKey) return;
+      reorderThreads(activeSection, threadKeysBySection[activeSection], activeKey, overKey);
+    },
+    [reorderThreads, threadKeysBySection],
+  );
 
   const jumpLabelByKey = useMemo(() => {
     const mapping = new Map<string, string>();
@@ -3421,7 +3488,7 @@ export default function Sidebar() {
                   const renderThreadRow = (
                     thread: EnvironmentThreadShell,
                     section: "pinned" | "active" | "snoozed" | "settled",
-                    sortable?: SortablePinnedRowBag,
+                    sortable?: SortableThreadRowBag,
                   ) => {
                     const threadKey = scopedThreadKey(
                       scopeThreadRef(thread.environmentId, thread.id),
@@ -3518,6 +3585,24 @@ export default function Sidebar() {
                       />
                     );
                   };
+                  const renderSortableThreadRow = (
+                    thread: EnvironmentThreadShell,
+                    section: SidebarThreadSection,
+                  ) => {
+                    const threadKey = scopedThreadKey(
+                      scopeThreadRef(thread.environmentId, thread.id),
+                    );
+                    const rowVariant = section === "active" ? "card" : "slim";
+                    return (
+                      <SortableSidebarThreadRow
+                        key={`${threadKey}:${rowVariant}`}
+                        id={threadKey}
+                        section={section}
+                      >
+                        {(bag) => renderThreadRow(thread, section, bag)}
+                      </SortableSidebarThreadRow>
+                    );
+                  };
                   // Draft block above everything, then the pinned block:
                   // full cards above the inbox, closed by a thin divider (the
                   // pin glyphs carry the meaning, so no header text). Both
@@ -3558,9 +3643,9 @@ export default function Sidebar() {
                             return renderThreadRow(thread, "pinned");
                           }
                           return (
-                            <SortablePinnedThreadRow key={threadKey} id={threadKey}>
+                            <SortableSidebarThreadRow key={threadKey} id={threadKey}>
                               {(bag) => renderThreadRow(thread, "pinned", bag)}
-                            </SortablePinnedThreadRow>
+                            </SortableSidebarThreadRow>
                           );
                         })}
                       </SortableContext>
@@ -3576,82 +3661,96 @@ export default function Sidebar() {
                       />,
                     );
                   }
-                  for (const thread of activeThreads) {
-                    items.push(renderThreadRow(thread, "active"));
-                  }
-                  // Snoozed shelf: between the inbox and Settled — out of the
-                  // way, never gone. The header always renders while anything
-                  // is snoozed (the count is the whole footprint when
-                  // collapsed); rows only when expanded. Vanishes entirely at
-                  // count 0.
-                  if (snoozedThreads.length > 0) {
-                    items.push(
-                      <li
-                        key="snoozed-shelf-header"
-                        data-thread-selection-safe
-                        className="list-none"
+                  items.push(
+                    <DndContext
+                      key="thread-sections-dnd"
+                      sensors={threadSectionDndSensors}
+                      collisionDetection={closestCenter}
+                      modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                      onDragEnd={handleThreadSectionDragEnd}
+                    >
+                      <SortableContext
+                        items={threadKeysBySection.active}
+                        strategy={verticalListSortingStrategy}
                       >
-                        <button
-                          type="button"
-                          onClick={toggleSnoozedShelf}
-                          aria-expanded={snoozedShelfExpanded}
-                          data-testid="sidebar-snoozed-shelf-toggle"
-                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                        {activeThreads.map((thread) => renderSortableThreadRow(thread, "active"))}
+                      </SortableContext>
+                      {snoozedThreads.length > 0 ? (
+                        <li
+                          key="snoozed-shelf-header"
+                          data-thread-selection-safe
+                          className="list-none"
                         >
-                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                            {snoozedShelfExpanded
-                              ? "Snoozed"
-                              : `Snoozed (${snoozedThreads.length})`}
-                          </span>
-                          <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
-                          <ChevronDownIcon
-                            aria-hidden
-                            className={cn(
-                              "size-3 text-blue-600 transition-transform dark:text-blue-400",
-                              snoozedShelfExpanded && "rotate-180",
-                            )}
-                          />
-                        </button>
-                      </li>,
-                    );
-                    for (const thread of visibleSnoozedThreads) {
-                      items.push(renderThreadRow(thread, "snoozed"));
-                    }
-                  }
-                  if (settledThreads.length > 0) {
-                    items.push(
-                      <li
-                        key="settled-shelf-header"
-                        data-thread-selection-safe
-                        className="list-none"
+                          <button
+                            type="button"
+                            onClick={toggleSnoozedShelf}
+                            aria-expanded={snoozedShelfExpanded}
+                            data-testid="sidebar-snoozed-shelf-toggle"
+                            className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                          >
+                            <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                              {snoozedShelfExpanded
+                                ? "Snoozed"
+                                : `Snoozed (${snoozedThreads.length})`}
+                            </span>
+                            <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
+                            <ChevronDownIcon
+                              aria-hidden
+                              className={cn(
+                                "size-3 text-blue-600 transition-transform dark:text-blue-400",
+                                snoozedShelfExpanded && "rotate-180",
+                              )}
+                            />
+                          </button>
+                        </li>
+                      ) : null}
+                      <SortableContext
+                        items={threadKeysBySection.snoozed}
+                        strategy={verticalListSortingStrategy}
                       >
-                        <button
-                          type="button"
-                          onClick={toggleSettledShelf}
-                          aria-expanded={settledShelfExpanded}
-                          data-testid="sidebar-settled-shelf-toggle"
-                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                        {visibleSnoozedThreads.map((thread) =>
+                          renderSortableThreadRow(thread, "snoozed"),
+                        )}
+                      </SortableContext>
+                      {settledThreads.length > 0 ? (
+                        <li
+                          key="settled-shelf-header"
+                          data-thread-selection-safe
+                          className="list-none"
                         >
-                          <span className="text-xs font-medium text-muted-foreground/50">
-                            {settledShelfExpanded
-                              ? "Settled"
-                              : `Settled (${settledThreads.length})`}
-                          </span>
-                          <span className="h-px flex-1 bg-sidebar-border/60" />
-                          <ChevronDownIcon
-                            aria-hidden
-                            className={cn(
-                              "size-3 text-muted-foreground/50 transition-transform",
-                              settledShelfExpanded && "rotate-180",
-                            )}
-                          />
-                        </button>
-                      </li>,
-                    );
-                  }
-                  for (const thread of renderedSettledThreads) {
-                    items.push(renderThreadRow(thread, "settled"));
-                  }
+                          <button
+                            type="button"
+                            onClick={toggleSettledShelf}
+                            aria-expanded={settledShelfExpanded}
+                            data-testid="sidebar-settled-shelf-toggle"
+                            className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                          >
+                            <span className="text-xs font-medium text-muted-foreground/50">
+                              {settledShelfExpanded
+                                ? "Settled"
+                                : `Settled (${settledThreads.length})`}
+                            </span>
+                            <span className="h-px flex-1 bg-sidebar-border/60" />
+                            <ChevronDownIcon
+                              aria-hidden
+                              className={cn(
+                                "size-3 text-muted-foreground/50 transition-transform",
+                                settledShelfExpanded && "rotate-180",
+                              )}
+                            />
+                          </button>
+                        </li>
+                      ) : null}
+                      <SortableContext
+                        items={threadKeysBySection.settled}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {renderedSettledThreads.map((thread) =>
+                          renderSortableThreadRow(thread, "settled"),
+                        )}
+                      </SortableContext>
+                    </DndContext>,
+                  );
                   return items;
                 })()}
                 {settledShelfExpanded && hiddenSettledCount > 0 ? (
