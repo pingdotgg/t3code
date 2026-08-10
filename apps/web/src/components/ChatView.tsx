@@ -4617,6 +4617,25 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      if (command === "terminal.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (terminalUiState.terminalOpen || activeRightPanelSurface?.kind === "terminal") {
+          setTerminalFocusRequestId((value) => value + 1);
+          return;
+        }
+        // The closed->open transition already requests terminal focus.
+        toggleTerminalVisibility();
+        return;
+      }
+
+      if (command === "chat.focusComposer") {
+        event.preventDefault();
+        event.stopPropagation();
+        focusComposer();
+        return;
+      }
+
       if (command === "rightPanel.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -4712,6 +4731,7 @@ function ChatViewContent(props: ChatViewProps) {
     closeTerminal,
     closePanelTerminal,
     createNewTerminal,
+    focusComposer,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,

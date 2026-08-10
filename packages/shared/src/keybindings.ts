@@ -21,6 +21,9 @@ type WhenToken =
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle" },
   { key: "mod+j", command: "terminal.toggle" },
+  // One key hops focus both ways without touching drawer visibility.
+  { key: "ctrl+`", command: "terminal.focus", when: "!terminalFocus" },
+  { key: "ctrl+`", command: "chat.focusComposer", when: "terminalFocus" },
   { key: "mod+alt+b", command: "rightPanel.toggle" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
