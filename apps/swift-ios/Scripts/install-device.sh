@@ -19,6 +19,8 @@ require_cmd() {
 }
 
 require_cmd awk
+require_cmd git
+require_cmd jq
 require_cmd mktemp
 require_cmd plutil
 require_cmd xcodebuild
@@ -71,17 +73,34 @@ fi
   "set T3_SWIFT_DEVICE_ID to a CoreDevice identifier or UDID from 'xcrun devicectl list devices --columns UDID'"
 [[ -n "${DEVELOPMENT_TEAM}" ]] || die \
   "set T3_SWIFT_DEVELOPMENT_TEAM to your Apple Developer team ID"
+[[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]] || die \
+  "set T3_SWIFT_BUILD_NUMBER to a number newer than the installed phone build"
 
 build_settings=(
   "DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM}"
 )
 
 DEVICE_JSON="$(mktemp -t t3-swift-devices.XXXXXX)"
-trap 'unlink "${DEVICE_JSON}" 2>/dev/null || true' EXIT
+INSTALLED_APPS_JSON="$(mktemp -t t3-swift-installed-apps.XXXXXX)"
+trap 'unlink "${DEVICE_JSON}" "${INSTALLED_APPS_JSON}" 2>/dev/null || true' EXIT
 xcrun devicectl list devices --json-output "${DEVICE_JSON}" --quiet >/dev/null
 DESTINATION_ID="$(
   xcrun swift "${SCRIPT_DIR}/resolve-device-udid.swift" "${DEVICE_JSON}" "${DEVICE_ID}"
 )" || die "could not resolve device '${DEVICE_ID}' to an Xcode destination UDID"
+
+xcrun devicectl device info apps \
+  --device "${DESTINATION_ID}" \
+  --bundle-id "${BUNDLE_IDENTIFIER}" \
+  --json-output "${INSTALLED_APPS_JSON}" \
+  --quiet >/dev/null
+INSTALLED_BUILD_NUMBER="$(
+  jq -r --arg bundle "${BUNDLE_IDENTIFIER}" \
+    'first(.result.apps[]? | select(.bundleIdentifier == $bundle) | .bundleVersion) // empty' \
+    "${INSTALLED_APPS_JSON}"
+)"
+"${SCRIPT_DIR}/validate-device-build-number.sh" \
+  "${T3_SWIFT_BUILD_NUMBER}" "${INSTALLED_BUILD_NUMBER}"
+build_settings+=("CURRENT_PROJECT_VERSION=${T3_SWIFT_BUILD_NUMBER}")
 
 for key in \
   T3CODE_CLERK_PUBLISHABLE_KEY \
@@ -96,10 +115,6 @@ done
 if [[ -n "${T3_SWIFT_VERSION:-}" ]]; then
   build_settings+=("MARKETING_VERSION=${T3_SWIFT_VERSION}")
 fi
-if [[ -n "${T3_SWIFT_BUILD_NUMBER:-}" ]]; then
-  build_settings+=("CURRENT_PROJECT_VERSION=${T3_SWIFT_BUILD_NUMBER}")
-fi
-
 printf '[swift-ios-device] building %s for %s\n' "${BUNDLE_IDENTIFIER}" "${DESTINATION_ID}"
 xcodebuild build \
   -project "${APP_DIR}/T3Code.xcodeproj" \
