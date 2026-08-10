@@ -101,7 +101,7 @@ T3 commit and replay only reviewed, isolated Auldric commits:
    test and guard.
 
    ```bash
-   pnpm --dir scripts run test -- auldric/check-t3-baseline.test.ts
+   pnpm --dir scripts test auldric/check-t3-baseline.test.ts
    node scripts/auldric/check-t3-baseline.ts --fetch
    ```
 

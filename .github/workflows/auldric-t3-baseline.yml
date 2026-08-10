@@ -34,7 +34,7 @@ jobs:
               - --filter=@t3tools/scripts...
 
       - name: Test the baseline guard
-        run: pnpm --dir scripts run test -- auldric/check-t3-baseline.test.ts
+        run: pnpm --dir scripts test auldric/check-t3-baseline.test.ts
 
       - name: Verify ancestry and classify downstream drift
         run: node scripts/auldric/check-t3-baseline.ts --fetch --run-declared-tests
