@@ -530,11 +530,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         timeoutMs: DEFAULT_TIMEOUT_MS,
       })
-      .pipe(
-        Effect.mapError(
-          (cause) => new GitHubCliAuthenticationError({ command: "gh", cwd: input.cwd, cause }),
-        ),
-      );
+      .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
     const token = output.stdout.trim();
     if (token.length === 0) {
       return yield* new GitHubAccountTokenUnavailableError({

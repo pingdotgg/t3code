@@ -178,6 +178,41 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(selectedLayer));
   });
 
+  it.effect("preserves missing-tool classification while reading a keyring token", () => {
+    const cause = new VcsProcessSpawnError({
+      operation: "GitHubCli.authToken",
+      command: "gh",
+      cwd: "/repo",
+      cause: PlatformError.systemError({
+        _tag: "NotFound",
+        module: "ChildProcess",
+        method: "spawn",
+        description: "gh missing",
+      }),
+    });
+    mockRun.mockReturnValueOnce(Effect.fail(cause));
+    const selectedLayer = layerWithSettings({
+      githubDefaultAccounts: {
+        "github.com": { host: "github.com", login: "work-user", tokenSource: "keyring" },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .execute({
+          cwd: "/repo",
+          host: "github.com",
+          repository: "acme/widget",
+          args: ["api", "user"],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "GitHubCliUnavailableError");
+      assert.strictEqual(error.cause, cause);
+    }).pipe(Effect.provide(selectedLayer));
+  });
+
   it.effect("normalizes host casing before selecting the token environment variable", () => {
     process.env.GITHUB_TOKEN = "environment-token";
     mockRun.mockReturnValueOnce(Effect.succeed(processOutput("ok")));
