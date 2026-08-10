@@ -419,20 +419,21 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             const stdout = yield* Ref.get(stdoutRef);
             const stderr = yield* Ref.get(stderrRef);
             const exitCode = Number(code);
+            const commandMissing = yield* isWindowsCommandNotFound(exitCode, stderr);
             yield* Deferred.fail(
               readyDeferred,
               new OpenCodeRuntimeError({
                 operation: "startOpenCodeServerProcess",
-                detail: [
-                  `OpenCode server exited before startup completed (code: ${String(exitCode)}).`,
-                  stdout.trim() ? `stdout:\n${stdout.trim()}` : null,
-                  stderr.trim() ? `stderr:\n${stderr.trim()}` : null,
-                ]
-                  .filter(Boolean)
-                  .join("\n\n"),
-                cause: (yield* isWindowsCommandNotFound(exitCode, stderr))
-                  ? new Error(`spawn ${input.binaryPath} ENOENT`)
-                  : { exitCode, stdout, stderr },
+                detail: commandMissing
+                  ? `spawn ${input.binaryPath} ENOENT`
+                  : [
+                      `OpenCode server exited before startup completed (code: ${String(exitCode)}).`,
+                      stdout.trim() ? `stdout:\n${stdout.trim()}` : null,
+                      stderr.trim() ? `stderr:\n${stderr.trim()}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join("\n\n"),
+                cause: { exitCode, stdout, stderr },
               }),
             ).pipe(Effect.ignore);
           }),
