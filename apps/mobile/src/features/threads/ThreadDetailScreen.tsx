@@ -2,6 +2,7 @@ import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
+import { HeaderHeightContext } from "@react-navigation/elements";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -15,8 +16,23 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, View, type GestureResponderEvent } from "react-native";
+import {
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  Platform,
+  ScrollView,
+  useWindowDimensions,
+  View,
+  type GestureResponderEvent,
+} from "react-native";
 import { KeyboardController, KeyboardStickyView } from "react-native-keyboard-controller";
 import Animated, { FadeInDown, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -204,6 +220,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadFeed = props.selectedThreadFeed;
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
+  const windowDimensions = useWindowDimensions();
+  // The pending approval/user-input cards live in the bottom-anchored composer
+  // overlay, so a card with many questions grows upward past the navigation
+  // header. Cap the card stack to the space between the header and the
+  // composer and let it scroll instead. Read the context directly
+  // (useHeaderHeight throws outside a header-providing screen) and fall back
+  // to the standard iOS bar height.
+  const navigationHeaderHeight = useContext(HeaderHeightContext);
+  const pendingCardsMaxHeight = Math.max(
+    120,
+    windowDimensions.height -
+      (navigationHeaderHeight || insets.top + 44) -
+      composerOverlapHeight -
+      12,
+  );
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
@@ -393,28 +424,35 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
               {props.activePendingApproval || props.activePendingUserInput ? (
                 <Animated.View
-                  className="shrink-0 gap-3 px-4 pb-3"
+                  className="shrink-0 px-4 pb-3"
+                  style={{ maxHeight: pendingCardsMaxHeight }}
                   entering={FadeInDown.duration(220)}
                   exiting={FadeOut.duration(140)}
                 >
-                  {props.activePendingApproval ? (
-                    <PendingApprovalCard
-                      approval={props.activePendingApproval}
-                      respondingApprovalId={props.respondingApprovalId}
-                      onRespond={props.onRespondToApproval}
-                    />
-                  ) : null}
-                  {props.activePendingUserInput ? (
-                    <PendingUserInputCard
-                      pendingUserInput={props.activePendingUserInput}
-                      drafts={props.activePendingUserInputDrafts}
-                      answers={props.activePendingUserInputAnswers}
-                      respondingUserInputId={props.respondingUserInputId}
-                      onSelectOption={props.onSelectUserInputOption}
-                      onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
-                      onSubmit={props.onSubmitUserInput}
-                    />
-                  ) : null}
+                  <ScrollView
+                    contentContainerClassName="gap-3"
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {props.activePendingApproval ? (
+                      <PendingApprovalCard
+                        approval={props.activePendingApproval}
+                        respondingApprovalId={props.respondingApprovalId}
+                        onRespond={props.onRespondToApproval}
+                      />
+                    ) : null}
+                    {props.activePendingUserInput ? (
+                      <PendingUserInputCard
+                        pendingUserInput={props.activePendingUserInput}
+                        drafts={props.activePendingUserInputDrafts}
+                        answers={props.activePendingUserInputAnswers}
+                        respondingUserInputId={props.respondingUserInputId}
+                        onSelectOption={props.onSelectUserInputOption}
+                        onChangeCustomAnswer={props.onChangeUserInputCustomAnswer}
+                        onSubmit={props.onSubmitUserInput}
+                      />
+                    ) : null}
+                  </ScrollView>
                 </Animated.View>
               ) : null}
             </View>
