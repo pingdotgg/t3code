@@ -38,6 +38,12 @@ import * as AgentHookRunner from "./AgentHookRunner.ts";
 import { AgentOrchestration } from "./AgentOrchestration.ts";
 import { compileAgentPrompt } from "./prompt/PromptCompiler.ts";
 import * as AgentRunDomain from "./run/AgentRun.ts";
+import {
+  appendAgentRunTaskActivity,
+  cancelledAgentRunRevision,
+  failedAgentRunRevision,
+  revisionAfterAgentRunTransition,
+} from "./run/AgentRunReactor.ts";
 import * as AgentRunRepository from "./run/AgentRunRepository.ts";
 
 const invalid = (
@@ -164,7 +170,7 @@ export const requestAgentFollowUp = Effect.fn("AgentOrchestration.requestAgentFo
         ),
       )}`,
     );
-    yield* input.repository
+    const events = yield* input.repository
       .dispatch({
         type: "agent-run.follow-up",
         runId: input.runId,
@@ -180,7 +186,16 @@ export const requestAgentFollowUp = Effect.fn("AgentOrchestration.requestAgentFo
           }),
         ),
       );
-    return { commandId, messageId };
+    const followUp = events.find(
+      (event) => event.type === "agent-run.follow-up-revised" && event.runId === input.runId,
+    );
+    if (followUp === undefined) {
+      return yield* invalid("The Agent follow-up transition did not persist.", {
+        operation: "run-follow-up",
+        runId: input.runId,
+      });
+    }
+    return { commandId, messageId, revision: followUp.revision };
   },
 );
 
@@ -785,6 +800,7 @@ export const make = Effect.gen(function* () {
         )}`,
       );
       const occurredAt = yield* nowIso;
+      const parentThreadId = context.currentRun?.parentThreadId ?? context.thread.id;
       yield* runs.putProfileSnapshot(target).pipe(
         Effect.mapError((cause) =>
           invalid("Could not persist the pinned Agent profile revision.", {
@@ -803,7 +819,7 @@ export const make = Effect.gen(function* () {
           budget,
           parentRunId: requestedParentRunId,
           detached: input.detached ?? false,
-          parentThreadId: context.currentRun?.parentThreadId ?? context.thread.id,
+          parentThreadId,
           projectId: context.project.id,
           modelSelection,
           instanceId: modelSelection.instanceId,
@@ -815,18 +831,43 @@ export const make = Effect.gen(function* () {
             invalid(error.message, { operation: "run-request", cause: error, runId }),
           ),
         );
+      const pinnedProfile: AgentProfileRef = {
+        id: target.id,
+        scope: target.scope,
+        revision: target.revision,
+      };
+      const activityRun = {
+        id: runId,
+        parentThreadId,
+        profile: pinnedProfile,
+        modelSelection,
+        revision: 0,
+        parentRunId: requestedParentRunId,
+      };
       const failQueuedSpawn = Effect.fn("AgentOrchestration.failQueuedSpawn")(function* (
         detail: string,
         cause: unknown,
       ) {
-        yield* runs
+        const failureOccurredAt = yield* nowIso;
+        const failed = yield* runs
           .dispatch({
             type: "agent-run.fail",
             runId,
             failure: detail.slice(0, 4_000),
-            occurredAt: yield* nowIso,
+            occurredAt: failureOccurredAt,
           })
-          .pipe(Effect.ignore);
+          .pipe(Effect.result);
+        if (Result.isSuccess(failed)) {
+          const revision = failedAgentRunRevision(activityRun, failed.success);
+          if (revision !== null) {
+            yield* appendAgentRunTaskActivity({
+              engine,
+              run: { ...activityRun, revision },
+              status: "failed",
+              createdAt: failureOccurredAt,
+            });
+          }
+        }
         yield* providers.stopSession({ threadId: childThreadId }).pipe(Effect.ignore);
         yield* engine
           .dispatch({
@@ -859,24 +900,31 @@ export const make = Effect.gen(function* () {
         return yield* failQueuedSpawn(assigned.failure.detail, assigned.failure);
       }
 
-      const pinnedProfile: AgentProfileRef = {
-        id: target.id,
-        scope: target.scope,
-        revision: target.revision,
-      };
       let createdWorktree: { readonly path: string; readonly branch: string } | null = null;
       const failSpawn = Effect.fn("AgentOrchestration.failSpawn")(function* (
         detail: string,
         cause: unknown,
       ) {
-        yield* runs
+        const failureOccurredAt = yield* nowIso;
+        const failed = yield* runs
           .dispatch({
             type: "agent-run.fail",
             runId,
             failure: detail.slice(0, 4_000),
-            occurredAt: yield* nowIso,
+            occurredAt: failureOccurredAt,
           })
-          .pipe(Effect.ignore);
+          .pipe(Effect.result);
+        if (Result.isSuccess(failed)) {
+          const revision = failedAgentRunRevision(activityRun, failed.success);
+          if (revision !== null) {
+            yield* appendAgentRunTaskActivity({
+              engine,
+              run: { ...activityRun, revision },
+              status: "failed",
+              createdAt: failureOccurredAt,
+            });
+          }
+        }
         yield* providers.stopSession({ threadId: childThreadId }).pipe(Effect.ignore);
         if (createdWorktree !== null) {
           yield* cleanupCreatedAgentWorktree({
@@ -992,10 +1040,22 @@ export const make = Effect.gen(function* () {
         agentProfile: pinnedProfile,
         createdAt: occurredAt,
       };
+      const startOccurredAt = yield* nowIso;
       const markRunStarted = runs
-        .dispatch({ type: "agent-run.start", runId, occurredAt: yield* nowIso })
+        .dispatch({ type: "agent-run.start", runId, occurredAt: startOccurredAt })
         .pipe(
-          Effect.asVoid,
+          Effect.flatMap((events) =>
+            appendAgentRunTaskActivity({
+              engine,
+              run: {
+                ...activityRun,
+                revision: revisionAfterAgentRunTransition(activityRun, events),
+              },
+              status: "started",
+              createdAt: startOccurredAt,
+              title: target.name,
+            }),
+          ),
           Effect.mapError((error) =>
             invalid(error.message, { operation: "run-start", cause: error, runId }),
           ),
@@ -1154,12 +1214,18 @@ export const make = Effect.gen(function* () {
         run,
       });
       const occurredAt = yield* nowIso;
-      const { commandId, messageId } = yield* requestAgentFollowUp({
+      const { commandId, messageId, revision } = yield* requestAgentFollowUp({
         crypto,
         repository: runs,
         runId: run.id,
         message: input.message,
         occurredAt,
+      });
+      yield* appendAgentRunTaskActivity({
+        engine,
+        run: { ...run, revision },
+        status: "pending",
+        createdAt: occurredAt,
       });
       const dispatch = yield* engine
         .dispatch({
@@ -1178,14 +1244,26 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.result);
       if (Result.isFailure(dispatch)) {
-        yield* runs
+        const failureOccurredAt = yield* nowIso;
+        const failed = yield* runs
           .dispatch({
             type: "agent-run.fail",
             runId: run.id,
             failure: "T3 could not send the follow-up turn.",
-            occurredAt: yield* nowIso,
+            occurredAt: failureOccurredAt,
           })
-          .pipe(Effect.ignore);
+          .pipe(Effect.result);
+        if (Result.isSuccess(failed)) {
+          const revision = failedAgentRunRevision(run, failed.success);
+          if (revision !== null) {
+            yield* appendAgentRunTaskActivity({
+              engine,
+              run: { ...run, revision },
+              status: "failed",
+              createdAt: failureOccurredAt,
+            });
+          }
+        }
         return yield* invalid("T3 could not send the Agent follow-up turn.", {
           operation: "follow-up-turn-dispatch",
           cause: dispatch.failure,
@@ -1206,20 +1284,41 @@ export const make = Effect.gen(function* () {
         );
       if (Result.isFailure(started)) {
         yield* providers.stopSession({ threadId: run.childThreadId }).pipe(Effect.ignore);
-        yield* runs
+        const failureOccurredAt = yield* nowIso;
+        const failed = yield* runs
           .dispatch({
             type: "agent-run.fail",
             runId: run.id,
             failure: "T3 could not start the Agent follow-up turn.",
-            occurredAt: yield* nowIso,
+            occurredAt: failureOccurredAt,
           })
-          .pipe(Effect.ignore);
+          .pipe(Effect.result);
+        if (Result.isSuccess(failed)) {
+          const revision = failedAgentRunRevision(run, failed.success);
+          if (revision !== null) {
+            yield* appendAgentRunTaskActivity({
+              engine,
+              run: { ...run, revision },
+              status: "failed",
+              createdAt: failureOccurredAt,
+            });
+          }
+        }
         return yield* invalid("T3 could not start the Agent follow-up turn.", {
           operation: "follow-up-run-start",
           cause: started.failure,
           runId: run.id,
         });
       }
+      yield* appendAgentRunTaskActivity({
+        engine,
+        run: {
+          ...run,
+          revision: revisionAfterAgentRunTransition(run, started.success),
+        },
+        status: "running",
+        createdAt: yield* nowIso,
+      });
       const updated = yield* ensureOwnedRun(context, run.id);
       return { runId: updated.id, status: updated.status, revision: updated.revision };
     },
@@ -1229,7 +1328,7 @@ export const make = Effect.gen(function* () {
     function* (scope, input) {
       const context = yield* invocationContext(scope);
       const run = yield* ensureOwnedRun(context, input.runId);
-      yield* runs
+      const cancelled = yield* runs
         .dispatch({
           type: "agent-run.cancel",
           runId: run.id,
@@ -1241,6 +1340,15 @@ export const make = Effect.gen(function* () {
             invalid(error.message, { operation: "run-cancel", cause: error, runId: run.id }),
           ),
         );
+      const cancelledRevision = cancelledAgentRunRevision(run, cancelled);
+      if (cancelledRevision !== null) {
+        yield* appendAgentRunTaskActivity({
+          engine,
+          run: { ...run, revision: cancelledRevision },
+          status: "cancelled",
+          createdAt: yield* nowIso,
+        });
+      }
       if (run.childThreadId !== null) {
         yield* providers.stopSession({ threadId: run.childThreadId }).pipe(
           Effect.mapError((cause) =>

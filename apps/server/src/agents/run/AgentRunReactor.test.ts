@@ -3,7 +3,10 @@ import {
   AgentProfileRevision,
   AgentProfileRef,
   AgentRunId,
+  CommandId,
+  EventId,
   ModelSelection,
+  type OrchestrationCommand,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -18,11 +21,15 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { AgentHookBlockedError } from "../AgentHookRunner.ts";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
+import { OrchestrationCommandInvariantError } from "../../orchestration/Errors.ts";
 import type { AgentRun, AgentRunCommand, AgentRunEvent } from "./AgentRun.ts";
 import type { AgentRunRepository } from "./AgentRunRepository.ts";
 import {
   AgentTerminalHookPrerequisiteError,
+  appendAgentRunTaskActivity,
+  cancelledAgentRunRevision,
   completeSuccessfulRun,
+  failedAgentRunRevision,
   hookWorkspaceForRun,
   loadAgentRunForProviderEvent,
 } from "./AgentRunReactor.ts";
@@ -120,6 +127,128 @@ it.effect("retains a provider event across a transient run lookup failure", () =
     assert.equal(attempts, 2);
   }),
 );
+
+it.effect("appends a deterministic parent task completion for a native Agent run", () =>
+  Effect.gen(function* () {
+    const commands: OrchestrationCommand[] = [];
+    yield* appendAgentRunTaskActivity({
+      engine: {
+        dispatch: (command) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
+      },
+      run: { ...run, revision: 3 },
+      status: "completed",
+      createdAt: occurredAt,
+    });
+    yield* appendAgentRunTaskActivity({
+      engine: {
+        dispatch: (command) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return { sequence: commands.length };
+          }),
+      },
+      run: { ...run, revision: 7 },
+      status: "running",
+      createdAt: "2026-08-07T12:02:00.000Z",
+    });
+
+    assert.deepEqual(commands, [
+      {
+        type: "thread.activity.append",
+        commandId: CommandId.make("agent-run:completion-run:3:completed"),
+        threadId: ThreadId.make("completion-parent"),
+        activity: {
+          id: EventId.make("agent-run:completion-run:3:completed"),
+          tone: "info",
+          kind: "task.completed",
+          summary: "Agent run completed",
+          payload: {
+            taskId: "completion-run",
+            agentKind: "agent",
+            model: "gpt-5",
+            agentProfileId: "completion-profile",
+            status: "completed",
+          },
+          turnId: null,
+          createdAt: occurredAt,
+        },
+        createdAt: occurredAt,
+      },
+      {
+        type: "thread.activity.append",
+        commandId: CommandId.make("agent-run:completion-run:7:running"),
+        threadId: ThreadId.make("completion-parent"),
+        activity: {
+          id: EventId.make("agent-run:completion-run:7:running"),
+          tone: "info",
+          kind: "task.updated",
+          summary: "Agent run running",
+          payload: {
+            taskId: "completion-run",
+            agentKind: "agent",
+            model: "gpt-5",
+            agentProfileId: "completion-profile",
+            status: "running",
+          },
+          turnId: null,
+          createdAt: "2026-08-07T12:02:00.000Z",
+        },
+        createdAt: "2026-08-07T12:02:00.000Z",
+      },
+    ]);
+  }),
+);
+
+it.effect("keeps AgentRun lifecycle authoritative when its parent activity append fails", () =>
+  Effect.gen(function* () {
+    let appendAttempts = 0;
+    yield* appendAgentRunTaskActivity({
+      engine: {
+        dispatch: () =>
+          Effect.suspend(() => {
+            appendAttempts += 1;
+            return Effect.fail(
+              new OrchestrationCommandInvariantError({
+                commandType: "thread.activity.append",
+                detail: "parent thread is unavailable",
+              }),
+            );
+          }),
+      },
+      run,
+      status: "completed",
+      createdAt: occurredAt,
+    });
+
+    assert.equal(appendAttempts, 1);
+  }),
+);
+
+it("does not synthesize cancellation activity for a no-op terminal cancel", () => {
+  assert.equal(cancelledAgentRunRevision(run, []), null);
+});
+
+it("uses only the persisted failure revision for the same Agent run", () => {
+  const failed = {
+    type: "agent-run.result-failed" as const,
+    runId: run.id,
+    revision: 9,
+    occurredAt,
+    failure: "Provider turn failed.",
+  };
+
+  assert.equal(failedAgentRunRevision(run, [failed]), 9);
+  assert.equal(
+    failedAgentRunRevision(run, [{ ...failed, runId: AgentRunId.make("different-run") }]),
+    null,
+  );
+  assert.equal(cancelledAgentRunRevision(run, [failed]), null);
+  assert.equal(failedAgentRunRevision(run, []), null);
+});
 
 it.effect("validates completion budgets before running afterResult hooks", () =>
   Effect.gen(function* () {

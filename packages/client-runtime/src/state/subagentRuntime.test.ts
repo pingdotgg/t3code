@@ -96,6 +96,66 @@ describe("foldSubagentActivities", () => {
     expect(agent.completedAt).not.toBeNull();
   });
 
+  it("preserves native Agent run model, profile ID, and run ID", () => {
+    const agents = fold([
+      activity("task.started", {
+        taskId: "6a31f0ba-1111-2222-3333-444444444444",
+        agentKind: "agent",
+        model: "gpt-5.6-sol",
+        agentProfileId: "sol-smoke-test",
+      }),
+      activity("task.completed", {
+        taskId: "6a31f0ba-1111-2222-3333-444444444444",
+        agentKind: "agent",
+        status: "completed",
+      }),
+    ]);
+
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      id: "6a31f0ba-1111-2222-3333-444444444444",
+      model: "gpt-5.6-sol",
+      profileId: "sol-smoke-test",
+      status: "completed",
+    });
+  });
+
+  it("preserves a native Agent run's cancelled terminal state", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "native-cancel", agentKind: "agent" }),
+      activity("task.completed", {
+        taskId: "native-cancel",
+        agentKind: "agent",
+        status: "cancelled",
+      }),
+    ]);
+
+    expect(agents[0]?.status).toBe("cancelled");
+  });
+
+  it("reactivates a completed native Agent run before recording follow-up failure", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "native-follow-up", agentKind: "agent" }),
+      activity("task.completed", {
+        taskId: "native-follow-up",
+        agentKind: "agent",
+        status: "completed",
+      }),
+      activity("task.updated", {
+        taskId: "native-follow-up",
+        agentKind: "agent",
+        status: "pending",
+      }),
+      activity("task.completed", {
+        taskId: "native-follow-up",
+        agentKind: "agent",
+        status: "failed",
+      }),
+    ]);
+
+    expect(agents[0]).toMatchObject({ status: "failed", activationCount: 2 });
+  });
+
   it("progress can create an agent when its start row aged out of retention", () => {
     const agents = fold([
       activity("task.progress", {

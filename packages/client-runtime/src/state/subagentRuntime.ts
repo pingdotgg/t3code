@@ -62,6 +62,7 @@ export interface RuntimeSubagent {
   readonly title: string;
   readonly role: string | null;
   readonly model: string | null;
+  readonly profileId: string | null;
   readonly effort: string | null;
   readonly status: RuntimeSubagentStatus;
   readonly activationCount: number;
@@ -231,6 +232,7 @@ interface MutableAgent {
   title: string;
   role: string | null;
   model: string | null;
+  profileId: string | null;
   effort: string | null;
   status: RuntimeSubagentStatus;
   activationCount: number;
@@ -282,9 +284,11 @@ function getOrCreate(
   const created: MutableAgent = {
     id,
     kind: kindFromPayload(payload, id),
-    title: asString(payload.title) ?? asString(payload.detail) ?? id,
+    title:
+      asString(payload.title) ?? asString(payload.detail) ?? asString(payload.agentProfileId) ?? id,
     role: asString(payload.role) ?? null,
     model: asString(payload.model) ?? null,
+    profileId: asString(payload.agentProfileId) ?? null,
     effort: asString(payload.effort) ?? null,
     status: "pending",
     activationCount: 0,
@@ -320,6 +324,8 @@ function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): vo
   if (role) agent.role = role;
   const model = asString(payload.model);
   if (model) agent.model = model;
+  const profileId = asString(payload.agentProfileId);
+  if (profileId) agent.profileId = profileId;
   const effort = asString(payload.effort);
   if (effort) agent.effort = effort;
   const parentAgentId = asString(payload.parentAgentId);
@@ -425,6 +431,7 @@ function applyStatus(agent: MutableAgent, status: RuntimeSubagentStatus, at: str
 const TASK_COMPLETED_STATUS: ReadonlyMap<string, RuntimeSubagentStatus> = new Map([
   ["completed", "completed"],
   ["failed", "failed"],
+  ["cancelled", "cancelled"],
   ["stopped", "interrupted"],
 ]);
 

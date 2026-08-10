@@ -1,4 +1,6 @@
 import {
+  CommandId,
+  EventId,
   RuntimeTaskUsage,
   type ThreadId,
   type ProviderRuntimeEvent,
@@ -15,9 +17,11 @@ import * as Schedule from "effect/Schedule";
 
 import * as AgentHookRunner from "../AgentHookRunner.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { OrchestrationEngineShape } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import * as ProviderService from "../../provider/Services/ProviderService.ts";
 import * as AgentRunRepository from "./AgentRunRepository.ts";
-import { decide, type AgentRun } from "./AgentRun.ts";
+import { decide, type AgentRun, type AgentRunEvent } from "./AgentRun.ts";
 
 const decodeUsage = Schema.decodeUnknownOption(RuntimeTaskUsage);
 const TERMINAL_EVENT_RETRY_SCHEDULE = Schedule.exponential("100 millis").pipe(
@@ -34,6 +38,123 @@ const retryDurable = <A, R>(
       schedule: TERMINAL_EVENT_RETRY_SCHEDULE,
     }),
   );
+
+type AgentRunTaskStatus =
+  | "started"
+  | "pending"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export const revisionAfterAgentRunTransition = (
+  run: Pick<AgentRun, "id" | "revision">,
+  events: ReadonlyArray<AgentRunEvent>,
+): number => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.runId === run.id) return event.revision;
+  }
+  return run.revision;
+};
+
+export const cancelledAgentRunRevision = (
+  run: Pick<AgentRun, "id">,
+  events: ReadonlyArray<AgentRunEvent>,
+): number | null => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === "agent-run.cancelled" && event.runId === run.id) return event.revision;
+  }
+  return null;
+};
+
+export const failedAgentRunRevision = (
+  run: Pick<AgentRun, "id">,
+  events: ReadonlyArray<AgentRunEvent>,
+): number | null => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === "agent-run.result-failed" && event.runId === run.id) {
+      return event.revision;
+    }
+  }
+  return null;
+};
+
+const agentRunTaskActivityDetails = (input: {
+  readonly run: Pick<
+    AgentRun,
+    "id" | "parentThreadId" | "parentRunId" | "profile" | "modelSelection" | "revision"
+  >;
+  readonly status: AgentRunTaskStatus;
+  readonly createdAt: string;
+  readonly title?: string;
+}) => {
+  const terminal =
+    input.status === "completed" || input.status === "failed" || input.status === "cancelled";
+  const activityId = `agent-run:${input.run.id}:${input.run.revision}:${input.status}`;
+  return {
+    commandId: CommandId.make(activityId),
+    threadId: input.run.parentThreadId,
+    activity: {
+      id: EventId.make(activityId),
+      tone: input.status === "failed" ? ("error" as const) : ("info" as const),
+      kind:
+        input.status === "started"
+          ? ("task.started" as const)
+          : terminal
+            ? ("task.completed" as const)
+            : ("task.updated" as const),
+      summary: `Agent run ${input.status}`,
+      payload: {
+        taskId: input.run.id,
+        agentKind: "agent",
+        ...(input.title === undefined ? {} : { title: input.title }),
+        model: input.run.modelSelection.model,
+        agentProfileId: input.run.profile.id,
+        ...(input.run.parentRunId === null ? {} : { parentAgentId: input.run.parentRunId }),
+        ...(input.status === "started" ? {} : { status: input.status }),
+      },
+      turnId: null,
+      createdAt: input.createdAt,
+    },
+  };
+};
+
+export const appendAgentRunTaskActivity = Effect.fn("AgentRunReactor.appendAgentRunTaskActivity")(
+  function* (input: {
+    readonly engine: Pick<OrchestrationEngineShape, "dispatch">;
+    readonly run: Pick<
+      AgentRun,
+      "id" | "parentThreadId" | "parentRunId" | "profile" | "modelSelection" | "revision"
+    >;
+    readonly status: AgentRunTaskStatus;
+    readonly createdAt: string;
+    readonly title?: string;
+  }) {
+    const activity = agentRunTaskActivityDetails(input);
+    yield* input.engine
+      .dispatch({
+        type: "thread.activity.append",
+        commandId: activity.commandId,
+        threadId: activity.threadId,
+        activity: activity.activity,
+        createdAt: input.createdAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not append Agent run parent task activity", {
+            runId: input.run.id,
+            parentThreadId: input.run.parentThreadId,
+            status: input.status,
+            cause,
+          }),
+        ),
+      );
+  },
+);
 
 export const hookWorkspaceForRun = (
   run: Pick<AgentRun, "workspaceMode" | "childThreadId">,
@@ -98,7 +219,7 @@ export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessf
         preflight.failure._tag === "AgentRunCommandInvariantError" &&
         preflight.failure.reason === "budget-exhausted"
       ) {
-        yield* retryDurable(
+        const failed = yield* retryDurable(
           input.repository.dispatch({
             type: "agent-run.fail",
             runId: input.run.id,
@@ -107,14 +228,17 @@ export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessf
             occurredAt: input.occurredAt,
           }),
         );
-        return;
+        return {
+          status: "failed" as const,
+          revision: revisionAfterAgentRunTransition(input.run, failed),
+        };
       }
       return yield* preflight.failure;
     }
 
     const hook = yield* input.afterResult.pipe(Effect.result);
     if (Result.isFailure(hook)) {
-      yield* retryDurable(
+      const failed = yield* retryDurable(
         input.repository.dispatch({
           type: "agent-run.fail",
           runId: input.run.id,
@@ -123,7 +247,10 @@ export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessf
           occurredAt: input.occurredAt,
         }),
       );
-      return;
+      return {
+        status: "failed" as const,
+        revision: revisionAfterAgentRunTransition(input.run, failed),
+      };
     }
 
     const completion = yield* retryDurable(input.repository.dispatch(command)).pipe(Effect.result);
@@ -132,7 +259,7 @@ export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessf
       completion.failure._tag === "AgentRunCommandInvariantError" &&
       completion.failure.reason === "budget-exhausted"
     ) {
-      yield* retryDurable(
+      const failed = yield* retryDurable(
         input.repository.dispatch({
           type: "agent-run.fail",
           runId: input.run.id,
@@ -141,9 +268,16 @@ export const completeSuccessfulRun = Effect.fn("AgentRunReactor.completeSuccessf
           occurredAt: input.occurredAt,
         }),
       );
-      return;
+      return {
+        status: "failed" as const,
+        revision: revisionAfterAgentRunTransition(input.run, failed),
+      };
     }
     if (Result.isFailure(completion)) return yield* completion.failure;
+    return {
+      status: "completed" as const,
+      revision: revisionAfterAgentRunTransition(input.run, completion.success),
+    };
   },
 );
 
@@ -151,6 +285,7 @@ const make = Effect.gen(function* () {
   const repository = yield* AgentRunRepository.AgentRunRepository;
   const provider = yield* ProviderService.ProviderService;
   const projection = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const engine = yield* OrchestrationEngineService;
   const hooks = yield* AgentHookRunner.AgentHookRunner;
 
   const hookWorkspace = Effect.fn("AgentRunReactor.hookWorkspace")(function* (
@@ -227,17 +362,23 @@ const make = Effect.gen(function* () {
         if (run.status !== "running" && run.status !== "waiting-for-input") return;
         const usage = decodeUsage(event.payload.usage);
         if (event.payload.state === "completed") {
-          yield* completeSuccessfulRun({
+          const status = yield* completeSuccessfulRun({
             run,
             usage: Option.getOrUndefined(usage),
             occurredAt: event.createdAt,
             repository,
             afterResult: runTerminalHook(run, "afterResult"),
           });
+          yield* appendAgentRunTaskActivity({
+            engine,
+            run: { ...run, revision: status.revision },
+            status: status.status,
+            createdAt: event.createdAt,
+          });
           return;
         }
         yield* runTerminalHook(run, "onError").pipe(Effect.ignore);
-        yield* retryDurable(
+        const failed = yield* retryDurable(
           repository.dispatch({
             type: "agent-run.fail",
             runId: run.id,
@@ -249,12 +390,18 @@ const make = Effect.gen(function* () {
             occurredAt: event.createdAt,
           }),
         );
+        yield* appendAgentRunTaskActivity({
+          engine,
+          run: { ...run, revision: revisionAfterAgentRunTransition(run, failed) },
+          status: "failed",
+          createdAt: event.createdAt,
+        });
         return;
       }
       case "turn.aborted":
         if (run.status === "running" || run.status === "waiting-for-input") {
           yield* runTerminalHook(run, "onError").pipe(Effect.ignore);
-          yield* retryDurable(
+          const failed = yield* retryDurable(
             repository.dispatch({
               type: "agent-run.fail",
               runId: run.id,
@@ -262,12 +409,18 @@ const make = Effect.gen(function* () {
               occurredAt: event.createdAt,
             }),
           );
+          yield* appendAgentRunTaskActivity({
+            engine,
+            run: { ...run, revision: revisionAfterAgentRunTransition(run, failed) },
+            status: "failed",
+            createdAt: event.createdAt,
+          });
         }
         return;
       case "runtime.error":
         if (run.status === "running" || run.status === "waiting-for-input") {
           yield* runTerminalHook(run, "onError").pipe(Effect.ignore);
-          yield* retryDurable(
+          const failed = yield* retryDurable(
             repository.dispatch({
               type: "agent-run.fail",
               runId: run.id,
@@ -275,28 +428,46 @@ const make = Effect.gen(function* () {
               occurredAt: event.createdAt,
             }),
           );
+          yield* appendAgentRunTaskActivity({
+            engine,
+            run: { ...run, revision: revisionAfterAgentRunTransition(run, failed) },
+            status: "failed",
+            createdAt: event.createdAt,
+          });
         }
         return;
       case "user-input.requested":
         if (run.status === "running") {
-          yield* retryDurable(
+          const waiting = yield* retryDurable(
             repository.dispatch({
               type: "agent-run.wait",
               runId: run.id,
               occurredAt: event.createdAt,
             }),
           );
+          yield* appendAgentRunTaskActivity({
+            engine,
+            run: { ...run, revision: revisionAfterAgentRunTransition(run, waiting) },
+            status: "waiting",
+            createdAt: event.createdAt,
+          });
         }
         return;
       case "user-input.resolved":
         if (run.status === "waiting-for-input") {
-          yield* retryDurable(
+          const resumed = yield* retryDurable(
             repository.dispatch({
               type: "agent-run.resume",
               runId: run.id,
               occurredAt: event.createdAt,
             }),
           );
+          yield* appendAgentRunTaskActivity({
+            engine,
+            run: { ...run, revision: revisionAfterAgentRunTransition(run, resumed) },
+            status: "running",
+            createdAt: event.createdAt,
+          });
         }
         return;
       default:

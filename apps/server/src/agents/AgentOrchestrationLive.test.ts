@@ -120,6 +120,31 @@ it.effect("does not queue a follow-up when a turn id cannot be allocated", () =>
   }),
 );
 
+it.effect("returns the durable follow-up revision before the provider turn starts", () =>
+  Effect.gen(function* () {
+    const result = yield* requestAgentFollowUp({
+      crypto: { randomUUIDv4: Effect.succeed("follow-up-uuid") },
+      repository: {
+        dispatch: () =>
+          Effect.succeed([
+            {
+              type: "agent-run.follow-up-revised" as const,
+              runId: AgentRunId.make("follow-up-run"),
+              revision: 3,
+              occurredAt: "2026-08-07T12:00:00.000Z",
+              message: "Address the review.",
+            },
+          ]),
+      },
+      runId: AgentRunId.make("follow-up-run"),
+      message: "Address the review.",
+      occurredAt: "2026-08-07T12:00:00.000Z",
+    });
+
+    NodeAssert.equal(result.revision, 3);
+  }),
+);
+
 it("derives restrictive runtime policy from a pinned profile", () => {
   NodeAssert.deepEqual(runtimeSettingsForAgentProfile(restrictiveProfile), {
     runtimeMode: "approval-required",
