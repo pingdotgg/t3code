@@ -83,6 +83,8 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    readonly selfHostedAccountsFile?: string | undefined;
+    readonly selfHostedRequireSecureTransport?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -186,6 +188,8 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    selfHostedAccountsFile: undefined,
+    selfHostedRequireSecureTransport: false,
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

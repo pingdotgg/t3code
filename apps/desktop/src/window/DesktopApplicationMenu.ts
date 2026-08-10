@@ -5,6 +5,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
+import {
+  createTranslator,
+  normalizeLocale,
+  type TranslationKey,
+} from "@t3tools/client-runtime/i18n";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -56,58 +61,67 @@ const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
   yield* desktopWindow.zoomMain(direction);
 });
 
-const checkForUpdatesFromMenu = Effect.gen(function* () {
-  const updates = yield* DesktopUpdates.DesktopUpdates;
-  const electronDialog = yield* ElectronDialog.ElectronDialog;
-  const result = yield* updates.check("menu");
-  const updateState = result.state;
+type Translator = (
+  key: TranslationKey,
+  params?: Readonly<Record<string, string | number>>,
+) => string;
 
-  if (updateState.status === "up-to-date") {
-    yield* electronDialog.showMessageBox({
-      type: "info",
-      title: "You're up to date!",
-      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
-      buttons: ["OK"],
-    });
-  } else if (updateState.status === "error") {
-    yield* electronDialog.showMessageBox({
-      type: "warning",
-      title: "Update check failed",
-      message: "Could not check for updates.",
-      detail: updateState.message ?? "An unknown error occurred. Please try again later.",
-      buttons: ["OK"],
-    });
-  }
-}).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
+const checkForUpdatesFromMenu = (t: Translator) =>
+  Effect.gen(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    const electronDialog = yield* ElectronDialog.ElectronDialog;
+    const result = yield* updates.check("menu");
+    const updateState = result.state;
 
-const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
-  const updates = yield* DesktopUpdates.DesktopUpdates;
-  const electronDialog = yield* ElectronDialog.ElectronDialog;
-  const disabledReason = yield* updates.disabledReason;
-  if (Option.isSome(disabledReason)) {
-    yield* logUpdaterInfo("manual update check requested, but updates are disabled", {
-      disabledReason: disabledReason.value,
-    });
-    yield* electronDialog.showMessageBox({
-      type: "info",
-      title: "Updates unavailable",
-      message: "Automatic updates are not available right now.",
-      detail: disabledReason.value,
-      buttons: ["OK"],
-    });
-    return;
-  }
+    if (updateState.status === "up-to-date") {
+      yield* electronDialog.showMessageBox({
+        type: "info",
+        title: t("desktop.upToDateTitle"),
+        message: t("desktop.upToDateBody", { version: updateState.currentVersion }),
+        buttons: [t("common.ok")],
+      });
+    } else if (updateState.status === "error") {
+      yield* electronDialog.showMessageBox({
+        type: "warning",
+        title: t("desktop.updateFailedTitle"),
+        message: t("desktop.updateFailedBody"),
+        detail: updateState.message ?? t("desktop.updateUnknown"),
+        buttons: [t("common.ok")],
+      });
+    }
+  }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
 
-  const desktopWindow = yield* DesktopWindow.DesktopWindow;
-  yield* desktopWindow.ensureMain;
-  yield* checkForUpdatesFromMenu;
-}).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
+const handleCheckForUpdatesMenuClick = (t: Translator) =>
+  Effect.gen(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    const electronDialog = yield* ElectronDialog.ElectronDialog;
+    const disabledReason = yield* updates.disabledReason;
+    if (Option.isSome(disabledReason)) {
+      yield* logUpdaterInfo("manual update check requested, but updates are disabled", {
+        disabledReason: disabledReason.value,
+      });
+      yield* electronDialog.showMessageBox({
+        type: "info",
+        title: t("desktop.updatesUnavailable"),
+        message: t("desktop.updatesUnavailableBody"),
+        detail: disabledReason.value,
+        buttons: [t("common.ok")],
+      });
+      return;
+    }
+
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    yield* desktopWindow.ensureMain;
+    yield* checkForUpdatesFromMenu(t);
+  }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
 export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const appName = yield* electronApp.name;
+  const locale = yield* electronApp.locale ?? Effect.succeed("en");
+  const t = createTranslator(normalizeLocale(locale));
   const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
 
@@ -129,7 +143,7 @@ export const make = Effect.gen(function* () {
 
   const configure = Effect.gen(function* () {
     const checkForUpdatesClick = () => {
-      runMenuEffect("check-for-updates", handleCheckForUpdatesMenuClick);
+      runMenuEffect("check-for-updates", handleCheckForUpdatesMenuClick(t));
     };
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
@@ -145,12 +159,12 @@ export const make = Effect.gen(function* () {
         submenu: [
           { role: "about" },
           {
-            label: "Check for Updates...",
+            label: t("desktop.checkUpdates"),
             click: checkForUpdatesClick,
           },
           { type: "separator" },
           {
-            label: "Settings...",
+            label: t("desktop.settings"),
             accelerator: "CmdOrCtrl+,",
             click: settingsClick,
           },
@@ -168,13 +182,13 @@ export const make = Effect.gen(function* () {
 
     template.push(
       {
-        label: "File",
+        label: t("desktop.file"),
         submenu: [
           ...(environment.platform === "darwin"
             ? []
             : [
                 {
-                  label: "Settings...",
+                  label: t("desktop.settings"),
                   accelerator: "CmdOrCtrl+,",
                   click: settingsClick,
                 },
@@ -185,7 +199,7 @@ export const make = Effect.gen(function* () {
       },
       { role: "editMenu" },
       {
-        label: "View",
+        label: t("desktop.view"),
         submenu: [
           { role: "reload" },
           { role: "forceReload" },
@@ -197,15 +211,15 @@ export const make = Effect.gen(function* () {
             page and the app UI appears stuck. These always zoom the main
             window (see DesktopWindow.zoomMain).
           */
-          { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },
-          { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: zoomClick("in") },
+          { label: t("desktop.actualSize"), accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },
+          { label: t("desktop.zoomIn"), accelerator: "CmdOrCtrl+=", click: zoomClick("in") },
           {
-            label: "Zoom In",
+            label: t("desktop.zoomIn"),
             accelerator: "CmdOrCtrl+Plus",
             visible: false,
             click: zoomClick("in"),
           },
-          { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
+          { label: t("desktop.zoomOut"), accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
           { type: "separator" },
           { role: "togglefullscreen" },
         ],
@@ -215,7 +229,7 @@ export const make = Effect.gen(function* () {
         role: "help",
         submenu: [
           {
-            label: "Check for Updates...",
+            label: t("desktop.checkUpdates"),
             click: checkForUpdatesClick,
           },
         ],

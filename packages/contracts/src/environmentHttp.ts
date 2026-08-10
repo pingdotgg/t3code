@@ -21,6 +21,8 @@ import {
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
   AuthSessionState,
+  AuthSelfHostedLoginRequest,
+  AuthSelfHostedLoginResult,
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
@@ -383,6 +385,13 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       headers: OptionalBearerHeaders,
       success: AuthSessionState,
       error: [EnvironmentInternalError],
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("selfHostedLogin", "/api/login", {
+      payload: AuthSelfHostedLoginRequest,
+      success: AuthSelfHostedLoginResult,
+      error: [EnvironmentAuthInvalidError, EnvironmentInternalError],
     }),
   )
   .add(

@@ -43,6 +43,7 @@ export class ElectronApp extends Context.Service<
   {
     readonly metadata: Effect.Effect<ElectronAppMetadata, ElectronAppMetadataReadError>;
     readonly name: Effect.Effect<string>;
+    readonly locale?: Effect.Effect<string>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;
     readonly quit: Effect.Effect<void>;
     readonly exit: (code: number) => Effect.Effect<void>;
@@ -119,6 +120,7 @@ export const make = ElectronApp.of({
     };
   }),
   name: Effect.sync(() => Electron.app.name),
+  locale: Effect.sync(() => Electron.app.getLocale()),
   whenReady: Effect.gen(function* () {
     const isPackaged = Electron.app.isPackaged;
     yield* Effect.tryPromise({

@@ -1,0 +1,22 @@
+[Unit]
+Description=T3 Code self-hosted environment server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=t3code
+Group=t3code
+WorkingDirectory=/opt/t3code
+EnvironmentFile=/etc/t3code/t3code.env
+ExecStart=/usr/bin/node /opt/t3code/apps/server/dist/bin.mjs serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/t3code
+
+[Install]
+WantedBy=multi-user.target
