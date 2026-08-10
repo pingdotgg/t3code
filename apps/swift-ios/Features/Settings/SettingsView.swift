@@ -170,11 +170,6 @@ public struct SettingsView: View {
                 settingsDivider
                 SettingsValueRow(title: "Version", value: appVersionLabel)
                 settingsDivider
-                SettingsValueRow(
-                    title: "Environment version",
-                    value: activeEnvironmentVersion
-                )
-                settingsDivider
                 NavigationLink {
                     BuildChangelogView(
                         changelog: buildChangelog,
@@ -219,13 +214,6 @@ public struct SettingsView: View {
         SettingsAboutMetadata.appVersionLabel(info: Bundle.main.infoDictionary)
     }
 
-    private var activeEnvironmentVersion: String {
-        SettingsAboutMetadata.environmentVersionLabel(
-            connectionState: model.snapshot.connection.state,
-            serverVersion: model.snapshot.environments.first(where: \.isActive)?.serverVersion
-        )
-    }
-
     private var buildChangelog: BuildChangelog? {
         BuildChangelog.load(info: Bundle.main.infoDictionary)
     }
@@ -257,14 +245,6 @@ public struct SettingsView: View {
 }
 
 enum SettingsAboutMetadata {
-    static func environmentVersionLabel(
-        connectionState: FeatureConnection.State,
-        serverVersion: String?
-    ) -> String {
-        guard connectionState == .connected else { return "Not connected" }
-        return serverVersion ?? "Unknown"
-    }
-
     static func appVersionLabel(info: [String: Any]?) -> String {
         let version = nonemptyValue("CFBundleShortVersionString", info: info) ?? "?"
         let build = nonemptyValue("CFBundleVersion", info: info) ?? "?"

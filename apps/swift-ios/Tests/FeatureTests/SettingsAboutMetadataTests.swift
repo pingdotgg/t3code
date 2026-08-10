@@ -13,18 +13,6 @@ struct SettingsAboutMetadataTests {
 
         #expect(SettingsAboutMetadata.appVersionLabel(info: info) == "1.2.3 (456)")
         #expect(SettingsAboutMetadata.appVersionLabel(info: nil) == "? (?)")
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
-            connectionState: .connected,
-            serverVersion: "2.3.4"
-        ) == "2.3.4")
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
-            connectionState: .connected,
-            serverVersion: nil
-        ) == "Unknown")
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
-            connectionState: .disconnected,
-            serverVersion: "2.3.4"
-        ) == "Not connected")
     }
 
     @Test
