@@ -8,8 +8,8 @@ interaction modes.
 
 ## Marketing composition boundary
 
-Issue #4 uses the web client's URL-owned route and root-layout composition point as the explicit
-product-domain seam, separate from T3 interaction modes:
+Issue #4 uses the web client's structurally reserved route and root-layout composition point as the
+explicit product-domain seam, separate from T3 interaction modes:
 
 ```text
 dev       -> native T3 behaviour
@@ -19,9 +19,10 @@ marketing -> isolated Auldric Marketing requirements and workspace
 Missing or unknown domain selects Dev. Entry and exit must be explicit and reversible. Returning to
 Dev clears Marketing context, evidence, workspace selection, and authority from later turns.
 
-The current lazy route is only the tested boundary placeholder. Issue #21 owns the responsive shell
-and visible switch; later Marketing issues own domain data and actions. Desktop inherits the same
-route through its existing web renderer and hash history without changing its runtime identity.
+The current lazy payload is only the tested boundary placeholder. Issue #21 owns the responsive
+shell and visible switch; later Marketing issues own domain data and actions. Desktop inherits the
+same case-sensitive parent, catch-all ownership, and safe pairing return through its existing web
+renderer and hash history without changing its runtime identity.
 
 The planned Marketing user journey is:
 

@@ -7,6 +7,12 @@ import * as NodeURL from "node:url";
 
 const canonicalUpstreamRepository = "https://github.com/pingdotgg/t3code.git";
 const defaultConfigPath = ".auldric/t3-baseline.json";
+const declaredSharedCoreTests = new Map<string, ReadonlyArray<string>>([
+  [
+    "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx",
+    ["--dir", "apps/web", "test", "src/productDomain.test.ts", "src/marketingRoute.test.tsx"],
+  ],
+]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -37,9 +43,10 @@ interface SharedCoreAllowlistEntry {
   readonly path: string;
   readonly owner: string;
   readonly reason: string;
+  readonly contentSha256: string;
   readonly expiresOn: string;
   readonly upstream: {
-    readonly status: "proposed" | "accepted" | "rejected";
+    readonly status: "related" | "proposed" | "accepted" | "rejected";
     readonly url: string;
   };
   readonly test: string;
@@ -245,12 +252,21 @@ function loadAllowlist(
     const entryPath = requireRepositoryPath(entry.path, `${label}.path`);
     const owner = requireString(entry.owner, `${label}.owner`);
     const reason = requireString(entry.reason, `${label}.reason`);
+    const contentSha256 = requireString(entry.contentSha256, `${label}.contentSha256`);
+    if (!/^[0-9a-f]{64}$/u.test(contentSha256)) {
+      throw new BaselineConfigurationError(`${label}.contentSha256 must be a lowercase SHA-256`);
+    }
     const expiresOn = parseDate(entry.expiresOn, `${label}.expiresOn`);
     const upstream = requireRecord(entry.upstream, `${label}.upstream`);
     const status = requireString(upstream.status, `${label}.upstream.status`);
-    if (status !== "proposed" && status !== "accepted" && status !== "rejected") {
+    if (
+      status !== "related" &&
+      status !== "proposed" &&
+      status !== "accepted" &&
+      status !== "rejected"
+    ) {
       throw new BaselineConfigurationError(
-        `${label}.upstream.status must be proposed, accepted, or rejected`,
+        `${label}.upstream.status must be related, proposed, accepted, or rejected`,
       );
     }
     const upstreamUrl = requireString(upstream.url, `${label}.upstream.url`);
@@ -260,6 +276,11 @@ function loadAllowlist(
       );
     }
     const test = requireString(entry.test, `${label}.test`);
+    if (!declaredSharedCoreTests.has(test)) {
+      throw new BaselineConfigurationError(
+        `${label}.test is not an approved declared shared-core test`,
+      );
+    }
     if (expiresOn < today) {
       throw new BaselineConfigurationError(`${label} expired on ${expiresOn}`);
     }
@@ -270,6 +291,7 @@ function loadAllowlist(
       path: entryPath,
       owner,
       reason,
+      contentSha256,
       expiresOn,
       upstream: { status, url: upstreamUrl },
       test,
@@ -379,7 +401,16 @@ function classifyChange(
     return { ...change, category: "downstream-governance" };
   }
 
-  if (change.paths.every((path) => baselinePaths.has(path) && allowlist.has(path))) {
+  if (
+    change.paths.every((path) => {
+      const entry = allowlist.get(path);
+      return (
+        baselinePaths.has(path) &&
+        entry !== undefined &&
+        releaseContentSha256.get(path) === entry.contentSha256
+      );
+    })
+  ) {
     return { ...change, category: "temporary-shared-core-seam" };
   }
 
@@ -538,6 +569,11 @@ export function inspectBaseline(options: InspectOptions): BaselineReport {
         `${config.classification.sharedCoreAllowlist} lists ${entry.path}, but it is not T3-owned at the baseline`,
       );
     }
+    const content = runGit(repoRoot, ["show", `${release}:${entry.path}`]);
+    releaseContentSha256.set(
+      entry.path,
+      NodeCrypto.createHash("sha256").update(content).digest("hex"),
+    );
   }
 
   const fileDrift = parseNameStatus(
@@ -580,16 +616,49 @@ interface CliOptions {
   readonly repoRoot: string;
   readonly fetchUpstream: boolean;
   readonly json: boolean;
+  readonly runDeclaredTests: boolean;
+}
+
+export function runDeclaredSharedCoreTests(options: {
+  readonly repoRoot: string;
+  readonly configPath?: string;
+  readonly now?: Date;
+}): void {
+  const repoRoot = NodePath.resolve(options.repoRoot);
+  const config = loadBaselineConfig(repoRoot, options.configPath ?? defaultConfigPath);
+  const allowlist = loadAllowlist(
+    repoRoot,
+    config.classification.sharedCoreAllowlist,
+    todayUtc(options.now ?? new Date()),
+  );
+  const tests = new Set(Array.from(allowlist.values(), (entry) => entry.test));
+  for (const test of tests) {
+    const args = declaredSharedCoreTests.get(test);
+    if (!args) {
+      throw new BaselineConfigurationError(`No closed command is registered for ${test}`);
+    }
+    process.stdout.write(`Running declared shared-core test: ${test}\n`);
+    const result = NodeChildProcess.spawnSync("pnpm", args, {
+      cwd: repoRoot,
+      stdio: "inherit",
+    });
+    if (result.status !== 0) {
+      throw new Error(`Declared shared-core test failed (${String(result.status)}): ${test}`);
+    }
+  }
 }
 
 function parseCliOptions(args: ReadonlyArray<string>): CliOptions {
   let repoRoot = process.cwd();
   let fetchUpstream = false;
   let json = false;
+  let runDeclaredTests = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument === "--fetch") {
       fetchUpstream = true;
+    } else if (argument === "--run-declared-tests") {
+      runDeclaredTests = true;
     } else if (argument === "--json") {
       json = true;
     } else if (argument === "--repo") {
@@ -601,7 +670,7 @@ function parseCliOptions(args: ReadonlyArray<string>): CliOptions {
       index += 1;
     } else if (argument === "--help") {
       process.stdout.write(
-        "Usage: node scripts/auldric/check-t3-baseline.ts [--fetch] [--json] [--repo PATH]\n",
+        "Usage: node scripts/auldric/check-t3-baseline.ts [--fetch] [--json] [--run-declared-tests] [--repo PATH]\n",
       );
       process.exit(0);
     } else {
@@ -609,7 +678,7 @@ function parseCliOptions(args: ReadonlyArray<string>): CliOptions {
     }
   }
   const resolvedRoot = runGit(repoRoot, ["rev-parse", "--show-toplevel"]).trim();
-  return { repoRoot: resolvedRoot, fetchUpstream, json };
+  return { repoRoot: resolvedRoot, fetchUpstream, json, runDeclaredTests };
 }
 
 function main(): void {
@@ -621,6 +690,8 @@ function main(): void {
     );
     if (!report.ok) {
       process.exitCode = 1;
+    } else if (options.runDeclaredTests) {
+      runDeclaredSharedCoreTests({ repoRoot: options.repoRoot });
     }
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

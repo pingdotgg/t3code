@@ -1,13 +1,34 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 
 import {
   HostedPairingRouteSurface,
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
+import { parsePairRouteSearch, resolveMarketingReturnPath } from "../productDomain";
+
+export type PairRouteDestination =
+  | { readonly to: "/" }
+  | { readonly to: "/marketing" }
+  | { readonly to: "/marketing/$"; readonly params: { readonly _splat: string } };
+
+export function resolvePairRouteDestination(marketingReturnTo: unknown): PairRouteDestination {
+  const returnTo = resolveMarketingReturnPath(marketingReturnTo);
+  if (returnTo === undefined) {
+    return { to: "/" };
+  }
+  if (returnTo === "/marketing") {
+    return { to: "/marketing" };
+  }
+  return {
+    to: "/marketing/$",
+    params: { _splat: returnTo.slice("/marketing/".length) },
+  };
+}
 
 export const Route = createFileRoute("/pair")({
-  beforeLoad: async ({ context }) => {
+  validateSearch: parsePairRouteSearch,
+  beforeLoad: async ({ context, search }) => {
     const { authGateState } = context;
     if (authGateState.status === "hosted-pairing") {
       return {
@@ -16,7 +37,11 @@ export const Route = createFileRoute("/pair")({
     }
 
     if (authGateState.status === "authenticated" || authGateState.status === "hosted-static") {
-      throw redirect({ to: "/", replace: true });
+      const destination = resolvePairRouteDestination(search.marketingReturnTo);
+      if (destination.to === "/marketing/$") {
+        throw redirect({ ...destination, replace: true });
+      }
+      throw redirect({ to: destination.to, replace: true });
     }
     return {
       authGateState,
@@ -28,7 +53,8 @@ export const Route = createFileRoute("/pair")({
 
 function PairRouteView() {
   const { authGateState } = Route.useRouteContext();
-  const navigate = useNavigate();
+  const { marketingReturnTo } = Route.useSearch();
+  const router = useRouter();
 
   if (!authGateState) {
     return null;
@@ -42,7 +68,12 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
-        void navigate({ to: "/", replace: true });
+        const destination = resolvePairRouteDestination(marketingReturnTo);
+        if (destination.to === "/marketing/$") {
+          void router.navigate({ ...destination, replace: true });
+          return;
+        }
+        void router.navigate({ to: destination.to, replace: true });
       }}
       {...(authGateState.errorMessage ? { initialErrorMessage: authGateState.errorMessage } : {})}
     />

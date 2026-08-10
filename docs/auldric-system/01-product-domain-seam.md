@@ -3,23 +3,31 @@
 ## Decision
 
 Use the web client's existing TanStack file-route and root-layout composition point as the smallest
-supported seam. The URL is the complete client-side product-domain state:
+supported seam. The route tree structurally owns the complete client-side product-domain state:
 
 ```text
 /marketing[/...] -> marketing
 every other path -> dev
 ```
 
-The resolver returns only `dev | marketing`; missing, unknown, or malformed values resolve to
-`dev`. It is independent of T3's provider interaction modes. No product-domain field is added to a
-T3 command, event, RPC, provider request, session, or database record.
+The resolver returns only `dev | marketing` from matched route identity, not a pathname guess.
+Missing, unknown, or malformed routes resolve to `dev`. It is independent of T3's provider
+interaction modes. No product-domain field is added to a T3 command, event, RPC, provider request,
+session, or database record.
 
-The route tree statically registers only a generic virtual route. The Marketing route component is
-a lazy chunk, so native Dev startup and turn paths do not import Marketing payload code. The root
-layout selects the isolated route outlet only for the exact Marketing namespace and otherwise
-renders the existing T3 command palette and sidebar tree. The lazy route contains render failures;
-the generic root error boundary detects the Marketing namespace for chunk-load failures. Both
-failure paths expose a direct return to Dev.
+The route tree statically registers a case-sensitive critical `/marketing` parent plus lazy index
+and splat children. That parent reserves every Marketing descendant before T3's dynamic chat route
+can match it. It owns only the native authentication gate, accessible pending state, and failure
+containment; Marketing payload UI remains in lazy chunks and is absent from native Dev startup and
+turn paths. The root layout selects the isolated outlet only when the Marketing parent actually
+matched and otherwise renders the existing T3 command palette and sidebar tree.
+
+Local unauthenticated access redirects through native pairing with a narrowly validated local
+Marketing return path. Hosted static is a supported T3 client surface, not Marketing data
+authorization: it terminates at an explicit no-data state linking to Connections before a lazy
+Marketing child can load. Issue #6 must provide a request-scoped verified environment actor before
+that surface can read Marketing data. Lazy-load and render failures remain inside the Marketing
+parent and expose a direct return to Dev.
 
 ## Repo-grounded options
 
@@ -27,33 +35,36 @@ failure paths expose a direct return to Dev.
 
 The current client already creates browser history for web and hash history for Electron in
 `apps/web/src/main.tsx`, builds its router from the generated file tree in `apps/web/src/router.ts`,
-and enables TanStack file routing in `apps/web/vite.config.ts`. `apps/web/src/routes/__root.tsx` is
-the single authenticated layout composition point. These existing public framework seams are
-sufficient; no provider, session, prompt, transport, authentication, or persistence hook is
-required.
+and enables TanStack file routing in `apps/web/vite.config.ts`. `apps/web/src/routes/__root.tsx`
+provides the native authentication gate context and the single layout composition point. These
+existing public framework seams are sufficient; no provider, session, prompt, transport, new
+authentication implementation, or persistence hook is required.
 
 Affected ownership:
 
-- T3 owns the `dev` fallback, the generic root-layout selection, authentication, connection state,
-  and unchanged Dev shell.
+- T3 owns the `dev` fallback, the generic root-layout selection, pairing, authentication,
+  connection state, and unchanged Dev shell.
 - Auldric owns the explicit `/marketing` namespace and its lazy payload.
 - Web and desktop share the same route implementation. Native mobile remains Dev-only until a
   separately approved Marketing surface owns its navigation and proof.
 
-The existing T3 files changed by this bounded seam are exact-path temporary exceptions in the
-shared-core drift guard. The generic upstream extension discussion is
+The existing T3 files changed by this bounded seam are exact-path, content-hashed temporary
+exceptions in the shared-core drift guard, and CI executes each declared focused test. The generic
+upstream extension discussion is related provenance, not a proposal for this route patch:
 [`pingdotgg/t3code#5020`](https://github.com/pingdotgg/t3code/issues/5020). Newly added domain and
 route files are listed as exact additive Marketing paths; the guard is not broadened to an existing
 T3 directory.
 
-Proof covers fallback decoding, exact namespace matching, reversible destinations, generated lazy
-imports, route-local loading and failure states, generic chunk-load recovery, and the exact native
-`thread.turn.start` request payload. Focused tests run without changing the native interaction-mode
-contract.
+Proof uses real memory-router matching for exact, deep, catch-all, case-mismatched, and adjacent
+paths, plus desktop hash history. It covers authenticated, pairing-gated, and hosted-static access;
+safe post-pair return; delayed and rejected lazy imports; accessible pending and error recovery;
+reversible destinations; and the exact native `thread.turn.start` request payload. Focused tests
+run without changing the native interaction-mode contract.
 
-Risk is confined to the root layout conditional and generated route registration. The Dev branch
-keeps the existing component tree and all non-Marketing paths select it. Rollback removes the new
-route and conditional without translating or rewriting T3 state.
+Risk is confined to the root layout conditional, generated route registration, and the validated
+Marketing-only return handled by the native pair route. The Dev branch keeps the existing component
+tree and all non-Marketing matches select it. Rollback removes the route, return parser, and
+conditional without translating or rewriting T3 state.
 
 ### Not selected: durable public extension registry
 

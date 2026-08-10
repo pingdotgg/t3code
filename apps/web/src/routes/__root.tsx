@@ -7,6 +7,7 @@ import {
   createRootRoute,
   type ErrorComponentProps,
   useLocation,
+  useMatches,
   useNavigate,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -42,7 +43,7 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
-import { productDomainPath, resolveProductDomainFromPathname } from "../productDomain";
+import { productDomainPath, resolveProductDomainFromRouteIds } from "../productDomain";
 import { shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -90,7 +91,7 @@ export const Route = createRootRoute({
 
 function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
-  const productDomain = resolveProductDomainFromPathname(pathname);
+  const productDomain = useMatchedProductDomain();
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
 
@@ -244,8 +245,7 @@ function HostedStaticEnvironmentBootstrap() {
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
-  const pathname = useLocation({ select: (location) => location.pathname });
-  const productDomain = resolveProductDomainFromPathname(pathname);
+  const productDomain = useMatchedProductDomain();
   const message = errorMessage(error);
   const details = errorDetails(error);
 
@@ -291,6 +291,12 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
       </section>
     </div>
   );
+}
+
+function useMatchedProductDomain() {
+  return useMatches({
+    select: (matches) => resolveProductDomainFromRouteIds(matches.map((match) => match.routeId)),
+  });
 }
 
 function errorMessage(error: unknown): string {

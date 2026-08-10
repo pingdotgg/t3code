@@ -49,6 +49,12 @@ For automation or release evidence, request JSON:
 node scripts/auldric/check-t3-baseline.ts --fetch --json
 ```
 
+To execute every focused test declared by the active shared-core entries after the guard passes:
+
+```bash
+node scripts/auldric/check-t3-baseline.ts --fetch --run-declared-tests
+```
+
 The command verifies that the pin is in current `upstream/main`, that it is an ancestor of the
 release commit, and that the checkout is clean. It reports release/upstream commit drift and every
 path changed after the pin. It fails changes outside these categories:
@@ -58,8 +64,8 @@ path changed after the pin. It fails changes outside these categories:
 - an existing T3-owned path with a valid temporary entry in the shared-core allowlist.
 
 The focused GitHub workflow [`.github/workflows/auldric-t3-baseline.yml`](../../.github/workflows/auldric-t3-baseline.yml)
-runs the guard tests and the fetched ancestry/drift check on every pull request and every push to
-`main`.
+runs the guard tests, fetched ancestry/drift check, and every declared shared-core test on every
+pull request and every push to `main`.
 
 ## Accepting a later T3 baseline
 
@@ -121,18 +127,22 @@ and is empty by default. Each entry is exact-path only and must include:
   "path": "apps/web/example.ts",
   "owner": "@maintainer",
   "reason": "Why the smallest shared seam is temporarily required",
+  "contentSha256": "<lowercase SHA-256 of the complete reviewed release file>",
   "expiresOn": "2026-09-01",
   "upstream": {
-    "status": "proposed",
+    "status": "related",
     "url": "https://github.com/pingdotgg/t3code/issues/123"
   },
-  "test": "pnpm --dir apps/web run test -- src/example.test.ts"
+  "test": "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx"
 }
 ```
 
-Expired entries, duplicate paths, missing metadata, non-T3 paths, and non-T3 upstream links fail the
-guard. The owner must remove the seam or refresh it through review before its expiry. A generic
-missing capability remains an upstream dependency; the allowlist is not permission to fork Dev.
+Expired entries, duplicate paths, missing metadata, a changed content hash, non-T3 paths, and non-T3
+upstream links fail the guard. Upstream status may be `related`, `proposed`, `accepted`, or
+`rejected`; use `related` when the link is context rather than an exact proposal for the patch. The
+test must exactly match a reviewed command in the guard's closed manifest. The owner must remove the
+seam or refresh it through review before its expiry. A generic missing capability remains an
+upstream dependency; the allowlist is not permission to fork Dev.
 
 ## Rollback and recovery
 

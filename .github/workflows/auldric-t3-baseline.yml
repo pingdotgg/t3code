@@ -37,4 +37,4 @@ jobs:
         run: pnpm --dir scripts run test -- auldric/check-t3-baseline.test.ts
 
       - name: Verify ancestry and classify downstream drift
-        run: node scripts/auldric/check-t3-baseline.ts --fetch
+        run: node scripts/auldric/check-t3-baseline.ts --fetch --run-declared-tests

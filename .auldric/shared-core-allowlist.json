@@ -5,9 +5,10 @@
       "path": "apps/web/src/routeTree.gen.ts",
       "owner": "#4",
       "reason": "Register the isolated Marketing route while preserving generated T3 routes and lazy-loading its payload.",
+      "contentSha256": "852c8516b955515669c2cf4eada3aee05e6013d58e71327203883b746595d43e",
       "expiresOn": "2026-09-10",
       "upstream": {
-        "status": "proposed",
+        "status": "related",
         "url": "https://github.com/pingdotgg/t3code/issues/5020"
       },
       "test": "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx"
@@ -15,24 +16,26 @@
     {
       "path": "apps/web/src/routes/__root.tsx",
       "owner": "#4",
-      "reason": "Select the isolated Marketing outlet only for its explicit namespace while leaving the native Dev layout branch unchanged.",
+      "reason": "Select the isolated Marketing outlet only from matched route identity while leaving the native Dev layout branch unchanged.",
+      "contentSha256": "9c7e0a84b160b2a4348ee369ba35897cf9127ca78f80f67249702d19781c12c7",
       "expiresOn": "2026-09-10",
       "upstream": {
-        "status": "proposed",
+        "status": "related",
         "url": "https://github.com/pingdotgg/t3code/issues/5020"
       },
       "test": "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx"
     },
     {
-      "path": "packages/client-runtime/src/operations/commands.test.ts",
+      "path": "apps/web/src/routes/pair.tsx",
       "owner": "#4",
-      "reason": "Capture the native Dev turn command and prove the product-domain seam adds no wrapper, context, or Marketing instruction.",
+      "reason": "Return a successfully paired local client only to a narrowly validated Marketing pathname.",
+      "contentSha256": "e4c30755b579f8d8582238c11d7c8c01833b8af938025f7397817165ed78e64a",
       "expiresOn": "2026-09-10",
       "upstream": {
-        "status": "proposed",
+        "status": "related",
         "url": "https://github.com/pingdotgg/t3code/issues/5020"
       },
-      "test": "pnpm --dir packages/client-runtime test src/operations/commands.test.ts"
+      "test": "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx"
     }
   ]
 }

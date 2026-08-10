@@ -14,6 +14,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
+import { Route as MarketingRouteImport } from './routes/marketing'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
@@ -30,13 +31,9 @@ import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
-const MarketingLazyRouteImport = createFileRoute('/marketing')()
+const MarketingIndexLazyRouteImport = createFileRoute('/marketing/')()
+const MarketingSplatLazyRouteImport = createFileRoute('/marketing/$')()
 
-const MarketingLazyRoute = MarketingLazyRouteImport.update({
-  id: '/marketing',
-  path: '/marketing',
-  getParentRoute: () => rootRouteImport,
-} as any).lazy(() => import('./routes/marketing.lazy').then((d) => d.Route))
 const UsageRoute = UsageRouteImport.update({
   id: '/usage',
   path: '/usage',
@@ -52,6 +49,11 @@ const PairRoute = PairRouteImport.update({
   path: '/pair',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MarketingRoute = MarketingRouteImport.update({
+  id: '/marketing',
+  path: '/marketing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConnectRoute = ConnectRouteImport.update({
   id: '/connect',
   path: '/connect',
@@ -61,11 +63,23 @@ const ChatRoute = ChatRouteImport.update({
   id: '/_chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MarketingIndexLazyRoute = MarketingIndexLazyRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => MarketingRoute,
+} as any).lazy(() =>
+  import('./routes/marketing.index.lazy').then((d) => d.Route),
+)
 const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
 } as any)
+const MarketingSplatLazyRoute = MarketingSplatLazyRouteImport.update({
+  id: '/$',
+  path: '/$',
+  getParentRoute: () => MarketingRoute,
+} as any).lazy(() => import('./routes/marketing.$.lazy').then((d) => d.Route))
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
   path: '/source-control',
@@ -131,10 +145,10 @@ const ChatEnvironmentIdThreadIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/connect': typeof ConnectRoute
+  '/marketing': typeof MarketingRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
-  '/marketing': typeof MarketingLazyRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -145,6 +159,8 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/marketing/$': typeof MarketingSplatLazyRoute
+  '/marketing/': typeof MarketingIndexLazyRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -153,7 +169,6 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
-  '/marketing': typeof MarketingLazyRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -164,7 +179,9 @@ export interface FileRoutesByTo {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/marketing/$': typeof MarketingSplatLazyRoute
   '/': typeof ChatIndexRoute
+  '/marketing': typeof MarketingIndexLazyRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -172,10 +189,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
   '/connect': typeof ConnectRoute
+  '/marketing': typeof MarketingRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
-  '/marketing': typeof MarketingLazyRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -186,7 +203,9 @@ export interface FileRoutesById {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
+  '/marketing/$': typeof MarketingSplatLazyRoute
   '/_chat/': typeof ChatIndexRoute
+  '/marketing/': typeof MarketingIndexLazyRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
@@ -195,10 +214,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/connect'
+    | '/marketing'
     | '/pair'
     | '/settings'
     | '/usage'
-    | '/marketing'
     | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -209,6 +228,8 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/marketing/$'
+    | '/marketing/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
@@ -217,7 +238,6 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
-    | '/marketing'
     | '/connect/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -228,17 +248,19 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/marketing/$'
     | '/'
+    | '/marketing'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
   id:
     | '__root__'
     | '/_chat'
     | '/connect'
+    | '/marketing'
     | '/pair'
     | '/settings'
     | '/usage'
-    | '/marketing'
     | '/connect_/callback'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -249,7 +271,9 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/source-control'
+    | '/marketing/$'
     | '/_chat/'
+    | '/marketing/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
   fileRoutesById: FileRoutesById
@@ -257,23 +281,16 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   ConnectRoute: typeof ConnectRoute
+  MarketingRoute: typeof MarketingRouteWithChildren
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
-  MarketingLazyRoute: typeof MarketingLazyRoute
   ConnectCallbackRoute: typeof ConnectCallbackRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/marketing': {
-      id: '/marketing'
-      path: '/marketing'
-      fullPath: '/marketing'
-      preLoaderRoute: typeof MarketingLazyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/usage': {
       id: '/usage'
       path: '/usage'
@@ -295,6 +312,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PairRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/marketing': {
+      id: '/marketing'
+      path: '/marketing'
+      fullPath: '/marketing'
+      preLoaderRoute: typeof MarketingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/connect': {
       id: '/connect'
       path: '/connect'
@@ -309,12 +333,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/marketing/': {
+      id: '/marketing/'
+      path: '/'
+      fullPath: '/marketing/'
+      preLoaderRoute: typeof MarketingIndexLazyRouteImport
+      parentRoute: typeof MarketingRoute
+    }
     '/_chat/': {
       id: '/_chat/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/marketing/$': {
+      id: '/marketing/$'
+      path: '/$'
+      fullPath: '/marketing/$'
+      preLoaderRoute: typeof MarketingSplatLazyRouteImport
+      parentRoute: typeof MarketingRoute
     }
     '/settings/source-control': {
       id: '/settings/source-control'
@@ -417,6 +455,20 @@ const ChatRouteChildren: ChatRouteChildren = {
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
+interface MarketingRouteChildren {
+  MarketingSplatLazyRoute: typeof MarketingSplatLazyRoute
+  MarketingIndexLazyRoute: typeof MarketingIndexLazyRoute
+}
+
+const MarketingRouteChildren: MarketingRouteChildren = {
+  MarketingSplatLazyRoute: MarketingSplatLazyRoute,
+  MarketingIndexLazyRoute: MarketingIndexLazyRoute,
+}
+
+const MarketingRouteWithChildren = MarketingRoute._addFileChildren(
+  MarketingRouteChildren,
+)
+
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
@@ -446,10 +498,10 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ConnectRoute: ConnectRoute,
+  MarketingRoute: MarketingRouteWithChildren,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
-  MarketingLazyRoute: MarketingLazyRoute,
   ConnectCallbackRoute: ConnectCallbackRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }

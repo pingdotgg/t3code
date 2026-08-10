@@ -91,7 +91,7 @@ function writeGovernance(root: string, baseline: string): void {
   );
 }
 
-function writeAllowlist(root: string, expiresOn: string): void {
+function writeAllowlist(root: string, expiresOn: string, reviewedContent: string): void {
   write(
     root,
     ".auldric/shared-core-allowlist.json",
@@ -103,12 +103,13 @@ function writeAllowlist(root: string, expiresOn: string): void {
             path: "apps/web/core.txt",
             owner: "@maintainer",
             reason: "Temporary boundary needed by the fixture",
+            contentSha256: sha256(reviewedContent),
             expiresOn,
             upstream: {
-              status: "proposed",
+              status: "related",
               url: "https://github.com/pingdotgg/t3code/issues/123",
             },
-            test: "pnpm run test -- core.test.ts",
+            test: "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx",
           },
         ],
       },
@@ -216,8 +217,9 @@ it("accepts a complete, unexpired exact-path shared-core seam", () => {
   const { root, baseline } = createRepository();
   try {
     writeGovernance(root, baseline);
-    writeAllowlist(root, "2026-08-11");
-    write(root, "apps/web/core.txt", "small temporary seam\n");
+    const reviewedContent = "small temporary seam\n";
+    writeAllowlist(root, "2026-08-11", reviewedContent);
+    write(root, "apps/web/core.txt", reviewedContent);
     commitAll(root, "add temporary shared seam");
 
     const report = inspect(root);
@@ -232,15 +234,60 @@ it("accepts a complete, unexpired exact-path shared-core seam", () => {
   }
 });
 
+it("rejects arbitrary content drift at an allowlisted shared-core path", () => {
+  const { root, baseline } = createRepository();
+  try {
+    const reviewedContent = "small temporary seam\n";
+    writeGovernance(root, baseline);
+    writeAllowlist(root, "2026-08-11", reviewedContent);
+    write(root, "apps/web/core.txt", reviewedContent);
+    commitAll(root, "add reviewed shared seam");
+    assert.equal(inspect(root).ok, true);
+
+    write(root, "apps/web/core.txt", "arbitrary replacement at the same path\n");
+    commitAll(root, "drift shared seam contents");
+
+    const report = inspect(root);
+    assert.equal(report.ok, false);
+    assert.include(report.violations, "unexpected shared-core edit: apps/web/core.txt");
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it("rejects an expired shared-core seam", () => {
   const { root, baseline } = createRepository();
   try {
     writeGovernance(root, baseline);
-    writeAllowlist(root, "2026-08-09");
-    write(root, "apps/web/core.txt", "expired seam\n");
+    const reviewedContent = "expired seam\n";
+    writeAllowlist(root, "2026-08-09", reviewedContent);
+    write(root, "apps/web/core.txt", reviewedContent);
     commitAll(root, "add expired shared seam");
 
     assert.throws(() => inspect(root), /expired on 2026-08-09/);
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects a shared-core test outside the closed CI manifest", () => {
+  const { root, baseline } = createRepository();
+  try {
+    const reviewedContent = "small temporary seam\n";
+    writeGovernance(root, baseline);
+    writeAllowlist(root, "2026-08-11", reviewedContent);
+    const allowlistPath = NodePath.join(root, ".auldric/shared-core-allowlist.json");
+    NodeFS.writeFileSync(
+      allowlistPath,
+      NodeFS.readFileSync(allowlistPath, "utf8").replace(
+        "pnpm --dir apps/web test src/productDomain.test.ts src/marketingRoute.test.tsx",
+        "pnpm exec unreviewed-command",
+      ),
+    );
+    write(root, "apps/web/core.txt", reviewedContent);
+    commitAll(root, "declare an unreviewed test command");
+
+    assert.throws(() => inspect(root), /not an approved declared shared-core test/);
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }

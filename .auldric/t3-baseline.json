@@ -47,14 +47,17 @@
       "apps/web/src/marketingRoute.test.tsx",
       "apps/web/src/productDomain.test.ts",
       "apps/web/src/productDomain.ts",
-      "apps/web/src/routes/marketing.lazy.tsx",
+      "apps/web/src/routes/marketing.$.lazy.tsx",
+      "apps/web/src/routes/marketing.index.lazy.tsx",
+      "apps/web/src/routes/marketing.tsx",
       "docs/auldric",
       "docs/_archive/auldric-runtime/",
       "docs/internals/identifier-ownership.md",
       "docs/user/product-identity.md",
       "scripts/auldric/check-legacy-donor-inventory.",
       "scripts/complete-feature-docs.",
-      "packages/auldric-"
+      "packages/auldric-",
+      "packages/client-runtime/src/auldric-dev-payload.test.ts"
     ],
     "distributionConfigurationPaths": [
       ".auldric/shared-core-allowlist.json",

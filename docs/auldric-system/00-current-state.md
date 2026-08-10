@@ -14,8 +14,9 @@ machine-verifiable baseline.
 
 - Native T3 web, desktop, mobile, server, provider, conversation, transport, Git, terminal,
   preview, Connect, collaboration, remote, CI, and release behaviour.
-- The explicit URL-owned `dev | marketing` product-domain boundary selected by issue #4. Its lazy
-  route currently contains only the boundary proof; issue #21 owns the usable Marketing shell.
+- The explicit route-owned `dev | marketing` product-domain boundary selected by issue #4. Its
+  lazy payload currently contains only the boundary proof; issue #21 owns the usable Marketing
+  shell. Hosted static remains fail-closed until issue #6 supplies a verified environment actor.
 - The public app currently present at `apps/marketing`, which is T3 material and is not proof of an
   approved Auldric public surface.
 - This reviewed Marketing-domain authority and requirements spine.

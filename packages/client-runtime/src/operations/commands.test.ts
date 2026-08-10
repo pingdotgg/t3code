@@ -1,7 +1,6 @@
 import {
   CommandId,
   EnvironmentId,
-  MessageId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ThreadId,
@@ -26,7 +25,6 @@ import {
   archiveThread,
   createProject,
   settleThread,
-  startThreadTurn,
   stopThreadSession,
   unsettleThread,
 } from "./commands.ts";
@@ -96,44 +94,6 @@ describe("environment commands", () => {
           title: "Project",
           workspaceRoot: "/workspace/project",
           createdAt: "2026-06-06T00:00:00.000Z",
-        },
-      ]);
-    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
-  );
-
-  it.effect("keeps the native Dev turn payload free of product-domain context", () =>
-    Effect.gen(function* () {
-      const dispatched: ClientOrchestrationCommand[] = [];
-      const supervisor = yield* makeSupervisor(dispatched);
-
-      yield* startThreadTurn({
-        commandId: CommandId.make("dev-turn-command"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: MessageId.make("message-1"),
-          role: "user",
-          text: "Keep this native Dev request unchanged.",
-          attachments: [],
-        },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        createdAt: "2026-06-06T00:02:00.000Z",
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(dispatched).toEqual([
-        {
-          type: "thread.turn.start",
-          commandId: "dev-turn-command",
-          threadId: "thread-1",
-          message: {
-            messageId: "message-1",
-            role: "user",
-            text: "Keep this native Dev request unchanged.",
-            attachments: [],
-          },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          createdAt: "2026-06-06T00:02:00.000Z",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
