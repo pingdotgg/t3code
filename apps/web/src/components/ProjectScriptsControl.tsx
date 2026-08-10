@@ -7,8 +7,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon, DownloadIcon, PlusIcon, SettingsIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { ChevronDownIcon, DownloadIcon, PlusIcon, SettingsIcon, WrenchIcon } from "lucide-react";
+import React, { useCallback, useMemo, useState } from "react";
 
 import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -77,14 +77,11 @@ export default function ProjectScriptsControl({
   onUpdateScript,
   onDeleteScript,
 }: ProjectScriptsControlProps) {
-<<<<<<< HEAD
-=======
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = React.useRef<HTMLDivElement | null>(null);
   const addScriptFormId = React.useId();
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
->>>>>>> abd5cc5ff8 (Map thread panel into title bar and sidebar)
   const [actionsMenuOpen, setActionsMenuOpen] = useState({
     scripts: false,
     imports: false,

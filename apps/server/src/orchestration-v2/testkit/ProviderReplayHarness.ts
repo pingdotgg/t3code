@@ -172,7 +172,7 @@ export function runOrchestratorV2ProviderReplayScenario<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
-    readonly enableAssistantStreaming?: boolean;
+    readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
   } = {},
 ): Effect.Effect<
@@ -211,7 +211,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
-    readonly enableAssistantStreaming?: boolean;
+    readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
     readonly replayGate?: ProviderReplayGate;
   } = {},
@@ -231,7 +231,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
-    readonly enableAssistantStreaming?: boolean;
+    readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
@@ -247,7 +247,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         );
   const databaseLayer = options.databaseLayer ?? SqlitePersistenceMemory;
   const serverSettingsLayer = ServerSettingsService.layerTest({
-    enableAssistantStreaming: options.enableAssistantStreaming ?? false,
+    enableLegacyTokenStreaming: options.enableLegacyTokenStreaming ?? false,
   }).pipe(Layer.orDie);
   const storesLayer = Layer.mergeAll(
     eventStoreLayer,

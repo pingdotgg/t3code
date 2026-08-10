@@ -221,7 +221,6 @@ export function readEnvironmentSupportsTitleRegeneration(environmentId: Environm
   );
 }
 
-<<<<<<< HEAD
 /** Whether the environment's server understands thread.pin.reorder (and
     orderKey on thread.pin). Same version-skew contract as settlement. */
 export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId): boolean {
@@ -231,12 +230,8 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
   );
 }
 
-export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
-  return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
-=======
 export function readThreadProjection(ref: ScopedThreadRef): EnvironmentThread | null {
   return appAtomRegistry.get(environmentThreadDetails.threadAtom(ref));
->>>>>>> d849d1caf9 (Retire V1 client orchestration parity)
 }
 
 /** Whether the environment's server understands thread.settle/unsettle.
