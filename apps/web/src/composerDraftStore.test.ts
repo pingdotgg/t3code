@@ -715,10 +715,9 @@ describe("composerDraftStore project draft thread mapping", () => {
     }
   });
 
-  it("clears orphaned composer drafts when remapping a project to a new draft thread", () => {
+  it("clears empty composer drafts when remapping a project to a new draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-    store.setPrompt(draftId, "orphan me");
 
     store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
 
@@ -726,6 +725,67 @@ describe("composerDraftStore project draft thread mapping", () => {
       otherThreadId,
     );
     expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+    expect(draftByKey(draftId)).toBeUndefined();
+  });
+
+  it("keeps invested composer drafts alive when remapping a project", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "keep me");
+
+    store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)?.threadId).toBe(
+      otherThreadId,
+    );
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.threadId).toBe(threadId);
+    expect(draftByKey(draftId)?.prompt).toBe("keep me");
+  });
+
+  it("persists mapped and invested sessions while omitting empty unmapped sessions", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "keep me after reload");
+    store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+    store.createDetachedDraftSession(projectRef, sharedDraftId);
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (
+          state: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState());
+
+    expect(persistedState.draftThreadsByThreadKey[draftId]).toBeDefined();
+    expect(persistedState.draftThreadsByThreadKey[otherDraftId]).toBeDefined();
+    expect(persistedState.draftThreadsByThreadKey[sharedDraftId]).toBeUndefined();
+
+    const rehydratedState = persistApi
+      .getOptions()
+      .merge(persistedState, useComposerDraftStore.getInitialState());
+    expect(rehydratedState.draftThreadsByThreadKey[draftId]?.threadId).toBe(threadId);
+    expect(rehydratedState.draftsByThreadKey[draftId]?.prompt).toBe("keep me after reload");
+    expect(rehydratedState.draftThreadsByThreadKey[otherDraftId]?.threadId).toBe(otherThreadId);
+    expect(rehydratedState.draftThreadsByThreadKey[sharedDraftId]).toBeUndefined();
+  });
+
+  it("clears every draft session owned by a project", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "invested");
+    store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+
+    store.clearProjectDraftThreadId(projectRef);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(otherDraftId)).toBeNull();
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
