@@ -56,7 +56,7 @@ public struct ThreadDetailView: View {
         .navigationBarBackButtonHidden(false)
 #if DEBUG
         // Dev-build marker inside a thread: the whole title bar goes orange.
-        .t3NavigationChrome(background: .orange)
+        .t3NavigationChrome(background: T3Colors.warning)
 #else
         .t3NavigationChrome()
 #endif
