@@ -490,6 +490,27 @@ class OnlineChatRepository(
     }.awaitAll()
   }
 
+  suspend fun readArchivedThreads(): List<ArchivedEnvironmentReport> = coroutineScope {
+    val environments = synchronized(lock) {
+      runtimes.values.map { runtime ->
+        Triple(runtime.environment.environmentId, runtime.environment.label, runtime.connection)
+      }
+    }
+    environments.map { (environmentId, label, connection) ->
+      async(Dispatchers.IO) {
+        if (connection == null) {
+          ArchivedEnvironmentReport(environmentId, label, error = "Environment is disconnected.")
+        } else {
+          runCatching { client.getArchivedShellSnapshot(connection.session) }
+            .fold(
+              onSuccess = { ArchivedEnvironmentReport(environmentId, label, snapshot = it) },
+              onFailure = { ArchivedEnvironmentReport(environmentId, label, error = it.safeMessage()) },
+            )
+        }
+      }
+    }.awaitAll()
+  }
+
   suspend fun dispatch(command: JsonObject): Long = withContext(Dispatchers.IO) {
     val runtime = connectedActiveRuntime()
     client.dispatch(requireNotNull(runtime.connection).session, command)
@@ -1038,8 +1059,22 @@ class OnlineChatRepository(
     }
   }
 
-  suspend fun clearCache() = withContext(Dispatchers.IO) {
-    database.clearCache(activeEnvironmentId)
+  suspend fun readClientCache(): List<EnvironmentCacheSummary> = withContext(Dispatchers.IO) {
+    val labels = synchronized(lock) {
+      runtimes.values.associate { it.environment.environmentId to it.environment.label }
+    }
+    database.cacheSummary().map { summary ->
+      EnvironmentCacheSummary(
+        environmentId = summary.environmentId,
+        environmentLabel = labels[summary.environmentId] ?: summary.environmentId,
+        recordCount = summary.recordCount,
+        payloadBytes = summary.payloadBytes,
+      )
+    }.sortedBy { it.environmentLabel.lowercase() }
+  }
+
+  suspend fun clearCache(environmentId: String? = null) = withContext(Dispatchers.IO) {
+    database.clearCache(environmentId)
   }
 
   fun onBackgrounded(now: Long = System.currentTimeMillis()) {

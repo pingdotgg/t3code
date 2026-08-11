@@ -220,6 +220,12 @@ class AppViewModel(
   private val mutableUsageState = MutableStateFlow(UsageUiState())
   val usageState = mutableUsageState.asStateFlow()
 
+  private val mutableArchivedThreadsState = MutableStateFlow(ArchivedThreadsUiState())
+  val archivedThreadsState = mutableArchivedThreadsState.asStateFlow()
+
+  private val mutableClientStorageState = MutableStateFlow(ClientStorageUiState())
+  val clientStorageState = mutableClientStorageState.asStateFlow()
+
   private val mutableAttachmentUrls = MutableStateFlow<Map<String, String>>(emptyMap())
   val attachmentUrls = mutableAttachmentUrls.asStateFlow()
 
@@ -248,6 +254,8 @@ class AppViewModel(
   private var reviewPreviewJob: Job? = null
   private var reviewTurnJob: Job? = null
   private var usageJob: Job? = null
+  private var archivedThreadsJob: Job? = null
+  private var clientStorageJob: Job? = null
   private var terminalWrites: Channel<String>? = null
   private var terminalBuffer = TerminalBufferState()
   private var terminalMetadata = emptyList<com.t3tools.android.protocol.TerminalSummary>()
@@ -283,6 +291,44 @@ class AppViewModel(
         .onFailure { failure ->
           if (failure !is CancellationException) {
             mutableUsageState.value = mutableUsageState.value.copy(
+              loading = false,
+              error = failure.safeMessage(),
+            )
+          }
+        }
+    }
+  }
+
+  fun loadArchivedThreads() {
+    archivedThreadsJob?.cancel()
+    mutableArchivedThreadsState.value = mutableArchivedThreadsState.value.copy(loading = true, error = null)
+    archivedThreadsJob = viewModelScope.launch {
+      runCatching { repository.readArchivedThreads() }
+        .onSuccess { reports ->
+          mutableArchivedThreadsState.value = ArchivedThreadsUiState(reports = reports)
+        }
+        .onFailure { failure ->
+          if (failure !is CancellationException) {
+            mutableArchivedThreadsState.value = mutableArchivedThreadsState.value.copy(
+              loading = false,
+              error = failure.safeMessage(),
+            )
+          }
+        }
+    }
+  }
+
+  fun loadClientStorage() {
+    clientStorageJob?.cancel()
+    mutableClientStorageState.value = mutableClientStorageState.value.copy(loading = true, error = null)
+    clientStorageJob = viewModelScope.launch {
+      runCatching { repository.readClientCache() }
+        .onSuccess { summaries ->
+          mutableClientStorageState.value = ClientStorageUiState(environments = summaries)
+        }
+        .onFailure { failure ->
+          if (failure !is CancellationException) {
+            mutableClientStorageState.value = mutableClientStorageState.value.copy(
               loading = false,
               error = failure.safeMessage(),
             )
@@ -1923,6 +1969,18 @@ class AppViewModel(
     value: String? = null,
   ) = dispatchAction(threadActionCommand(type, threadId, value), environmentId)
 
+  fun archivedThreadAction(environmentId: String, type: String, threadId: String) {
+    viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
+      runCatching { repository.dispatch(environmentId, threadActionCommand(type, threadId)) }
+        .onSuccess {
+          mutableDispatchState.value = DispatchState.Idle
+          loadArchivedThreads()
+        }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
   fun reorderPinned(assignments: List<PinOrderAssignment>) {
     if (assignments.isEmpty()) return
     viewModelScope.launch {
@@ -1979,10 +2037,18 @@ class AppViewModel(
     }
   }
 
-  fun clearCache() {
+  fun clearCache(environmentId: String? = null) {
+    if (mutableClientStorageState.value.clearing) return
+    mutableClientStorageState.value = mutableClientStorageState.value.copy(clearing = true, error = null)
     viewModelScope.launch {
-      runCatching { repository.clearCache() }
-        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+      runCatching { repository.clearCache(environmentId) }
+        .onSuccess { loadClientStorage() }
+        .onFailure { failure ->
+          mutableClientStorageState.value = mutableClientStorageState.value.copy(
+            clearing = false,
+            error = failure.safeMessage(),
+          )
+        }
     }
   }
 

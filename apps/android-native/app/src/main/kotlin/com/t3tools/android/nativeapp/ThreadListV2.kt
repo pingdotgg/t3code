@@ -325,15 +325,22 @@ fun buildThreadListV2Layout(
 
 fun resolveSnoozePresets(now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()): List<SnoozePreset> {
   val local = ZonedDateTime.ofInstant(now, zone)
-  val evening = local.toLocalDate().atTime(18, 0).atZone(zone).let {
-    if (it.isAfter(local)) it else it.plusDays(1)
-  }
+  val evening = local.toLocalDate().atTime(18, 0).atZone(zone)
   val tomorrow = local.toLocalDate().plusDays(1).atTime(9, 0).atZone(zone)
-  return listOf(
-    SnoozePreset("hour", "1 hour", now.plus(1, ChronoUnit.HOURS)),
-    SnoozePreset("evening", "This evening", evening.toInstant()),
-    SnoozePreset("tomorrow", "Tomorrow", tomorrow.toInstant()),
-  )
+  val daysUntilMonday = (8 - local.dayOfWeek.value) % 7
+  val nextMonday = local.toLocalDate()
+    .plusDays((daysUntilMonday.takeUnless { it == 0 } ?: 7).toLong())
+    .atTime(9, 0)
+    .atZone(zone)
+  return buildList {
+    add(SnoozePreset("hour", "In 1 hour", now.plus(1, ChronoUnit.HOURS)))
+    add(SnoozePreset("three-hours", "In 3 hours", now.plus(3, ChronoUnit.HOURS)))
+    if (evening.toInstant().isAfter(now.plus(1, ChronoUnit.HOURS))) {
+      add(SnoozePreset("evening", "This evening", evening.toInstant()))
+    }
+    add(SnoozePreset("tomorrow", "Tomorrow", tomorrow.toInstant()))
+    add(SnoozePreset("next-week", "Next week", nextMonday.toInstant()))
+  }
 }
 
 fun relativeTimeLabel(iso: String?, now: Instant = Instant.now()): String {

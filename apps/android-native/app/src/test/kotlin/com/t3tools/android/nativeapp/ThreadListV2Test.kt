@@ -5,6 +5,8 @@ import com.t3tools.android.protocol.ModelSelection
 import com.t3tools.android.protocol.ThreadSession
 import com.t3tools.android.protocol.ThreadSummary
 import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,6 +15,45 @@ import org.junit.Test
 
 class ThreadListV2Test {
   private val now = Instant.parse("2026-08-08T12:00:00Z")
+
+  @Test
+  fun snooze_presets_match_the_shared_client_order() {
+    val presets = resolveSnoozePresets(
+      Instant.parse("2026-08-08T10:00:00Z"),
+      ZoneId.of("UTC"),
+    )
+
+    assertEquals(
+      listOf("hour", "three-hours", "evening", "tomorrow", "next-week"),
+      presets.map(SnoozePreset::id),
+    )
+    assertEquals("2026-08-08T13:00:00Z", presets.first { it.id == "three-hours" }.snoozedUntil.toString())
+    assertEquals("2026-08-10T09:00:00Z", presets.first { it.id == "next-week" }.snoozedUntil.toString())
+  }
+
+  @Test
+  fun snooze_presets_drop_evening_when_it_is_near_or_past() {
+    val presets = resolveSnoozePresets(
+      Instant.parse("2026-08-08T17:30:00Z"),
+      ZoneId.of("UTC"),
+    )
+
+    assertEquals(
+      listOf("hour", "three-hours", "tomorrow", "next-week"),
+      presets.map(SnoozePreset::id),
+    )
+  }
+
+  @Test
+  fun calendar_snooze_presets_keep_local_time_across_dst() {
+    val zone = ZoneId.of("America/New_York")
+    val now = ZonedDateTime.parse("2026-03-07T23:30:00-05:00[America/New_York]").toInstant()
+    val tomorrow = resolveSnoozePresets(now, zone).first { it.id == "tomorrow" }
+    val localWake = ZonedDateTime.ofInstant(tomorrow.snoozedUntil, zone)
+
+    assertEquals(8, localWake.dayOfMonth)
+    assertEquals(9, localWake.hour)
+  }
 
   @Test
   fun partitions_pinned_active_snoozed_settled() {

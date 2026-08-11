@@ -2,6 +2,7 @@ package com.t3tools.android.protocol
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -235,6 +236,31 @@ class ChatReducersTest {
 
     assertEquals("Run tests", state.detail?.approvals?.single()?.detail)
     assertEquals("Which mode?", state.detail?.userInputs?.single()?.questions?.single()?.question)
+  }
+
+  @Test
+  fun `archived shell snapshots decode archived threads`() {
+    val snapshot = json(
+      """
+      {
+        "snapshotSequence":42,
+        "projects":[{"id":"project-1","title":"T3","workspaceRoot":"/t3","defaultModelSelection":null,"scripts":[]}],
+        "threads":[{
+          ${threadSummaryJson("Archived").removePrefix("{").removeSuffix("}")}
+        }]
+      }
+      """,
+    )
+    val archived = snapshot.toMutableMap().let { fields ->
+      val threads = requireNotNull(fields["threads"]) as kotlinx.serialization.json.JsonArray
+      val thread = threads.single().jsonObject.toMutableMap().apply {
+        put("archivedAt", JsonPrimitive("2026-08-10T00:00:00Z"))
+      }
+      JsonObject(fields + ("threads" to kotlinx.serialization.json.JsonArray(listOf(JsonObject(thread)))))
+    }.toShellState()
+
+    assertEquals(42, archived.sequence)
+    assertEquals("2026-08-10T00:00:00Z", archived.threads.getValue("thread-1").archivedAt)
   }
 
   private fun threadSnapshot(

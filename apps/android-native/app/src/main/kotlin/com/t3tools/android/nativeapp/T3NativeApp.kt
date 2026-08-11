@@ -4,6 +4,7 @@ package com.t3tools.android.nativeapp
 
 import android.content.ClipboardManager
 import android.content.ClipData
+import android.content.Intent
 import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -25,6 +26,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.graphicsLayer
@@ -64,6 +66,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Send
@@ -77,6 +80,7 @@ import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Computer
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Close
@@ -85,14 +89,19 @@ import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PhotoLibrary
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material.icons.rounded.Unarchive
@@ -129,6 +138,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -153,7 +163,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.SubcomposeLayout
@@ -205,8 +217,13 @@ private const val HOME = "home"
 private const val INCOMING_SHARE = "share/{shareId}"
 private const val ADD_PROJECT = "add-project"
 private const val SETTINGS = "settings"
+private const val T3_WORDMARK_PATH =
+  "M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
 private const val ARCHIVED_THREADS = "settings/archived"
 private const val USAGE = "settings/usage"
+private const val SETTINGS_ENVIRONMENTS = "settings/environments"
+private const val CLIENT_STORAGE = "settings/storage"
+private const val LEGAL = "settings/legal"
 private const val THREAD = "thread/{threadId}"
 private const val THREAD_FILES = "thread/{threadId}/files"
 private const val THREAD_GIT_COMMIT = "thread/{threadId}/git/commit"
@@ -378,10 +395,20 @@ fun T3NativeApp(viewModel: AppViewModel) {
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
         onOpenConnect = { navController.navigate(CONNECT) },
-        onAddEnvironment = { navController.navigate(ONBOARDING) },
         onAddProject = { navController.navigate(ADD_PROJECT) },
+        onOpenEnvironments = { navController.navigate(SETTINGS_ENVIRONMENTS) },
         onOpenArchivedThreads = { navController.navigate(ARCHIVED_THREADS) },
         onOpenUsage = { navController.navigate(USAGE) },
+        onOpenClientStorage = { navController.navigate(CLIENT_STORAGE) },
+        onOpenLegal = { navController.navigate(LEGAL) },
+      )
+    }
+    composable(SETTINGS_ENVIRONMENTS) {
+      EnvironmentSettingsScreen(
+        runtime = runtime,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+        onAddEnvironment = { navController.navigate(ONBOARDING) },
       )
     }
     composable(USAGE) {
@@ -395,12 +422,25 @@ fun T3NativeApp(viewModel: AppViewModel) {
       )
     }
     composable(ARCHIVED_THREADS) {
+      val archivedState by viewModel.archivedThreadsState.collectAsState()
+      LaunchedEffect(Unit) { viewModel.loadArchivedThreads() }
       ArchivedThreadsScreen(
-        runtime = runtime,
-        dispatchState = dispatchState,
+        state = archivedState,
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
       )
+    }
+    composable(CLIENT_STORAGE) {
+      val storageState by viewModel.clientStorageState.collectAsState()
+      LaunchedEffect(Unit) { viewModel.loadClientStorage() }
+      ClientStorageScreen(
+        state = storageState,
+        viewModel = viewModel,
+        onBack = { navController.popBackStack() },
+      )
+    }
+    composable(LEGAL) {
+      LegalScreen(onBack = { navController.popBackStack() })
     }
     composable(
       route = THREAD,
@@ -959,6 +999,52 @@ private fun DraftThreadRow(
 }
 
 @Composable
+private fun CompactBrandTitle(statusLabel: String) {
+  Column {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      val wordmark = remember { PathParser().parsePathString(T3_WORDMARK_PATH).toPath() }
+      Canvas(Modifier.width(25.dp).height(15.dp)) {
+        val scale = size.height / 56.96f
+        withTransform({
+          translate(left = -15.5309f * scale, top = -37f * scale)
+          scale(scaleX = scale, scaleY = scale, pivot = Offset.Zero)
+        }) {
+          drawPath(wordmark, color = Color.White)
+        }
+      }
+      Text(
+        text = "Code",
+        style = MaterialTheme.typography.titleLarge.copy(
+          fontSize = 21.sp,
+          fontWeight = FontWeight.Medium,
+          letterSpacing = (-0.5).sp,
+        ),
+        color = Color(0xFFD4D4D8),
+      )
+      Surface(
+        shape = CircleShape,
+        color = Color(0xFF27272A),
+      ) {
+        Text(
+          text = "ALPHA",
+          modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+          style = MaterialTheme.typography.labelSmall.copy(
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.9.sp,
+          ),
+          color = Color(0xFFA1A1AA),
+        )
+      }
+    }
+    Text(statusLabel, style = MaterialTheme.typography.labelSmall)
+  }
+}
+
+@Composable
 private fun HomeScreen(
   runtime: OnlineChatState,
   dispatchState: DispatchState,
@@ -1057,10 +1143,7 @@ private fun HomeScreen(
     topBar = {
       TopAppBar(
         title = {
-          Column {
-            Text("T3 Code", fontWeight = FontWeight.Bold)
-            Text(runtime.statusLabel(), style = MaterialTheme.typography.labelSmall)
-          }
+          CompactBrandTitle(runtime.statusLabel())
         },
         actions = {
           IconButton(onClick = onSettings) {
@@ -1679,216 +1762,261 @@ private fun SettingsScreen(
   viewModel: AppViewModel,
   onBack: () -> Unit,
   onOpenConnect: () -> Unit,
-  onAddEnvironment: () -> Unit,
   onAddProject: () -> Unit,
+  onOpenEnvironments: () -> Unit,
   onOpenArchivedThreads: () -> Unit,
   onOpenUsage: () -> Unit,
+  onOpenClientStorage: () -> Unit,
+  onOpenLegal: () -> Unit,
 ) {
-  var showEditEnv by remember { mutableStateOf(false) }
   BackHandler(onBack = onBack)
   Scaffold(topBar = { BackTopBar("Settings", onBack) }) { padding ->
     Column(
-      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(14.dp),
+      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
+      verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-      Text("Environments", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      if (runtime.environments.isEmpty()) {
-        Text("No saved environments", color = MaterialTheme.colorScheme.onSurfaceVariant)
-      } else {
-        runtime.environments.forEach { item ->
-          val isSelected = item.environmentId == runtime.environment?.environmentId
-          val status = runtime.environmentStatuses[item.environmentId]
-          Card(
-            onClick = { viewModel.selectEnvironment(item.environmentId) },
-            colors = CardDefaults.cardColors(
-              containerColor = if (isSelected) Color(0xFF1E293B) else Color(0xFF111827),
-            ),
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Row(
-              modifier = Modifier.padding(14.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-              Column(modifier = Modifier.weight(1f)) {
-                Text(
-                  text = item.label,
-                  fontWeight = FontWeight.Bold,
-                  color = Color.White,
-                )
-                Text(
-                  text = status?.connectionPhase?.name ?: if (isSelected) "Selected" else "Saved",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-              }
-              if (isSelected) {
-                Icon(
-                  imageVector = Icons.Rounded.Check,
-                  contentDescription = "Selected",
-                  tint = MaterialTheme.colorScheme.primary,
-                )
-              }
-            }
-          }
-        }
+      NativeSettingsSection("Account") {
+        NativeSettingsRow(
+          icon = Icons.Rounded.Person,
+          label = "T3 Account",
+          value = if (runtime.cloud.signedIn) {
+            runtime.cloud.accountLabel ?: runtime.cloud.accountId ?: "Signed in"
+          } else {
+            "Sign in"
+          },
+          onClick = onOpenConnect,
+        )
       }
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        Button(
-          onClick = onAddEnvironment,
-          modifier = Modifier.weight(1f),
-        ) {
-          Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(Modifier.width(6.dp))
-          Text("Add environment")
-        }
-        if (runtime.environment != null) {
-          OutlinedButton(onClick = { showEditEnv = true }) {
-            Text("Edit current")
-          }
-        }
-      }
-      HorizontalDivider()
-      Text("Projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      OutlinedButton(onClick = onAddProject, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text("Add project")
-      }
-      HorizontalDivider()
-      Text("General", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      Surface(
-        onClick = onOpenUsage,
-        shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF111827),
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-          Icon(
-            Icons.Rounded.BarChart,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-          )
-          Column(Modifier.weight(1f)) {
-            Text("Usage", color = Color.White, fontWeight = FontWeight.SemiBold)
-            Text(
-              "Token activity and API-rate estimates",
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              style = MaterialTheme.typography.bodySmall,
-            )
-          }
-          Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-      }
-      HorizontalDivider()
-      Text("Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      Text("AMOLED dark", color = MaterialTheme.colorScheme.onSurfaceVariant)
-      ToggleRow("Compact thread rows", runtime.settings.compactThreadRows) {
-        viewModel.updateSettings(runtime.settings.copy(compactThreadRows = it))
-      }
-      HorizontalDivider()
-      Text("Threads", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      OutlinedButton(onClick = onOpenArchivedThreads, modifier = Modifier.fillMaxWidth()) {
-        Icon(Icons.Rounded.Archive, contentDescription = null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text("Archived Threads")
-      }
-      HorizontalDivider()
-      Text("Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
       Text(
-        "${runtime.environments.size} environments · ${runtime.pendingTasks.size} pending tasks",
+        "T3 Code works locally without signing in. Cloud features are optional.",
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(horizontal = 8.dp).offset(y = (-16).dp),
       )
-      OutlinedButton(onClick = viewModel::clearCache) { Text("Clear cached snapshots") }
-      HorizontalDivider()
-      Text("T3 Connect", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      if (runtime.cloud.signedIn) {
-        Text(
-          "Signed in as ${runtime.cloud.accountLabel ?: runtime.cloud.accountId}",
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(onClick = onOpenConnect, modifier = Modifier.fillMaxWidth()) {
-          Text("Manage T3 Connect")
-        }
-      } else {
-        Text(
-          "Sign in to discover and open relay environments.",
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Button(onClick = onOpenConnect, modifier = Modifier.fillMaxWidth()) {
-          Text("via T3 Connect")
-        }
-      }
-      HorizontalDivider()
-      Text("Beta", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-      ToggleRow("Native beta features", runtime.settings.betaFeatures) {
-        viewModel.updateSettings(runtime.settings.copy(betaFeatures = it))
-      }
-      Text("Open-source licenses and privacy information ship with T3 Code.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-      RuntimeError(runtime.error, dispatchState)
-    }
-  }
 
-  if (showEditEnv) {
-    EnvironmentDrawer(
-      runtime = runtime,
-      viewModel = viewModel,
-      onAdd = {
-        showEditEnv = false
-        onAddEnvironment()
-      },
-      dismiss = { showEditEnv = false },
-    )
+      NativeSettingsSection("Configuration") {
+        NativeSettingsRow(Icons.Rounded.Computer, "Environments", runtime.environments.size.toString(), onOpenEnvironments)
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsRow(Icons.Rounded.CreateNewFolder, "Add Project", onClick = onAddProject)
+      }
+
+      NativeSettingsSection("General") {
+        NativeSettingsRow(Icons.Rounded.BarChart, "Usage", onClick = onOpenUsage)
+      }
+
+      NativeSettingsSection("Appearance") {
+        NativeSettingsRow(Icons.Rounded.Palette, "Theme", value = "AMOLED dark")
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsSwitchRow(
+          icon = Icons.Rounded.FilterList,
+          label = "Compact thread rows",
+          checked = runtime.settings.compactThreadRows,
+          onCheckedChange = {
+            viewModel.updateSettings(runtime.settings.copy(compactThreadRows = it))
+          },
+        )
+      }
+
+      NativeSettingsSection("Threads") {
+        NativeSettingsRow(Icons.Rounded.Archive, "Archived Threads", onClick = onOpenArchivedThreads)
+      }
+
+      NativeSettingsSection("App") {
+        NativeSettingsRow(Icons.Rounded.Storage, "Client Storage", onClick = onOpenClientStorage)
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsRow(Icons.Rounded.Info, "Legal", onClick = onOpenLegal)
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsRow(Icons.Rounded.Info, "Version", value = BuildConfig.VERSION_NAME)
+      }
+
+      RuntimeError(runtime.error, dispatchState)
+      Spacer(Modifier.height(8.dp))
+    }
   }
 }
 
-private data class ArchivedThreadEntry(
-  val environment: SavedEnvironment,
-  val project: Project?,
-  val thread: ThreadSummary,
-)
+@Composable
+private fun NativeSettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Text(
+      title,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      style = MaterialTheme.typography.labelLarge,
+      modifier = Modifier.padding(horizontal = 8.dp),
+    )
+    Surface(
+      shape = RoundedCornerShape(20.dp),
+      color = Color(0xFF111113),
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Column(content = content)
+    }
+  }
+}
+
+@Composable
+private fun NativeSettingsRow(
+  icon: ImageVector,
+  label: String,
+  value: String? = null,
+  onClick: (() -> Unit)? = null,
+) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clickable(enabled = onClick != null) { onClick?.invoke() }
+      .padding(horizontal = 16.dp, vertical = 15.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(14.dp),
+  ) {
+    Icon(icon, contentDescription = null, tint = Color(0xFFE4E4E7), modifier = Modifier.size(22.dp))
+    Text(label, color = Color.White, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+    value?.let {
+      Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    if (onClick != null) {
+      Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color(0xFF71717A), modifier = Modifier.size(18.dp))
+    }
+  }
+}
+
+@Composable
+private fun NativeSettingsSwitchRow(
+  icon: ImageVector,
+  label: String,
+  checked: Boolean,
+  onCheckedChange: (Boolean) -> Unit,
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(horizontal = 16.dp, vertical = 9.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(14.dp),
+  ) {
+    Icon(icon, contentDescription = null, tint = Color(0xFFE4E4E7), modifier = Modifier.size(22.dp))
+    Text(label, color = Color.White, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+    Switch(checked = checked, onCheckedChange = onCheckedChange)
+  }
+}
+
+@Composable
+private fun EnvironmentSettingsScreen(
+  runtime: OnlineChatState,
+  viewModel: AppViewModel,
+  onBack: () -> Unit,
+  onAddEnvironment: () -> Unit,
+) {
+  var showEditEnv by remember { mutableStateOf(false) }
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("Environments", onBack) }) { padding ->
+    Column(
+      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      runtime.environments.forEach { environment ->
+        val selected = environment.environmentId == runtime.environment?.environmentId
+        val status = runtime.environmentStatuses[environment.environmentId]
+        Card(
+          onClick = { viewModel.selectEnvironment(environment.environmentId) },
+          colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFF1E293B) else Color(0xFF111113)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+              Text(environment.label, fontWeight = FontWeight.SemiBold)
+              Text(
+                status?.connectionPhase?.name ?: if (selected) "Selected" else "Saved",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+              )
+            }
+            if (selected) Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+          }
+        }
+      }
+      if (runtime.environments.isEmpty()) {
+        Text("No saved environments", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(8.dp))
+      }
+      Button(onClick = onAddEnvironment, modifier = Modifier.fillMaxWidth()) { Text("Add environment") }
+      if (runtime.environment != null) {
+        OutlinedButton(onClick = { showEditEnv = true }, modifier = Modifier.fillMaxWidth()) { Text("Edit current") }
+      }
+    }
+  }
+  if (showEditEnv) {
+    EnvironmentDrawer(runtime, viewModel, onAdd = {
+      showEditEnv = false
+      onAddEnvironment()
+    }, dismiss = { showEditEnv = false })
+  }
+}
 
 @Composable
 private fun ArchivedThreadsScreen(
-  runtime: OnlineChatState,
-  dispatchState: DispatchState,
+  state: ArchivedThreadsUiState,
   viewModel: AppViewModel,
   onBack: () -> Unit,
 ) {
   var search by remember { mutableStateOf("") }
+  var selectedEnvironmentId by remember { mutableStateOf<String?>(null) }
+  var sortOrder by remember { mutableStateOf(ArchivedThreadSortOrder.Newest) }
+  var filterOpen by remember { mutableStateOf(false) }
   var deleteTarget by remember { mutableStateOf<ArchivedThreadEntry?>(null) }
-  val entries = remember(runtime.environmentShells, runtime.environments, search) {
-    val environments = runtime.environments.associateBy(SavedEnvironment::environmentId)
-    runtime.environmentShells.flatMap { (environmentId, shell) ->
-      val environment = environments[environmentId] ?: return@flatMap emptyList()
-      shell.threads.values.mapNotNull { thread ->
-        thread.takeIf { it.archivedAt != null }?.let {
-          ArchivedThreadEntry(environment, shell.projects[thread.projectId], thread)
-        }
-      }
-    }.filter { entry ->
-      search.isBlank() || entry.thread.title.contains(search.trim(), ignoreCase = true)
-    }.sortedByDescending { it.thread.updatedAt }
+  val groups = remember(state.reports, selectedEnvironmentId, search, sortOrder) {
+    buildArchivedThreadGroups(state.reports, selectedEnvironmentId, search, sortOrder)
   }
+  val failedReports = state.reports.filter { it.error != null }
 
   BackHandler(onBack = onBack)
   Scaffold(topBar = { BackTopBar("Archived Threads", onBack) }) { padding ->
     Column(Modifier.fillMaxSize().padding(padding)) {
-      CompactSearchField(
-        value = search,
-        onValueChange = { search = it },
-        placeholder = "Search archived threads",
+      Row(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
-      )
-      RuntimeError(runtime.error, dispatchState)
-      if (entries.isEmpty()) {
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        CompactSearchField(search, { search = it }, "Search archived threads", Modifier.weight(1f))
+        IconButton(onClick = viewModel::loadArchivedThreads) {
+          Icon(Icons.Rounded.Refresh, contentDescription = "Refresh archived threads")
+        }
+        Box {
+          IconButton(onClick = { filterOpen = true }) {
+            Icon(Icons.Rounded.FilterList, contentDescription = "Filter and sort archived threads")
+          }
+          DropdownMenu(filterOpen, { filterOpen = false }, containerColor = Color(0xFF1C1C1F)) {
+            DropdownMenuItem(
+              text = { Text("All environments") },
+              onClick = { selectedEnvironmentId = null; filterOpen = false },
+              trailingIcon = { if (selectedEnvironmentId == null) Icon(Icons.Rounded.Check, null) },
+            )
+            state.reports.forEach { report ->
+              DropdownMenuItem(
+                text = { Text(report.environmentLabel) },
+                onClick = { selectedEnvironmentId = report.environmentId; filterOpen = false },
+                trailingIcon = { if (selectedEnvironmentId == report.environmentId) Icon(Icons.Rounded.Check, null) },
+              )
+            }
+            HorizontalDivider(color = Color(0xFF3F3F46))
+            ArchivedThreadSortOrder.entries.forEach { order ->
+              DropdownMenuItem(
+                text = { Text(if (order == ArchivedThreadSortOrder.Newest) "Newest first" else "Oldest first") },
+                onClick = { sortOrder = order; filterOpen = false },
+                trailingIcon = { if (sortOrder == order) Icon(Icons.Rounded.Check, null) },
+              )
+            }
+          }
+        }
+      }
+      if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+      state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+      if (failedReports.isNotEmpty()) {
+        Text(
+          failedReports.joinToString("\n") { "${it.environmentLabel}: ${it.error}" },
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          style = MaterialTheme.typography.bodySmall,
+          modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+      }
+      if (!state.loading && groups.isEmpty()) {
         Text(
           if (search.isBlank()) "No archived threads" else "No matching archived threads",
           color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1898,36 +2026,29 @@ private fun ArchivedThreadsScreen(
         LazyColumn(
           modifier = Modifier.fillMaxSize(),
           contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          items(entries, key = { "${it.environment.environmentId}:${it.thread.id}" }) { entry ->
-            Card(modifier = Modifier.fillMaxWidth()) {
-              Column(
-                modifier = Modifier.fillMaxWidth().padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-              ) {
-                Text(entry.thread.title, fontWeight = FontWeight.SemiBold)
-                Text(
-                  listOfNotNull(entry.environment.label, entry.project?.title).joinToString(" · "),
-                  style = MaterialTheme.typography.labelSmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                  Button(onClick = {
-                    viewModel.threadAction(
-                      entry.environment.environmentId,
+          groups.forEach { group ->
+            item("group:${group.key}") {
+              ArchivedThreadGroupHeader(group)
+            }
+            group.threads.forEachIndexed { index, entry ->
+              item("${entry.environmentId}:${entry.thread.id}") {
+                ArchivedThreadRow(
+                  entry = entry,
+                  first = index == 0,
+                  last = index == group.threads.lastIndex,
+                  onRestore = {
+                    viewModel.archivedThreadAction(
+                      entry.environmentId,
                       "thread.unarchive",
                       entry.thread.id,
                     )
-                  }) {
-                    Icon(Icons.Rounded.Unarchive, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Restore")
-                  }
-                  TextButton(onClick = { deleteTarget = entry }) { Text("Delete") }
-                }
+                  },
+                  onDelete = { deleteTarget = entry },
+                )
               }
             }
+            item("spacer:${group.key}") { Spacer(Modifier.height(16.dp)) }
           }
         }
       }
@@ -1938,11 +2059,11 @@ private fun ArchivedThreadsScreen(
     AlertDialog(
       onDismissRequest = { deleteTarget = null },
       title = { Text("Delete thread?") },
-      text = { Text("This permanently deletes the thread from ${entry.environment.label}.") },
+      text = { Text("This permanently deletes the thread from ${entry.environmentLabel}.") },
       confirmButton = {
         Button(onClick = {
-          viewModel.threadAction(
-            entry.environment.environmentId,
+          viewModel.archivedThreadAction(
+            entry.environmentId,
             "thread.delete",
             entry.thread.id,
           )
@@ -1951,6 +2072,232 @@ private fun ArchivedThreadsScreen(
       },
       dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
     )
+  }
+}
+
+@Composable
+private fun ArchivedThreadGroupHeader(group: ArchivedThreadGroup) {
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 12.dp, end = 8.dp, bottom = 10.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Icon(
+      Icons.Rounded.FolderOpen,
+      contentDescription = null,
+      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.size(18.dp),
+    )
+    Spacer(Modifier.width(10.dp))
+    Text(
+      group.project.title.uppercase(),
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      style = MaterialTheme.typography.labelLarge,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      modifier = Modifier.weight(1f),
+    )
+    Spacer(Modifier.width(12.dp))
+    Text(
+      group.environmentLabel,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      style = MaterialTheme.typography.labelMedium,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+    )
+  }
+}
+
+@Composable
+private fun ArchivedThreadRow(
+  entry: ArchivedThreadEntry,
+  first: Boolean,
+  last: Boolean,
+  onRestore: () -> Unit,
+  onDelete: () -> Unit,
+) {
+  var menuOpen by remember { mutableStateOf(false) }
+  val shape = when {
+    first && last -> RoundedCornerShape(20.dp)
+    first -> RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    last -> RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
+    else -> RoundedCornerShape(0.dp)
+  }
+
+  Card(
+    modifier = Modifier.fillMaxWidth(),
+    colors = CardDefaults.cardColors(containerColor = Color(0xFF161618)),
+    shape = shape,
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Box(
+        modifier = Modifier.size(48.dp).background(Color(0xFF202024), RoundedCornerShape(14.dp)),
+        contentAlignment = Alignment.Center,
+      ) {
+        Icon(
+          Icons.Rounded.Archive,
+          contentDescription = null,
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.size(22.dp),
+        )
+      }
+      Spacer(Modifier.width(12.dp))
+      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+          entry.thread.title,
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.SemiBold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(
+            Icons.Rounded.AccountTree,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(14.dp),
+          )
+          Spacer(Modifier.width(5.dp))
+          Text(
+            listOfNotNull(entry.environmentLabel, entry.thread.branch).joinToString(" · "),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+      }
+      Text(
+        archivedThreadAgeLabel(entry.thread.archivedAt),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      Box {
+        IconButton(onClick = { menuOpen = true }) {
+          Icon(Icons.Rounded.MoreVert, contentDescription = "Archived thread actions")
+        }
+        DropdownMenu(menuOpen, { menuOpen = false }, containerColor = Color(0xFF1C1C1F)) {
+          DropdownMenuItem(
+            text = { Text("Restore") },
+            onClick = { menuOpen = false; onRestore() },
+            leadingIcon = { Icon(Icons.Rounded.Unarchive, contentDescription = null) },
+          )
+          DropdownMenuItem(
+            text = { Text("Delete") },
+            onClick = { menuOpen = false; onDelete() },
+            leadingIcon = { Icon(Icons.Rounded.Delete, contentDescription = null) },
+          )
+        }
+      }
+    }
+    if (!last) {
+      HorizontalDivider(color = Color(0xFF27272A), modifier = Modifier.padding(start = 74.dp))
+    }
+  }
+}
+
+@Composable
+private fun ClientStorageScreen(
+  state: ClientStorageUiState,
+  viewModel: AppViewModel,
+  onBack: () -> Unit,
+) {
+  var clearEnvironment by remember { mutableStateOf<EnvironmentCacheSummary?>(null) }
+  var clearAll by remember { mutableStateOf(false) }
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("Client Storage", onBack) }) { padding ->
+    Column(
+      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
+      verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+      if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+      NativeSettingsSection("Environment caches") {
+        if (!state.loading && state.environments.isEmpty()) {
+          Text("No cached data", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
+        }
+        state.environments.forEachIndexed { index, environment ->
+          if (index > 0) HorizontalDivider(color = Color(0xFF27272A))
+          Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(Modifier.weight(1f)) {
+              Text(environment.environmentLabel)
+              Text(
+                "${environment.recordCount} records · ${formatStorageBytes(environment.payloadBytes)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+              )
+            }
+            TextButton(enabled = !state.clearing, onClick = { clearEnvironment = environment }) {
+              Text("Clear", color = MaterialTheme.colorScheme.error)
+            }
+          }
+        }
+      }
+      NativeSettingsSection("Actions") {
+        NativeSettingsRow(
+          icon = Icons.Rounded.Delete,
+          label = if (state.payloadBytes > 0) "Clear ${formatStorageBytes(state.payloadBytes)}" else "Clear all caches",
+          onClick = if (!state.clearing && state.recordCount > 0) ({ clearAll = true }) else null,
+        )
+      }
+      Text(
+        "Clearing caches removes offline snapshots only. Connections, credentials, drafts, and preferences stay intact.",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodySmall,
+      )
+      state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    }
+  }
+
+  clearEnvironment?.let { environment ->
+    AlertDialog(
+      onDismissRequest = { clearEnvironment = null },
+      title = { Text("Clear cache for ${environment.environmentLabel}?") },
+      text = { Text("Offline snapshots for this environment will be downloaded again when needed.") },
+      confirmButton = {
+        Button(onClick = { viewModel.clearCache(environment.environmentId); clearEnvironment = null }) { Text("Clear Cache") }
+      },
+      dismissButton = { TextButton(onClick = { clearEnvironment = null }) { Text("Cancel") } },
+    )
+  }
+  if (clearAll) {
+    AlertDialog(
+      onDismissRequest = { clearAll = false },
+      title = { Text("Clear all client caches?") },
+      text = { Text("Offline snapshots for every environment will be removed. Saved connections stay intact.") },
+      confirmButton = {
+        Button(onClick = { viewModel.clearCache(null); clearAll = false }) { Text("Clear All Caches") }
+      },
+      dismissButton = { TextButton(onClick = { clearAll = false }) { Text("Cancel") } },
+    )
+  }
+}
+
+@Composable
+private fun LegalScreen(onBack: () -> Unit) {
+  val context = LocalContext.current
+  fun open(url: String) {
+    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+  }
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("Legal", onBack) }) { padding ->
+    Column(
+      Modifier.fillMaxSize().padding(padding).padding(20.dp),
+      verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+      NativeSettingsSection("Documents") {
+        NativeSettingsRow(Icons.Rounded.Info, "Legal", onClick = { open("https://t3.codes/legal?source=app") })
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsRow(Icons.Rounded.Info, "Privacy Policy", onClick = { open("https://t3.codes/privacy-policy?source=app") })
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsRow(Icons.Rounded.Info, "Terms of Service", onClick = { open("https://t3.codes/terms-of-service?source=app") })
+      }
+      Text("Documents open in your browser.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
   }
 }
 
@@ -4157,7 +4504,7 @@ private fun ChatComposerArea(
             Box(
               modifier = Modifier
                 .height(38.dp)
-                .width(if (active && canSend) 82.dp else 38.dp),
+                .width(38.dp),
               contentAlignment = Alignment.CenterEnd,
             ) {
               IconButton(
@@ -4178,11 +4525,7 @@ private fun ChatComposerArea(
                 )
               }
 
-              androidx.compose.animation.AnimatedVisibility(
-                visible = active,
-                enter = fadeIn(tween(220)),
-                exit = fadeOut(tween(220)),
-              ) {
+              if (active) {
                 IconButton(
                   onClick = { onInterrupt?.invoke() },
                   modifier = Modifier

@@ -12,7 +12,7 @@ import kotlinx.serialization.json.longOrNull
 
 fun ShellState.reduce(item: JsonObject): ShellState {
   return when (item.text("kind")) {
-    "snapshot" -> parseShellSnapshot(item.obj("snapshot") ?: return this)
+    "snapshot" -> (item.obj("snapshot") ?: return this).toShellState()
     "synchronized" -> copy(synchronized = true)
     "project-upserted" -> reduceShellEvent(item) { sequence ->
       val project = item.obj("project")?.toProject() ?: return@reduceShellEvent this
@@ -209,15 +209,15 @@ fun parseProviderModels(config: JsonObject): List<ProviderModel> =
     }
   }
 
-private fun parseShellSnapshot(snapshot: JsonObject): ShellState {
-  val projects = snapshot.array("projects").orEmpty()
+internal fun JsonObject.toShellState(): ShellState {
+  val projects = array("projects").orEmpty()
     .mapNotNull { (it as? JsonObject)?.toProject() }
     .associateBy(Project::id)
-  val threads = snapshot.array("threads").orEmpty()
+  val threads = array("threads").orEmpty()
     .mapNotNull { (it as? JsonObject)?.toThreadSummary() }
     .associateBy(ThreadSummary::id)
   return ShellState(
-    sequence = snapshot.long("snapshotSequence") ?: -1,
+    sequence = long("snapshotSequence") ?: -1,
     projects = projects,
     threads = threads,
   )

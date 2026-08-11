@@ -461,10 +461,7 @@ private data class DerivedActivity(
     val toolLike = source.tone in setOf("tool", "thinking", "error") ||
       itemType != null || source.kind.startsWith("tool.")
     val failed = source.tone == "error" || statusText in setOf("failed", "declined") ||
-      detail.orEmpty().lowercase().let {
-        "command not found" in it || "no such file" in it || "enoent" in it ||
-          Regex("exit(?:ed)? with exit code\\s+[1-9]\\d*").containsMatchIn(it)
-      }
+      toolDetailTextLooksLikeFailure(detail.orEmpty())
     val inProgress = statusText in setOf("inProgress", "running", "started") || source.kind == "tool.updated"
     val preview = command ?: detail ?: changedFiles.firstOrNull()?.let { first ->
       if (changedFiles.size == 1) first else "$first +${changedFiles.size - 1} more"
@@ -495,6 +492,16 @@ private data class DerivedActivity(
       },
     )
   }
+}
+
+private fun toolDetailTextLooksLikeFailure(text: String): Boolean {
+  val normalized = text.lowercase()
+  return "command not found" in normalized ||
+    "no such file" in normalized ||
+    "enoent" in normalized ||
+    "is not recognized as the name of a cmdlet" in normalized ||
+    "a parameter cannot be found that matches parameter name" in normalized ||
+    Regex("exit(?:ed)? with exit code\\s+[1-9]\\d*").containsMatchIn(normalized)
 }
 
 private fun ThreadActivity.toDerivedActivity(): DerivedActivity {

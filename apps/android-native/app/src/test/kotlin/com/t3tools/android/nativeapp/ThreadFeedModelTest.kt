@@ -16,6 +16,55 @@ import org.junit.Test
 
 class ThreadFeedModelTest {
   @Test
+  fun marks_powershell_cmdlet_errors_as_failed_work() {
+    val failures = listOf(
+      "Get-Thing : The term 'Get-Thing' is not recognized as the name of a cmdlet",
+      "Get-ChildItem : A parameter cannot be found that matches parameter name 'Depths'",
+    )
+
+    failures.forEachIndexed { index, message ->
+      val feed = buildThreadFeed(
+        detail(
+          activities = listOf(
+            activity(
+              "powershell-$index",
+              "tool.completed",
+              "Run PowerShell",
+              "turn-1",
+              "2026-08-09T00:00:01Z",
+              payload("itemType" to "command_execution", "detail" to message),
+            ),
+          ),
+        ),
+      )
+      val group = feed.single() as ThreadFeedItem.ActivityGroup
+
+      assertEquals(ThreadFeedActivityStatus.Failure, group.activities.single().status)
+    }
+  }
+
+  @Test
+  fun keeps_successful_powershell_work_successful() {
+    val feed = buildThreadFeed(
+      detail(
+        activities = listOf(
+          activity(
+            "powershell-success",
+            "tool.completed",
+            "Run PowerShell",
+            "turn-1",
+            "2026-08-09T00:00:01Z",
+            payload("itemType" to "command_execution", "detail" to "Get-ChildItem completed"),
+          ),
+        ),
+      ),
+    )
+    val group = feed.single() as ThreadFeedItem.ActivityGroup
+
+    assertEquals(ThreadFeedActivityStatus.Success, group.activities.single().status)
+  }
+
+  @Test
   fun merges_messages_and_work_in_chronological_order() {
     val detail = detail(
       messages = listOf(

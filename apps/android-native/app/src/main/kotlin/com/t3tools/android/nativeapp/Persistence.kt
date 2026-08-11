@@ -44,8 +44,13 @@ data class CachedServerConfig(
 @Serializable
 data class AppSettings(
   val compactThreadRows: Boolean = false,
-  val betaFeatures: Boolean = true,
   val terminalFontSize: Float = 10.5f,
+)
+
+data class CachedSnapshotSummary(
+  val environmentId: String,
+  val recordCount: Int,
+  val payloadBytes: Long,
 )
 
 class NativeDatabase(
@@ -366,6 +371,29 @@ class NativeDatabase(
       writableDatabase.delete("snapshots", null, null)
     } else {
       writableDatabase.delete("snapshots", "environment_id = ?", arrayOf(environmentId))
+    }
+  }
+
+  @Synchronized
+  fun cacheSummary(): List<CachedSnapshotSummary> = readableDatabase.rawQuery(
+    """
+    SELECT environment_id, COUNT(*), COALESCE(SUM(LENGTH(CAST(payload AS BLOB))), 0)
+    FROM snapshots
+    GROUP BY environment_id
+    ORDER BY environment_id
+    """.trimIndent(),
+    null,
+  ).use { cursor ->
+    buildList {
+      while (cursor.moveToNext()) {
+        add(
+          CachedSnapshotSummary(
+            environmentId = cursor.getString(0),
+            recordCount = cursor.getInt(1),
+            payloadBytes = cursor.getLong(2),
+          ),
+        )
+      }
     }
   }
 

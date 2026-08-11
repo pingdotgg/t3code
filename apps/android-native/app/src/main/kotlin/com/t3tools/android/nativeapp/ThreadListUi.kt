@@ -182,7 +182,6 @@ fun ThreadListV2Row(
   val showSnooze = resolveThreadListV2SwipeSecondary(item.snoozed, snooze, snoozable)
   var menuOpen by remember(thread.id) { mutableStateOf(false) }
   var confirmDelete by remember(thread.id) { mutableStateOf(false) }
-  var snoozePicker by remember(thread.id) { mutableStateOf(false) }
   var renameDialog by remember(thread.id) { mutableStateOf(false) }
   var renameText by remember(thread.id, thread.title) { mutableStateOf(thread.title) }
 
@@ -256,7 +255,6 @@ fun ThreadListV2Row(
         canMovePinnedUp = canMovePinnedUp,
         canMovePinnedDown = canMovePinnedDown,
         onMovePinned = onMovePinned,
-        onSnoozePicker = { snoozePicker = true },
         onRename = {
           renameText = thread.title
           renameDialog = true
@@ -415,28 +413,6 @@ fun ThreadListV2Row(
     )
   }
 
-  if (snoozePicker) {
-    val presets = remember { resolveSnoozePresets() }
-    AlertDialog(
-      onDismissRequest = { snoozePicker = false },
-      title = { Text("Snooze") },
-      text = {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-          presets.forEach { preset ->
-            TextButton(
-              onClick = {
-                onAction("thread.snooze", preset.snoozedUntil.toString())
-                snoozePicker = false
-              },
-              modifier = Modifier.fillMaxWidth(),
-            ) { Text(preset.label) }
-          }
-        }
-      },
-      confirmButton = {},
-      dismissButton = { TextButton(onClick = { snoozePicker = false }) { Text("Cancel") } },
-    )
-  }
 }
 
 @Composable
@@ -1065,13 +1041,13 @@ private fun ThreadContextMenuBottomSheet(
   canMovePinnedUp: Boolean,
   canMovePinnedDown: Boolean,
   onMovePinned: (direction: Int) -> Unit,
-  onSnoozePicker: () -> Unit,
   onRename: () -> Unit,
   onConfirmDelete: () -> Unit,
 ) {
   val thread = item.thread
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   val clipboardManager = LocalClipboardManager.current
+  var snoozeMenuOpen by remember(thread.id) { mutableStateOf(false) }
 
   ModalBottomSheet(
     onDismissRequest = onDismiss,
@@ -1197,16 +1173,33 @@ private fun ThreadContextMenuBottomSheet(
 
       // 3. Snooze
       if (capabilities.snooze && !item.snoozed) {
-        ContextMenuItemRow(
-          icon = Icons.Rounded.Schedule,
-          iconColor = SnoozeColor,
-          label = "Snooze thread…",
-          enabled = canSnoozeThread(thread),
-          onClick = {
-            onDismiss()
-            onSnoozePicker()
-          },
-        )
+        Box {
+          ContextMenuItemRow(
+            icon = Icons.Rounded.Schedule,
+            iconColor = SnoozeColor,
+            label = "Snooze thread…",
+            enabled = canSnoozeThread(thread),
+            onClick = { snoozeMenuOpen = true },
+          )
+          DropdownMenu(
+            expanded = snoozeMenuOpen,
+            onDismissRequest = { snoozeMenuOpen = false },
+            modifier = Modifier.width(240.dp),
+            shape = RoundedCornerShape(20.dp),
+            containerColor = Color(0xFF1C1C1F),
+          ) {
+            resolveSnoozePresets().forEach { preset ->
+              DropdownMenuItem(
+                text = { Text(preset.label) },
+                onClick = {
+                  snoozeMenuOpen = false
+                  onDismiss()
+                  onAction("thread.snooze", preset.snoozedUntil.toString())
+                },
+              )
+            }
+          }
+        }
       }
 
       HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
