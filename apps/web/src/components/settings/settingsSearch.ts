@@ -1,5 +1,6 @@
 export type SettingsPath =
   | "/settings/general"
+  | "/settings/notifications"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
@@ -20,6 +21,7 @@ export interface SettingsSearchItem {
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
+  "/settings/notifications": "Notifications",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
@@ -150,6 +152,31 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "notifications",
+    title: "Notifications",
+    to: "/settings/notifications",
+  },
+  {
+    id: "notification-task-completed",
+    title: "Notify when a task completes",
+    to: "/settings/notifications",
+  },
+  {
+    id: "notification-task-failed",
+    title: "Notify when a task fails",
+    to: "/settings/notifications",
+  },
+  {
+    id: "notification-approval-needed",
+    title: "Notify when approval is needed",
+    to: "/settings/notifications",
+  },
+  {
+    id: "notification-sound",
+    title: "Notification sound",
+    to: "/settings/notifications",
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",
@@ -197,6 +224,19 @@ export const SETTINGS_SEARCH_ITEMS = [
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
+
+/**
+ * Sections that only exist where a desktop bridge does. The web build hides
+ * them from the nav and from search rather than routing to a panel whose
+ * controls could not do anything.
+ */
+export const DESKTOP_ONLY_SETTINGS_PATHS: ReadonlySet<SettingsPath> = new Set([
+  "/settings/notifications",
+]);
+
+export function isSettingsPathAvailable(to: SettingsPath, desktop: boolean): boolean {
+  return desktop || !DESKTOP_ONLY_SETTINGS_PATHS.has(to);
+}
 
 const SEARCH_ITEMS_BY_ID = Object.fromEntries(
   SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item]),

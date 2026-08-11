@@ -3,14 +3,12 @@
 import { Toast } from "@base-ui/react/toast";
 import {
   useEffect,
-  useMemo,
   useState,
   type CSSProperties,
   type ComponentPropsWithoutRef,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { useParams } from "@tanstack/react-router";
 import { type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import {
   CheckIcon,
@@ -27,9 +25,8 @@ import {
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";
-import { useComposerDraftStore } from "~/composerDraftStore";
+import { useActiveThreadRefFromRoute } from "~/hooks/useActiveThreadRef";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { resolveThreadRouteTarget } from "~/threadRoutes";
 import {
   buildVisibleToastLayout,
   shouldHideCollapsedToastContent,
@@ -425,29 +422,6 @@ type ToastPosition =
 
 interface ToastProviderProps extends Toast.Provider.Props {
   position?: ToastPosition;
-}
-
-function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
-  const routeTarget = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteTarget(params),
-  });
-  const activeDraftSession = useComposerDraftStore((store) =>
-    routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
-  );
-
-  return useMemo(() => {
-    if (routeTarget?.kind === "server") {
-      return routeTarget.threadRef;
-    }
-    if (routeTarget?.kind === "draft" && activeDraftSession) {
-      return {
-        environmentId: activeDraftSession.environmentId,
-        threadId: activeDraftSession.threadId,
-      };
-    }
-    return null;
-  }, [activeDraftSession, routeTarget]);
 }
 
 function ThreadToastVisibleAutoDismiss({
