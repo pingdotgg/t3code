@@ -1245,8 +1245,12 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
 
     const socket = options.socket;
     if (socket === undefined) {
-      // REST-only mode (no transport configured): the settle backstop poll
-      // is the only feed. Nothing to fork here.
+      // No transport configured. Reachable ONLY from the unit harness: the
+      // driver derives `restClient` and `socket` from the same API key
+      // (AetherDriver.create), and startSession fails loudly without a
+      // restClient — so any session that reaches here in the product has a
+      // socket. Nothing to fork, and deliberately no reconcile: a session
+      // with no transport also has no feed to reconcile against.
       return;
     }
     // One pump per session at a time. A running pump reconnects by itself;
@@ -2354,47 +2358,61 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         },
       });
     }
-    // Read-side confirmation: settle ONLY once the task row has actually
-    // left processing — never optimistically on the 200.
-    let confirmed: AetherTask | undefined;
-    for (let attempt = 1; attempt <= turnTiming.interruptMaxAttempts; attempt++) {
-      const task = yield* restClient
-        .getTask(taskId)
-        .pipe(Effect.mapError(toRestRequestError("interruptTurn")));
-      if (task.status !== "processing" && task.status !== "queued") {
-        confirmed = task;
-        break;
-      }
-      yield* Effect.sleep(Duration.millis(turnTiming.interruptPollMs));
-    }
-    if (confirmed === undefined) {
-      return yield* new ProviderAdapterRequestError({
-        provider: PROVIDER,
-        method: "interruptTurn",
-        detail: `Aether task '${taskId}' is still processing after the stop request; the interrupt could not be confirmed.`,
-      });
-    }
-    // Settle through the standard pipeline: mirror sync runs, the mapper's
-    // interrupt flag turns the settle into state=interrupted, and if the
-    // live path already settled the turn this emits nothing extra.
-    if (context.mapper !== undefined) {
-      yield* processMapperEvents(context, context.mapper.reconcileTask(confirmed, yield* nowIso));
-    }
     // Every DISCARDED deferred turn needs its own terminal settle: it was
     // announced through session.activeTurnId at queue time, but the remote
-    // never picked it up, so neither the mapper nor the reconcile above will
+    // never picked it up, so neither the mapper nor the reconcile below will
     // ever settle it — without this a stop pressed while ONLY a queued steer
     // exists leaves the session running on a turn that no longer exists.
-    for (const discarded of deferred) {
-      yield* emit({
-        ...(yield* baseEvent(context)),
-        eventId: EventId.make(`aether:${taskId}:turn:${discarded.wireTurnId}:settled`),
-        turnId: discarded.turnId,
-        type: "turn.completed",
-        payload: { state: "interrupted" },
-      });
-      yield* onTurnSettled(context, discarded.turnId);
-    }
+    const settleDiscarded = Effect.gen(function* () {
+      for (const discarded of deferred) {
+        yield* emit({
+          ...(yield* baseEvent(context)),
+          eventId: EventId.make(`aether:${taskId}:turn:${discarded.wireTurnId}:settled`),
+          turnId: discarded.turnId,
+          type: "turn.completed",
+          payload: { state: "interrupted" },
+        });
+        yield* onTurnSettled(context, discarded.turnId);
+      }
+    });
+
+    // Read-side confirmation: settle the ACTIVE turn ONLY once the task row
+    // has actually left processing — never optimistically on the 200, because
+    // an unconfirmed stop may still be running remotely.
+    const confirmInterrupt = Effect.gen(function* () {
+      let confirmed: AetherTask | undefined;
+      for (let attempt = 1; attempt <= turnTiming.interruptMaxAttempts; attempt++) {
+        const task = yield* restClient
+          .getTask(taskId)
+          .pipe(Effect.mapError(toRestRequestError("interruptTurn")));
+        if (task.status !== "processing" && task.status !== "queued") {
+          confirmed = task;
+          break;
+        }
+        yield* Effect.sleep(Duration.millis(turnTiming.interruptPollMs));
+      }
+      if (confirmed === undefined) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "interruptTurn",
+          detail: `Aether task '${taskId}' is still processing after the stop request; the interrupt could not be confirmed.`,
+        });
+      }
+      // Settle through the standard pipeline: mirror sync runs, the mapper's
+      // interrupt flag turns the settle into state=interrupted, and if the
+      // live path already settled the turn this emits nothing extra.
+      if (context.mapper !== undefined) {
+        yield* processMapperEvents(context, context.mapper.reconcileTask(confirmed, yield* nowIso));
+      }
+    });
+
+    // The deferred turns were discarded by the STOP, which already succeeded —
+    // their settle is owed from that moment, not from the confirmation. A
+    // transient getTask failure (or an exhausted confirm budget) must not
+    // strand them: nothing else will ever settle a turn the remote dropped
+    // before picking it up, so the thread would show it running forever.
+    yield* confirmInterrupt.pipe(Effect.onError(() => settleDiscarded));
+    yield* settleDiscarded;
     // The session must not stay wedged on a turn the remote no longer runs.
     if (context.activeTurn !== undefined && context.activeTurn.turnId === active?.turnId) {
       yield* onTurnSettled(context, active.turnId);
@@ -2507,7 +2525,10 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
   ): CloudTerminalConnectError =>
     error._tag === "AetherTerminalWorkspaceUnavailableError"
       ? new CloudTerminalUnavailableError({ reason: error.reason })
-      : new CloudTerminalTransportError({ detail: "workspace terminal connect failed", cause: error });
+      : new CloudTerminalTransportError({
+          detail: "workspace terminal connect failed",
+          cause: error,
+        });
   const cloudTerminal: CloudTerminalConnector | undefined =
     terminalRestClient !== undefined && terminalSocket !== undefined
       ? {

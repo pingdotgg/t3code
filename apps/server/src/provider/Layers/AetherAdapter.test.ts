@@ -2759,6 +2759,82 @@ describe("AetherAdapter turn lifecycle", () => {
     }),
   );
 
+  it.effect("settles the discarded queued turn even when the stop cannot be confirmed", () =>
+    Effect.gen(function* () {
+      // The stop SUCCEEDS — Aether has already dropped the queued message —
+      // and only the read-side confirmation fails. The local settle for that
+      // discarded turn is owed from the stop, so a transient getTask failure
+      // must not strand it: nothing else ever settles a turn the remote
+      // dropped before picking it up.
+      const deltas = scriptedDeltas([
+        delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+        delta({ task: messageIdleTask, latestSequence: 4 }),
+      ]);
+      let respondCount = 0;
+      let stopped = false;
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () =>
+              stopped
+                ? Effect.fail(
+                    new AetherApiNotFoundError({ endpoint: "/tasks/task-1", detail: "flaky" }),
+                  )
+                : Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: () =>
+              Effect.sync(() => {
+                respondCount++;
+              }).pipe(Effect.map(() => ({ message_id: respondCount === 1 ? "m2" : "m3" }))),
+            stopTask: () =>
+              Effect.sync(() => {
+                stopped = true;
+              }),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const collector = yield* adapter.streamEvents.pipe(
+              Stream.take(5),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "turn two" });
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "queued follow-up" });
+            yield* drainPoll;
+            expect((yield* adapter.listSessions())[0]!.activeTurnId).toBe("aether-turn-m3");
+
+            // The interrupt still FAILS LOUDLY — the confirmation is real.
+            const failure = yield* Effect.flip(adapter.interruptTurn(session.threadId));
+            expect(failure._tag).toBe("ProviderAdapterRequestError");
+
+            const events = yield* Fiber.join(collector);
+            expect(events.map((event) => event.type)).toEqual([
+              "turn.started",
+              "session.state.changed",
+              "turn.completed",
+              "runtime.warning",
+              "turn.completed",
+            ]);
+            expect(events[4]).toMatchObject({
+              turnId: "aether-turn-m3",
+              payload: { state: "interrupted" },
+            });
+            // …and the session is not wedged on a turn that no longer exists.
+            expect((yield* adapter.listSessions())[0]!.activeTurnId).toBeUndefined();
+          }),
+      );
+    }),
+  );
+
   it.effect("a failed stop does NOT falsify the turn's natural settle into 'interrupted'", () =>
     Effect.gen(function* () {
       const deltas = scriptedDeltas([
