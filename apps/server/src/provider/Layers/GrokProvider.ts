@@ -167,11 +167,14 @@ const waitForGrokAvailableCommands = (
 ): Effect.Effect<ReadonlyArray<EffectAcpSchema.AvailableCommand>> =>
   Effect.gen(function* () {
     const poll = Duration.millis(GROK_AVAILABLE_COMMANDS_POLL_MS);
-    const deadlineMillis = (yield* Clock.currentTimeMillis) + GROK_AVAILABLE_COMMANDS_WAIT_MS;
+    // Monotonic deadline: wall clock can jump backward on NTP corrections and
+    // would otherwise stretch this settle window unboundedly.
+    const waitNanos = BigInt(GROK_AVAILABLE_COMMANDS_WAIT_MS) * 1_000_000n;
+    const deadlineNanos = (yield* Clock.monotonicTimeNanos) + waitNanos;
 
     let best = yield* getAvailableCommands;
 
-    while ((yield* Clock.currentTimeMillis) < deadlineMillis) {
+    while ((yield* Clock.monotonicTimeNanos) < deadlineNanos) {
       yield* Effect.sleep(poll);
       best = preferRicherAvailableCommands(best, yield* getAvailableCommands);
     }
