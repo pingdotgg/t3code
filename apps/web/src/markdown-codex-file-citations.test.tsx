@@ -50,6 +50,15 @@ describe("Codex file citations", () => {
     expect(html).toContain('href="/tmp/report &quot; purpose=notes.pdf"');
   });
 
+  it("ends a Windows path at a trailing separator, not at the following attribute", () => {
+    // `build\"` is byte-identical to an escaped quote, so the closer is the one after which the
+    // rest parses: here ` purpose="output"` does, so the path is the trailing-separator directory
+    // and does not swallow ` purpose=`.
+    expect(
+      extractCodexFileCitationPaths(':codex-file-citation{path="C:\\build\\" purpose="output"}'),
+    ).toEqual(["C:\\build\\"]);
+  });
+
   it("links an artifact written outside the workspace", () => {
     const html = renderMessage(':codex-file-citation{path="/tmp/export.zip" purpose="output"}');
 

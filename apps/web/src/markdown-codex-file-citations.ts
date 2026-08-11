@@ -17,13 +17,16 @@
 import { resolveMarkdownFileLinkMeta } from "./markdown-links";
 
 const CODEX_FILE_CITATION_PATTERN = /:codex-file-citation\{([^{}\r\n]*)\}/g;
-// The path ends at the first quote the directive did not escape. Everything before it belongs to
-// the path, including a `" purpose=` that only reads like the attribute after it.
-const CITATION_PATH_ATTRIBUTE_PATTERN = /(?:^|\s)path="((?:\\"|[^"])*)"/;
-// The directive quotes its path, so a quote inside the path arrives backslash-escaped. Every other
-// backslash is a separator: `C:\repo\.env` and `\\server\share\report.docx` are the Windows paths
-// they look like, not escape sequences.
+// Locates the opening quote of the `path` attribute; the value that follows is closed by scanning
+// (see readCitationPath), not by this pattern.
+const CITATION_PATH_ATTRIBUTE_START = /(?:^|\s)path="/;
+// The directive escapes `"` inside a value as `\"`; every other backslash is a literal separator
+// (`C:\repo\.env`, `\\server\share\report.docx`). A trailing `\` right before the closing quote is
+// therefore byte-identical to an escaped quote, so the closer cannot be found by escape rules
+// alone — only by which choice leaves a directive that parses (see readCitationPath).
 const CITATION_ESCAPED_QUOTE_PATTERN = /\\"/g;
+// A well-formed remainder after the path value: zero or more ` key="value"` attributes then the end.
+const CITATION_ATTRIBUTE_TAIL_PATTERN = /^(?:\s+[A-Za-z_][\w-]*="(?:\\"|[^"])*")*\s*$/;
 // A citation path is a filesystem path, not a URL. Percent-encoding the characters that URL
 // parsing would otherwise claim — a Windows drive colon read as a scheme, `#` and `?` read as a
 // fragment and a query — keeps the path intact through react-markdown's URL transform and the
@@ -51,10 +54,24 @@ interface RemarkCodexFileCitationsOptions {
 }
 
 function readCitationPath(attributes: string): string | null {
-  const path = CITATION_PATH_ATTRIBUTE_PATTERN.exec(attributes)?.[1]
-    ?.replace(CITATION_ESCAPED_QUOTE_PATTERN, '"')
-    .trim();
-  return path ? path : null;
+  const opening = CITATION_PATH_ATTRIBUTE_START.exec(attributes);
+  if (opening === null) return null;
+  const valueStart = opening.index + opening[0].length;
+  // `\"` (escaped quote inside the path) and a literal trailing `\` before the closer look the
+  // same, so the closing quote is the first `"` after which the rest of the directive is a valid
+  // attribute tail. That picks the escaped quote's outer closer in `report \" purpose=x.pdf" ...`
+  // and the trailing-separator closer in `C:\dir\" purpose="x"`, each without a lookahead that the
+  // other case would satisfy.
+  for (let i = valueStart; i < attributes.length; i++) {
+    if (attributes[i] !== '"') continue;
+    if (!CITATION_ATTRIBUTE_TAIL_PATTERN.test(attributes.slice(i + 1))) continue;
+    const path = attributes
+      .slice(valueStart, i)
+      .replace(CITATION_ESCAPED_QUOTE_PATTERN, '"')
+      .trim();
+    return path ? path : null;
+  }
+  return null;
 }
 
 /**
