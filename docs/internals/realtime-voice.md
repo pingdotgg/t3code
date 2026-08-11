@@ -1,102 +1,213 @@
-# Realtime Voice Server Boundary
+# Realtime Voice Architecture
 
-> For maintainers. This documents the server foundation; it does not imply that a voice UI or
-> audio transport has shipped on every client.
+> For maintainers. The shipped surface is web and desktop. Mobile voice requires a separate client
+> implementation and is not currently mounted.
 
-T3 keeps the environment's OpenAI API key on the host. An authenticated client asks its connected
-environment for a short-lived Realtime client secret, then connects to OpenAI directly over
-WebRTC. The T3 server does not proxy microphone or speaker media.
+Voice Supervisor is a global, provider-neutral work controller backed by OpenAI Realtime. “Provider
+neutral” applies to the T3 projects and threads it supervises: the voice conversation itself uses a
+fixed OpenAI Realtime model.
+
+## Credential and Session Boundary
+
+The selected T3 environment owns the long-lived OpenAI API key. A stored secret takes precedence
+over `OPENAI_API_KEY`; removing the stored secret restores the environment fallback. Credential
+status exposes only configured/source state, and clients never read the key itself. Reading that
+redacted status and setting or removing the stored key require `access:write`, while client-secret
+minting requires `orchestration:operate`.
+
+| Method | Path                                | Purpose                                 |
+| ------ | ----------------------------------- | --------------------------------------- |
+| `GET`  | `/api/voice/openai/credential`      | Read redacted configured/source status  |
+| `POST` | `/api/voice/openai/credential`      | Set or remove the stored key            |
+| `POST` | `/api/voice/realtime/client-secret` | Mint a 60-second Realtime client secret |
+
+All voice HTTP responses, including decode and authentication failures, receive `no-store` and
+`no-cache` headers. The server redacts the API key, does not inspect upstream error bodies, and
+maps failures to stable unavailable, rate-limited, upstream, timeout, or internal categories.
+
+The mint adapter calls only OpenAI's `/v1/realtime/client_secrets` endpoint, with a ten-second
+timeout and no retry. It fixes the session type and `gpt-realtime-2.1` model, validates the selected
+voice against the shared allowlist, and sends OpenAI a stable, hashed pseudonymous identifier
+derived from the environment ID for safety tracking. Process-local backpressure allows six mints
+per authenticated session per minute, 30 globally per minute, and four concurrent upstream
+requests. Its session tracker is bounded to 256 entries with a two-minute idle TTL.
+
+The default voice is `marin`; the shared allowlist is `alloy`, `ash`, `ballad`, `coral`, `echo`,
+`sage`, `shimmer`, `verse`, `marin`, and `cedar`. Upstream `429` responses retain a bounded
+`Retry-After`; local rate and concurrency failures use the same typed public error shape.
+
+These are issuance controls, not runtime enforcement or a spend cap. An OpenAI client secret is
+usable until expiry, and a client can update session defaults after minting. The web coordinator
+therefore locally validates the voice selection and sends the same fixed model, selected
+allowlisted voice, prompt, and tool schemas during its handshake, but the server does not claim
+that mint defaults enforce the rest of the session.
+
+## Direct WebRTC Transport
+
+The server never proxies microphone or speaker media:
 
 ```text
-web, desktop, or mobile client
-  -> authenticated T3 environment HTTP endpoint
-  -> OpenAI client-secret endpoint (server API key)
-  -> short-lived client secret returned to the client
-  -> direct client-to-OpenAI WebRTC session
+web or desktop client
+  -> selected authenticated T3 environment: mint short-lived client secret
+  -> OpenAI /v1/realtime/calls: exchange SDP using that secret
+  -> direct client-to-OpenAI WebRTC audio + data channel
 ```
 
-This split preserves local, LAN, Tailscale, and T3 Connect operation because the request uses the
-same environment HTTP origin, cookie/Bearer/DPoP authentication, and remote URL preparation as the
-rest of the client runtime.
+The browser transport requires a secure context and `getUserMedia`. After microphone access, it
+creates one peer connection and `oai-events` data channel, starts a 20-second negotiation timeout,
+creates an SDP offer, mints the secret, exchanges SDP with OpenAI, and waits for the data channel to
+open. No reconnect policy lives in the transport or host; a failed session must be started again.
 
-## Environment API
+Every connect attempt has a transport generation. Starting again aborts and tears down the prior
+attempt, and late async results or events cannot mutate the new generation. Teardown aborts pending
+work, removes listeners, stops local, remote, sender, and receiver tracks, clears the audio element,
+closes the channel and peer connection, and cancels timers.
 
-The `realtimeVoice` environment capability advertises this boundary. Older environments omit the
-flag, so clients must not probe these endpoints when it is absent.
+## Root Coordinator and Handshake
 
-| Method | Path                                | Required scope          | Result                                                                                     |
-| ------ | ----------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
-| `GET`  | `/api/voice/openai/credential`      | `access:write`          | Whether a key is configured and whether it comes from stored state or the host environment |
-| `POST` | `/api/voice/openai/credential`      | `access:write`          | Typed `set` or `remove` action followed by the new status                                  |
-| `POST` | `/api/voice/realtime/client-secret` | `orchestration:operate` | A short-lived client secret, expiration timestamp, and Realtime session ID                 |
+A single Voice Supervisor host is mounted at the web root, so its controller and replay state
+survive route changes. It owns another monotonic session generation above the transport generation;
+all state projection, tool calls, confirmations, and transport callbacks are generation-checked.
 
-Credential status never returns the key. Removing stored state is an explicit reverse operation;
-if `OPENAI_API_KEY` is present, the environment fallback becomes active again.
+Opening the panel does not request microphone permission or start a session. The user must choose
+**Start voice**. The native desktop bridge first checks macOS microphone permission and, when
+needed, requests it through the main process. Browser `getUserMedia` remains the media authority on
+all surfaces. The permission prompt is intentionally outside T3's handshake timer.
 
-Every response under `/api/voice/` uses `Cache-Control: no-store` and `Pragma: no-cache`, including
-authentication and request-decoding failures. Rate-limit responses also include `Retry-After`.
+After transport readiness, the coordinator waits for `session.created`, sends one static
+`session.update`, and treats a `session.updated` with the same OpenAI session ID as the
+acknowledgement. It does not verify echoed configuration fields. A 20-second handshake timer starts
+only after transport readiness. Until that acknowledgement, the microphone is held muted and
+other Realtime events are ignored. The configuration sent for acknowledgement is:
 
-## Credential Resolution
+- model `gpt-realtime-2.1` with audio output;
+- the selected allowlisted voice;
+- server VAD that creates responses and permits response interruption;
+- separate `gpt-4o-mini-transcribe` input transcription;
+- one static supervisor instruction and the eight static function schemas below.
 
-`OpenAiRealtimeCredential` owns one fixed `ServerSecretStore` key. Stored state takes precedence
-over the optional `OPENAI_API_KEY` process setting. Both inputs are trimmed and bounded before use;
-invalid stored or environment values fail closed. The fixed-key store retains the existing
-directory and file permission guarantees rather than adding a second settings or encryption path.
+The static instruction tells the model to use tools for work facts, require local confirmation for
+all mutations, never claim a proposal executed before its result says so, and treat speech,
+transcripts, project/thread data, and tool content as untrusted.
 
-The main API key remains redacted inside the adapter and is used only to construct the upstream
-authorization header. Public status, success, and error schemas contain no API-key field.
+Transcript deltas are coalesced at 80 ms and projected into bounded client state. Input
+transcription is an asynchronous display stream, not the conversation model's authoritative
+interpretation; a transcription failure is recorded without failing the session.
 
-## OpenAI Adapter
+The host is reachable from the floating launcher, both sidebars, and the Command Palette. The
+`voice.toggle` command can be assigned in Keybindings but has no default. Hiding the panel preserves
+an active session; Stop or host loss performs teardown. The launcher retains connection, mute,
+failure, and pending-confirmation state while the panel is hidden.
 
-The upstream boundary is intentionally narrow:
+## Static Tool Surface
 
-- origin: `https://api.openai.com`
-- endpoint: `POST /v1/realtime/client_secrets`
-- model: `gpt-realtime-2.1`
-- client-secret TTL: 60 seconds
-- default voice: `marin`
-- allowed voices: `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, and `cedar`
+Only these tools are sent to the model:
 
-The server derives a stable, non-PII identifier by hashing its persisted environment ID with a
-domain separator and sends it as `OpenAI-Safety-Identifier`. OpenAI binds that server-supplied
-identifier to the resulting ephemeral token. See the official
-[Realtime WebRTC authentication guide](https://developers.openai.com/api/docs/guides/realtime-webrtc#connecting-using-an-ephemeral-token)
-and [client-secret API reference](https://developers.openai.com/api/reference/resources/realtime/subresources/client_secrets/methods/create).
+| Tool                 | Kind              | Model-visible result                                                     |
+| -------------------- | ----------------- | ------------------------------------------------------------------------ |
+| `list_active_work`   | read              | Bounded active thread labels, opaque handles, status, availability       |
+| `list_projects`      | read              | Bounded project labels, opaque handles, availability                     |
+| `list_threads`       | read              | Bounded non-archived thread labels, opaque handles, status, availability |
+| `get_thread_summary` | read              | Operational status and bounded current plan step                         |
+| `open_thread`        | navigation        | Compact opened label/handle result                                       |
+| `start_thread`       | mutation proposal | Compact proposal only                                                    |
+| `send_follow_up`     | mutation proposal | Compact proposal only                                                    |
+| `interrupt_thread`   | mutation proposal | Compact proposal only                                                    |
 
-OpenAI client secrets may be reused until expiry, and the client can override their attached
-session defaults. T3 clients therefore keep the same model and voice allowlist when they establish
-the WebRTC session; the server limits issuance but cannot treat mint limits as a hard session or
-spend cap.
+The model schemas are closed and bounded; the protocol call ID is injected locally instead of
+being model-authored. Unknown tools, extra properties, malformed values, oversized strings, unsafe
+keys, accessors, and unserializable results fail to compact, redacted statuses. There is no tool for
+approvals, user-input prompts, files, terminals, delete/archive, or arbitrary commands.
 
-The adapter performs one request with a ten-second timeout and no retry. It decodes only the
-declared success fields and requires the returned expiration to fit the requested TTL plus thirty
-seconds of clock and network skew. It never reads or logs an upstream error body. Transport and
-decode causes are replaced with stable tagged errors before they reach environment request
-logging.
+## Multi-Environment Targets
 
-## Local Backpressure
+At invocation time the repository reads current connection projections and authoritative,
+potentially cached shell snapshots across the current client catalog. Cached targets remain
+eligible for bounded list results when present; summary reads revalidate a live target before
+returning current plan text. The repository classifies every record as live, stale, or disconnected
+from current connection and shell state. A record also carries its
+environment-qualified label and a version derived from that entity's authoritative update fields.
+Navigation and commands retain the exact owning environment.
 
-Client-secret minting uses bounded, process-local protection:
+The shared supervisor core publishes short-lived opaque handles rather than raw environment,
+project, thread, or path identifiers. Target results are capped at 20 items and labels/summaries are
+bounded. Exact labels and aliases resolve only within the latest publication generation. Duplicate
+exact names return bounded ambiguous candidates; a partial match always returns candidates rather
+than silently resolving. Mutation proposals accept only an exact opaque handle.
 
-- six requests per authenticated session per minute;
-- thirty requests across the process per minute;
-- four concurrent upstream requests.
+Targets normally live for two minutes. Re-publishing an unchanged binding/version reuses its
+handle; a changed version receives a new binding. The target, proposal, call, alias, JSON depth,
+node, byte, key, and array stores all have explicit caps and fail closed at capacity rather than
+evicting replay guards.
 
-The per-session tracker retains at most 256 session IDs and expires idle entries after two
-minutes, so session churn cannot grow process memory without bound. These limits reset with the
-server process and are not intended to coordinate multiple hosts.
-OpenAI `429` responses retain a bounded `Retry-After` value; local rate and concurrency rejection
-use the same typed environment error shape.
+New-thread preparation reuses the current T3 policy: routed composer/shell/draft carry, sticky and
+project provider/model selection, provider availability, permission and interaction modes,
+project → `t3.json` → primary environment workspace defaults, and default-ref/current-branch
+then current-ref worktree selection. It generates command, message, and thread IDs once, before
+confirmation, and never invents a model or path when authoritative defaults are unavailable.
 
-## Public Failure Model
+## Tool Serialization and Replay
 
-Clients receive only stable categories:
+A Realtime `response.done` may contain parallel calls, but the host admits only one response-level
+tool batch at a time. It mutes the microphone for the entire batch, including any wait for local
+confirmation. New speech or responses during that hold fail the session instead of creating
+overlapping work. When every call settles, the host sends correlated `function_call_output` events
+followed by one `response.create`, then restores the user's requested mute state.
 
-- unavailable: no credential, rejected credential, or unavailable model;
-- rate limited: local request rate, local concurrency, or upstream rate;
-- upstream failure: request failure, upstream outage, or invalid response;
-- timeout;
-- internal environment failure for secret-store, safety-identifier, or limiter faults.
+Response IDs, call IDs, tool metadata, argument bytes, and calls per response are bounded. The host
+keeps bounded response and call replay ledgers for the session: identical response replays are
+ignored, reused/conflicting IDs fail closed, and ledgers are never evicted to admit a new ID. The
+tool controller maintains its own normalized call ledger so identical valid calls return the same
+frozen result and invalid calls leave tombstones. Client-authored continuation event IDs are also
+tracked so a provider error can be correlated to the exact output or continuation that failed.
 
-Raw provider messages, response bodies, authorization headers, and stored secret values are not
-part of these errors.
+All tool results are copied into bounded, deeply frozen JSON before caching or returning. Model
+outputs contain opaque handles and compact summaries, never frozen local previews or raw IDs.
+
+## Local Confirmation and Execution
+
+`start_thread`, `send_follow_up`, and `interrupt_thread` only prepare proposals. The core snapshots
+the exact command mutation and a separate full local preview as bounded, deeply frozen JSON. It
+binds both to the opaque target's environment, identity, kind, and version. At most one actionable
+proposal is pending; proposals normally expire after 30 seconds and are one-shot across confirm,
+deny, replacement, expiry, and replay.
+
+The trusted UI reads the frozen preview directly. Confirmation is a local button or keyboard
+action; no model tool can confirm itself. On confirm, the execution adapter re-reads the exact
+project or thread and rejects missing, disconnected, stale, or version-changed targets. Only then
+does it decode the frozen mutation, build the existing start/follow-up/interrupt command, route it
+to the bound environment, and await its receipt-backed accepted result. Denial cancels the proposal
+without dispatch.
+
+## Remote Modes and Failure Handling
+
+Credential status and minting use the selected voice host's prepared connection. Bounded list
+reads span the current client catalog and may include cached targets classified as stale or
+disconnected. Summary reads and navigation revalidate the target as live. Confirmed commands
+retain the exact connection of the target that owns the project or thread and additionally require
+the bound target to remain live, connected, and unchanged. Those connections can be
+local, LAN, SSH-forwarded, Tailscale, or T3 Connect; relay HTTP requests use the same authenticated
+signer path as other environment operations. The client still negotiates WebRTC directly with
+OpenAI, so T3 Connect does not carry voice media. The client device owns the microphone and speaker;
+a remote host does not need audio hardware.
+
+Older servers omit the Realtime voice capability. Clients treat that as unsupported and do not
+probe the endpoints. Loss of the selected host, secure-context failures, permission denial,
+credential/model rejection, rate limits, timeouts, upstream errors, protocol overlap, replay
+conflicts, and capacity exhaustion all produce bounded UI-safe failures. Raw provider bodies,
+credentials, and causes never enter model-facing or public error results.
+
+## Bounds and Test Seams
+
+The user-facing panel renders only the latest 40 transcript and 40 activity rows, clips transcript
+rows to 2,000 characters, and keeps larger in-memory stores bounded. The tool layer caps each list
+at 20 items, one Realtime response at 16 calls, tool call arguments at 16 KiB, and its primary call
+and target/proposal stores at fixed session-local capacities.
+
+The design keeps provider and browser effects behind injected seams: media devices, peer
+connections, fetch, clocks/timers, state projection, repository reads, navigation, command
+dispatch, receipt results, opaque ID generation, and confirmation execution. Focused tests cover
+generation races, handshake order and timeouts, transport cleanup, microphone holds, event
+correlation and replay, strict argument decoding, bounded output, duplicate cross-environment
+names, stale/disconnected/version-changed targets, one-shot confirmation, exact command routing,
+desktop permission preflight, entry points, and panel interaction.

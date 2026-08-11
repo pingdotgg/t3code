@@ -10,6 +10,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Thread timeline](#thread-timeline)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
+- [Voice supervision](#voice-supervision)
 - [Checkpointing](#checkpointing)
 
 ## Concepts
@@ -116,6 +117,16 @@ Controls how assistant text reaches the thread timeline. In [the contracts][1], 
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
 
+### Voice supervision
+
+#### Voice Supervisor
+
+The global web and desktop voice controller for inspecting and navigating work across environments known to the current client and proposing limited thread actions. Its conversation uses OpenAI Realtime, while the threads it supervises may use any supported provider. Model-facing reads are bounded and use opaque target handles; starting a thread, following up, and interrupting require local confirmation. See [the user guide][25] and [the Realtime voice architecture][26].
+
+#### Voice host
+
+The connected T3 environment selected to hold or source the OpenAI API key and mint a short-lived Realtime client secret. It does not limit which environments Voice Supervisor can inspect or control, and it does not proxy the direct client-to-OpenAI WebRTC audio. See [the Realtime voice architecture][26].
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -154,6 +165,8 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 - [Provider architecture][16]
 - [Permission modes][18]
 - [Workspace layout][2]
+- [Voice Supervisor user guide][25]
+- [Realtime voice architecture][26]
 
 [1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -179,3 +192,5 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../user/voice-supervisor.md
+[26]: ./realtime-voice.md
