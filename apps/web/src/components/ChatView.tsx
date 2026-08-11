@@ -3252,7 +3252,7 @@ function ChatViewContent(props: ChatViewProps) {
     const cwd = gitCwd ?? activeProject.workspaceRoot;
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
-    setTerminalFocusRequestId((value) => value + 1);
+    setPanelTerminalFocusRequestId((value) => value + 1);
     void openTerminal({
       environmentId: activeThreadRef.environmentId,
       input: {
@@ -3291,7 +3291,7 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore
         .getState()
         .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
       void openTerminal({
         environmentId: activeThreadRef.environmentId,
         input: {
@@ -3326,7 +3326,7 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore
         .getState()
         .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
     },
     [activeRightPanelSurface, activeThreadRef],
   );
@@ -3341,7 +3341,7 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore
         .getState()
         .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
+      setPanelTerminalFocusRequestId((value) => value + 1);
     },
     [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
   );
@@ -3353,7 +3353,7 @@ function ChatViewContent(props: ChatViewProps) {
         setActivePreviewTab(activeThreadRef, surface.resourceId);
       }
       if (surface.kind === "terminal") {
-        setTerminalFocusRequestId((value) => value + 1);
+        setPanelTerminalFocusRequestId((value) => value + 1);
       }
       if (surface.kind === "diff" && !diffOpen) {
         onDiffPanelOpen?.();
