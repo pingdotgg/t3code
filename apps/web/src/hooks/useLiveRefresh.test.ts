@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vite-plus/test";
+import { createElement } from "react";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { installReactHookTestDom, mountReactHookTestComponent } from "../test/reactDomHookHarness";
 import {
   LIVE_REFRESH_IDLE_AFTER_MS,
   LIVE_REFRESH_INTERVAL_MS,
@@ -8,7 +10,10 @@ import {
   shouldLiveRefresh,
   shouldRefreshOnArrival,
   shouldRefreshOnInterval,
+  useLiveRefresh,
 } from "./useLiveRefresh";
+
+afterEach(() => vi.useRealTimers());
 
 describe("shouldLiveRefresh", () => {
   const at = (now: number, lastRefreshedAt: number, visible = true) =>
@@ -98,6 +103,44 @@ describe("resolveLiveRefreshCadence", () => {
         minimumIntervalMs: cadence.minimumIntervalMs,
       }),
     ).toBe(false);
+  });
+});
+
+describe("useLiveRefresh", () => {
+  it("uses the quota's 30-second timer without duplicate, hidden, or idle reads", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const dom = installReactHookTestDom();
+    const refresh = vi.fn();
+    const mounted = await mountReactHookTestComponent(
+      createElement(() => {
+        useLiveRefresh(refresh, {
+          key: "quota-hook-cadence",
+          intervalMs: 30_000,
+          minimumIntervalMs: 10_000,
+        });
+        return null;
+      }),
+      dom.document,
+    );
+
+    expect(refresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(refresh).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    dom.setVisibility("hidden");
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_IDLE_AFTER_MS);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    dom.setVisibility("visible");
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    await mounted.unmount();
+    dom.cleanup();
   });
 });
 

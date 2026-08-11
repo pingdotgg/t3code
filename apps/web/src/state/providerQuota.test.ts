@@ -1,17 +1,43 @@
 import type {
+  EnvironmentId,
   ProviderQuotaConsumeResetInput,
   ProviderQuotaConsumeResetOutcome,
   ProviderQuotaSummary,
 } from "@t3tools/contracts";
+import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { RpcClientError } from "effect/unstable/rpc";
+import { act, createElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+
+import { installReactHookTestDom, mountReactHookTestComponent } from "../test/reactDomHookHarness";
+
+const mocks = vi.hoisted(() => ({
+  appAtomRegistry: { refresh: vi.fn() },
+  primaryEnvironmentId: null as EnvironmentId | null,
+  serverEnvironment: {
+    configProjection: vi.fn(),
+    consumeProviderQuotaReset: { label: "consume-provider-quota-reset" },
+    providerQuota: vi.fn(),
+  },
+}));
+
+vi.mock("../hooks/useLiveRefresh", () => ({ useLiveRefresh: () => undefined }));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: mocks.appAtomRegistry }));
+vi.mock("./environments", () => ({
+  usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
+}));
+vi.mock("./server", () => ({ serverEnvironment: mocks.serverEnvironment }));
+vi.mock("./use-atom-command", () => ({
+  useAtomCommand: () => async () => AsyncResult.success("reset"),
+}));
 
 import {
   consumeAndRefreshProviderQuota,
   refreshProviderQuota,
   resolveProviderQuotaView,
+  usePrimaryProviderQuota,
 } from "./providerQuota";
 
 const environmentId = "primary" as never;
@@ -79,5 +105,47 @@ describe("provider quota state", () => {
     ).resolves.toBe(outcome);
     expect(consume).toHaveBeenCalledExactlyOnceWith({ environmentId, input });
     expect(refresh).toHaveBeenCalledExactlyOnceWith(environmentId);
+  });
+
+  it("refreshes only the primary quota query after a settings projection update", async () => {
+    const primaryEnvironmentId = "primary" as EnvironmentId;
+    const primaryQuotaAtom = Atom.make(AsyncResult.initial<ProviderQuotaSummary, never>(false));
+    const secondaryQuotaAtom = Atom.make(AsyncResult.initial<ProviderQuotaSummary, never>(false));
+    const projectionAtom = Atom.make(
+      AsyncResult.success({ latestEvent: { type: "snapshot" } } as never),
+    );
+    const registry = AtomRegistry.make();
+    const dom = installReactHookTestDom();
+    mocks.primaryEnvironmentId = primaryEnvironmentId;
+    mocks.serverEnvironment.providerQuota.mockImplementation(({ environmentId: target }) =>
+      target === primaryEnvironmentId ? primaryQuotaAtom : secondaryQuotaAtom,
+    );
+    mocks.serverEnvironment.configProjection.mockReturnValue(projectionAtom);
+
+    const mounted = await mountReactHookTestComponent(
+      createElement(
+        RegistryContext.Provider,
+        { value: registry },
+        createElement(() => {
+          usePrimaryProviderQuota();
+          return null;
+        }),
+      ),
+      dom.document,
+    );
+
+    await act(async () => {
+      registry.set(
+        projectionAtom,
+        AsyncResult.success({ latestEvent: { type: "settingsUpdated" } } as never),
+      );
+    });
+
+    expect(mocks.appAtomRegistry.refresh).toHaveBeenCalledExactlyOnceWith(primaryQuotaAtom);
+    expect(mocks.appAtomRegistry.refresh).not.toHaveBeenCalledWith(secondaryQuotaAtom);
+
+    await mounted.unmount();
+    dom.cleanup();
+    registry.dispose();
   });
 });
