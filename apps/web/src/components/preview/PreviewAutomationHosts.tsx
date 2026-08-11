@@ -65,6 +65,7 @@ import {
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import { reconcilePreviewRightPanelSurfaces } from "./reconcilePreviewRightPanelSurfaces";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -320,6 +321,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             return raiseAtomCommandFailure(result);
           }
           reconcilePreviewServerSessions(threadRef, result.value);
+          reconcilePreviewRightPanelSurfaces(threadRef);
           state = readThreadPreviewState(threadRef);
         }
         tabId = request.tabId ?? state.snapshot?.tabId ?? null;
@@ -428,6 +430,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 updatePreviewServerSnapshot(threadRef, resizeResult.value);
               }
             }
+            reconcilePreviewRightPanelSurfaces(threadRef);
             const shouldPresentPreview = shouldOpenPreviewMiniPlayer(input);
             if (shouldPresentPreview) {
               usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
