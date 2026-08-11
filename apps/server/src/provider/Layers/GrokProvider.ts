@@ -135,21 +135,32 @@ type GrokAcpDiscoveryResult = {
   readonly availableCommands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
 };
 
-function availableCommandListSignature(
-  commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
-): string {
-  return commands.map((command) => command.name).join("\0");
+/**
+ * Prefer the richer command snapshot: longer lists win (partial first
+ * emissions lose to later fuller ones); equal length keeps the newer read so
+ * description/hint enrichments for the same names still apply.
+ */
+function preferRicherAvailableCommands(
+  current: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+  candidate: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+): ReadonlyArray<EffectAcpSchema.AvailableCommand> {
+  if (candidate.length === 0) {
+    return current;
+  }
+  if (candidate.length >= current.length) {
+    return candidate;
+  }
+  return current;
 }
 
 /**
- * Poll for ACP available commands for up to GROK_AVAILABLE_COMMANDS_WAIT_MS.
+ * Poll for ACP available commands for the full GROK_AVAILABLE_COMMANDS_WAIT_MS
+ * window (does not share the ACP start timeout budget).
  *
- * - Does not share the ACP start timeout budget.
- * - Keeps the latest non-empty list so a later fuller emission wins over a
- *   partial first snapshot.
- * - Returns early once a non-empty list is stable across two consecutive polls.
- * - Always performs a final read at the end of the window so a late update in
- *   the last poll interval is not missed.
+ * Grok may emit a partial `available_commands_update` during `session/new` and
+ * a fuller list shortly after, so we never early-exit on the first non-empty
+ * snapshot. We keep the richest list seen and always take a final read at the
+ * end of the window so a late update in the last poll interval is not missed.
  */
 const waitForGrokAvailableCommands = (
   getAvailableCommands: Effect.Effect<ReadonlyArray<EffectAcpSchema.AvailableCommand>>,
@@ -158,31 +169,14 @@ const waitForGrokAvailableCommands = (
     const poll = Duration.millis(GROK_AVAILABLE_COMMANDS_POLL_MS);
     const deadlineMillis = (yield* Clock.currentTimeMillis) + GROK_AVAILABLE_COMMANDS_WAIT_MS;
 
-    let latest = yield* getAvailableCommands;
-    let previousSignature = availableCommandListSignature(latest);
-    let stablePolls = latest.length > 0 ? 1 : 0;
+    let best = yield* getAvailableCommands;
 
     while ((yield* Clock.currentTimeMillis) < deadlineMillis) {
-      if (latest.length > 0 && stablePolls >= 2) {
-        return latest;
-      }
       yield* Effect.sleep(poll);
-      const current = yield* getAvailableCommands;
-      if (current.length === 0) {
-        continue;
-      }
-      const signature = availableCommandListSignature(current);
-      if (signature === previousSignature) {
-        stablePolls += 1;
-      } else {
-        latest = current;
-        previousSignature = signature;
-        stablePolls = 1;
-      }
+      best = preferRicherAvailableCommands(best, yield* getAvailableCommands);
     }
 
-    const finalCommands = yield* getAvailableCommands;
-    return finalCommands.length > 0 ? finalCommands : latest;
+    return preferRicherAvailableCommands(best, yield* getAvailableCommands);
   });
 
 /**
