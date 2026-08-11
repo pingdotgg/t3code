@@ -42,6 +42,36 @@ describe("buildAetherPreviewUrl", () => {
     ).toBe(`http://5173-abcdefgh-${TOKEN}.localhost:8080`);
   });
 
+  it("follows the api base protocol for an http-only self-hosted instance", () => {
+    // The preview gateway of an http-only instance is http too — emitting
+    // https for every non-localhost host produced an unreachable URL.
+    expect(
+      buildAetherPreviewUrl({
+        apiBaseUrl: "http://api.aether.internal",
+        workspaceId: "abcdefgh1234",
+        port: 3000,
+        previewToken: TOKEN,
+      }),
+    ).toBe(`http://3000-abcdefgh-${TOKEN}.preview.aether.internal`);
+    expect(
+      buildAetherPreviewUrl({
+        apiBaseUrl: "http://127.0.0.1:8080",
+        workspaceId: "abcdefgh1234",
+        port: 3000,
+        previewToken: TOKEN,
+      }),
+    ).toBe(`http://3000-abcdefgh-${TOKEN}.127.0.0.1:8080`);
+    // An unparseable base pairs with the production preview domain: https.
+    expect(
+      buildAetherPreviewUrl({
+        apiBaseUrl: "not a url",
+        workspaceId: "abcdefgh1234",
+        port: 3000,
+        previewToken: TOKEN,
+      }),
+    ).toBe(`https://3000-abcdefgh-${TOKEN}.preview.runaether.dev`);
+  });
+
   it("returns undefined for a malformed token (best-effort, never throws)", () => {
     expect(
       buildAetherPreviewUrl({

@@ -30,6 +30,21 @@ export function deriveAetherPreviewDomain(apiBaseUrl: string): string {
 }
 
 /**
+ * The preview gateway is reachable over whatever scheme the instance's API
+ * is: an http-only self-hosted instance (`http://aether.internal`, a dev
+ * `http://127.0.0.1:8080`) serves previews over http too, and hardcoding
+ * https for every non-localhost host produced a URL that cannot connect. An
+ * unparseable URL pairs with the production preview domain, which is https.
+ */
+export function deriveAetherPreviewProtocol(apiBaseUrl: string): "http" | "https" {
+  try {
+    return new URL(apiBaseUrl).protocol === "http:" ? "http" : "https";
+  } catch {
+    return "https";
+  }
+}
+
+/**
  * Build a workspace port-preview URL, or `undefined` when the preview token is
  * malformed or absent. Port previews are best-effort — the caller skips
  * surfacing the port rather than failing a turn.
@@ -45,6 +60,5 @@ export function buildAetherPreviewUrl(input: {
   }
   const domain = deriveAetherPreviewDomain(input.apiBaseUrl);
   const subdomain = `${input.port}-${input.workspaceId.slice(0, 8)}-${input.previewToken}`;
-  const protocol = domain.startsWith("localhost") ? "http" : "https";
-  return `${protocol}://${subdomain}.${domain}`;
+  return `${deriveAetherPreviewProtocol(input.apiBaseUrl)}://${subdomain}.${domain}`;
 }

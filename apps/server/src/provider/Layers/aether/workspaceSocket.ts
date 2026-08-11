@@ -719,19 +719,26 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                 Deferred.Deferred<unknown, AetherWorkspaceDetachedError>
               >();
               let requestCounter = 0;
-              yield* Effect.addFinalizer(() =>
+              // Sticky once the socket is known dead. `WebSocket.send()`
+              // SILENTLY DISCARDS data in CLOSING/CLOSED, so a non-throwing
+              // send is no proof a request was delivered: without this latch a
+              // request issued after the close — including one `onConnected`
+              // reconciliation starts against a socket that died in the same
+              // tick as `open` — waits out the full `requestTimeoutMs` before
+              // the reconnect can begin.
+              let detached: AetherWorkspaceDetachedError | undefined;
+              const detach = (error: AetherWorkspaceDetachedError) =>
                 Effect.gen(function* () {
+                  detached = error;
                   for (const deferred of pending.values()) {
-                    yield* Deferred.fail(
-                      deferred,
-                      new AetherWorkspaceDetachedError({
-                        detail: "the workspace socket closed with the request in flight",
-                      }),
-                    ).pipe(Effect.ignore);
+                    yield* Deferred.fail(deferred, error).pipe(Effect.ignore);
                   }
                   pending.clear();
-                }),
-              );
+                });
+              const socketClosedDetached = new AetherWorkspaceDetachedError({
+                detail: "the workspace socket closed with the request in flight",
+              });
+              yield* Effect.addFinalizer(() => detach(socketClosedDetached));
 
               const sendRequest = <A>(input: {
                 readonly channel: "git" | "files";
@@ -740,6 +747,9 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                 readonly parse: (frame: unknown) => AetherWsRequestOutcome<A>;
               }): Effect.Effect<A, AetherWorkspaceRequestError> =>
                 Effect.gen(function* () {
+                  if (detached !== undefined) {
+                    return yield* detached;
+                  }
                   requestCounter++;
                   const requestId = `t3-${input.channel}-${requestCounter}`;
                   const deferred = yield* Deferred.make<unknown, AetherWorkspaceDetachedError>();
@@ -810,6 +820,13 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                 while (true) {
                   const signal = yield* Queue.take(opened.signals);
                   if (signal._tag === "closed") {
+                    // Fail every in-flight request BEFORE handing the close to
+                    // the consumer: the consumer cannot reach the queued close
+                    // while `onConnected`/`onEvent` is still awaiting a git or
+                    // files response, so a drop would otherwise stall the
+                    // disconnect — and the reconnect — for a full request
+                    // timeout.
+                    yield* detach(socketClosedDetached);
                     yield* Queue.offer(routed, signal);
                     return;
                   }

@@ -252,4 +252,40 @@ describe("openAetherTerminalConnection", () => {
       );
     }),
   );
+
+  it.effect("fails loudly when the first attach cannot send the create handshake", () =>
+    Effect.gen(function* () {
+      // The socket closes in the same tick as `open`, so `send` THROWS. As a
+      // defect that throw slipped past runLifecycle's typed catch: the fork
+      // died without failing `ready` and the open blocked forever. It must
+      // surface as a typed failure instead.
+      class ThrowingSocket extends FakeSocket {
+        override send(): void {
+          throw new Error("WebSocket is already in CLOSING or CLOSED state");
+        }
+      }
+      const exit = yield* Effect.exit(
+        Effect.scoped(
+          openAetherTerminalConnection({
+            restClient,
+            apiBaseUrl: "https://api.runaether.dev",
+            apiKey: "aether_test_key",
+            taskId: "task-1",
+            sessionId: "term-1",
+            cols: 80,
+            rows: 24,
+            timing: ZERO_TIMING,
+            webSocketFactory: () => {
+              const socket = new ThrowingSocket();
+              socket.open();
+              return socket;
+            },
+            onOutput: () => {},
+            onClosed: () => {},
+          }),
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+    }),
+  );
 });

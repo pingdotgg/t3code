@@ -14,6 +14,7 @@ import type { AetherSettings, ModelCapabilities, ServerProviderModel } from "@t3
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
@@ -235,10 +236,26 @@ export const checkAetherProviderStatus = Effect.fn("checkAetherProviderStatus")(
     HttpClientRequest.setHeader("authorization", `Bearer ${apiKey}`),
   );
 
-  const responseExit = yield* Effect.exit(
-    client.execute(request).pipe(Effect.timeout(PROBE_TIMEOUT_MS)),
+  // ONE deadline over the whole exchange, body included: a `/profile` that
+  // answers with 2xx headers and then stalls mid-body would hang the probe
+  // forever if only `execute` were timed. A malformed payload is a distinct
+  // answer, so it is caught INSIDE the deadline rather than folded into it.
+  const probeExit = yield* Effect.exit(
+    Effect.gen(function* () {
+      const response = yield* client.execute(request);
+      if (response.status === 401) {
+        return { _tag: "unauthenticated" } as const;
+      }
+      if (response.status < 200 || response.status >= 300) {
+        return { _tag: "http-status", status: response.status } as const;
+      }
+      const decoded = yield* Effect.result(response.json.pipe(Effect.flatMap(decodeAetherProfile)));
+      return Result.isSuccess(decoded)
+        ? ({ _tag: "profile", profile: decoded.success } as const)
+        : ({ _tag: "malformed-profile" } as const);
+    }).pipe(Effect.timeout(PROBE_TIMEOUT_MS)),
   );
-  if (Exit.isFailure(responseExit)) {
+  if (Exit.isFailure(probeExit)) {
     return draft({
       status: "error",
       auth: { status: "unknown" },
@@ -246,8 +263,8 @@ export const checkAetherProviderStatus = Effect.fn("checkAetherProviderStatus")(
     });
   }
 
-  const response = responseExit.value;
-  if (response.status === 401) {
+  const probeResult = probeExit.value;
+  if (probeResult._tag === "unauthenticated") {
     return draft({
       status: "error",
       auth: { status: "unauthenticated" },
@@ -255,16 +272,14 @@ export const checkAetherProviderStatus = Effect.fn("checkAetherProviderStatus")(
         "Invalid Aether API key. Update the AETHER_API_KEY environment variable on this instance.",
     });
   }
-  if (response.status < 200 || response.status >= 300) {
+  if (probeResult._tag === "http-status") {
     return draft({
       status: "error",
       auth: { status: "unknown" },
-      message: `Aether API returned HTTP ${response.status} from ${baseUrl}/profile.`,
+      message: `Aether API returned HTTP ${probeResult.status} from ${baseUrl}/profile.`,
     });
   }
-
-  const profileExit = yield* Effect.exit(response.json.pipe(Effect.flatMap(decodeAetherProfile)));
-  if (Exit.isFailure(profileExit)) {
+  if (probeResult._tag === "malformed-profile") {
     return draft({
       status: "error",
       auth: { status: "unknown" },
@@ -272,7 +287,7 @@ export const checkAetherProviderStatus = Effect.fn("checkAetherProviderStatus")(
     });
   }
 
-  const profile = profileExit.value;
+  const profile = probeResult.profile;
   const email = profile.email?.trim();
   return draft({
     status: "ready",

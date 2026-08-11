@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -879,6 +880,54 @@ describe("workspace request-response channel", () => {
       }),
     // A regression deadlocks instead of failing an assertion: cap it so the
     // suite fails fast rather than hanging.
+    { timeout: 15_000 },
+  );
+
+  it.effect(
+    "fails an onConnected request IMMEDIATELY when the server closed right after open",
+    () =>
+      Effect.gen(function* () {
+        // `WebSocket.send()` silently discards data once the socket is
+        // CLOSING/CLOSED, so a non-throwing subscribe is no proof of a live
+        // connection. Before the detached latch, the reconcile onConnected
+        // starts issued a request nothing could ever answer and waited the
+        // full 30s request budget before the queued close could be consumed
+        // and the reconnect begin.
+        const outcomes: Array<string> = [];
+        const harness = makeHarness(
+          {
+            getTask: scriptedGetTask([taskProcessing]).getTask,
+            connectWorkspace: scriptedConnect([runningOutcome]).connectWorkspace,
+          },
+          (socket, index) => {
+            if (index !== 0) {
+              return;
+            }
+            const originalSend = socket.send.bind(socket);
+            socket.send = (data: string) => {
+              originalSend(data);
+              socket.serverClose(1006, "closed right after open");
+            };
+          },
+        );
+        const options: AetherAgentStreamOptions = {
+          ...harness.options,
+          onConnected: (connection) =>
+            Effect.gen(function* () {
+              const result = yield* Effect.result(connection.requestGitDiff({ mode: "main" }));
+              outcomes.push(Result.isFailure(result) ? result.failure._tag : "unexpected-success");
+            }),
+        };
+        const fiber = yield* Effect.forkChild(runAetherAgentStream(options));
+        yield* settlePump;
+        // No clock advancement: the request budget never fired, the close did.
+        expect(outcomes[0]).toBe("AetherWorkspaceDetachedError");
+        // And the drop was observed, so the loop reconnected.
+        expect(harness.sockets.length).toBeGreaterThan(1);
+
+        yield* Fiber.interrupt(fiber);
+      }),
+    // A regression stalls for the request timeout instead of asserting.
     { timeout: 15_000 },
   );
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import {
   HttpClient,
   HttpClientError,
@@ -172,6 +174,33 @@ describe("checkAetherProviderStatus", () => {
       );
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).toContain("unexpected /profile payload");
+    }),
+  );
+
+  it.effect("times out a 2xx response whose BODY never arrives", () =>
+    Effect.gen(function* () {
+      // The probe deadline covered only `client.execute`, so a /profile that
+      // answered with 2xx headers and then stalled mid-body hung forever and
+      // never produced the error draft it promises.
+      const probe = yield* Effect.forkChild(
+        checkAetherProviderStatus(enabledSettings, keyedEnvironment).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            respondingClient(
+              () =>
+                new Response(new ReadableStream({ start: () => {} }), {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+            ),
+          ),
+        ),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("10 seconds");
+      const snapshot = yield* Fiber.join(probe);
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toContain("Couldn't reach the Aether API");
     }),
   );
 

@@ -57,8 +57,26 @@ export class AetherTerminalWorkspaceUnavailableError extends Schema.TaggedErrorC
   }
 }
 
+/**
+ * The PTY create/resize handshake could not be written to a socket that had
+ * just opened — a `send` on a socket the server closed in the same tick.
+ */
+export class AetherTerminalAttachError extends Schema.TaggedErrorClass<AetherTerminalAttachError>()(
+  "AetherTerminalAttachError",
+  {
+    taskId: Schema.String,
+    sessionId: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Aether cloud terminal could not start a shell for task '${this.taskId}': the socket closed before the create/resize handshake was sent.`;
+  }
+}
+
 export type AetherTerminalConnectError =
   | AetherTerminalWorkspaceUnavailableError
+  | AetherTerminalAttachError
   | AetherTaskErroredError
   | AetherTaskUnknownStatusError
   | AetherWorkspaceConnectTimeoutError
@@ -210,12 +228,24 @@ export const openAetherTerminalConnection = (
     let currentRows = options.rows;
     const ready = yield* Deferred.make<void, AetherTerminalConnectError>();
 
+    // `socket.send`/`socket.close` THROW on a socket the server already
+    // closed. Inside `Effect.sync` that is a defect, and `Effect.ignore` only
+    // clears the error channel — a defect here kills the lifecycle fork
+    // without failing `ready`, which is exactly the hang this connection must
+    // never produce. Every best-effort socket call goes through `Effect.try`.
+    const bestEffort = (call: () => void): Effect.Effect<void> =>
+      Effect.try({
+        try: call,
+        catch: (cause) =>
+          new CloudTerminalWriteError({ detail: "best-effort socket call failed", cause }),
+      }).pipe(Effect.ignore);
+
     const heartbeat = (socket: AetherWebSocketLike): Effect.Effect<never> =>
       Effect.sleep(ACTIVITY_PING_INTERVAL).pipe(
         Effect.andThen(
-          Effect.sync(() => {
+          bestEffort(() => {
             socket.send(encodeUserActivity({ channel: "activity", type: "user_activity" }));
-          }).pipe(Effect.ignore),
+          }),
         ),
         Effect.forever,
       );
@@ -256,12 +286,12 @@ export const openAetherTerminalConnection = (
         );
         const { socket, signals } = yield* Effect.acquireRelease(
           openSocket(factory, url, timing.openTimeoutMs),
-          ({ socket }) => Effect.sync(() => socket.close()),
+          ({ socket }) => bestEffort(() => socket.close()),
         );
         // Send an explicit terminal close before the socket close finalizer
         // (LIFO) so this attach's VM PTY is reaped promptly.
         yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
+          bestEffort(() => {
             socket.send(
               encodeTerminalClose({
                 channel: "terminal",
@@ -269,28 +299,43 @@ export const openAetherTerminalConnection = (
                 sessionId: options.sessionId,
               }),
             );
-          }).pipe(Effect.ignore),
+          }),
         );
         currentSocket = socket;
-        socket.send(
-          encodeTerminalCreate({
-            channel: "terminal",
-            type: "create",
-            sessionId: options.sessionId,
-          }),
-        );
-        // The VM PTY is created at a default 80x24; apply the latest requested
-        // size up front so output wraps correctly — including after a resize +
-        // reconnect, when this recreates the shell.
-        socket.send(
-          encodeTerminalResize({
-            channel: "terminal",
-            type: "resize",
-            sessionId: options.sessionId,
-            cols: currentCols,
-            rows: currentRows,
-          }),
-        );
+        // These two sends run BEFORE `ready` resolves, so a throw here (the
+        // socket closed the instant after `openSocket` returned) must be a
+        // TYPED failure: as a defect it would slip past `runLifecycle`'s
+        // typed catch, kill the fork without failing `ready`, and leave
+        // `openAetherTerminalConnection` awaiting it forever.
+        yield* Effect.try({
+          try: () => {
+            socket.send(
+              encodeTerminalCreate({
+                channel: "terminal",
+                type: "create",
+                sessionId: options.sessionId,
+              }),
+            );
+            // The VM PTY is created at a default 80x24; apply the latest
+            // requested size up front so output wraps correctly — including
+            // after a resize + reconnect, when this recreates the shell.
+            socket.send(
+              encodeTerminalResize({
+                channel: "terminal",
+                type: "resize",
+                sessionId: options.sessionId,
+                cols: currentCols,
+                rows: currentRows,
+              }),
+            );
+          },
+          catch: (cause) =>
+            new AetherTerminalAttachError({
+              taskId: options.taskId,
+              sessionId: options.sessionId,
+              cause,
+            }),
+        });
         yield* Effect.forkScoped(heartbeat(socket));
         yield* notifyReady;
 

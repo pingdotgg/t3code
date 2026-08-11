@@ -488,7 +488,15 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
               message: target.errorMessage,
             });
           }
-        }),
+        }).pipe(
+          // The listener is registered BEFORE the initial delivery so no output
+          // can slip between the two — which means a delivery that defects, or
+          // an interrupt before the unsubscribe below is returned, would strand
+          // a dead listener in the set. `drainLoop` then defects on the next
+          // output and terminal output stops for every remaining healthy
+          // client, so unwind the registration on any non-success exit.
+          Effect.onError(() => Effect.sync(() => target.listeners.delete(listener))),
+        ),
       );
       return () => {
         target.listeners.delete(listener);
@@ -571,8 +579,12 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       for (const key of keys) {
         const session = sessions.get(key);
         if (!session) continue;
-        sessions.delete(key);
+        // Drop the session from the map only AFTER teardown is guaranteed:
+        // the manager's shutdown finalizer closes what is still in the map, so
+        // a `closeOne` that fails or is interrupted before `teardownConnection`
+        // would orphan a live cloud shell and its socket.
         yield* closeOne(session);
+        sessions.delete(key);
       }
     });
 
