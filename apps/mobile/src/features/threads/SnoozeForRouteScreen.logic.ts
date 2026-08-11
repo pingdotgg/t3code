@@ -1,5 +1,10 @@
 export type AndroidSnoozePicker = "date" | "time";
 
+export function resolveAndroidPickerValue(value: Date, part: AndroidSnoozePicker): Date {
+  if (part === "time") return value;
+  return new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
+}
+
 export function mergeAndroidPickerValue(
   current: Date,
   selected: Date,

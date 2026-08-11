@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeAndroidPickerValue } from "./SnoozeForRouteScreen.logic";
+import { mergeAndroidPickerValue, resolveAndroidPickerValue } from "./SnoozeForRouteScreen.logic";
+
+describe("resolveAndroidPickerValue", () => {
+  it("seeds Material DatePicker with UTC midnight for the local calendar day", () => {
+    const originalTimezone = process.env.TZ;
+    try {
+      process.env.TZ = "America/Los_Angeles";
+      const localEvening = new Date(2026, 7, 10, 20, 30);
+
+      expect(localEvening.toISOString()).toContain("2026-08-11");
+      expect(resolveAndroidPickerValue(localEvening, "date").toISOString()).toBe(
+        "2026-08-10T00:00:00.000Z",
+      );
+      expect(resolveAndroidPickerValue(localEvening, "time")).toBe(localEvening);
+    } finally {
+      process.env.TZ = originalTimezone;
+    }
+  });
+});
 
 describe("mergeAndroidPickerValue", () => {
   it("reads Material DatePicker calendar parts from UTC", () => {
