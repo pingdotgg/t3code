@@ -284,7 +284,7 @@ const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
@@ -317,17 +317,24 @@ function addSnoozeDays(base: Date, days: number): Date {
 
 /**
  * Shared "snooze until" choices for every client. "This evening" only
- * appears while it is meaningfully before evening; after that the list
- * starts at "Tomorrow".
+ * appears while it is meaningfully before evening; after that the calendar
+ * choices start at "Tomorrow".
  */
 export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   const inAnHour = new Date(now.getTime() + HOUR_MS);
+  const inThreeHours = new Date(now.getTime() + 3 * HOUR_MS);
   const presets: SnoozePreset[] = [
     {
       id: "hour",
       label: "In 1 hour",
       whenLabel: snoozeTimeOfDayLabel(inAnHour),
       snoozedUntil: inAnHour.toISOString(),
+    },
+    {
+      id: "three-hours",
+      label: "In 3 hours",
+      whenLabel: snoozeTimeOfDayLabel(inThreeHours),
+      snoozedUntil: inThreeHours.toISOString(),
     },
   ];
 
