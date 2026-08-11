@@ -235,6 +235,27 @@ var x = 1;
 
   // regionCount is what separates "clean" from "this scan went blind because the
   // marker format changed". A caller that ignores it gets a vacuous pass.
+  // The scan has to answer both directions. Checking only that externals are
+  // absent still passes on a bundle that externalized everything, which is the
+  // failure this whole change prevents.
+  it("reports the packages that were inlined, not just the violations", () => {
+    const source =
+      region("../../node_modules/.pnpm/effect@4.0.0/node_modules/effect/dist/index.js") +
+      region("../../node_modules/.pnpm/yaml@2.4.0/node_modules/yaml/dist/index.js") +
+      region("../../src/server/main.ts");
+    const result = findInlinedExternalPackages(source);
+
+    assert.deepStrictEqual(result.inlinedPackages, ["effect", "yaml"]);
+    assert.deepStrictEqual(result.inlined, []);
+  });
+
+  it("does not report the pnpm store directory as a package", () => {
+    const result = findInlinedExternalPackages(
+      region("../../node_modules/.pnpm/effect@4.0.0/node_modules/effect/dist/index.js"),
+    );
+    assert.deepStrictEqual(result.inlinedPackages, ["effect"]);
+  });
+
   it("reports no regions when the marker format is absent", () => {
     const result = findInlinedExternalPackages("var x = 1; // node_modules/detect-libc/lib.js");
     assert.strictEqual(result.regionCount, 0);

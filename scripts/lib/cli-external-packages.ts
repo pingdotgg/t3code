@@ -107,10 +107,18 @@ export const CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS = CLI_EXTERNAL_PACKAGE_PREFIXES.f
  *
  * `regionCount` is reported so the caller can tell "nothing was inlined" apart
  * from "the marker format changed and this scan no longer sees anything".
+ *
+ * `inlinedPackages` is every package seen in a region, which lets the caller
+ * check the opposite direction too. Verifying only that externals are absent
+ * would still pass if the bundler reverted to leaving everything external: the
+ * scan would see source-file regions, report nothing inlined, and the packaged
+ * WSL backend would then fail with ERR_MODULE_NOT_FOUND because those packages
+ * are not in the unpack globs either.
  */
 export function findInlinedExternalPackages(source: string): {
   readonly regionCount: number;
   readonly inlined: ReadonlyArray<string>;
+  readonly inlinedPackages: ReadonlyArray<string>;
 } {
   // Rolldown marks each inlined module with a `//#region <path>` comment.
   const regionPattern = /\/\/#region\s+(\S+)/g;
@@ -118,14 +126,21 @@ export function findInlinedExternalPackages(source: string): {
 
   let regionCount = 0;
   const inlined = new Set<string>();
+  const inlinedPackages = new Set<string>();
   for (const region of source.matchAll(regionPattern)) {
     regionCount += 1;
     const regionPath = region[1] ?? "";
     for (const candidate of regionPath.matchAll(packagePattern)) {
       const name = candidate[1];
-      if (name !== undefined && isExternalCliDependency(name)) inlined.add(name);
+      if (name === undefined || name === ".pnpm") continue;
+      inlinedPackages.add(name);
+      if (isExternalCliDependency(name)) inlined.add(name);
     }
   }
 
-  return { regionCount, inlined: [...inlined].sort() };
+  return {
+    regionCount,
+    inlined: [...inlined].sort(),
+    inlinedPackages: [...inlinedPackages].sort(),
+  };
 }

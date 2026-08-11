@@ -379,6 +379,22 @@ const desktopBuildInputArtifactNames = {
   "bundled-server-client": "bundled server client",
 } satisfies Record<DesktopBuildInputArtifact, string>;
 
+/**
+ * Imported by every server module, so it is inlined in any correctly bundled
+ * build. Its absence means the bundle went back to externalizing its
+ * dependencies, which the unpack globs do not cover.
+ */
+const BUNDLE_SELF_CONTAINED_SENTINEL = "effect";
+
+export class ExternalizedBundleError extends Schema.TaggedErrorClass<ExternalizedBundleError>()(
+  "ExternalizedBundleError",
+  { sentinel: Schema.String, inlinedPackageCount: Schema.Number },
+) {
+  override get message(): string {
+    return `The server bundle did not inline "${this.sentinel}" (${this.inlinedPackageCount} packages inlined). The bundle is meant to be self-contained apart from the native externals; if its dependencies are external again they will not be unpacked, and the WSL backend will fail with ERR_MODULE_NOT_FOUND. Check the deps.alwaysBundle wiring in apps/server/vite.config.ts.`;
+  }
+}
+
 export class InlinedExternalPackageError extends Schema.TaggedErrorClass<InlinedExternalPackageError>()(
   "InlinedExternalPackageError",
   { packages: Schema.Array(Schema.String) },
@@ -1851,11 +1867,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     );
     let totalRegions = 0;
     const inlined = new Set<string>();
+    const inlinedPackages = new Set<string>();
     for (const chunkName of chunkNames) {
       const source = yield* fs.readFileString(path.join(distDirs.serverDist, chunkName));
       const scan = findInlinedExternalPackages(source);
       totalRegions += scan.regionCount;
       for (const name of scan.inlined) inlined.add(name);
+      for (const name of scan.inlinedPackages) inlinedPackages.add(name);
     }
     if (inlined.size > 0) {
       return yield* new InlinedExternalPackageError({
@@ -1867,6 +1885,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     if (totalRegions === 0) {
       return yield* new InlinedExternalPackageError({
         packages: ["<no module regions found; the bundle scan needs updating>"],
+      });
+    }
+    // The check above is one-directional: it only proves nothing external got
+    // inlined. A regression to externalizing everything would also pass it,
+    // since source-file regions still exist -- and that is the failure this
+    // whole change exists to prevent, because those packages are not in the
+    // unpack globs and the WSL backend would die on ERR_MODULE_NOT_FOUND.
+    // `effect` is imported by every server module, so it is inlined in any
+    // correctly bundled build (209 regions at the time of writing).
+    if (!inlinedPackages.has(BUNDLE_SELF_CONTAINED_SENTINEL)) {
+      return yield* new ExternalizedBundleError({
+        sentinel: BUNDLE_SELF_CONTAINED_SENTINEL,
+        inlinedPackageCount: inlinedPackages.size,
       });
     }
   }
