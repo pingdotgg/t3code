@@ -547,6 +547,7 @@ enum MarkdownCodeBlockWrapping {
 
 private struct MarkdownInlineText: UIViewRepresentable {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.openURL) private var openURL
 
     let rendered: MarkdownRenderedInline
     let selectionContext: MarkdownSelectionContext
@@ -585,6 +586,10 @@ private struct MarkdownInlineText: UIViewRepresentable {
         textView.textContainer.widthTracksTextView = true
         textView.textContainer.lineBreakMode = wrapsLines ? .byWordWrapping : .byClipping
         textView.adjustsFontForContentSizeCategory = true
+        textView.linkTextAttributes = [
+            .foregroundColor: T3Colors.uiAccent,
+            .underlineStyle: 0,
+        ]
         textView.accessibilityTraits = .staticText
         textView.delegate = context.coordinator
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -612,6 +617,9 @@ private struct MarkdownInlineText: UIViewRepresentable {
             context.coordinator.didApply(attributedText)
         }
         context.coordinator.selectionContext = selectionContext
+        context.coordinator.onOpenURL = { url in
+            openURL(url)
+        }
         textView.accessibilityCustomActions = context.coordinator.accessibilityActions(
             title: selectionContext.copyActionTitle
         )
@@ -652,6 +660,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
             source: MarkdownSelectionSource(""),
             copyActionTitle: "Copy message"
         )
+        var onOpenURL: ((URL) -> Void)?
         private var cacheKey: CacheKey?
         private var cachedRendered: MarkdownRenderedInline?
         private var cachedAttributedText: NSAttributedString?
@@ -680,6 +689,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
                 from: rendered,
                 lineSpacing: lineSpacing,
                 foregroundColor: textColor.uiColor,
+                dynamicTypeSize: dynamicTypeSize,
                 wrapsLines: wrapsLines
             )
             cacheKey = key
@@ -733,14 +743,25 @@ private struct MarkdownInlineText: UIViewRepresentable {
                 .split(separator: "\n", omittingEmptySubsequences: false)
                 .map(\.utf16.count)
                 .max() ?? 0
-            let maximumWidth = max(10_000, CGFloat(longestLineLength) * 64)
-            let fittingSize = textView.sizeThatFits(
-                CGSize(width: maximumWidth, height: .greatestFiniteMagnitude)
-            )
+            var largestFontPointSize: CGFloat = 0
+            textView.attributedText.enumerateAttribute(
+                .font,
+                in: NSRange(location: 0, length: textView.attributedText.length)
+            ) { value, _, _ in
+                largestFontPointSize = max(
+                    largestFontPointSize,
+                    (value as? UIFont)?.pointSize ?? 0
+                )
+            }
+            let perCharacterWidth = max(16, largestFontPointSize * 1.5)
+            let maximumWidth = max(2_048, CGFloat(longestLineLength) * perCharacterWidth)
             let bounds = textView.attributedText.boundingRect(
                 with: CGSize(width: maximumWidth, height: .greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin, .usesFontLeading],
                 context: nil
+            )
+            let fittingSize = textView.sizeThatFits(
+                CGSize(width: max(1, ceil(bounds.width)), height: .greatestFiniteMagnitude)
             )
             let size = CGSize(
                 width: max(1, ceil(bounds.width)),
@@ -780,6 +801,17 @@ private struct MarkdownInlineText: UIViewRepresentable {
             return UIMenu(children: suggestedActions + [copyMessage])
         }
 
+        func textView(
+            _ textView: UITextView,
+            primaryActionFor textItem: UITextItem,
+            defaultAction: UIAction
+        ) -> UIAction? {
+            guard case let .link(url) = textItem.content else { return defaultAction }
+            return UIAction { [weak self] _ in
+                self?.onOpenURL?(url)
+            }
+        }
+
         private func copyMessage() {
             UIPasteboard.general.string = selectionContext.source.text
         }
@@ -792,6 +824,7 @@ enum MarkdownSelectableTextAttributes {
         from rendered: MarkdownRenderedInline,
         lineSpacing: CGFloat,
         foregroundColor: UIColor = T3Colors.uiTextPrimary,
+        dynamicTypeSize: DynamicTypeSize = .large,
         wrapsLines: Bool = true
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
@@ -802,19 +835,22 @@ enum MarkdownSelectableTextAttributes {
         for run in rendered.attributedText.runs {
             let intent = run.inlinePresentationIntent
             var attributes: [NSAttributedString.Key: Any] = [
-                .font: font(for: rendered.style, intent: intent),
+                .font: font(
+                    for: rendered.style,
+                    intent: intent,
+                    dynamicTypeSize: dynamicTypeSize
+                ),
                 .foregroundColor: foregroundColor,
                 .paragraphStyle: paragraphStyle,
             ]
             if intent?.contains(.code) == true {
-                attributes[.backgroundColor] = UIColor.secondarySystemBackground
+                attributes[.backgroundColor] = T3Colors.uiSurfaceRaised
             }
             if intent?.contains(.strikethrough) == true {
                 attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
             }
             if let link = run.link {
                 attributes[.link] = link
-                attributes[.foregroundColor] = UIColor.link
             }
             result.append(
                 NSAttributedString(
@@ -830,9 +866,10 @@ enum MarkdownSelectableTextAttributes {
     @MainActor
     private static func font(
         for style: MarkdownInlineStyle,
-        intent: InlinePresentationIntent?
+        intent: InlinePresentationIntent?,
+        dynamicTypeSize: DynamicTypeSize
     ) -> UIFont {
-        var font = style.uiFont
+        var font = style.uiFont(dynamicTypeSize: dynamicTypeSize)
         if intent?.contains(.code) == true, style != .code {
             font = UIFont.monospacedSystemFont(
                 ofSize: font.pointSize,

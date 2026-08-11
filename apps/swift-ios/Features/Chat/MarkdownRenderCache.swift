@@ -44,7 +44,7 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
     case code
 
     @MainActor
-    var uiFont: UIFont {
+    func uiFont(dynamicTypeSize: DynamicTypeSize) -> UIFont {
         let textStyle: UIFont.TextStyle
         let weight: UIFont.Weight
         switch self {
@@ -68,12 +68,12 @@ enum MarkdownInlineStyle: String, Hashable, Sendable {
             weight = .regular
         }
 
-        let preferred = UIFont.preferredFont(forTextStyle: textStyle)
+        let traits = UITraitCollection(
+            preferredContentSizeCategory: UIContentSizeCategory(dynamicTypeSize)
+        )
+        let preferred = UIFont.preferredFont(forTextStyle: textStyle, compatibleWith: traits)
         if self == .code {
-            return UIFont.monospacedSystemFont(
-                ofSize: preferred.pointSize,
-                weight: weight
-            )
+            return UIFont.monospacedSystemFont(ofSize: preferred.pointSize, weight: weight)
         }
         return UIFont.systemFont(ofSize: preferred.pointSize, weight: weight)
     }

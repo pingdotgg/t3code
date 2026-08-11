@@ -8,11 +8,13 @@ enum T3Colors {
     static let uiBackground = adaptive(light: rgb(0xF2F2F7), dark: rgb(0x0A0A0A))
     static let uiTextPrimary = adaptive(light: rgb(0x262626), dark: rgb(0xF5F5F5))
     static let uiTextSecondary = adaptive(light: rgb(0x525252), dark: rgb(0xA3A3A3))
+    static let uiSurfaceRaised = adaptive(light: rgb(0xF5F5F5), dark: rgb(0x1C1C1C))
+    static let uiAccent = adaptive(light: rgb(0x007AFF), dark: rgb(0x0A84FF))
 
     static let background = Color(uiColor: uiBackground)
     static let sheet = color(light: rgb(0xF2F2F7, alpha: 0.98), dark: rgb(0x0E0E0E, alpha: 0.98))
     static let surface = color(light: rgb(0xFFFFFF), dark: rgb(0x171717))
-    static let surfaceRaised = color(light: rgb(0xF5F5F5), dark: rgb(0x1C1C1C))
+    static let surfaceRaised = Color(uiColor: uiSurfaceRaised)
     static let input = color(light: rgb(0xFFFFFF), dark: rgb(0x141414))
     static let border = color(light: rgb(0x000000, alpha: 0.08), dark: rgb(0xFFFFFF, alpha: 0.06))
     static let inputBorder = color(
@@ -33,7 +35,7 @@ enum T3Colors {
 
     static let primaryAction = color(light: rgb(0x262626), dark: rgb(0xF5F5F5))
     static let primaryActionForeground = color(light: rgb(0xFFFFFF), dark: rgb(0x0A0A0A))
-    static let accent = color(light: rgb(0x007AFF), dark: rgb(0x0A84FF))
+    static let accent = Color(uiColor: uiAccent)
     static let statusRunning = color(light: rgb(0x0284C7), dark: rgb(0x22D3EE))
     static let statusInput = color(light: rgb(0x4F46E5), dark: rgb(0xA5B4FC))
     static let success = color(light: rgb(0x16A34A), dark: rgb(0x30D158))

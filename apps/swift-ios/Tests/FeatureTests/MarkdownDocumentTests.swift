@@ -307,7 +307,10 @@ struct MarkdownDocumentTests {
         #expect(boldFont.fontDescriptor.symbolicTraits.contains(.traitBold))
         #expect(emphasisFont.fontDescriptor.symbolicTraits.contains(.traitItalic))
         #expect(codeFont.fontDescriptor.symbolicTraits.contains(.traitMonoSpace))
-        #expect(attributed.attribute(.backgroundColor, at: codeIndex, effectiveRange: nil) != nil)
+        #expect(
+            attributed.attribute(.backgroundColor, at: codeIndex, effectiveRange: nil)
+                as? UIColor == T3Colors.uiSurfaceRaised
+        )
         #expect(
             attributed.attribute(.strikethroughStyle, at: removedIndex, effectiveRange: nil)
                 as? Int == NSUnderlineStyle.single.rawValue
@@ -325,6 +328,38 @@ struct MarkdownDocumentTests {
                 == "Use bold, emphasis, code, removed, and docs."
         )
         #expect(paragraphStyle.lineSpacing == 4)
+    }
+
+    @Test @MainActor
+    func selectableTextAttributesHonorDynamicTypeSize() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision("Readable body text")
+            )
+        )
+        guard case let .paragraph(inline) = document.blocks.first else {
+            Issue.record("Expected a rendered paragraph")
+            return
+        }
+
+        let small = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 4,
+            dynamicTypeSize: .small
+        )
+        let accessibility = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 4,
+            dynamicTypeSize: .accessibility1
+        )
+        let smallFont = try #require(
+            small.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        )
+        let accessibilityFont = try #require(
+            accessibility.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        )
+
+        #expect(accessibilityFont.pointSize > smallFont.pointSize)
     }
 
     @Test @MainActor
