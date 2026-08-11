@@ -92,6 +92,20 @@ describe("ProviderUsageStripView", () => {
     expect(markup).toContain('aria-label="Work Codex: usage remaining unavailable"');
   });
 
+  it("forwards composed popover trigger semantics to the rendered provider button", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderUsageStripView
+        canOperate={false}
+        isSmallScreen={false}
+        items={[item({ id: "codex-personal", percentage: 100 })]}
+        onConsumeReset={async () => null}
+      />,
+    );
+
+    expect(markup).toContain('aria-haspopup="dialog"');
+    expect(markup).toContain('data-base-ui-click-trigger=""');
+  });
+
   it("keeps every footer menu child semantic and places the strip before Usage", () => {
     const markup = renderToStaticMarkup(
       <SidebarMenu data-testid="footer-menu">

@@ -1,12 +1,12 @@
 import { type ProviderBankedReset, type ProviderQuotaConsumeResetInput } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { BotIcon } from "lucide-react";
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { type ComponentPropsWithRef, memo, useCallback, useMemo, useRef, useState } from "react";
 
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { randomUUID } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { type PrimaryProviderQuotaState, usePrimaryProviderQuota } from "../../state/providerQuota";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
@@ -44,13 +44,22 @@ import {
   type ProviderUsageStripItem,
 } from "./ProviderUsageStrip.logic";
 
-function ProviderUsageButton({ item }: { readonly item: ProviderUsageStripItem }) {
+function ProviderUsageButton({
+  item,
+  className,
+  type = "button",
+  ...props
+}: ComponentPropsWithRef<"button"> & { readonly item: ProviderUsageStripItem }) {
   const Icon = PROVIDER_ICON_BY_PROVIDER[item.driver] ?? BotIcon;
   return (
     <button
+      {...props}
       aria-label={providerUsageAriaLabel(item)}
-      className="inline-flex h-6 w-[3.75rem] shrink-0 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-      type="button"
+      className={cn(
+        "inline-flex h-6 w-[3.75rem] shrink-0 items-center justify-center gap-1.5 rounded-md text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+        className,
+      )}
+      type={type}
     >
       <Icon aria-hidden="true" className="size-3.5 shrink-0" />
       <span className="w-7 text-center tabular-nums">
