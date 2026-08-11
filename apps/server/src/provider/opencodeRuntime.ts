@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect ChildProcess cannot redirect stdout to a file descriptor.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
@@ -96,6 +101,117 @@ export interface OpenCodeCommandResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly code: number;
+}
+
+interface OpenCodeFileCaptureInput {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly shell: boolean;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly signal?: AbortSignal;
+  readonly platform: NodeJS.Platform;
+}
+
+/** @internal */
+export function captureOpenCodeCommandWithFileStdout(
+  input: OpenCodeFileCaptureInput,
+): Promise<OpenCodeCommandResult> {
+  let tempDirectory: string | undefined;
+  let stdoutFd: number | undefined;
+  try {
+    tempDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-"));
+    const stdoutPath = NodePath.join(tempDirectory, "stdout");
+    stdoutFd = NodeFS.openSync(stdoutPath, "w");
+    const ownedTempDirectory = tempDirectory;
+    const ownedStdoutFd = stdoutFd;
+
+    return new Promise((resolve, reject) => {
+      let stderr = "";
+      let settled = false;
+      let abortError: Error | undefined;
+      let child: NodeChildProcess.ChildProcess | undefined;
+      const cleanup = () => {
+        try {
+          NodeFS.rmSync(ownedTempDirectory, { recursive: true, force: true });
+        } catch {
+          // Temp-file cleanup must never prevent the command result from settling.
+        }
+      };
+      const fail = (cause: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(cause);
+      };
+      const abort = () => {
+        if (settled || child?.pid === undefined) return;
+        abortError = new Error("The operation was aborted", { cause: input.signal?.reason });
+        abortError.name = "AbortError";
+        if (input.platform === "win32") {
+          NodeChildProcess.spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+            windowsHide: true,
+          });
+        } else {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            child.kill("SIGKILL");
+          }
+        }
+      };
+
+      try {
+        child = NodeChildProcess.spawn(input.command, [...input.args], {
+          detached: input.platform !== "win32",
+          env: input.environment ?? process.env,
+          shell: input.shell,
+          stdio: ["ignore", ownedStdoutFd, "pipe"],
+          windowsHide: true,
+        });
+        NodeFS.closeSync(ownedStdoutFd);
+        stdoutFd = undefined;
+      } catch (cause) {
+        try {
+          NodeFS.closeSync(ownedStdoutFd);
+        } catch {
+          // The descriptor may already be closed by a partial spawn.
+        }
+        stdoutFd = undefined;
+        fail(cause);
+        return;
+      }
+
+      child.stderr?.setEncoding("utf8");
+      child.stderr?.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+      child.once("error", fail);
+      input.signal?.addEventListener("abort", abort, { once: true });
+      if (input.signal?.aborted) abort();
+      child.once("close", (code) => {
+        if (settled) return;
+        input.signal?.removeEventListener("abort", abort);
+        if (abortError !== undefined) {
+          fail(abortError);
+          return;
+        }
+        try {
+          const stdout = NodeFS.readFileSync(stdoutPath, "utf8");
+          settled = true;
+          cleanup();
+          resolve({ stdout, stderr, code: code ?? 1 });
+        } catch (cause) {
+          fail(cause);
+        }
+      });
+    });
+  } catch (cause) {
+    if (stdoutFd !== undefined) NodeFS.closeSync(stdoutFd);
+    if (tempDirectory !== undefined) {
+      NodeFS.rmSync(tempDirectory, { recursive: true, force: true });
+    }
+    return Promise.reject(cause);
+  }
 }
 
 export interface OpenCodeInventory {
@@ -436,6 +552,39 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       ),
     );
 
+  const runOpenCodeCommandWithFileStdout = (input: {
+    readonly binaryPath: string;
+    readonly args: ReadonlyArray<string>;
+    readonly environment?: NodeJS.ProcessEnv;
+  }) =>
+    Effect.gen(function* () {
+      const spawnCommand = yield* resolveCommand(input.binaryPath, input.args, input.environment);
+      const result = yield* Effect.tryPromise({
+        try: (signal) =>
+          captureOpenCodeCommandWithFileStdout({
+            command: spawnCommand.command,
+            args: spawnCommand.args,
+            shell: spawnCommand.shell,
+            signal,
+            platform: hostPlatform,
+            ...(input.environment ? { environment: input.environment } : {}),
+          }),
+        catch: (cause) =>
+          ensureRuntimeError(
+            "runOpenCodeCommandWithFileStdout",
+            `Failed to execute '${input.binaryPath} ${input.args.join(" ")}': ${openCodeRuntimeErrorDetail(cause)}`,
+            cause,
+          ),
+      });
+      if (yield* isWindowsCommandNotFound(result.code, result.stderr)) {
+        return yield* new OpenCodeRuntimeError({
+          operation: "runOpenCodeCommandWithFileStdout",
+          detail: `spawn ${input.binaryPath} ENOENT`,
+        });
+      }
+      return result;
+    });
+
   const startOpenCodeServerProcess: OpenCodeRuntimeShape["startOpenCodeServerProcess"] = (input) =>
     Effect.gen(function* () {
       // Bind this server's lifetime to the caller's scope. When the caller's
@@ -665,15 +814,17 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const env = input.environment !== undefined ? { environment: input.environment } : ({} as {});
 
       const runModelsCli = () =>
-        runOpenCodeCommand({
+        runOpenCodeCommandWithFileStdout({
           binaryPath: input.binaryPath,
           args: ["models", "--verbose"],
           ...env,
         }).pipe(Effect.exit);
       const runAgentsCli = () =>
-        runOpenCodeCommand({ binaryPath: input.binaryPath, args: ["agent", "list"], ...env }).pipe(
-          Effect.exit,
-        );
+        runOpenCodeCommandWithFileStdout({
+          binaryPath: input.binaryPath,
+          args: ["agent", "list"],
+          ...env,
+        }).pipe(Effect.exit);
 
       // First attempt — run both in parallel
       let [modelsResult, agentsResult] = yield* Effect.all([runModelsCli(), runAgentsCli()], {
