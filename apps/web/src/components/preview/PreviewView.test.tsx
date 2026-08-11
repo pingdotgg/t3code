@@ -414,7 +414,7 @@ describe("PreviewView navigation", () => {
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
   });
 
-  it("still sends when screenshot attachment conversion fails", async () => {
+  it("drops the screenshot claim when attachment conversion fails", async () => {
     const annotation = {
       id: "annotation-2",
       pageUrl: "https://example.com/dashboard",
@@ -434,7 +434,9 @@ describe("PreviewView navigation", () => {
     };
     const onSendAnnotation = vi.fn();
     mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-    mocks.previewAnnotationScreenshotFile.mockRejectedValue(new Error("conversion failed"));
+    mocks.previewAnnotationScreenshotFile.mockImplementation(() => {
+      throw new Error("conversion failed");
+    });
 
     renderToStaticMarkup(
       <PreviewView
@@ -446,7 +448,12 @@ describe("PreviewView navigation", () => {
     );
     mocks.toggleAnnotation?.();
 
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
+    // The prompt advertises the crop off `screenshot`, so a failed conversion
+    // has to clear it — otherwise the agent is told to look at an image that
+    // was never attached.
+    const withoutScreenshot = { ...annotation, screenshot: null };
+    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(withoutScreenshot, null));
+    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, withoutScreenshot);
     expect(mocks.addImage).not.toHaveBeenCalled();
   });
 });

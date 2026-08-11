@@ -557,15 +557,23 @@ export function PreviewView({
       try {
         const result = await previewBridge.pickElement(runtimeTabId);
         if (!result) return;
-        const { annotation, submission } = result;
-        addPreviewAnnotation(threadRef, annotation);
+        const { annotation: capturedAnnotation, submission } = result;
         let screenshotFile: File | null = null;
         try {
-          screenshotFile = await previewAnnotationScreenshotFile(annotation);
-        } catch {
+          screenshotFile = previewAnnotationScreenshotFile(capturedAnnotation);
+        } catch (error) {
           // The structured annotation is still sendable when converting its
           // optional screenshot into a composer attachment fails.
+          console.error("Could not convert preview annotation screenshot.", error);
         }
+        // The prompt advertises the crop off `screenshot`, so an annotation
+        // whose attachment did not survive must not keep it — otherwise the
+        // agent is told to look at an image it never received.
+        const annotation =
+          capturedAnnotation.screenshot && !screenshotFile
+            ? { ...capturedAnnotation, screenshot: null }
+            : capturedAnnotation;
+        addPreviewAnnotation(threadRef, annotation);
         const image =
           screenshotFile && annotation.screenshot
             ? ({
