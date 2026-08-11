@@ -16,7 +16,11 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useThreadShell } from "../../state/entities";
 import { useThreadListActions } from "../home/useThreadListActions";
 
-import { mergeAndroidPickerValue, type AndroidSnoozePicker } from "./SnoozeForRouteScreen.logic";
+import {
+  mergeAndroidPickerValue,
+  resolveAndroidPickerValue,
+  type AndroidSnoozePicker,
+} from "./SnoozeForRouteScreen.logic";
 
 type SnoozeForRouteParams = {
   readonly environmentId: string;
@@ -179,7 +183,7 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
             setAndroidPicker(null);
           }}
           presentation="dialog"
-          value={value}
+          value={resolveAndroidPickerValue(value, androidPicker)}
         />
       ) : null}
     </View>
