@@ -217,6 +217,24 @@ export const make = Effect.gen(function* () {
               ),
             );
 
+      const currentInstance = yield* registry
+        .getInstance(instance.instanceId)
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      const currentRevision =
+        currentInstance === instance &&
+        currentInstance.enabled &&
+        currentInstance.quota !== undefined
+          ? yield* currentInstance.quota.revision.pipe(
+              Effect.catchCause(() => Effect.succeed(Number.NaN)),
+            )
+          : currentInstance === instance && currentInstance.enabled
+            ? null
+            : undefined;
+      if (currentRevision === undefined || !Object.is(currentRevision, revision)) {
+        yield* retireOwnedGeneration;
+        return obsoleteCacheRead;
+      }
+
       const completedAtMs = yield* Clock.currentTimeMillis;
       const published = yield* cacheMutex.withPermits(1)(
         Effect.sync(() => {
