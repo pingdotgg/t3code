@@ -273,6 +273,68 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
+  it("projects available command updates into runtime events", () => {
+    const parsed = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          {
+            name: "skill:review",
+            description: "Review the current change",
+            input: { hint: "scope" },
+          },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(parsed.events).toEqual([
+      {
+        _tag: "AvailableCommandsChanged",
+        commands: [
+          {
+            name: "skill:review",
+            description: "Review the current change",
+            input: { hint: "scope" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("trims and drops empty available commands", () => {
+    const parsed = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          {
+            name: " skill:review ",
+            description: " Review the current change ",
+            input: { hint: "scope" },
+          },
+          {
+            name: "   ",
+            description: "Missing command name",
+          },
+        ],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(parsed.events).toEqual([
+      {
+        _tag: "AvailableCommandsChanged",
+        commands: [
+          {
+            name: "skill:review",
+            description: "Review the current change",
+            input: { hint: "scope" },
+          },
+        ],
+      },
+    ]);
+  });
+
   it("projects typed ACP plan and content updates", () => {
     const planResult = parseSessionUpdateEvent({
       sessionId: "session-1",

@@ -114,6 +114,29 @@ describe("ClientSettings sidebar", () => {
 });
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
+  it("decodes Kimi provider defaults", () => {
+    const settings = decodeServerSettings({ providers: { kimi: {} } });
+
+    expect(settings.providers.kimi).toEqual({
+      enabled: false,
+      binaryPath: "kimi",
+      homePath: "",
+      launchArgs: "",
+      customModels: [],
+    });
+  });
+
+  it("decodes and trims Kimi provider patches", () => {
+    const patch = decodeServerSettingsPatch({
+      providers: { kimi: { homePath: " ~/.kimi-work ", launchArgs: " --agent coder " } },
+    });
+
+    expect(patch.providers?.kimi).toEqual({
+      homePath: "~/.kimi-work",
+      launchArgs: "--agent coder",
+    });
+  });
+
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({
       instanceId: ProviderInstanceId.make("codex"),

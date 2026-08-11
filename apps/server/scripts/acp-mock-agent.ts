@@ -17,6 +17,9 @@ const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
+const emitAvailableCommandUpdates = process.env.T3_ACP_EMIT_AVAILABLE_COMMAND_UPDATES === "1";
+const emitAvailableCommandClearUpdates =
+  process.env.T3_ACP_EMIT_AVAILABLE_COMMAND_CLEAR_UPDATES === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
@@ -24,9 +27,13 @@ const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATE
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
+const omitCodeMode = process.env.T3_ACP_OMIT_CODE_MODE === "1";
+const omitModelConfig = process.env.T3_ACP_OMIT_MODEL_CONFIG === "1";
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
 const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
+const advertiseResume = process.env.T3_ACP_ADVERTISE_RESUME === "1";
+const failResumeSession = process.env.T3_ACP_FAIL_RESUME_SESSION === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
 const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
 const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
@@ -37,6 +44,7 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
   process.env.T3_ACP_EMIT_OVERLAPPING_XAI_PROMPT_COMPLETE_OUT_OF_ORDER === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
+const setConfigOptionDelayMs = Number(process.env.T3_ACP_SET_CONFIG_OPTION_DELAY_MS ?? "0");
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
@@ -207,21 +215,23 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
     }
   }
 
-  return [
-    {
-      id: "model",
-      name: "Model",
-      category: "model",
-      type: "select" as const,
-      currentValue: currentModelId,
-      options: [
-        { value: "default", name: "Auto" },
-        { value: "composer-2", name: "Composer 2" },
-        { value: "composer-2[fast=true]", name: "Composer 2 Fast" },
-        { value: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
-      ],
-    },
-  ];
+  return omitModelConfig
+    ? []
+    : [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select" as const,
+          currentValue: currentModelId,
+          options: [
+            { value: "default", name: "Auto" },
+            { value: "composer-2", name: "Composer 2" },
+            { value: "composer-2[fast=true]", name: "Composer 2 Fast" },
+            { value: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
+          ],
+        },
+      ];
 }
 
 function modelConfigOptionsFor(modelId: string): ReadonlyArray<AcpSchema.SessionConfigOption> {
@@ -269,7 +279,7 @@ const availableModes: ReadonlyArray<AcpSchema.SessionMode> = [
     name: "Code",
     description: "Write and modify code with full tool access",
   },
-];
+].filter((mode) => !omitCodeMode || mode.id !== "code");
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -302,7 +312,10 @@ const program = Effect.gen(function* () {
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: {
+          loadSession: true,
+          ...(advertiseResume ? { sessionCapabilities: { resume: {} } } : {}),
+        },
       };
     }),
   );
@@ -380,6 +393,12 @@ const program = Effect.gen(function* () {
     }),
   );
 
+  if (failResumeSession) {
+    yield* agent.handleResumeSession(() =>
+      Effect.fail(AcpError.AcpRequestError.invalidParams("Mock resume session failure")),
+    );
+  }
+
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
       if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
@@ -398,6 +417,9 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
+      if (Number.isFinite(setConfigOptionDelayMs) && setConfigOptionDelayMs > 0) {
+        yield* Effect.sleep(`${setConfigOptionDelayMs} millis`);
+      }
       if (exitOnSetConfigOption) {
         return yield* Effect.sync(() => {
           process.exit(7);
@@ -751,6 +773,59 @@ const program = Effect.gen(function* () {
           },
         });
 
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitAvailableCommandUpdates) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "skill:review",
+                description: "Review the current change",
+                input: { hint: "scope" },
+              },
+            ],
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "skill:ship",
+                description: "Prepare the current change for delivery",
+              },
+            ],
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitAvailableCommandClearUpdates) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [
+              {
+                name: "skill:review",
+                description: "Review the current change",
+                input: { hint: "scope" },
+              },
+            ],
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [],
+          },
+        });
         return { stopReason: "end_turn" };
       }
 

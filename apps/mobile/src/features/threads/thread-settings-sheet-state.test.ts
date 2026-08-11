@@ -16,6 +16,7 @@ function modelOption(
     providerKey: "codex",
     providerLabel: "Codex",
     providerDriver: "codex",
+    providerBadgeLabel: undefined,
     isDefault: false,
     isLegacy: false,
     capabilities: null,

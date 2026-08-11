@@ -116,6 +116,112 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("replaces available command snapshots while preserving update events", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "show commands" }],
+      });
+
+      const events = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 2)));
+      expect(events).toEqual([
+        {
+          _tag: "AvailableCommandsChanged",
+          commands: [
+            {
+              name: "skill:review",
+              description: "Review the current change",
+              input: { hint: "scope" },
+            },
+          ],
+        },
+        {
+          _tag: "AvailableCommandsChanged",
+          commands: [
+            {
+              name: "skill:ship",
+              description: "Prepare the current change for delivery",
+            },
+          ],
+        },
+      ]);
+      const commands = yield* runtime.getAvailableCommands;
+      expect(commands).toEqual([
+        {
+          name: "skill:ship",
+          description: "Prepare the current change for delivery",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_AVAILABLE_COMMAND_UPDATES: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("clears available command snapshots while preserving empty update events", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "clear commands" }],
+      });
+
+      const events = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 2)));
+      expect(events).toEqual([
+        {
+          _tag: "AvailableCommandsChanged",
+          commands: [
+            {
+              name: "skill:review",
+              description: "Review the current change",
+              input: { hint: "scope" },
+            },
+          ],
+        },
+        {
+          _tag: "AvailableCommandsChanged",
+          commands: [],
+        },
+      ]);
+      const commands = yield* runtime.getAvailableCommands;
+      expect(commands).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_AVAILABLE_COMMAND_CLEAR_UPDATES: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("keeps assistant item IDs unique when a provider session restarts", () => {
     const collectFirstAssistantItemId = Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
@@ -420,6 +526,44 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("uses standard ACP model switching when no model config option is advertised", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.setModel("grok-mock-alt");
+
+      expect(
+        requestEvents.some(
+          (event) => event.method === "session/set_model" && event.status === "succeeded",
+        ),
+      ).toBe(true);
+      expect(requestEvents.some((event) => event.method === "session/set_config_option")).toBe(
+        false,
+      );
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_OMIT_MODEL_CONFIG: "1" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
   it.effect("skips no-op session config writes when the requested value is already active", () => {
     const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
     return Effect.gen(function* () {
@@ -528,6 +672,113 @@ describe("AcpSessionRuntime", () => {
       Effect.provide(NodeServices.layer),
     ),
   );
+
+  it.effect(
+    "uses session/load without attempting resume when the agent did not advertise it",
+    () => {
+      const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+      return Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        const started = yield* runtime.start();
+
+        expect(started.sessionId).toBe("mock-session-1");
+        expect(
+          requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+        ).toEqual(["initialize", "authenticate", "session/load"]);
+      }).pipe(
+        Effect.provide(
+          AcpSessionRuntime.layer({
+            authMethodId: "test",
+            spawn: {
+              command: mockAgentCommand,
+              args: mockAgentArgs,
+            },
+            cwd: process.cwd(),
+            resumeSessionId: "mock-session-1",
+            resumeStrategy: "resume-first",
+            clientInfo: { name: "t3-test", version: "0.0.0" },
+            requestLogger: (event) =>
+              Effect.sync(() => {
+                requestEvents.push(event);
+              }),
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+      );
+    },
+  );
+
+  it.effect("falls back to session/load only when an advertised resume method is missing", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const started = yield* runtime.start();
+
+      expect(started.sessionId).toBe("mock-session-1");
+      expect(
+        requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+      ).toEqual(["initialize", "authenticate", "session/resume", "session/load"]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_ADVERTISE_RESUME: "1" },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          resumeStrategy: "resume-first",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("propagates an advertised resume failure other than method-not-found", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const error = yield* runtime.start().pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "AcpRequestError", code: -32602 });
+      expect(
+        requestEvents.filter((event) => event.status === "started").map((event) => event.method),
+      ).toEqual(["initialize", "authenticate", "session/resume"]);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_ADVERTISE_RESUME: "1",
+              T3_ACP_FAIL_RESUME_SESSION: "1",
+            },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          resumeStrategy: "resume-first",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
 
   it.effect("ignores session/update replay notifications during session/load", () =>
     Effect.gen(function* () {

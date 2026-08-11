@@ -82,6 +82,10 @@ export interface AcpPermissionRequest {
 
 export type AcpParsedSessionEvent =
   | {
+      readonly _tag: "AvailableCommandsChanged";
+      readonly commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
+    }
+  | {
       readonly _tag: "ModeChanged";
       readonly modeId: string;
     }
@@ -514,6 +518,20 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
   let modeId: string | undefined;
 
   switch (upd.sessionUpdate) {
+    case "available_commands_update": {
+      const commands = upd.availableCommands.flatMap((command) => {
+        const name = command.name.trim();
+        if (!name) {
+          return [];
+        }
+        return [{ ...command, name, description: command.description.trim() }];
+      });
+      events.push({
+        _tag: "AvailableCommandsChanged",
+        commands,
+      });
+      break;
+    }
     case "current_mode_update": {
       modeId = upd.currentModeId.trim();
       if (modeId) {
