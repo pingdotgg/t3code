@@ -262,21 +262,33 @@ export type PreparedWallpaperImage =
   | { readonly ok: true; readonly dataUrl: string }
   | { readonly ok: false; readonly reason: ImageCompressionFailureReason };
 
+// A raster wallpaper decodes to width×height×4 bytes in the renderer and stays
+// that big as a full-viewport background. The re-encode path already caps every
+// dimension at MAX_DIMENSION (2048); this bounds the verbatim path, which stores
+// the file untouched, so a highly compressible but enormous image (a uniform
+// 16k×16k PNG is a few KB encoded, ~1 GB decoded) cannot freeze or OOM the tab.
+// Generous enough for any real wallpaper (8K UHD is ~33M pixels).
+const MAX_WALLPAPER_IMAGE_PIXELS = 40_000_000;
+
+const SVG_DATA_URL_PREFIX = "data:image/svg+xml";
+
 /**
- * Whether the browser will paint `dataUrl`. The wallpaper is a CSS
- * `background-image` and previews in an `<img>`, so an element decode is the
- * test that matches where it ends up: `createImageBitmap` answers a stricter
- * question — it refuses SVG sources outright, and those paint perfectly well
- * as a background.
+ * The decoded pixel size of `dataUrl`, or null when the browser cannot paint it.
+ * The wallpaper is a CSS `background-image` and previews in an `<img>`, so an
+ * element decode is the test that matches where it ends up: `createImageBitmap`
+ * answers a stricter question — it refuses SVG sources outright, and those paint
+ * perfectly well as a background.
  */
-async function paintsAsImage(dataUrl: string): Promise<boolean> {
+async function decodedImageSize(
+  dataUrl: string,
+): Promise<{ width: number; height: number } | null> {
   const probe = new Image();
   probe.src = dataUrl;
   try {
     await probe.decode();
-    return true;
+    return { width: probe.naturalWidth, height: probe.naturalHeight };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -299,9 +311,19 @@ export async function prepareWallpaperImage(file: File): Promise<PreparedWallpap
   if (!compressed.ok) {
     return compressed;
   }
-  // Re-encoding already decoded the file, so only the verbatim path is unproven.
-  if (!compressed.image.recompressed && !(await paintsAsImage(compressed.image.dataUrl))) {
-    return { ok: false, reason: "unreadable" };
+  // Re-encoding already decoded the file and bounded its dimensions, so only the
+  // verbatim path is unproven — both that it decodes and that it is not enormous.
+  if (!compressed.image.recompressed) {
+    const size = await decodedImageSize(compressed.image.dataUrl);
+    if (size === null) {
+      return { ok: false, reason: "unreadable" };
+    }
+    // SVG is vector: naturalWidth/Height are a viewBox, not a raster the tab must
+    // hold, so the pixel ceiling does not apply to it.
+    const isVector = compressed.image.dataUrl.startsWith(SVG_DATA_URL_PREFIX);
+    if (!isVector && size.width * size.height > MAX_WALLPAPER_IMAGE_PIXELS) {
+      return { ok: false, reason: "too-large" };
+    }
   }
   return { ok: true, dataUrl: compressed.image.dataUrl };
 }

@@ -238,12 +238,17 @@ describe("prepareWallpaperImage", () => {
    * no `createImageBitmap` here: jsdom has none, so probing through it instead
    * would fail every one of these.
    */
-  function stubImageDecoder(decodes: (source: string) => boolean): string[] {
+  function stubImageDecoder(
+    decodes: (source: string) => boolean,
+    size: { width: number; height: number } = { width: 4, height: 4 },
+  ): string[] {
     const probed: string[] = [];
     vi.stubGlobal(
       "Image",
       class {
         src = "";
+        naturalWidth = size.width;
+        naturalHeight = size.height;
         decode() {
           probed.push(this.src);
           return decodes(this.src)
@@ -302,5 +307,36 @@ describe("prepareWallpaperImage", () => {
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.dataUrl.startsWith("data:image/svg+xml;base64,")).toBe(true);
+  });
+
+  it("rejects an under-budget raster whose decoded dimensions would exhaust memory", async () => {
+    // A few bytes encoded, ~1 GB decoded — the verbatim path stores it untouched, so the
+    // dimension ceiling is the only thing standing between the picker and a frozen tab.
+    stubImageDecoder(() => true, { width: 16_384, height: 16_384 });
+
+    expect(
+      await prepareWallpaperImage(
+        new File([new Uint8Array([1, 2, 3, 4])], "uniform.png", { type: "image/png" }),
+      ),
+    ).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  it("accepts a large-viewBox SVG, whose vector holds no raster to bound", async () => {
+    stubImageDecoder((source) => source.startsWith("data:image/svg+xml;"), {
+      width: 100_000,
+      height: 100_000,
+    });
+
+    const result = await prepareWallpaperImage(
+      new File(
+        ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100000 100000" />'],
+        "big.svg",
+        {
+          type: "image/svg+xml",
+        },
+      ),
+    );
+
+    expect(result.ok).toBe(true);
   });
 });
