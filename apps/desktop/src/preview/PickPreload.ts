@@ -16,6 +16,7 @@ import type {
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { pickedElementSource } from "./PickedElementSource.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
@@ -255,7 +256,7 @@ async function captureElement(element: Element): Promise<PickedElementPayload | 
       selector: context.selector,
       htmlPreview: context.htmlPreview ?? "",
       componentName: context.componentName,
-      source: stack[0] ?? null,
+      source: pickedElementSource(context) ?? stack[0] ?? null,
       stack,
       styles: context.styles ?? "",
       pickedAt: new Date().toISOString(),
