@@ -87,6 +87,9 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
+  // Idle is resumable, so it has no completedAt. Its latest update is the
+  // transition that ended the current activation and must freeze the timer.
+  const endedAt = live ? null : (agent.completedAt ?? agent.updatedAt);
 
   useEffect(() => {
     if (!live || !startedAt) {
@@ -107,7 +110,7 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   }
   return (
     <span ref={textRef} className="tabular-nums">
-      {elapsedBetween(startedAt, live ? null : agent.completedAt)}
+      {elapsedBetween(startedAt, endedAt)}
     </span>
   );
 }
