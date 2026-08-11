@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { demoEnvironments, DEMO_METRICS_WORKTREE_PATH, demoVcsStatusByCwd } from "./fixtures";
 import {
   applyDemoGitActionToStatus,
+  demoTerminalSnapshot,
   demoGitActionEvents,
   DemoSettingsStore,
   DemoShellStore,
@@ -13,6 +14,26 @@ import {
 } from "./server";
 
 const decodeCommand = Schema.decodeUnknownSync(ClientOrchestrationCommand);
+
+describe("demo terminal", () => {
+  it("opens inside the T3 Code repository with native terminal history", () => {
+    const snapshot = demoTerminalSnapshot({
+      threadId: "thread-sidebar",
+      terminalId: "term-1",
+      cwd: "~/code/t3code-worktrees/sidebar-v2-polish",
+    });
+
+    expect(snapshot).toMatchObject({
+      threadId: "thread-sidebar",
+      terminalId: "term-1",
+      cwd: "~/code/t3code-worktrees/sidebar-v2-polish",
+      status: "running",
+      label: "t3code",
+    });
+    expect(snapshot.history).toContain("~/code/t3code");
+    expect(snapshot.history).toContain("vp test run apps/web/src/demo/server.test.ts");
+  });
+});
 
 describe("demo shell mutations", () => {
   it("timestamps mode changes when they are applied", () => {

@@ -62,6 +62,40 @@ import {
 } from "./fixtures";
 import { onDemoStageChange } from "./stage";
 
+const DEMO_TERMINAL_HISTORY = [
+  "\u001b[38;5;244m~/code/t3code\u001b[0m \u001b[38;5;75mfeat/sidebar-v2-polish\u001b[0m",
+  "\u001b[38;5;75m❯\u001b[0m git status --short",
+  " M apps/marketing/src/pages/v2.astro",
+  " M apps/web/src/demo/server.ts",
+  "",
+  "\u001b[38;5;75m❯\u001b[0m vp test run apps/web/src/demo/server.test.ts",
+  "\u001b[38;5;78m✓\u001b[0m 11 tests passed",
+  "",
+  "\u001b[38;5;75m❯\u001b[0m ",
+].join("\r\n");
+
+export function demoTerminalSnapshot(input: {
+  readonly threadId: string;
+  readonly terminalId: string;
+  readonly cwd?: string | undefined;
+  readonly worktreePath?: string | null | undefined;
+}) {
+  return {
+    threadId: input.threadId,
+    terminalId: input.terminalId,
+    cwd: input.cwd ?? "~/code/t3code",
+    worktreePath: input.worktreePath ?? null,
+    status: "running" as const,
+    pid: 73102,
+    history: DEMO_TERMINAL_HISTORY,
+    exitCode: null,
+    exitSignal: null,
+    label: "t3code",
+    updatedAt: "2026-08-11T12:00:00.000Z",
+    sequence: 0,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // In-memory WebSocket pair
 // ---------------------------------------------------------------------------
@@ -1143,13 +1177,17 @@ function makeHandlersLayer(backend: DemoBackend) {
           Effect.succeed(demoReviewDiffPreview(input.cwd)),
         [WS_METHODS.reviewGetDiffFileContents]: () =>
           Effect.succeed({ oldContents: "", newContents: "" }),
-        [WS_METHODS.terminalOpen]: () => unsupported("terminalOpen"),
-        [WS_METHODS.terminalAttach]: () => Stream.fail(unsupportedError("terminalAttach")),
-        [WS_METHODS.terminalWrite]: () => unsupported("terminalWrite"),
-        [WS_METHODS.terminalResize]: () => unsupported("terminalResize"),
-        [WS_METHODS.terminalClear]: () => unsupported("terminalClear"),
-        [WS_METHODS.terminalRestart]: () => unsupported("terminalRestart"),
-        [WS_METHODS.terminalClose]: () => unsupported("terminalClose"),
+        [WS_METHODS.terminalOpen]: (input) => Effect.succeed(demoTerminalSnapshot(input)),
+        [WS_METHODS.terminalAttach]: (input) =>
+          Stream.concat(
+            Stream.make({ type: "snapshot" as const, snapshot: demoTerminalSnapshot(input) }),
+            Stream.never,
+          ),
+        [WS_METHODS.terminalWrite]: () => Effect.void,
+        [WS_METHODS.terminalResize]: () => Effect.void,
+        [WS_METHODS.terminalClear]: () => Effect.void,
+        [WS_METHODS.terminalRestart]: (input) => Effect.succeed(demoTerminalSnapshot(input)),
+        [WS_METHODS.terminalClose]: () => Effect.void,
         [WS_METHODS.previewOpen]: () => unsupported("previewOpen"),
         [WS_METHODS.previewNavigate]: () => unsupported("previewNavigate"),
         [WS_METHODS.previewResize]: () => unsupported("previewResize"),

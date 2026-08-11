@@ -9,6 +9,42 @@ import {
   GOOGLE_PLAY_STORE_URL,
   IOS_APP_STORE_URL,
 } from "../lib/site";
+
+const faqs = [
+  {
+    question: "What is T3 Code?",
+    answer:
+      "T3 Code is not a Harness, T3 Code is an open-source control center for existing coding agents.",
+    link: { label: "Explore the source", href: GITHUB_REPOSITORY_URL },
+  },
+  {
+    question: "Why use it?",
+    answer:
+      "Manage your agents, projects, threads, diffs, terminals and pull requests in one fast interface. Start at your desk, then check in from the web or your phone.",
+    link: { label: "See what it can do", href: GITHUB_REPOSITORY_URL },
+  },
+  {
+    question: "Which agents work?",
+    answer:
+      "Codex, Claude Code, Cursor, Grok Build, and OpenCode. Sign in to the provider CLI and keep using the plan you already pay for. T3 Chat is a separate service and does not include coding-agent usage.",
+    link: { label: "Set up an agent", href: `${GITHUB_REPOSITORY_URL}#installation` },
+  },
+  {
+    question: "Where does my data go?",
+    answer:
+      "Your repo and T3 Code data stay on the machine running T3 Code, not in T3 Tools’ cloud. Your agent provider receives what you send it. Optional online features such as T3 Connect use the account, connection, and diagnostic data they need.",
+    link: { label: "Read the privacy policy", href: "/privacy-policy" },
+  },
+  {
+    question: "Can I use it anywhere?",
+    answer:
+      "Yes. Keep T3 Code running on the machine with your projects, then connect from the desktop app, web, iPhone, iPad, or Android. Use T3 Connect, Tailscale or your own network.",
+    link: {
+      label: "Set up remote access",
+      href: `${GITHUB_REPOSITORY_URL}/blob/main/docs/user/remote-access.md`,
+    },
+  },
+] as const;
 ---
 
 <Layout
@@ -170,14 +206,38 @@ import {
     </section>
   </div>
 
-  <p class="releases-link">
-    Looking for another build? Check the{" "}
-    <a id="releases-link" href={RELEASES_URL} target="_blank" rel="noopener noreferrer">
-      GitHub releases page<span aria-hidden="true"> &#8599;</span>
-    </a>
-  </p>
-
   </div>
+
+  <section class="download-faq-section" aria-labelledby="download-faq-title">
+    <div class="download-faq">
+      <h2 id="download-faq-title">Questions, answered.</h2>
+      <div class="download-faq-list">
+        {faqs.map((faq) => (
+          <details class="download-faq-item">
+            <summary>
+              <span>{faq.question}</span>
+              <span class="download-faq-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="download-faq-answer">
+              <p>
+                {faq.answer}{" "}
+                <a href={faq.link.href} target="_blank" rel="noopener noreferrer">
+                  {faq.link.label}<span aria-hidden="true"> ↗</span>
+                </a>
+              </p>
+            </div>
+          </details>
+        ))}
+      </div>
+    </div>
+
+    <p class="releases-link">
+      Looking for another build? Check the{" "}
+      <a id="releases-link" href={RELEASES_URL} target="_blank" rel="noopener noreferrer">
+        GitHub releases page<span aria-hidden="true"> &#8599;</span>
+      </a>
+    </p>
+  </section>
 </Layout>
 
 <script>
@@ -787,6 +847,136 @@ import {
     text-decoration-color: var(--fg);
   }
 
+  /* ── FAQ ── */
+
+  .download-faq-section {
+    position: relative;
+    z-index: 4;
+    display: flex;
+    width: 100%;
+    align-items: center;
+    flex-direction: column;
+    padding: 8rem 1.5rem 4rem;
+    background: #000;
+  }
+
+  .download-faq {
+    --faq-accent: rgba(255, 255, 255, 0.68);
+    width: 100%;
+    max-width: 820px;
+    overflow: visible;
+  }
+
+  :global(html[data-stage="nightly"]) .download-faq {
+    --faq-accent: rgb(183, 174, 255);
+  }
+
+  :global(html[data-stage="dev"]) .download-faq {
+    --faq-accent: rgb(150, 201, 255);
+  }
+
+  .download-faq > h2 {
+    margin-bottom: 14px;
+    color: var(--fg-muted);
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+    text-align: center;
+  }
+
+  .download-faq-list {
+    display: grid;
+    width: 100%;
+    gap: 6px;
+  }
+
+  .download-faq-item {
+    overflow: hidden;
+    border: 1px solid var(--download-surface-border);
+    border-radius: 10px;
+    background: var(--download-surface);
+    transition: background 0.18s ease, border-color 0.18s ease;
+  }
+
+  .download-faq-item:hover,
+  .download-faq-item[open] {
+    border-color: rgba(255, 255, 255, 0.16);
+    background: var(--download-surface-hover);
+  }
+
+  .download-faq-item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 20px;
+    color: rgba(255, 255, 255, 0.82);
+    cursor: pointer;
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: -0.012em;
+    line-height: 1.25;
+    list-style: none;
+    user-select: none;
+  }
+
+  .download-faq-item summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .download-faq-item summary::marker {
+    content: "";
+  }
+
+  .download-faq-item summary:focus-visible {
+    outline: 2px solid var(--faq-accent);
+    outline-offset: -2px;
+  }
+
+  .download-faq-chevron {
+    display: grid;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--faq-accent);
+  }
+
+  .download-faq-chevron::before {
+    width: 7px;
+    height: 7px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    content: "";
+    transform: translateY(-2px) rotate(45deg);
+    transition: transform 0.2s ease;
+  }
+
+  .download-faq-item[open] .download-faq-chevron::before {
+    transform: translateY(2px) rotate(225deg);
+  }
+
+  .download-faq-answer {
+    padding: 0 48px 18px 20px;
+  }
+
+  .download-faq-answer p {
+    color: var(--fg-muted);
+    font-size: 15.5px;
+    line-height: 1.5;
+  }
+
+  .download-faq-answer a {
+    color: var(--faq-accent);
+    white-space: nowrap;
+    transition: color 0.18s ease;
+  }
+
+  .download-faq-answer a:hover {
+    color: var(--fg);
+  }
+
   /* ── Mobile ── */
 
   @media (max-width: 640px) {
@@ -847,6 +1037,25 @@ import {
     .source-code button {
       opacity: 1;
       pointer-events: auto;
+    }
+
+    .download-faq-section {
+      padding: 6rem 1.25rem 4rem;
+    }
+
+    .download-faq-item summary {
+      padding: 16px 18px;
+      font-size: 16px;
+    }
+
+    .download-faq-answer {
+      padding: 0 42px 16px 18px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .download-faq-chevron::before {
+      transition: none;
     }
   }
 </style>

@@ -2,6 +2,7 @@
 import stableAppIcon from "../assets/t3-latest-384.webp?url";
 import Layout from "../layouts/Layout.astro";
 import {
+  GITHUB_REPOSITORY_URL,
   GOOGLE_PLAY_STORE_URL,
   IOS_APP_STORE_URL,
   MARKETING_STATS,
@@ -54,10 +55,6 @@ const endorsementRows = [
             </span>
             <span>Rest is on us.</span>
           </h1>
-          <p class="v2-hero-description">
-            We don't sell subs. You bring your own subs and use it in the best AI coding experience
-            there is.
-          </p>
           <div class="v2-actions">
             <div class="v2-download-row">
               <div class="v2-download-button-wrap">
@@ -238,10 +235,10 @@ const endorsementRows = [
         <div class="v2-connect-screens">
           <div class="v2-connect-desktop">
             <iframe
-              src="/sidebar-demo/demo.html#/demo-mac-studio/thread-connect"
+              src="/sidebar-demo/demo.html?sidebar=closed#/demo-mac-studio/thread-connect"
               title="The same T3 Code thread on desktop"
               loading="lazy"
-              allow="clipboard-write"
+              tabindex="-1"
             ></iframe>
           </div>
           <div class="v2-connect-phone">
@@ -296,6 +293,42 @@ const endorsementRows = [
           </div>
         </div>
       ))}
+    </div>
+  </section>
+
+  <section class="v2-open-source" aria-labelledby="v2-open-source-title">
+    <div class="v2-shell v2-open-source-grid">
+      <div class="v2-open-source-card">
+        <iframe
+          src="/sidebar-demo/demo.html?sidebar=closed&showcase=open-source#/demo-mac-studio/thread-sidebar"
+          title="T3 Code running the T3 Code repository with its terminal open"
+          loading="lazy"
+          tabindex="-1"
+        ></iframe>
+      </div>
+
+      <div class="v2-open-source-copy">
+        <h2 id="v2-open-source-title">It’s Open Source.</h2>
+        <p>You don’t like something, change it. Found a bug, create a GitHub issue.</p>
+        <div class="v2-open-source-actions">
+          <a
+            class="btn btn-primary"
+            href={`${GITHUB_REPOSITORY_URL}/fork`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Fork on GitHub <span aria-hidden="true">↗</span>
+          </a>
+          <a
+            class="v2-open-source-link"
+            href={GITHUB_REPOSITORY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Browse the source <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -422,7 +455,7 @@ const endorsementRows = [
   }
 
   .v2-hero {
-    padding: 110px 0 54px;
+    padding: 92px 0 20px;
     overflow: hidden;
   }
 
@@ -430,7 +463,7 @@ const endorsementRows = [
     display: grid;
     width: 100%;
     grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
-    min-height: clamp(460px, 58svh, 560px);
+    min-height: clamp(390px, 48svh, 460px);
   }
 
   .v2-section-heading h2,
@@ -445,7 +478,7 @@ const endorsementRows = [
     min-width: 0;
     flex-direction: column;
     justify-content: center;
-    padding: 64px 0;
+    padding: 36px 0;
   }
 
   .v2-hero-card h1 {
@@ -458,14 +491,6 @@ const endorsementRows = [
 
   .v2-hero-card h1 > span {
     display: block;
-  }
-
-  .v2-hero-description {
-    max-width: 560px;
-    margin-top: 24px;
-    color: #8c8c95;
-    font-size: 16px;
-    line-height: 1.55;
   }
 
   .v2-hero-provider-line {
@@ -799,7 +824,7 @@ const endorsementRows = [
     display: flex;
     width: 100%;
     height: min(92%, 520px);
-    align-items: stretch;
+    align-items: flex-end;
     justify-content: center;
     gap: 18px;
   }
@@ -808,7 +833,7 @@ const endorsementRows = [
     position: relative;
     display: grid;
     width: min(42%, 250px);
-    height: 100%;
+    height: auto;
     place-items: center;
     border-radius: 14px;
     background: #08080a;
@@ -817,8 +842,7 @@ const endorsementRows = [
 
   .v2-phone-device > img {
     width: 100%;
-    height: 100%;
-    object-fit: contain;
+    height: auto;
     object-position: center;
   }
 
@@ -905,9 +929,9 @@ const endorsementRows = [
   .v2-connect-grid {
     display: grid;
     width: min(100% - 48px, 1240px);
-    grid-template-columns: minmax(380px, 0.84fr) minmax(0, 1.16fr);
+    grid-template-columns: minmax(340px, 0.7fr) minmax(0, 1.3fr);
     align-items: center;
-    gap: 52px;
+    gap: 36px;
   }
 
   .v2-connect-grid > header,
@@ -919,7 +943,7 @@ const endorsementRows = [
     display: flex;
     align-items: baseline;
     gap: 0.08em;
-    font-size: clamp(58px, 6vw, 94px);
+    font-size: clamp(54px, 5.2vw, 82px);
     white-space: nowrap;
   }
 
@@ -963,14 +987,14 @@ const endorsementRows = [
 
   .v2-connect-visual {
     min-width: 0;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .v2-connect-screens {
     position: relative;
     display: flex;
-    aspect-ratio: 1.42;
-    align-items: flex-start;
+    aspect-ratio: 1.48;
+    align-items: center;
   }
 
   .v2-connect-desktop {
@@ -988,31 +1012,34 @@ const endorsementRows = [
     height: 125%;
     border: 0;
     background: #08080a;
+    pointer-events: none;
     transform: scale(0.8);
     transform-origin: top left;
   }
 
-  .v2-connect-phone {
-    position: absolute;
-    right: 0;
-    bottom: 2px;
-    width: 24%;
+.v2-connect-phone {
+  position: absolute;
+  right: 10%;
+  bottom: -5%;
+  width: 25%;
     padding: 8px;
     border: 1px solid var(--border-strong);
     border-radius: 28px;
     background: #08080a;
+    transform: rotate(2deg);
+    transform-origin: center bottom;
   }
 
   .v2-connect-phone img {
+    display: block;
     width: 100%;
-  }
-
-  .v2-connect-phone img {
+    height: auto;
     border-radius: 20px;
+    object-fit: contain;
   }
 
   .v2-endorsements {
-    padding: 36px 0 150px;
+    padding: 150px 0;
     overflow: hidden;
   }
 
@@ -1139,6 +1166,86 @@ const endorsementRows = [
     -webkit-line-clamp: 3;
   }
 
+  .v2-open-source {
+    padding: 0 0 150px;
+  }
+
+  .v2-open-source-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.133fr) minmax(320px, 0.867fr);
+    align-items: stretch;
+    gap: 56px;
+  }
+
+  .v2-open-source-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    padding: 30px 0;
+  }
+
+  .v2-open-source-copy h2 {
+    max-width: 740px;
+    font-size: clamp(44px, 5vw, 72px);
+    font-weight: 500;
+    letter-spacing: -0.052em;
+    line-height: 1.02;
+  }
+
+  .v2-open-source-copy > p {
+    max-width: 590px;
+    margin-top: 28px;
+    color: #898991;
+    font-size: 17px;
+    line-height: 1.6;
+  }
+
+  .v2-open-source-actions {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    margin-top: 34px;
+  }
+
+  .v2-open-source-link {
+    color: #898991;
+    font-size: 14px;
+    font-weight: 500;
+    transition: color 0.18s ease;
+  }
+
+  .v2-open-source-link:hover {
+    color: #fff;
+  }
+
+  .v2-open-source-card {
+    position: relative;
+    min-height: 443px;
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 18px;
+    background: #08080a;
+    transition: border-color 0.18s ease;
+  }
+
+  .v2-open-source-card:hover {
+    border-color: rgba(255, 255, 255, 0.28);
+  }
+
+  .v2-open-source-card iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 111.112%;
+    height: 111.112%;
+    border: 0;
+    background: #08080a;
+    pointer-events: none;
+    transform: scale(0.9);
+    transform-origin: top left;
+  }
+
   @keyframes v2EndorsementMarquee {
     to {
       transform: translateX(-50%);
@@ -1156,13 +1263,13 @@ const endorsementRows = [
     }
   }
 
-  @media (max-width: 820px) {
+  @media (max-width: 900px) {
     .v2-shell {
       width: min(100% - 40px, 680px);
     }
 
     .v2-hero {
-      padding: 104px 0 68px;
+      padding: 88px 0 32px;
     }
 
     .v2-hero-card {
@@ -1171,7 +1278,7 @@ const endorsementRows = [
     }
 
     .v2-hero-primary {
-      padding: 48px 28px;
+      padding: 36px 0;
     }
 
     .v2-model-lab {
@@ -1197,10 +1304,6 @@ const endorsementRows = [
       padding: 56px 0 48px;
     }
 
-    .v2-endorsements {
-      padding-top: 44px;
-    }
-
     .v2-section-heading {
       align-items: start;
       gap: 20px;
@@ -1219,11 +1322,24 @@ const endorsementRows = [
     }
 
     .v2-surface-panels {
-      min-height: 420px;
+      min-height: 520px;
     }
 
     .v2-connect-grid {
       gap: 48px;
+    }
+
+    .v2-open-source-grid {
+      grid-template-columns: 1fr;
+      gap: 42px;
+    }
+
+    .v2-open-source-copy {
+      padding: 0;
+    }
+
+    .v2-open-source-card {
+      min-height: 380px;
     }
 
   }
@@ -1310,6 +1426,25 @@ const endorsementRows = [
       width: 268px;
       padding: 14px;
     }
+
+    .v2-open-source {
+      padding-bottom: 100px;
+    }
+
+    .v2-open-source-copy h2 {
+      font-size: 44px;
+    }
+
+    .v2-open-source-actions {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .v2-open-source-card {
+      min-height: 320px;
+    }
+
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1325,5 +1460,6 @@ const endorsementRows = [
     .v2-endorsement-track {
       animation-play-state: paused;
     }
+
   }
 </style>

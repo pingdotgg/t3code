@@ -40,6 +40,9 @@ const RIGHT_PANEL_STORAGE_VERSION = 7;
 
 const DIFF_PANEL_STORAGE_KEY = "t3code:diff-panel-state:v1";
 const DIFF_PANEL_STORAGE_VERSION = 1;
+const TERMINAL_UI_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const TERMINAL_UI_STATE_STORAGE_VERSION = 4;
+const OPEN_SOURCE_TERMINAL_THREAD_KEY = "demo-mac-studio:thread-sidebar";
 const DEMO_FIXTURE_VERSION = 2;
 
 /**
@@ -343,6 +346,54 @@ function seedDiffPanelSelection(force: boolean): boolean {
   );
 }
 
+/** Opens the native terminal drawer for the dedicated open-source showcase. */
+function seedOpenSourceTerminalState(): void {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("showcase") !== "open-source") return;
+
+  const persisted = readLocalStorage(TERMINAL_UI_STATE_STORAGE_KEY);
+  let existingState: Record<string, unknown> = {};
+  let existingByThreadKey: Record<string, unknown> = {};
+  if (persisted !== null) {
+    try {
+      const parsed: unknown = JSON.parse(persisted);
+      if (parsed !== null && typeof parsed === "object" && "state" in parsed) {
+        const state = parsed.state;
+        if (state !== null && typeof state === "object") {
+          existingState = state as Record<string, unknown>;
+          const existing = existingState.terminalUiStateByThreadKey;
+          if (existing !== null && typeof existing === "object") {
+            existingByThreadKey = existing as Record<string, unknown>;
+          }
+        }
+      }
+    } catch {
+      // Replace malformed persisted demo state with a valid document.
+    }
+  }
+
+  writeLocalStorage(
+    TERMINAL_UI_STATE_STORAGE_KEY,
+    JSON.stringify({
+      state: {
+        ...existingState,
+        terminalUiStateByThreadKey: {
+          ...existingByThreadKey,
+          [OPEN_SOURCE_TERMINAL_THREAD_KEY]: {
+            terminalOpen: true,
+            terminalHeight: Math.round(window.innerHeight * 0.5),
+            terminalIds: ["term-1"],
+            activeTerminalId: "term-1",
+            terminalGroups: [{ id: "group-term-1", terminalIds: ["term-1"] }],
+            activeTerminalGroupId: "group-term-1",
+          },
+        },
+      },
+      version: TERMINAL_UI_STATE_STORAGE_VERSION,
+    }),
+  );
+}
+
 /**
  * The channel-preview builds (?stage=nightly/dev) report stage-suffixed server
  * versions so the real branding + stage art react to them, which would also
@@ -371,6 +422,7 @@ export async function seedDemoClientState(): Promise<void> {
       // The demo remains usable when browser storage is blocked or full.
     }
   }
+  seedOpenSourceTerminalState();
   seedVersionMismatchDismissals();
   // The original marker proved both storage surfaces were seeded. A short-lived
   // split-marker implementation also wrote separate panel/catalog keys, so the
