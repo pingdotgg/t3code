@@ -1011,7 +1011,37 @@ const makeWsRpcLayer = (
                 expectedBranch: expectedWorkspace.branch,
                 expectedWorktreePath: expectedWorkspace.worktreePath,
               });
-              yield* refreshGitStatus(targetWorktreePath);
+              // The decider NO-OPS that attach when the thread was repointed
+              // while the worktree was being created, so the dispatch alone is
+              // no proof it landed. If it did not, the checkout just created is
+              // an orphan: the thread runs somewhere else, nothing may execute
+              // in it (a setup script there would be invisible to the user),
+              // and leaving it on disk leaks a worktree and its branch.
+              const threadAfterAttach = yield* projectionSnapshotQuery.getThreadShellById(
+                command.threadId,
+              );
+              const attachApplied = Option.match(threadAfterAttach, {
+                onNone: () => false,
+                onSome: (thread) => thread.worktreePath === targetWorktreePath,
+              });
+              if (attachApplied) {
+                yield* refreshGitStatus(targetWorktreePath);
+              } else {
+                const orphanPath = targetWorktreePath;
+                // Skips runSetupProgram(), which requires a target worktree.
+                targetWorktreePath = null;
+                yield* Effect.logWarning(
+                  "bootstrap worktree attach was superseded; removing the orphaned worktree",
+                  { threadId: command.threadId, worktreePath: orphanPath },
+                );
+                yield* gitWorkflow
+                  .removeWorktree({
+                    cwd: bootstrap.prepareWorktree.projectCwd,
+                    path: orphanPath,
+                    force: true,
+                  })
+                  .pipe(Effect.ignoreCause({ log: true }));
+              }
             }
 
             yield* runSetupProgram();
