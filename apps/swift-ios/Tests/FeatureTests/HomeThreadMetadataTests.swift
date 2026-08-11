@@ -130,7 +130,9 @@ struct HomeThreadMetadataTests {
                     path: "/work/t3code"
                 ),
             ],
-            providers: [FeatureProvider(id: "claude", name: "Claude")]
+            providersByEnvironment: [
+                "device": [FeatureProvider(id: "claude", name: "Claude")],
+            ]
         )
 
         #expect(thread.homeEnvironmentLabel(in: snapshot) == "steambox")
@@ -162,9 +164,11 @@ struct HomeThreadMetadataTests {
                 ),
             ],
             threads: [knownThread, customThread],
-            providers: [
-                FeatureProvider(id: "work-claude", name: "Claude Code", driver: "custom"),
-                FeatureProvider(id: "acme-agent", name: "Acme Agent", driver: "custom"),
+            providersByEnvironment: [
+                "device": [
+                    FeatureProvider(id: "work-claude", name: "Claude Code", driver: "custom"),
+                    FeatureProvider(id: "acme-agent", name: "Acme Agent", driver: "custom"),
+                ],
             ]
         )
 
