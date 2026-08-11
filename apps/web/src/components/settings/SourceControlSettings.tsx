@@ -510,11 +510,12 @@ function EmptySourceControlDiscovery({
 export function SourceControlSettingsPanel() {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  const fallbackEnvironment =
+    environments.find((environment) => environment.connection.phase === "connected") ??
+    environments[0] ??
+    null;
   const environmentId =
-    primaryEnvironment?.connection.phase === "connected"
-      ? primaryEnvironment.environmentId
-      : (environments.find((environment) => environment.connection.phase === "connected")
-          ?.environmentId ?? null);
+    primaryEnvironment?.environmentId ?? fallbackEnvironment?.environmentId ?? null;
   const isPrimaryEnvironment = environmentId === primaryEnvironment?.environmentId;
   const discovery = useEnvironmentQuery(
     environmentId === null
