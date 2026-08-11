@@ -19,6 +19,7 @@ async function mountChrome() {
       onForward={vi.fn()}
       onRefresh={vi.fn()}
       onSubmit={vi.fn()}
+      onCapture={vi.fn()}
     />,
   );
 }
@@ -45,7 +46,9 @@ describe("PreviewChromeRow", () => {
       expect(inputRect.left).toBeGreaterThan(backRect.left);
       expect(inputRect.top).toBeLessThan(backRect.bottom);
       expect(inputRect.bottom).toBeGreaterThan(backRect.top);
-      expect(row.getBoundingClientRect().height).toBeLessThan(56);
+      expect(row.getBoundingClientRect().height).toBe(32);
+      expect(inputRect.height).toBeLessThanOrEqual(24);
+      expect(document.querySelector("[data-preview-chrome-actions]")).toBeInTheDocument();
     } finally {
       await screen.unmount();
     }

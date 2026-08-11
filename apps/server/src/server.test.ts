@@ -25,6 +25,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  type RuntimeMode,
   ThreadId,
   TurnId,
   WS_METHODS,
@@ -94,6 +95,7 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
+import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -358,6 +360,7 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
+    providerService?: Partial<ProviderServiceShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -684,7 +687,32 @@ const buildAppUnderTest = (options?: {
       Layer.provide(layerConfig),
     );
 
-    yield* Layer.build(appLayer);
+    // provideMerge: ProviderService is only read via serviceOption, so it is not
+    // a layer requirement and must be re-exported into the final context.
+    const appLayerWithProvider = options?.layers?.providerService
+      ? appLayer.pipe(
+          Layer.provideMerge(
+            Layer.mock(ProviderService)({
+              startSession: () => Effect.die("Not implemented in server test."),
+              forkSession: () => Effect.die("Not implemented in server test."),
+              sendTurn: () => Effect.die("Not implemented in server test."),
+              interruptTurn: () => Effect.die("Not implemented in server test."),
+              respondToRequest: () => Effect.die("Not implemented in server test."),
+              respondToUserInput: () => Effect.die("Not implemented in server test."),
+              stopSession: () => Effect.die("Not implemented in server test."),
+              listSessions: () => Effect.succeed([]),
+              prewarmSession: () => Effect.void,
+              getCapabilities: () => Effect.die("Not implemented in server test."),
+              getInstanceInfo: () => Effect.die("Not implemented in server test."),
+              rollbackConversation: () => Effect.die("Not implemented in server test."),
+              streamEvents: Stream.empty,
+              ...options.layers.providerService,
+            }),
+          ),
+        )
+      : appLayer;
+
+    yield* Layer.build(appLayerWithProvider);
     return config;
   });
 
@@ -3189,6 +3217,64 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       );
       assert.equal(response.status, 404);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.prewarmProviderSession without provider service", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      // Handler must stay callable when ProviderService is absent (serviceOption).
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverPrewarmProviderSession]({
+            instanceId: ProviderInstanceId.make("codex"),
+            cwd: "/tmp",
+            runtimeMode: "full-access",
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, {});
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.prewarmProviderSession to ProviderService", () =>
+    Effect.gen(function* () {
+      const calls: Array<{
+        readonly instanceId: ProviderInstanceId;
+        readonly cwd: string;
+        readonly runtimeMode: RuntimeMode;
+      }> = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            prewarmSession: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const payload = {
+        instanceId: ProviderInstanceId.make("codex"),
+        cwd: "/tmp",
+        runtimeMode: "full-access" as const satisfies RuntimeMode,
+      };
+      // Exercises the onSome branch so regressions that stop forwarding the
+      // payload (or reintroduce an unbound service) fail this test.
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverPrewarmProviderSession](payload),
+        ),
+      );
+
+      assert.deepEqual(response, {});
+      assert.deepEqual(calls, [payload]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

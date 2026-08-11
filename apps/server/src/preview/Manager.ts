@@ -47,12 +47,17 @@ export class PreviewManager extends Context.Service<
     readonly navigate: (
       input: PreviewNavigateInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
-    readonly reportStatus: (input: PreviewReportStatusInput) => Effect.Effect<void, PreviewError>;
+    readonly reportStatus: (
+      input: PreviewReportStatusInput,
+    ) => Effect.Effect<void, PreviewSessionLookupError>;
     readonly resize: (
       input: PreviewResizeInput,
-    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
-    readonly refresh: (input: PreviewRefreshInput) => Effect.Effect<void, PreviewError>;
-    readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
+    ) => Effect.Effect<PreviewSessionSnapshot, PreviewSessionLookupError>;
+    readonly refresh: (
+      input: PreviewRefreshInput,
+    ) => Effect.Effect<void, PreviewSessionLookupError>;
+    // Idempotent: unknown tabs are a no-op.
+    readonly close: (input: PreviewCloseInput) => Effect.Effect<void>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;

@@ -6,10 +6,24 @@
  */
 
 /**
- * Height of the shared title-bar row. Falls back to the native overlay height
- * under Windows' controls overlay, which dictates its own row.
+ * Height of the shared title-bar row.
+ *
+ * The row is window chrome sharing a line with the macOS traffic lights, which
+ * macOS draws in screen points and page zoom does not scale. A plain `44px` row
+ * grew with the zoom and dragged the whole line — lights, title, and actions —
+ * down away from the window corner: at 150% it stood 66pt tall and pushed the
+ * lights 28pt down, against Cursor's 9pt. Dividing by the zoom holds the row to
+ * a constant height on screen instead, and the floor lets it grow rather than
+ * clip once zoomed content needs more than that. `titleBarRowHeightForZoom()`
+ * in the desktop main process mirrors this so the lights land on the same line.
+ *
+ * Because the height is fixed rather than intrinsic, the row also centres its
+ * own content: a header that instead padded itself to the row's height would
+ * overflow it and sit off the line the traffic lights are drawn on. Carrying
+ * the centring here means a call site cannot forget it.
  */
-export const TITLEBAR_ROW_CLASS = "h-titlebar wco:h-[env(titlebar-area-height)]";
+export const TITLEBAR_ROW_CLASS =
+  "flex items-center h-[max(28px,calc(var(--spacing-titlebar)/var(--app-zoom,1)))] wco:h-[env(titlebar-area-height)]";
 
 /**
  * Right inset that keeps trailing header content clear of the Windows overlay

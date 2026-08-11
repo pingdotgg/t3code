@@ -442,6 +442,7 @@ export const WsPreviewRefreshRpc = Rpc.make(WS_METHODS.previewRefresh, {
   error: PreviewSessionLookupError,
 });
 
+// Idempotent: missing tabs are a no-op, so there is no error channel.
 export const WsPreviewCloseRpc = Rpc.make(WS_METHODS.previewClose, {
   payload: PreviewCloseInput,
 });

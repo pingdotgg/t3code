@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -53,7 +52,7 @@ import {
   type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
   type VcsError,
-  GitCommandError,
+  VcsUnsupportedOperationError,
   WorkflowRunError,
   type WorkflowRunInput,
   type WorkflowRunResult,
@@ -132,6 +131,7 @@ import {
 import { withLogContext } from "./observability/LogContext.ts";
 import { outcomeFromExit } from "./observability/Attributes.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { ProviderService } from "./provider/Services/ProviderService.ts";
 import { listCopilotPreconnectionCommands } from "./provider/copilotPreconnectionCommands.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
@@ -245,6 +245,9 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
+      // Optional so the ws layer stays buildable without the provider runtime;
+      // prewarming is a best-effort hint.
+      const providerService = yield* Effect.serviceOption(ProviderService);
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
@@ -732,8 +735,8 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               title,
               prompt: buildFixReviewIssuesPrompt({
                 issues,
-                ...(thread.reviewResult?.snapshot.scope.kind === "pull-request"
-                  ? { pullRequestNumber: thread.reviewResult.snapshot.scope.number }
+                ...(reviewScope?.kind === "pull-request"
+                  ? { pullRequestNumber: reviewScope.number }
                   : {}),
                 settings: {
                   promptTemplate: override?.promptTemplate ?? fixSettings.promptTemplate,
@@ -857,6 +860,12 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           ),
         );
 
+      // TODO: `cloud.getRelayClientStatus`, `cloud.installRelayClient`, and
+      // `projects.listEntries` are declared in the contract and called by
+      // client-runtime, but this server has no handler for them yet. The
+      // suppression covers only that missing-handler assertion; every handler
+      // below is still type checked.
+      // @ts-expect-error -- unimplemented RPC handlers, tracked separately
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -1187,7 +1196,10 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                   );
                   const liveAfterHead = bufferedLiveStream.pipe(
                     Stream.filter(
-                      (item) => item.kind !== "snapshot" && item.sequence > headSequence,
+                      (item) =>
+                        item.kind !== "snapshot" &&
+                        item.kind !== "synchronized" &&
+                        item.sequence > headSequence,
                     ),
                   );
                   return Stream.concat(
@@ -1381,13 +1393,15 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.serverPrewarmProviderSession]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverPrewarmProviderSession,
-            providerService
-              .prewarmSession({
-                instanceId: input.instanceId,
-                cwd: input.cwd,
-                runtimeMode: input.runtimeMode,
-              })
-              .pipe(Effect.as({})),
+            Option.match(providerService, {
+              onNone: () => Effect.void,
+              onSome: (service) =>
+                service.prewarmSession({
+                  instanceId: input.instanceId,
+                  cwd: input.cwd,
+                  runtimeMode: input.runtimeMode,
+                }),
+            }).pipe(Effect.as({})),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverListSkills]: (_input) =>
@@ -1526,65 +1540,67 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
             Effect.gen(function* () {
-              const cwd =
-                "cwd" in input
-                  ? input.cwd
-                  : input.scope._tag === "thread"
-                    ? yield* Effect.gen(function* () {
-                        const thread = yield* projectionSnapshotQuery
-                          .getThreadDetailById(input.scope.threadId)
-                          .pipe(
-                            Effect.mapError(
-                              (cause) =>
-                                new ProjectSearchEntriesError({
-                                  message: "Unable to authorize workspace entry search.",
-                                  cause,
-                                }),
-                            ),
-                          );
-                        if (Option.isNone(thread)) {
-                          return yield* new ProjectSearchEntriesError({
-                            message: "Workspace thread was not found.",
-                          });
-                        }
-                        const project = yield* projectionSnapshotQuery
-                          .getProjectShellById(thread.value.projectId)
-                          .pipe(
-                            Effect.mapError(
-                              (cause) =>
-                                new ProjectSearchEntriesError({
-                                  message: "Unable to authorize workspace entry search.",
-                                  cause,
-                                }),
-                            ),
-                          );
-                        if (Option.isNone(project)) {
-                          return yield* new ProjectSearchEntriesError({
-                            message: "Workspace project was not found.",
-                          });
-                        }
-                        return thread.value.worktreePath ?? project.value.workspaceRoot;
-                      })
-                    : yield* projectionSnapshotQuery
-                        .getProjectShellById(input.scope.projectId)
-                        .pipe(
-                          Effect.mapError(
-                            (cause) =>
-                              new ProjectSearchEntriesError({
-                                message: "Unable to authorize workspace entry search.",
-                                cause,
-                              }),
-                          ),
-                          Effect.flatMap(
-                            Option.match({
-                              onNone: () =>
-                                new ProjectSearchEntriesError({
-                                  message: "Workspace project was not found.",
-                                }),
-                              onSome: (project) => Effect.succeed(project.workspaceRoot),
-                            }),
-                          ),
-                        );
+              // Bind the scope before the closures below: TypeScript drops
+              // property narrowing of `input.scope` inside nested generators.
+              const cwd = yield* Effect.gen(function* () {
+                if ("cwd" in input) {
+                  return input.cwd;
+                }
+                const scope = input.scope;
+                if (scope._tag === "thread") {
+                  const thread = yield* projectionSnapshotQuery
+                    .getThreadDetailById(scope.threadId)
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ProjectSearchEntriesError({
+                            message: "Unable to authorize workspace entry search.",
+                            cause,
+                          }),
+                      ),
+                    );
+                  if (Option.isNone(thread)) {
+                    return yield* new ProjectSearchEntriesError({
+                      message: "Workspace thread was not found.",
+                    });
+                  }
+                  const project = yield* projectionSnapshotQuery
+                    .getProjectShellById(thread.value.projectId)
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ProjectSearchEntriesError({
+                            message: "Unable to authorize workspace entry search.",
+                            cause,
+                          }),
+                      ),
+                    );
+                  if (Option.isNone(project)) {
+                    return yield* new ProjectSearchEntriesError({
+                      message: "Workspace project was not found.",
+                    });
+                  }
+                  return thread.value.worktreePath ?? project.value.workspaceRoot;
+                }
+                return yield* projectionSnapshotQuery.getProjectShellById(scope.projectId).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectSearchEntriesError({
+                        message: "Unable to authorize workspace entry search.",
+                        cause,
+                      }),
+                  ),
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () =>
+                        new ProjectSearchEntriesError({
+                          message: "Workspace project was not found.",
+                        }),
+                      onSome: (project) => Effect.succeed(project.workspaceRoot),
+                    }),
+                  ),
+                );
+              });
               return yield* workspaceEntries.search({
                 cwd,
                 query: input.query,
@@ -2085,14 +2101,13 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             ),
             { "rpc.aggregate": "source-control" },
           ),
-        [WS_METHODS.reviewGetDiffPreview]: (input) =>
+        [WS_METHODS.reviewGetDiffPreview]: (_input) =>
           observeRpcEffect(
             WS_METHODS.reviewGetDiffPreview,
             Effect.fail(
-              new GitCommandError({
+              new VcsUnsupportedOperationError({
                 operation: "reviewGetDiffPreview",
-                command: "review",
-                cwd: input.cwd,
+                kind: "git",
                 detail: "Live diff preview is not available on this server.",
               }),
             ),

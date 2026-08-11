@@ -87,6 +87,16 @@ describe("RightPanelTabs", () => {
     }
   });
 
+  it("keeps the surface title bar compact", async () => {
+    const { screen } = await mountTabs();
+    try {
+      const tabBar = document.querySelector<HTMLElement>("[data-right-panel-tabbar]")!;
+      expect(tabBar.getBoundingClientRect().height).toBe(32);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("dispatches add-menu and maximize actions", async () => {
     const { callbacks, screen } = await mountTabs();
     try {
