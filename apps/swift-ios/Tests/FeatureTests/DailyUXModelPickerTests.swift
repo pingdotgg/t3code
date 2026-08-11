@@ -369,7 +369,7 @@ struct DailyUXModelPickerTests {
             materializesDefaultSelection: false
         )
 
-        #expect(context?.choices.map(\.id) == ["medium", "ultrathink"])
+        #expect(context?.choices.map(\.id) == ["ultrathink", "medium"])
         var unsupported = selection
         unsupported.options = [.init(id: "effort", value: .string("ultrathink"))]
         let injectedContext = FeatureComposerReasoningSelection.context(
@@ -379,6 +379,50 @@ struct DailyUXModelPickerTests {
             materializesDefaultSelection: false
         )
         #expect(injectedContext?.summary == "Ultrathink")
+    }
+
+    @Test
+    func composerReasoningSelectionShowsStandardLevelsLowToHighWithoutUltra() {
+        let selection = FeatureSelection(
+            providerID: "codex",
+            modelID: "sol",
+            options: [.init(id: "reasoningEffort", value: .string("medium"))]
+        )
+        let providers = [
+            FeatureProvider(
+                id: "codex",
+                name: "Codex",
+                models: [
+                    FeatureModel(
+                        id: "sol",
+                        name: "Sol",
+                        options: [
+                            .init(
+                                id: "reasoningEffort",
+                                label: "Reasoning",
+                                kind: .select,
+                                choices: [
+                                    .init(id: "ultra", label: "Ultra"),
+                                    .init(id: "high", label: "High"),
+                                    .init(id: "medium", label: "Medium"),
+                                    .init(id: "low", label: "Low"),
+                                ]
+                            ),
+                        ]
+                    ),
+                ]
+            ),
+        ]
+
+        let context = FeatureComposerReasoningSelection.context(
+            explicit: selection,
+            inherited: selection,
+            providers: providers,
+            materializesDefaultSelection: false
+        )
+
+        #expect(context?.choices.map(\.id) == ["low", "medium", "high"])
+        #expect(context?.summary == "Medium")
     }
 
     @Test

@@ -552,7 +552,7 @@ enum FeatureComposerReasoningSelection {
               let value = DailyUXModelOptions.value(for: descriptor, in: resolved.options) else {
             return nil
         }
-        let choices = descriptor.choices
+        let choices = displayedChoices(for: descriptor)
         let summary: String
         switch (descriptor.kind, value) {
         case let (.select, .string(choiceID)):
@@ -573,6 +573,15 @@ enum FeatureComposerReasoningSelection {
             value: value,
             summary: summary
         )
+    }
+
+    private static func displayedChoices(
+        for descriptor: FeatureModelOptionDescriptor
+    ) -> [FeatureModelOptionChoice] {
+        descriptor.choices.reversed().filter { choice in
+            choice.id.lowercased() != "ultra"
+                && choice.label.lowercased() != "ultra"
+        }
     }
 
     static func updating(
