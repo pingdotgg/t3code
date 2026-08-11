@@ -2083,6 +2083,23 @@ label:has(> select#reasoning-effort) select {
   background: transparent !important;
 }
 
+.chat-markdown .chat-markdown-mermaid {
+  max-width: 100%;
+  margin: 0.65rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--muted);
+  padding: 1rem;
+}
+
+.chat-markdown .chat-markdown-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 /* Diagnostics-style tables: row separators only, uppercase headers, and a
    scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
