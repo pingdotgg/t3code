@@ -53,6 +53,8 @@ The **Source Control settings** page shows you exactly what's connected:
 - 👤 Which account is signed in (when available)
 
 Run a quick **Rescan** after setting up a new machine or changing credentials.
+If you have multiple environments connected, select a device at the top of the page to view and
+configure its source control tools and settings.
 
 ## Getting Started
 

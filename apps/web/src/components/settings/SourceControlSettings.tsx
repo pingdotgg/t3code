@@ -1,9 +1,10 @@
 import { ChevronDownIcon, GitPullRequestIcon, InfoIcon, RefreshCwIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
+  EnvironmentId,
   SourceControlProviderKind,
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
@@ -17,9 +18,9 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
@@ -54,8 +55,13 @@ import {
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
+import { SettingsEnvironmentSelector } from "./SettingsEnvironmentSelector";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import {
+  buildProviderEnvironmentOptions,
+  resolveSelectedProviderEnvironmentId,
+} from "./ProviderSettingsPanel.logic";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -346,9 +352,13 @@ function DiscoveryItemRow({
   );
 }
 
-function GitFetchIntervalSettings() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+export function GitFetchIntervalSettings({
+  environmentId,
+}: {
+  readonly environmentId: EnvironmentId;
+}) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
@@ -508,14 +518,50 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
-  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const { environments, isReady } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const options = useMemo(
+    () => buildProviderEnvironmentOptions(environments, primaryEnvironmentId),
+    [environments, primaryEnvironmentId],
+  );
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
+    primaryEnvironmentId,
+  );
+  const effectiveEnvironmentId = resolveSelectedProviderEnvironmentId(
+    options,
+    selectedEnvironmentId,
+    primaryEnvironmentId,
+  );
+
+  return (
+    <SettingsPageContainer>
+      <SettingsEnvironmentSelector
+        environments={options}
+        isReady={isReady}
+        selectedEnvironmentId={effectiveEnvironmentId}
+        emptyDescription="Connect an execution environment before configuring source control."
+        onSelect={setSelectedEnvironmentId}
+      />
+      {effectiveEnvironmentId !== null ? (
+        <EnvironmentSourceControlSettings
+          key={effectiveEnvironmentId}
+          environmentId={effectiveEnvironmentId}
+        />
+      ) : null}
+    </SettingsPageContainer>
+  );
+}
+
+export function EnvironmentSourceControlSettings({
+  environmentId,
+}: {
+  readonly environmentId: EnvironmentId;
+}) {
   const discovery = useEnvironmentQuery(
-    environmentId === null
-      ? null
-      : sourceControlEnvironment.discovery({
-          environmentId,
-          input: {},
-        }),
+    sourceControlEnvironment.discovery({
+      environmentId,
+      input: {},
+    }),
   );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
   const hasVersionControlSystems = result.versionControlSystems.length > 0;
@@ -545,7 +591,7 @@ export function SourceControlSettingsPanel() {
   );
 
   return (
-    <SettingsPageContainer>
+    <>
       {isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
@@ -561,7 +607,9 @@ export function SourceControlSettingsPanel() {
             >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
+                  {item.kind === "git" ? (
+                    <GitFetchIntervalSettings environmentId={environmentId} />
+                  ) : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
@@ -587,7 +635,7 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      {environmentId !== null ? <SourceControlWritingSettingsSection /> : null}
-    </SettingsPageContainer>
+      <SourceControlWritingSettingsSection environmentId={environmentId} />
+    </>
   );
 }
