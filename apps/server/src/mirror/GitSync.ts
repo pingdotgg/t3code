@@ -50,10 +50,16 @@ export class GitSyncCommandError extends Schema.TaggedErrorClass<GitSyncCommandE
   },
 ) {
   override get message(): string {
-    const detail = this.stderr.trim();
-    return `git ${this.args.join(" ")} failed in '${this.root}'${
+    // `message` reaches MirrorSyncFailedError.detail and from there the RPC
+    // boundary, status, and logs — so it must stay bounded. `args` and
+    // `stderr` are kept as structured fields (e.g. for local debugging) but
+    // never embedded here: args can carry a remote URL with embedded
+    // credentials (setRemote/setRemotes), and stderr is unbounded raw
+    // process output.
+    const subcommand = this.args[0] ?? "git";
+    return `git ${subcommand} failed in '${this.root}'${
       this.exitCode === null ? "" : ` with exit code ${this.exitCode}`
-    }${detail.length > 0 ? `: ${detail}` : ""}`;
+    }${this.stderr.trim().length > 0 ? ` (${this.stderr.trim().length} bytes of stderr)` : ""}`;
   }
 }
 
