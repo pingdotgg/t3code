@@ -746,6 +746,65 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("rejects a recovery command when the thread advances before commit", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:foundation-stale-recovery-command");
+      const initialAt = yield* DateTime.now;
+      const initialThread = makeThread(threadId, initialAt);
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({
+            id: "event:foundation-stale-recovery-command:created",
+            thread: initialThread,
+            now: initialAt,
+          }),
+        ],
+      });
+
+      const advancedAt = DateTime.makeUnsafe("2099-01-01T00:00:00.000Z");
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:foundation-stale-recovery-command:advanced"),
+            type: "thread.metadata-updated",
+            threadId,
+            providerInstanceId,
+            occurredAt: advancedAt,
+            payload: { ...initialThread, title: "Live work advanced", updatedAt: advancedAt },
+          },
+        ],
+      });
+
+      const result = yield* eventSink.commitCommand({
+        commandId: CommandId.make("command:foundation-stale-recovery-command"),
+        threadId,
+        commandType: "provider-runtime.reconcile",
+        acceptedAt: advancedAt,
+        expectedThreadUpdatedAt: initialAt,
+        events: [
+          {
+            id: EventId.make("event:foundation-stale-recovery-command:cancel"),
+            type: "thread.metadata-updated",
+            threadId,
+            providerInstanceId,
+            occurredAt: advancedAt,
+            payload: { ...initialThread, title: "Stale recovery write", updatedAt: advancedAt },
+          },
+        ],
+        effects: [],
+      });
+
+      assert.isFalse(result.committed);
+      assert.deepEqual(result.storedEvents, []);
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(threadId)).thread.title,
+        "Live work advanced",
+      );
+    }),
+  );
+
   it.effect("does not wake claimers for effects from an idempotent command retry", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
@@ -1169,6 +1228,78 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue(Option.isSome(cancelled));
       if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
     }),
+  );
+
+  it.effect("limits startup process-loss reconciliation to effects that predate recovery", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const threadId = ThreadId.make("thread:foundation-bounded-process-loss");
+      const claimedEffectId = "effect:foundation-bounded-process-loss-a-claimed";
+      const oldEffectId = "effect:foundation-bounded-process-loss-b-old";
+      const newEffectId = "effect:foundation-bounded-process-loss-new";
+      yield* outbox.enqueue([
+        {
+          id: claimedEffectId,
+          commandId: CommandId.make("command:foundation-bounded-process-loss-claimed"),
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-bounded-process-loss-claimed"),
+          },
+        },
+        {
+          id: oldEffectId,
+          commandId: CommandId.make("command:foundation-bounded-process-loss-old"),
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-bounded-process-loss-old"),
+          },
+        },
+      ]);
+      yield* TestClock.adjust("1 second");
+      const recoveryStartedAt = yield* DateTime.now;
+      yield* TestClock.adjust("1 second");
+      const claimed = yield* outbox.claimNext({
+        workerId: "foundation-bounded-process-loss-worker",
+        leaseDurationMs: 60_000,
+      });
+      assert.equal(Option.getOrThrow(claimed).id, claimedEffectId);
+      yield* outbox.enqueue([
+        {
+          id: newEffectId,
+          commandId: CommandId.make("command:foundation-bounded-process-loss-new"),
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-bounded-process-loss-new"),
+          },
+        },
+      ]);
+
+      const result = yield* outbox.reconcileAfterProcessLossBefore(recoveryStartedAt);
+      assert.deepEqual(result, { requeued: 0, cancelled: 1 });
+      const oldEffect = yield* outbox.get(oldEffectId);
+      const claimedEffect = yield* outbox.get(claimedEffectId);
+      const newEffect = yield* outbox.get(newEffectId);
+      assert.equal(Option.getOrThrow(oldEffect).status, "cancelled");
+      assert.equal(Option.getOrThrow(claimedEffect).status, "running");
+      assert.equal(Option.getOrThrow(newEffect).status, "pending");
+      assert.deepEqual(
+        yield* outbox.cancelUnsettled({
+          threadId,
+          effectTypes: ["provider-turn.start"],
+          reason: "Bounded per-thread recovery.",
+          updatedBefore: recoveryStartedAt,
+        }),
+        [],
+      );
+      yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["provider-turn.start"],
+        reason: "Test cleanup.",
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("treats cancellation between execution and settlement as a normal outcome", () =>
@@ -1916,6 +2047,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
         ),
       );
+      yield* TestClock.adjust("1 millis");
 
       const recovery = yield* ProviderRuntimeRecovery.make.pipe(
         Effect.provideService(
