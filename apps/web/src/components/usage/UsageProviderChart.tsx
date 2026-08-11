@@ -2,13 +2,20 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
-import { formatDayShort, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
+import {
+  formatCurrency,
+  formatCurrencyCompact,
+  formatDayShort,
+  formatTokens,
+} from "@t3tools/shared/usageFormat";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
 const TICK_COUNT = 4;
 const PLOT_TOP = 8;
+const AXIS_GUTTER_CLASS = "w-16";
+const AXIS_GUTTER_PADDING_CLASS = "pl-18";
 
 export type UsageChartMetric = "tokens" | "cost";
 
@@ -16,6 +23,15 @@ interface UsageProviderChartProps {
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly metric: UsageChartMetric;
+  /**
+   * Converts a USD cost into chart display units before scaling and plotting.
+   * Axis ticks are nicened in these units, so currency changes keep round labels.
+   */
+  readonly toDisplayCost?: (amountUsd: number) => number;
+  /** Formats a cost already expressed in display units. */
+  readonly formatCost?: (amount: number) => string;
+  /** Compact axis form for a cost already expressed in display units. */
+  readonly formatCostCompact?: (amount: number) => string;
 }
 
 /** One day's per-provider values, shared by the paths and the hover readout. */
@@ -36,10 +52,11 @@ function valueFor(
   daily: DailyTotals | undefined,
   provider: UsageProviderKind,
   metric: UsageChartMetric,
+  toDisplayCost: (amountUsd: number) => number,
 ): number {
   const entry = daily?.byProvider.get(provider);
   if (entry === undefined) return 0;
-  return metric === "tokens" ? entry.totalTokens : entry.costUsd;
+  return metric === "tokens" ? entry.totalTokens : toDisplayCost(entry.costUsd);
 }
 
 /**
@@ -166,18 +183,26 @@ export function buildDayColumns(
   days: readonly string[],
   byDay: ReadonlyMap<string, DailyTotals>,
   metric: UsageChartMetric,
+  toDisplayCost: (amountUsd: number) => number = (amountUsd) => amountUsd,
 ): readonly DayColumn[] {
   return days.map((day) => {
     const entry = byDay.get(day);
     const bands = PROVIDER_ORDER.map((provider) => ({
       provider,
-      value: valueFor(entry, provider, metric),
+      value: valueFor(entry, provider, metric, toDisplayCost),
     }));
     return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
   });
 }
 
-export function UsageProviderChart({ days, daily, metric }: UsageProviderChartProps) {
+export function UsageProviderChart({
+  days,
+  daily,
+  metric,
+  toDisplayCost = (amountUsd) => amountUsd,
+  formatCost = (amount) => formatCurrency(amount, "USD"),
+  formatCostCompact = (amount) => formatCurrencyCompact(amount, "USD"),
+}: UsageProviderChartProps) {
   const byDay = useMemo(() => new Map(daily.map((entry) => [entry.day, entry])), [daily]);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
@@ -193,7 +218,9 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
       };
     }
 
-    const columns = buildDayColumns(days, byDay, metric);
+    // Cost series are converted before nicening so axis labels stay round in
+    // the active currency instead of being FX leftovers of a USD scale.
+    const columns = buildDayColumns(days, byDay, metric, toDisplayCost);
 
     // The scale tops out at the largest single provider-day, not the largest
     // sum: layered series each measure from zero, so a combined peak would
@@ -231,9 +258,10 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
     const ordered = [...built].sort((a, b) => b.total - a.total);
 
     return { paths: ordered, ticks: tickValues, stepX: step, toY, series: columns };
-  }, [byDay, days, metric]);
+  }, [byDay, days, metric, toDisplayCost]);
 
-  const format = metric === "tokens" ? formatTokens : formatUsd;
+  const formatHover = metric === "tokens" ? formatTokens : formatCost;
+  const formatAxis = metric === "tokens" ? formatTokens : formatCostCompact;
 
   const handleMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -251,24 +279,25 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
   const hoverLeft = days.length <= 1 ? 0 : ((hoverIndex ?? 0) / (days.length - 1)) * 100;
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex gap-2">
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex min-w-0 gap-2">
         {/* Axis labels sit outside the plot so they stay aligned to gridlines. */}
-        <div className="relative h-56 w-14 shrink-0">
+        <div className={`relative h-56 shrink-0 overflow-hidden ${AXIS_GUTTER_CLASS}`}>
           {ticks.map((tick) => (
             <span
               key={tick}
-              className="absolute right-0 -translate-y-1/2 text-[10px] text-muted-foreground tabular-nums"
+              className="absolute right-0 max-w-full -translate-y-1/2 truncate text-right text-[10px] text-muted-foreground tabular-nums"
               style={{ top: `${(toY(tick) / VIEW_HEIGHT) * 100}%` }}
+              title={tick === 0 ? "0" : formatHover(tick)}
             >
-              {tick === 0 ? "0" : format(tick)}
+              {tick === 0 ? "0" : formatAxis(tick)}
             </span>
           ))}
         </div>
 
         <div
           ref={plotRef}
-          className="relative h-56 flex-1"
+          className="relative h-56 min-w-0 flex-1"
           onMouseMove={handleMove}
           onMouseLeave={() => setHoverIndex(null)}
         >
@@ -343,7 +372,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
                       {PROVIDER_LABEL[provider]}
                     </span>
                     <span className="text-foreground tabular-nums">
-                      {format(
+                      {formatHover(
                         hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
                       )}
                     </span>
@@ -353,7 +382,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
                 <span className="text-muted-foreground">Total</span>
                 <span className="text-foreground tabular-nums">
-                  {format(hoveredColumn?.total ?? 0)}
+                  {formatHover(hoveredColumn?.total ?? 0)}
                 </span>
               </div>
             </div>
@@ -361,7 +390,9 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
         </div>
       </div>
 
-      <div className="flex justify-between pl-16 text-[10px] text-muted-foreground uppercase">
+      <div
+        className={`flex justify-between text-[10px] text-muted-foreground uppercase ${AXIS_GUTTER_PADDING_CLASS}`}
+      >
         <span>{days[0] === undefined ? "" : formatDayShort(days[0])}</span>
         <span>
           {days[Math.floor(days.length / 2)] === undefined

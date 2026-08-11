@@ -6,17 +6,67 @@
  */
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 
-const CURRENCY = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
 const INTEGER = new Intl.NumberFormat("en-US");
 
+const currencyFormatters = new Map<string, Intl.NumberFormat>();
+const compactCurrencyFormatters = new Map<string, Intl.NumberFormat>();
+
+function getCurrencyFormatter(currency: string): Intl.NumberFormat {
+  let formatter = currencyFormatters.get(currency);
+  if (formatter === undefined) {
+    // Omit fraction-digit overrides so Intl uses the currency's ISO default
+    // (0 for JPY/KRW, 2 for USD/EUR, 3 for some Gulf dinars, etc.).
+    formatter = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+    });
+    currencyFormatters.set(currency, formatter);
+  }
+  return formatter;
+}
+
+/** Formats a monetary amount in the given ISO 4217 currency. */
+export function formatCurrency(value: number, currency = "USD"): string {
+  return getCurrencyFormatter(currency).format(value);
+}
+
 export function formatUsd(value: number): string {
-  return CURRENCY.format(value);
+  return formatCurrency(value, "USD");
+}
+
+/**
+ * Fraction digits for compact currency so sub-unit amounts stay distinct.
+ *
+ * A fixed `maximumFractionDigits: 1` rounds every cent-scale tick to `$0`, so a
+ * chart with peak `$0.04` labels `$0.01`–`$0.04` identically. Once the value is
+ * at least 1 major unit, one digit is enough for compact suffixes (`$1.2K`).
+ * For currencies without minor units, keep whole amounts below the compact
+ * threshold but allow a fractional scaled significand (`¥1.5K`).
+ */
+function compactCurrencyFractionDigits(value: number, currency: string): number {
+  const currencyFractionDigits =
+    getCurrencyFormatter(currency).resolvedOptions().maximumFractionDigits ?? 2;
+  const abs = Math.abs(value);
+  if (currencyFractionDigits === 0) return abs >= 1_000 ? 1 : 0;
+  if (!(abs > 0) || abs >= 1) return 1;
+  return Math.min(6, Math.max(currencyFractionDigits, Math.ceil(-Math.log10(abs) - 1e-12)));
+}
+
+/** Short chart-axis form (`$1.2K`, `BIF 2M`) so wide currencies stay readable. */
+export function formatCurrencyCompact(value: number, currency = "USD"): string {
+  const maximumFractionDigits = compactCurrencyFractionDigits(value, currency);
+  const cacheKey = `${currency}:${maximumFractionDigits}`;
+  let formatter = compactCurrencyFormatters.get(cacheKey);
+  if (formatter === undefined) {
+    formatter = new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      notation: "compact",
+      maximumFractionDigits,
+    });
+    compactCurrencyFormatters.set(cacheKey, formatter);
+  }
+  return formatter.format(value);
 }
 
 export function formatCount(value: number): string {

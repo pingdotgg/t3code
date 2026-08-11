@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { formatCurrencyCompact } from "@t3tools/shared/usageFormat";
 import { buildDayColumns, niceScale } from "./UsageProviderChart";
 
 describe("niceScale", () => {
@@ -37,6 +38,12 @@ describe("niceScale", () => {
 
   it("degrades to a single zero tick with no data", () => {
     expect(niceScale(0, 4)).toEqual({ max: 0, ticks: [0] });
+  });
+
+  it("produces distinct compact labels for zero-decimal currency ticks", () => {
+    const labels = niceScale(2000, 4).ticks.map((tick) => formatCurrencyCompact(tick, "JPY"));
+
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });
 
@@ -93,5 +100,39 @@ describe("buildDayColumns", () => {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
+  });
+
+  it("converts cost into display units before banding", () => {
+    // Regression: nicening in USD then FX-formatting ticks produced labels like
+    // €692.9 for an $800 gridline. Convert first so the scale is round in-currency.
+    expect(buildDayColumns(days, byDay, "cost", (usd) => usd * 0.5).map((c) => c.total)).toEqual([
+      15, 0, 2.5,
+    ]);
+  });
+
+  it("leaves token values unconverted", () => {
+    expect(buildDayColumns(days, byDay, "tokens", (usd) => usd * 0.5).map((c) => c.total)).toEqual([
+      300, 0, 50,
+    ]);
+  });
+});
+
+describe("currency-aware cost scale", () => {
+  it("nicens after conversion so axis ticks stay round", () => {
+    const peakUsd = 800;
+    const eurRate = 0.866;
+    // Converted USD ticks would be 692.8 / 519.6 / …; nicening in EUR first
+    // should land on a clean 1/2/5 step instead.
+    expect(niceScale(peakUsd * eurRate, 4).ticks).toEqual([0, 200, 400, 600, 800]);
+  });
+
+  it("formats low-cost axis ticks with distinct labels", () => {
+    const { ticks } = niceScale(0.04, 4);
+    const labels = ticks
+      .filter((tick) => tick > 0)
+      .map((tick) => formatCurrencyCompact(tick, "USD"));
+
+    expect(labels.length).toBeGreaterThan(1);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });

@@ -3,6 +3,7 @@ import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { isElectron } from "../../env";
+import { useUsageCurrency } from "../../hooks/useUsageCurrency";
 import { cn } from "../../lib/utils";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import {
@@ -11,13 +12,13 @@ import {
   formatDayShort,
   formatPercent,
   formatTokens,
-  formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
+import { UsageCurrencySelect } from "./UsageCurrencySelect";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
@@ -31,6 +32,15 @@ export function UsagePage() {
   const [windowDays, setWindowDays] = useState<number>(30);
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [breakdown, setBreakdown] = useState<"model" | "day">("model");
+  const {
+    currency,
+    setCurrency,
+    formatCost,
+    formatCostCompact,
+    toDisplayCost,
+    formatDisplayCost,
+    formatDisplayCostCompact,
+  } = useUsageCurrency();
 
   // Recomputed only when the window length changes, so a re-render does not
   // shift the range and refetch every environment.
@@ -56,6 +66,9 @@ export function UsagePage() {
       ),
     [merged.providers, metric],
   );
+
+  const heroAmount =
+    metric === "cost" ? `${formatCost(merged.costUsd)}*` : formatTokens(merged.totalTokens);
 
   const activeDays = merged.daily.filter((day) => day.totalTokens > 0).length;
   const dailyAverage = activeDays === 0 ? 0 : merged.totalTokens / activeDays;
@@ -98,6 +111,7 @@ export function UsagePage() {
                 {formatDayShort(window.sinceDay)} to {formatDayShort(window.untilDay)}
               </p>
               <div className="flex items-center gap-2">
+                <UsageCurrencySelect value={currency} onValueChange={setCurrency} />
                 <div className="flex overflow-hidden rounded-md border border-border">
                   {WINDOW_OPTIONS.map((option) => (
                     <button
@@ -139,19 +153,19 @@ export function UsagePage() {
                   staleEnvironments={merged.staleEnvironments}
                 />
 
-                {/* Cost first: the financial answer, then the provider split. */}
-                <section className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+                {/* Cost first: the financial answer, then the provider split.
+                Single-column below lg so the summary stretches with the chart;
+                at lg the summary column grows with the headline amount. */}
+                <section className="grid gap-6 lg:grid-cols-[minmax(20rem,max-content)_minmax(0,1fr)]">
                   {/* The summary follows the chart toggle, so the headline and the
                   series are always reading the same units. */}
-                  <div className="flex flex-col gap-5">
+                  <div className="flex min-w-0 flex-col gap-5">
                     <div className="flex flex-col gap-1">
                       <span className="text-xs tracking-wide text-muted-foreground uppercase">
                         {metric === "cost" ? "Raw token cost" : "Processed tokens"}
                       </span>
-                      <span className="text-4xl font-semibold text-foreground tabular-nums">
-                        {metric === "cost"
-                          ? `${formatUsd(merged.costUsd)}*`
-                          : formatTokens(merged.totalTokens)}
+                      <span className="w-max max-w-full text-4xl font-semibold whitespace-nowrap text-foreground tabular-nums">
+                        {heroAmount}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {metric === "cost"
@@ -163,15 +177,15 @@ export function UsagePage() {
                     {orderedProviders.map((provider) => {
                       const share = metric === "cost" ? provider.costShare : provider.tokenShare;
                       return (
-                        <div key={provider.provider} className="flex flex-col gap-1.5">
-                          <div className="flex items-baseline justify-between">
-                            <span className="flex items-center gap-2 text-sm text-foreground">
+                        <div key={provider.provider} className="flex min-w-0 flex-col gap-1.5">
+                          <div className="flex min-w-0 items-baseline justify-between gap-3">
+                            <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
                               <ProviderMark provider={provider.provider} className="size-4" />
-                              {PROVIDER_LABEL[provider.provider]}
+                              <span className="truncate">{PROVIDER_LABEL[provider.provider]}</span>
                             </span>
-                            <span className="text-sm text-foreground tabular-nums">
+                            <span className="shrink-0 text-right text-sm text-foreground tabular-nums">
                               {metric === "cost"
-                                ? formatUsd(provider.costUsd)
+                                ? formatCostCompact(provider.costUsd)
                                 : formatTokens(provider.totalTokens)}
                             </span>
                           </div>
@@ -187,14 +201,14 @@ export function UsagePage() {
                           <span className="text-xs text-muted-foreground">
                             {metric === "cost"
                               ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                              : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                              : `${formatPercent(share)} of tokens · ${formatCostCompact(provider.costUsd)}`}
                           </span>
                         </div>
                       );
                     })}
                   </div>
 
-                  <div className="flex flex-col gap-3">
+                  <div className="flex min-w-0 flex-col gap-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <h2 className="text-sm font-medium text-foreground">
                         Daily {metric === "tokens" ? "processed tokens" : "cost"}
@@ -220,7 +234,14 @@ export function UsagePage() {
                         <UsageChartLegend />
                       </div>
                     </div>
-                    <UsageProviderChart days={days} daily={merged.daily} metric={metric} />
+                    <UsageProviderChart
+                      days={days}
+                      daily={merged.daily}
+                      metric={metric}
+                      toDisplayCost={toDisplayCost}
+                      formatCost={formatDisplayCost}
+                      formatCostCompact={formatDisplayCostCompact}
+                    />
                   </div>
                 </section>
 
@@ -247,7 +268,7 @@ export function UsagePage() {
                   />
                   <Metric
                     label="Cache savings"
-                    value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+                    value={formatCost(merged.costQuality.cacheSavingsUsd)}
                     detail={
                       merged.costUsd > 0
                         ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw token cost`
@@ -308,7 +329,7 @@ export function UsagePage() {
                                 </span>
                               </td>
                               <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(model.costUsd)}
+                                {formatCost(model.costUsd)}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatPercent(model.costShare)}
@@ -351,11 +372,11 @@ export function UsagePage() {
                                   key={provider}
                                   className="py-2 text-right text-muted-foreground tabular-nums"
                                 >
-                                  {formatUsd(day.byProvider.get(provider)?.costUsd ?? 0)}
+                                  {formatCost(day.byProvider.get(provider)?.costUsd ?? 0)}
                                 </td>
                               ))}
                               <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(day.costUsd)}
+                                {formatCost(day.costUsd)}
                               </td>
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatTokens(day.totalTokens)}
@@ -516,7 +537,7 @@ const SKELETON_BAR_HEIGHTS = [34, 58, 41, 72, 22, 12, 49, 63, 80, 38, 55, 26, 44
 function UsageSkeleton() {
   return (
     <>
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(20rem,max-content)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
             <span className="text-xs tracking-wide text-muted-foreground uppercase">
