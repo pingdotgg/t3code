@@ -108,7 +108,7 @@ import {
 } from "./aether/eventMapper.ts";
 import { makeAetherMirrorSync, type AetherMirrorSyncEngine } from "./aether/mirrorSync.ts";
 import { buildAetherPreviewUrl } from "./aether/portPreview.ts";
-import type { AetherRestClient } from "./aether/restClient.ts";
+import type { AetherRestClient, AetherRestError } from "./aether/restClient.ts";
 import type {
   AetherPromptAttachment,
   AetherProject,
@@ -359,7 +359,13 @@ interface AetherSessionContext {
    * pins WHICH send is in flight so a retry carrying different content is
    * refused instead of silently resolving to the committed row.
    */
-  pendingSend: { readonly ordinal: number; readonly fingerprint: string } | undefined;
+  pendingSend:
+    | {
+        readonly ordinal: number;
+        readonly clientMessageId: string;
+        readonly fingerprint: string;
+      }
+    | undefined;
   latestSequence: number;
   /** The driver's own turn→messageId pairs, oldest first (see AetherResumeCursor). */
   turnLedger: Array<AetherTurnLedgerEntry>;
@@ -467,6 +473,38 @@ const dispatchFingerprintOf = (input: {
         `${attachment.filename}\u0000${attachment.mediaType}\u0000${attachment.data.length}:${attachment.data}`,
     ),
   ].join("\u0001");
+
+/**
+ * Did the server ANSWER this dispatch with a rejection? Then it committed
+ * nothing, the client_message_id at that ordinal is unspent, and the pending
+ * pin must be released so a corrected prompt can go out — otherwise the thread
+ * refuses every changed follow-up forever with no way back.
+ *
+ * A 409 counts: on respond it carries the task-state `code` /
+ * `awaiting_input_kind` — the request was refused, not deduped (the
+ * client_message_id dedupe answers 2xx with the committed row, which is
+ * exactly why callers may retry).
+ *
+ * Only genuinely ambiguous outcomes stay pinned, because the row MAY exist: a
+ * transport failure never learned the outcome, and a decode failure means the
+ * server answered 2xx with a body we could not read. Over-retaining is
+ * recoverable — an identical retry is still allowed, and the reconcile
+ * releases the pin for real once the committed row appears — while
+ * under-retaining silently loses the user's message.
+ */
+const isDefinitiveRejection = (error: AetherRestError): boolean => {
+  switch (error._tag) {
+    case "AetherApiAuthError":
+    case "AetherApiPaymentRequiredError":
+    case "AetherApiNotFoundError":
+    case "AetherApiConflictError":
+    case "AetherApiRequestError":
+      return true;
+    case "AetherApiTransportError":
+    case "AetherApiDecodeError":
+      return false;
+  }
+};
 
 const turnIdForWire = (wireTurnId: string): TurnId =>
   TurnId.make(`${AETHER_TURN_ID_PREFIX}${wireTurnId}`);
@@ -807,6 +845,22 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       cause,
     });
 
+  /**
+   * Release the pin when the failure PROVES nothing was committed. An error
+   * the server answered leaves the ordinal's client_message_id unspent, so the
+   * next (possibly corrected) send may reuse it; an ambiguous outcome keeps
+   * the pin until either an identical retry succeeds or the reconcile sees the
+   * row land.
+   */
+  const releasePendingSendIfRejected = (
+    context: AetherSessionContext,
+    error: AetherRestError,
+  ): void => {
+    if (isDefinitiveRejection(error)) {
+      context.pendingSend = undefined;
+    }
+  };
+
   const toRestRequestError = (method: string) => (cause: { readonly message: string }) =>
     new ProviderAdapterRequestError({
       provider: PROVIDER,
@@ -1060,7 +1114,26 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         yield* onTurnSettled(context, discarded.turnId);
       }
       for (const row of delta.messages) {
-        if (row.role !== "user" || row.sequence <= afterSequence) {
+        if (row.role !== "user") {
+          continue;
+        }
+        // The durable proof a pinned send DID commit even though its 202 never
+        // arrived. Releasing the pin here — and burning the ordinal, since the
+        // id it names is now spent — is what lets a CHANGED follow-up through:
+        // without it the thread refuses every corrected prompt forever, even
+        // after the message it is waiting on is visible in the transcript.
+        const pinned = context.pendingSend;
+        if (
+          pinned !== undefined &&
+          row.clientMessageId !== undefined &&
+          row.clientMessageId === pinned.clientMessageId
+        ) {
+          context.pendingSend = undefined;
+          if (context.sentCount === pinned.ordinal) {
+            context.sentCount = pinned.ordinal + 1;
+          }
+        }
+        if (row.sequence <= afterSequence) {
           continue;
         }
         const ledgered =
@@ -2174,6 +2247,50 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
               resolveAetherModelSlug(input.modelSelection.model),
             );
 
+      const clientMessageId = deterministicClientMessageId({
+        taskId,
+        sessionEpoch: context.session.createdAt,
+        sendOrdinal: context.sentCount,
+      });
+      // A respond whose 202 was lost leaves the ordinal — and therefore the
+      // client_message_id — unchanged, which is deliberate: the retry must
+      // reuse it for the server's ON CONFLICT dedupe to fire. The cost is that
+      // a retry carrying DIFFERENT text, attachments, effort or mode resolves
+      // to the row already committed and the user's change is silently
+      // dropped. Pin the in-flight dispatch and refuse a retry that is not the
+      // same send, exactly as the first-turn create path does.
+      //
+      // This runs BEFORE the model switch below on purpose: that switch is a
+      // remote `PUT` plus a `context.session.model` mutation, so letting it go
+      // first would change remote settings for a send that is about to be
+      // rejected AND move the session model the fingerprint is computed from —
+      // permanently invalidating the pin the user is trying to retry into.
+      const dispatchFingerprint = dispatchFingerprintOf({
+        message,
+        model: input.modelSelection?.model ?? context.session.model,
+        effort: selectionEffort,
+        interactionMode: input.interactionMode,
+        attachments,
+      });
+      const pendingSend = context.pendingSend;
+      if (
+        pendingSend !== undefined &&
+        pendingSend.ordinal === context.sentCount &&
+        pendingSend.fingerprint !== dispatchFingerprint
+      ) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue:
+            "The previous message was already dispatched to Aether but its result never came back. Retry with exactly the same input, or wait for it to appear and send the change as a follow-up.",
+        });
+      }
+      context.pendingSend = {
+        ordinal: context.sentCount,
+        clientMessageId,
+        fingerprint: dispatchFingerprint,
+      };
+
       // Model switch between turns (build item 11): `PUT /tasks/{id}` is a
       // FULL settings replace, so the current row is read back first — the
       // auto_fix_* flags are live-mutable remotely and must not be clobbered
@@ -2221,40 +2338,6 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         };
       }
 
-      const clientMessageId = deterministicClientMessageId({
-        taskId,
-        sessionEpoch: context.session.createdAt,
-        sendOrdinal: context.sentCount,
-      });
-      // A respond whose 202 was lost leaves the ordinal — and therefore the
-      // client_message_id — unchanged, which is deliberate: the retry must
-      // reuse it for the server's ON CONFLICT dedupe to fire. The cost is that
-      // a retry carrying DIFFERENT text, attachments, effort or mode resolves
-      // to the row already committed and the user's change is silently
-      // dropped. Pin the in-flight dispatch and refuse a retry that is not the
-      // same send, exactly as the first-turn create path does.
-      const dispatchFingerprint = dispatchFingerprintOf({
-        message,
-        model: input.modelSelection?.model ?? context.session.model,
-        effort: selectionEffort,
-        interactionMode: input.interactionMode,
-        attachments,
-      });
-      const pendingSend = context.pendingSend;
-      if (
-        pendingSend !== undefined &&
-        pendingSend.ordinal === context.sentCount &&
-        pendingSend.fingerprint !== dispatchFingerprint
-      ) {
-        return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
-          operation: "sendTurn",
-          issue:
-            "The previous message was already dispatched to Aether but its result never came back. Retry with exactly the same input, or wait for it to appear and send the change as a follow-up.",
-        });
-      }
-      context.pendingSend = { ordinal: context.sentCount, fingerprint: dispatchFingerprint };
-
       // A task parked on a proposed plan makes this send the accept/reject
       // verb (spec §2.4): t3 routes plan acceptance as a fresh turn with
       // interactionMode 'default' (ChatView thread.turn.start) and a
@@ -2280,7 +2363,12 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
             },
             client_message_id: clientMessageId,
           })
-          .pipe(Effect.mapError(toRestRequestError("sendTurn")));
+          .pipe(
+            Effect.tapError((cause) =>
+              Effect.sync(() => releasePendingSendIfRejected(context, cause)),
+            ),
+            Effect.mapError(toRestRequestError("sendTurn")),
+          );
         context.sentCount++;
         context.pendingSend = undefined;
         context.adoptActiveTurn = false;
@@ -2322,7 +2410,12 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
           ...(selectionEffort !== undefined ? { reasoning_effort: selectionEffort } : {}),
           client_message_id: clientMessageId,
         })
-        .pipe(Effect.mapError(toRestRequestError("sendTurn")));
+        .pipe(
+          Effect.tapError((cause) =>
+            Effect.sync(() => releasePendingSendIfRejected(context, cause)),
+          ),
+          Effect.mapError(toRestRequestError("sendTurn")),
+        );
       // Advance the ordinal only on a confirmed 202: a respond whose answer
       // was lost in transit retries with the SAME client_message_id, so the
       // server's ON CONFLICT dedupe can actually fire — incrementing before
@@ -2463,7 +2556,16 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         const task = yield* restClient
           .getTask(taskId)
           .pipe(Effect.mapError(toRestRequestError("interruptTurn")));
-        if (task.status !== "processing" && task.status !== "queued") {
+        // `unknown-status` is the forward-compat carrier for a status this
+        // build does not know: it is NOT evidence the turn stopped. Treating
+        // it as settled let Stop report success, mark the session ready and
+        // run onTurnSettled with no terminal turn event and no proof the
+        // remote turn ended — keep polling instead.
+        if (
+          task.status !== "processing" &&
+          task.status !== "queued" &&
+          task.status !== "unknown-status"
+        ) {
           confirmed = task;
           break;
         }
@@ -2540,15 +2642,47 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         sessionEpoch: context.session.createdAt,
         sendOrdinal: context.sentCount,
       });
+      // The transcript row: the raw response JSON, exactly like Aether's own
+      // composer (packages/conversation toolResponseRequestBody).
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors aether-web's wire-exact transcript row, not a schema decode.
+      const answerPayload = JSON.stringify(built.data);
+      // Same at-most-once pin as sendTurn, and needed for the same reason: the
+      // id is deterministic per ordinal, so a retry after a lost 202 reuses it
+      // and Aether's ON CONFLICT dedupe resolves it to the ORIGINAL row. Left
+      // unguarded, a retry carrying DIFFERENT answers advanced the ordinal,
+      // resolved the panel with the NEW answers and announced the turn — the
+      // transcript claiming an answer set that was never sent.
+      const answerFingerprint = dispatchFingerprintOf({
+        message: `${requestKey}\u0001${answerPayload}`,
+        model: undefined,
+        effort: undefined,
+        interactionMode: undefined,
+        attachments: undefined,
+      });
+      const pinnedAnswer = context.pendingSend;
+      if (
+        pinnedAnswer !== undefined &&
+        pinnedAnswer.ordinal === context.sentCount &&
+        pinnedAnswer.fingerprint !== answerFingerprint
+      ) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "respondToUserInput",
+          issue:
+            "The previous answer was already dispatched to Aether but its result never came back. Retry with exactly the same answers, or wait for it to appear and continue from there.",
+        });
+      }
+      context.pendingSend = {
+        ordinal: context.sentCount,
+        clientMessageId,
+        fingerprint: answerFingerprint,
+      };
       // Registered BEFORE the call (see sendTurn): the answer row can hit
       // the wire before the 202 lands here.
       context.issuedClientMessageIds.add(clientMessageId);
       const responded = yield* restClient
         .respondToTask(taskId, {
-          // The transcript row: the raw response JSON, exactly like Aether's
-          // own composer (packages/conversation toolResponseRequestBody).
-          // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors aether-web's wire-exact transcript row, not a schema decode.
-          message: JSON.stringify(built.data),
+          message: answerPayload,
           tool_response: { tool_name: "ask_user", data: built.data },
           client_message_id: clientMessageId,
         })
@@ -2564,7 +2698,8 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
                 // stale-request machinery (ProviderCommandReactor, decider,
                 // ProjectionPipeline) classifies the failure only by that
                 // substring. The decoded body's message rides along.
-                (context.reconcile ?? Effect.void).pipe(
+                Effect.sync(() => releasePendingSendIfRejected(context, cause)).pipe(
+                  Effect.andThen(context.reconcile ?? Effect.void),
                   Effect.andThen(
                     Effect.fail(
                       new ProviderAdapterRequestError({
@@ -2576,10 +2711,13 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
                     ),
                   ),
                 )
-              : Effect.fail(toRestRequestError("respondToUserInput")(cause)),
+              : Effect.sync(() => releasePendingSendIfRejected(context, cause)).pipe(
+                  Effect.andThen(Effect.fail(toRestRequestError("respondToUserInput")(cause))),
+                ),
           ),
         );
       context.sentCount++;
+      context.pendingSend = undefined;
       context.adoptActiveTurn = false;
       // Resolve the panel BEFORE announcing the resumed turn.
       if (context.mapper !== undefined) {

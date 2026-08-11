@@ -2760,6 +2760,56 @@ describe("AetherAdapter turn lifecycle", () => {
     }),
   );
 
+  it.effect("does not accept an unknown task status as proof the stop landed", () =>
+    Effect.gen(function* () {
+      // `unknown-status` is the forward-compat carrier for a status this build
+      // does not know — NOT evidence the turn stopped. Accepting it let Stop
+      // report success and mark the session ready with no terminal turn event.
+      const unknownStatusTask = {
+        ...processingTask,
+        status: "unknown-status" as const,
+        rawStatus: "some_future_status",
+      };
+      let getTaskCalls = 0;
+      const deltas = scriptedDeltas([
+        delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+      ]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () =>
+              Effect.sync(() => {
+                getTaskCalls++;
+                return unknownStatusTask;
+              }),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: () => Effect.succeed({ message_id: "m2" }),
+            stopTask: () => Effect.void,
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "turn two" });
+            const beforeConfirm = getTaskCalls;
+
+            const failure = yield* Effect.flip(adapter.interruptTurn(session.threadId));
+            expect(failure._tag).toBe("ProviderAdapterRequestError");
+            expect(failure.message).toContain("could not be confirmed");
+            // It kept polling rather than accepting the first unknown answer.
+            expect(getTaskCalls - beforeConfirm).toBeGreaterThan(1);
+          }),
+      );
+    }),
+  );
+
   it.effect("settles the discarded queued turn even when the stop cannot be confirmed", () =>
     Effect.gen(function* () {
       // The stop SUCCEEDS — Aether has already dropped the queued message —
@@ -2836,6 +2886,155 @@ describe("AetherAdapter turn lifecycle", () => {
     }),
   );
 
+  it.effect("a definitive API rejection releases the pin so a corrected prompt can go out", () =>
+    Effect.gen(function* () {
+      // The server ANSWERED with a 4xx: it committed nothing, so the ordinal's
+      // client_message_id is unspent. Holding the pin here would refuse every
+      // corrected prompt forever with no way back.
+      let respondCalls = 0;
+      const deltas = scriptedDeltas([
+        delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+      ]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: () =>
+              Effect.sync(() => {
+                respondCalls++;
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new AetherApiNotFoundError({
+                      endpoint: "/tasks/task-1/respond",
+                      detail: "task not found",
+                    }),
+                  ),
+                ),
+              ),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            yield* Effect.flip(
+              adapter.sendTurn({ threadId: session.threadId, input: "original prompt" }),
+            );
+            expect(respondCalls).toBe(1);
+
+            // A CHANGED prompt reaches the wire — it is not refused locally.
+            const corrected = yield* Effect.flip(
+              adapter.sendTurn({ threadId: session.threadId, input: "a corrected prompt" }),
+            );
+            expect(corrected._tag).toBe("ProviderAdapterRequestError");
+            expect(respondCalls).toBe(2);
+          }),
+      );
+    }),
+  );
+
+  it.effect("reconcile observing the committed row releases the pin and burns its ordinal", () =>
+    Effect.gen(function* () {
+      // The steer's 202 was lost but Aether DID commit the row. Once it shows
+      // up in the durable feed the pin must go and the ordinal must advance —
+      // otherwise a changed follow-up stays refused forever, and the next send
+      // would reuse a client_message_id the server has already spent.
+      let respondCalls = 0;
+      let sessionEpoch = "";
+      let steerRowVisible = false;
+      const sentClientMessageIds: Array<string | undefined> = [];
+      const restClient: AetherRestClient = {
+        ...unusedRestClient,
+        listProjects: () => Effect.succeed([project()]),
+        getTask: () => Effect.succeed(processingTask),
+        getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+        respondToTask: (_taskId, request) =>
+          Effect.suspend(() => {
+            respondCalls++;
+            sentClientMessageIds.push(request.client_message_id);
+            // Turn 1 lands; the steer's answer is lost in transit.
+            return respondCalls === 1
+              ? Effect.succeed({ message_id: "m2" })
+              : Effect.fail(
+                  new AetherApiTransportError({
+                    endpoint: "/tasks/task-1/respond",
+                    detail: "The request did not complete before the deadline.",
+                  }),
+                );
+          }),
+        getConversationDelta: (_taskId, _after) =>
+          Effect.sync(() =>
+            steerRowVisible
+              ? delta({
+                  task: processingTask,
+                  activeMessageId: "m2",
+                  messages: [
+                    {
+                      id: "m3",
+                      role: "user",
+                      content: "steer it",
+                      deliveryStatus: "queued",
+                      timestamp: "t5",
+                      sequence: 5,
+                      // The row Aether committed for the steer whose 202 never
+                      // came back, carrying the driver's own pinned id.
+                      clientMessageId: deterministicClientMessageId({
+                        taskId: "task-1",
+                        sessionEpoch,
+                        sendOrdinal: 1,
+                      }),
+                    },
+                  ],
+                  latestSequence: 5,
+                })
+              : delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+          ),
+      };
+      yield* withAdapter({ restClient }, (adapter) =>
+        Effect.gen(function* () {
+          const session = yield* adapter.startSession(
+            startInput({
+              resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+            }),
+          );
+          sessionEpoch = session.createdAt;
+          yield* adapter.sendTurn({ threadId: session.threadId, input: "turn two" });
+          // The steer's answer is lost: the pin holds at this ordinal.
+          yield* Effect.flip(adapter.sendTurn({ threadId: session.threadId, input: "steer it" }));
+          expect(respondCalls).toBe(2);
+          const pinnedId = sentClientMessageIds[1];
+
+          // Still pinned: a CHANGED follow-up is refused before the wire.
+          const refused = yield* Effect.flip(
+            adapter.sendTurn({ threadId: session.threadId, input: "a changed follow-up" }),
+          );
+          expect(refused._tag).toBe("ProviderAdapterValidationError");
+          expect(respondCalls).toBe(2);
+
+          // …until the committed row shows up in the durable feed.
+          steerRowVisible = true;
+          yield* drainPoll;
+
+          // Now it goes out, under a FRESH id — reusing the spent one would
+          // dedupe the new prompt away.
+          yield* Effect.flip(
+            adapter.sendTurn({ threadId: session.threadId, input: "a changed follow-up" }),
+          );
+          expect(respondCalls).toBe(3);
+          expect(sentClientMessageIds[2]).not.toBe(pinnedId);
+        }),
+      );
+    }),
+  );
+
   it.effect("rejects an interrupt naming a turn that already settled", () =>
     Effect.gen(function* () {
       // `stopTask` stops the TASK, so an interrupt that raced its target's
@@ -2908,10 +3107,13 @@ describe("AetherAdapter turn lifecycle", () => {
                 respondCalls++;
               }).pipe(
                 Effect.andThen(
+                  // A TRANSPORT failure: the outcome is genuinely unknown, so
+                  // the row may or may not have committed and the pin holds.
+                  // (A 4xx would PROVE nothing committed and release it.)
                   Effect.fail(
-                    new AetherApiNotFoundError({
+                    new AetherApiTransportError({
                       endpoint: "/tasks/task-1/respond",
-                      detail: "lost",
+                      detail: "The request did not complete before the deadline.",
                     }),
                   ),
                 ),
