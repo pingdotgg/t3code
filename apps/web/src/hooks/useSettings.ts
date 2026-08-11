@@ -233,16 +233,14 @@ export function useClientSettings<T = ClientSettings>(
 /** Canonical runtime policy resolved from the legacy-compatible client settings shape. */
 export function useClientThreadAutoSettlePolicy() {
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
-  const autoSettleOnPullRequestCompletion = useClientSettings(
-    (settings) => settings.sidebarAutoSettleOnPullRequestCompletion,
-  );
+  const autoSettleMode = useClientSettings((settings) => settings.sidebarAutoSettleMode);
   return useMemo(
     () =>
       resolveClientThreadAutoSettlePolicy({
         sidebarAutoSettleAfterDays: autoSettleAfterDays,
-        sidebarAutoSettleOnPullRequestCompletion: autoSettleOnPullRequestCompletion,
+        sidebarAutoSettleMode: autoSettleMode,
       }),
-    [autoSettleAfterDays, autoSettleOnPullRequestCompletion],
+    [autoSettleAfterDays, autoSettleMode],
   );
 }
 

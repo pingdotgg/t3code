@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  mobileThreadAutoSettleModePatch,
-  resolveMobileThreadAutoSettlePolicy,
-} from "./thread-auto-settle.logic";
+import { resolveMobileThreadAutoSettlePolicy } from "./thread-auto-settle.logic";
 
 describe("mobile thread auto-settle policy", () => {
   it("defaults to the combined three-day policy", () => {
@@ -20,6 +17,5 @@ describe("mobile thread auto-settle policy", () => {
     ["inactive-or-pull-request", { mode: "inactive-or-pull-request", afterDays: 3 }],
   ] as const)("resolves the %s preference", (mode, expected) => {
     expect(resolveMobileThreadAutoSettlePolicy({ threadAutoSettleMode: mode })).toEqual(expected);
-    expect(mobileThreadAutoSettleModePatch(mode)).toEqual({ threadAutoSettleMode: mode });
   });
 });

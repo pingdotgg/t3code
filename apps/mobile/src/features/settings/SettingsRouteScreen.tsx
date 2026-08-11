@@ -43,10 +43,7 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import {
-  mobileThreadAutoSettleModePatch,
-  useMobileThreadAutoSettlePolicy,
-} from "../../state/thread-auto-settle";
+import { useMobileThreadAutoSettlePolicy } from "../../state/thread-auto-settle";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
   type AppUpdateCheckState,
@@ -567,7 +564,7 @@ function GeneralSettingsSection() {
           actions={autoSettleActions}
           onPressAction={({ nativeEvent }) => {
             if (!isThreadAutoSettleMode(nativeEvent.event)) return;
-            savePreferences(mobileThreadAutoSettleModePatch(nativeEvent.event));
+            savePreferences({ threadAutoSettleMode: nativeEvent.event });
           }}
         >
           {autoSettleRow}

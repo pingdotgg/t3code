@@ -18,6 +18,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
+  DEFAULT_THREAD_AUTO_SETTLE_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type EnvironmentIdentificationMode,
   MAX_CODE_FONT_SIZE,
@@ -475,6 +476,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
+  const autoSettleMode = resolveClientThreadAutoSettleMode(settings);
 
   const changedSettingLabels = useMemo(
     () => [
@@ -498,8 +500,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.sidebarAutoSettleAfterDays !==
         DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ||
-      settings.sidebarAutoSettleOnPullRequestCompletion !==
-        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnPullRequestCompletion
+      autoSettleMode !== DEFAULT_THREAD_AUTO_SETTLE_MODE
         ? ["Auto-settle threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
@@ -556,7 +557,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarAutoSettleAfterDays,
-      settings.sidebarAutoSettleOnPullRequestCompletion,
+      autoSettleMode,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
@@ -638,8 +639,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
-      sidebarAutoSettleOnPullRequestCompletion:
-        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnPullRequestCompletion,
+      sidebarAutoSettleMode: DEFAULT_THREAD_AUTO_SETTLE_MODE,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -1853,15 +1853,13 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.sidebarAutoSettleAfterDays !==
               DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ||
-            settings.sidebarAutoSettleOnPullRequestCompletion !==
-              DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnPullRequestCompletion ? (
+            autoSettleMode !== DEFAULT_THREAD_AUTO_SETTLE_MODE ? (
               <SettingResetButton
                 label="auto-settle threads"
                 onClick={() =>
                   updateSettings({
                     sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
-                    sidebarAutoSettleOnPullRequestCompletion:
-                      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnPullRequestCompletion,
+                    sidebarAutoSettleMode: DEFAULT_THREAD_AUTO_SETTLE_MODE,
                   })
                 }
               />

@@ -82,7 +82,7 @@ describe("ClientSettings sidebar", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
-    expect(settings.sidebarAutoSettleOnPullRequestCompletion).toBe(true);
+    expect(settings.sidebarAutoSettleMode).toBeUndefined();
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -108,15 +108,13 @@ describe("ClientSettings sidebar", () => {
     ).toBeNull();
   });
 
-  it("allows auto-settle on pull request completion to be disabled", () => {
+  it("accepts an explicit auto-settle mode", () => {
+    expect(decodeClientSettings({ sidebarAutoSettleMode: "never" }).sidebarAutoSettleMode).toBe(
+      "never",
+    );
     expect(
-      decodeClientSettings({ sidebarAutoSettleOnPullRequestCompletion: false })
-        .sidebarAutoSettleOnPullRequestCompletion,
-    ).toBe(false);
-    expect(
-      decodeClientSettingsPatch({ sidebarAutoSettleOnPullRequestCompletion: false })
-        .sidebarAutoSettleOnPullRequestCompletion,
-    ).toBe(false);
+      decodeClientSettingsPatch({ sidebarAutoSettleMode: "pull-request" }).sidebarAutoSettleMode,
+    ).toBe("pull-request");
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
