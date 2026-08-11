@@ -31,6 +31,93 @@ struct DailyUXSidebarTests {
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
     @Test
+    func swipePlanKeepsDeleteOutOfTheFullSwipeSlot() {
+        let active = thread(id: "active", created: -20, updated: -10)
+        let settled = thread(
+            id: "settled",
+            created: -20,
+            updated: -10,
+            isSettled: true
+        )
+        let settledButWorking = thread(
+            id: "settled-working",
+            created: -20,
+            updated: -10,
+            state: .working,
+            isSettled: true
+        )
+
+        let activePlan = HomeThreadSwipeActionPlan.make(
+            thread: active,
+            isArchived: false,
+            now: now
+        )
+        let settledPlan = HomeThreadSwipeActionPlan.make(
+            thread: settled,
+            isArchived: false,
+            now: now
+        )
+        let settledButWorkingPlan = HomeThreadSwipeActionPlan.make(
+            thread: settledButWorking,
+            isArchived: false,
+            now: now
+        )
+
+        #expect(activePlan.orderedActions == [.settle, .delete])
+        #expect(settledPlan.orderedActions == [.reopen, .delete])
+        #expect(settledButWorkingPlan.orderedActions == [.settle, .delete])
+        #expect(activePlan.performsPrimaryWithFullSwipe)
+        #expect(!activePlan.deleteFinishesOptimistically)
+        #expect(activePlan.orderedActions.first != .delete)
+    }
+
+    @Test
+    func settleUndoCapturesOnlyStateThatSettlementClears() {
+        let snoozeUntil = now.addingTimeInterval(300)
+        let pinnedAndSnoozed = thread(
+            id: "pinned",
+            created: -20,
+            updated: -10,
+            pinned: -5,
+            snoozedUntil: snoozeUntil
+        )
+        let snoozedOnly = thread(
+            id: "snoozed",
+            created: -20,
+            updated: -10,
+            snoozedUntil: snoozeUntil
+        )
+
+        #expect(
+            HomeThreadSettleUndoRestoration.capture(from: pinnedAndSnoozed)
+                == HomeThreadSettleUndoRestoration(
+                    restoresPin: true,
+                    restoresSnoozeUntil: snoozeUntil
+                )
+        )
+        #expect(
+            HomeThreadSettleUndoRestoration.capture(from: snoozedOnly)
+                == HomeThreadSettleUndoRestoration(
+                    restoresPin: false,
+                    restoresSnoozeUntil: nil
+                )
+        )
+    }
+
+    @Test
+    func reopeningDoesNotSupersedeAnInFlightSettleNotice() {
+        let settleRequestID = UUID()
+        var state = HomeThreadSettleUndoState()
+
+        #expect(
+            state.beginSettleRequest(ifSettling: true, id: settleRequestID)
+                == settleRequestID
+        )
+        #expect(state.beginSettleRequest(ifSettling: false) == nil)
+        #expect(state.latestSettleRequestID == settleRequestID)
+    }
+
+    @Test
     func settleUndoTargetsOnlyTheLatestNoticeOnce() {
         let firstID = UUID()
         let secondID = UUID()
@@ -122,7 +209,7 @@ struct DailyUXSidebarTests {
             HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousThread: active,
+                previousWasEffectivelySettled: false,
                 updatedThread: settled
             )
         )
@@ -130,7 +217,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: false,
                 didSucceed: true,
-                previousThread: active,
+                previousWasEffectivelySettled: false,
                 updatedThread: settled
             )
         )
@@ -138,7 +225,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: false,
-                previousThread: active,
+                previousWasEffectivelySettled: false,
                 updatedThread: settled
             )
         )
@@ -146,7 +233,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousThread: settled,
+                previousWasEffectivelySettled: true,
                 updatedThread: settled
             )
         )
@@ -154,7 +241,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousThread: active,
+                previousWasEffectivelySettled: false,
                 updatedThread: active
             )
         )
@@ -162,7 +249,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousThread: active,
+                previousWasEffectivelySettled: false,
                 updatedThread: nil
             )
         )
@@ -622,7 +709,9 @@ struct DailyUXSidebarTests {
         created: TimeInterval,
         updated: TimeInterval,
         state: FeatureThreadState = .idle,
-        isSettled: Bool = false
+        isSettled: Bool = false,
+        pinned: TimeInterval? = nil,
+        snoozedUntil: Date? = nil
     ) -> FeatureThread {
         FeatureThread(
             id: id,
@@ -632,7 +721,10 @@ struct DailyUXSidebarTests {
             updatedAt: now.addingTimeInterval(updated),
             state: state,
             isSettled: isSettled,
-            lastActivityAt: now.addingTimeInterval(updated)
+            lastActivityAt: now.addingTimeInterval(updated),
+            snoozedUntil: snoozedUntil,
+            snoozedAt: snoozedUntil.map { _ in now.addingTimeInterval(updated) },
+            pinnedAt: pinned.map(now.addingTimeInterval)
         )
     }
 }

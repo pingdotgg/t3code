@@ -1,6 +1,45 @@
 import SwiftUI
 import UIKit
 
+enum HomeThreadSwipeActionKind: Equatable, Sendable {
+    case restore
+    case unpin
+    case settle
+    case reopen
+    case archive
+    case delete
+}
+
+struct HomeThreadSwipeActionPlan: Equatable, Sendable {
+    let primary: HomeThreadSwipeActionKind
+    let secondary: HomeThreadSwipeActionKind = .delete
+    let performsPrimaryWithFullSwipe = true
+    let deleteFinishesOptimistically = false
+
+    var orderedActions: [HomeThreadSwipeActionKind] {
+        [primary, secondary]
+    }
+
+    static func make(
+        thread: FeatureThread,
+        isArchived: Bool,
+        now: Date
+    ) -> HomeThreadSwipeActionPlan {
+        if isArchived {
+            return HomeThreadSwipeActionPlan(primary: .restore)
+        }
+        if thread.pinnedAt != nil, thread.canTogglePin {
+            return HomeThreadSwipeActionPlan(primary: .unpin)
+        }
+        if thread.canToggleSettlement {
+            return HomeThreadSwipeActionPlan(
+                primary: thread.isEffectivelySettled(at: now) ? .reopen : .settle
+            )
+        }
+        return HomeThreadSwipeActionPlan(primary: .archive)
+    }
+}
+
 /// A recycled, diffable Home surface. SwiftUI still owns the surrounding shell,
 /// while UIKit keeps row creation and updates proportional to visible threads.
 struct HomeThreadCollectionView: UIViewRepresentable {
@@ -20,7 +59,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onShowMoreSettled: () -> Void
     let onRename: (FeatureThread) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
-    let onSettle: (FeatureThread, Bool) -> Void
+    let onSettle: (FeatureThread, Bool, Bool) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
     let onDelete: (FeatureThread) -> Void
@@ -193,17 +232,23 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 return nil
             }
 
+            let plan = HomeThreadSwipeActionPlan.make(
+                thread: thread,
+                isArchived: isArchived,
+                now: .now
+            )
             let delete = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, finish in
                 self?.parent.onDelete(thread)
                 // Deletion is deferred until the confirmation alert. Keep the
                 // row in place if the user cancels instead of letting UIKit
                 // animate an optimistic removal that never reached the model.
-                finish(false)
+                finish(plan.deleteFinishesOptimistically)
             }
             delete.image = UIImage(systemName: "trash")
 
             let primaryAction: UIContextualAction
-            if isArchived {
+            switch plan.primary {
+            case .restore:
                 primaryAction = UIContextualAction(style: .normal, title: "Restore") {
                     [weak self] _, _, finish in
                     self?.parent.onArchive(thread, false)
@@ -211,7 +256,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 }
                 primaryAction.image = UIImage(systemName: "arrow.uturn.backward")
                 primaryAction.backgroundColor = .systemBlue
-            } else if thread.pinnedAt != nil, thread.canTogglePin {
+            case .unpin:
                 primaryAction = UIContextualAction(style: .normal, title: "Unpin") {
                     [weak self] _, _, finish in
                     self?.parent.onPin(thread, false)
@@ -219,20 +264,24 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 }
                 primaryAction.image = UIImage(systemName: "pin.slash")
                 primaryAction.backgroundColor = .systemBlue
-            } else if thread.canToggleSettlement {
-                let isSettled = thread.isEffectivelySettled(at: .now)
+            case .settle, .reopen:
+                let wasEffectivelySettled = plan.primary == .reopen
                 primaryAction = UIContextualAction(
                     style: .normal,
-                    title: isSettled ? "Reopen" : "Settle"
+                    title: wasEffectivelySettled ? "Reopen" : "Settle"
                 ) { [weak self] _, _, finish in
-                    self?.parent.onSettle(thread, !isSettled)
+                    self?.parent.onSettle(
+                        thread,
+                        !wasEffectivelySettled,
+                        wasEffectivelySettled
+                    )
                     finish(true)
                 }
                 primaryAction.image = UIImage(
-                    systemName: isSettled ? "arrow.counterclockwise" : "checkmark"
+                    systemName: wasEffectivelySettled ? "arrow.counterclockwise" : "checkmark"
                 )
-                primaryAction.backgroundColor = isSettled ? .systemBlue : .systemGreen
-            } else {
+                primaryAction.backgroundColor = wasEffectivelySettled ? .systemBlue : .systemGreen
+            case .archive:
                 primaryAction = UIContextualAction(style: .normal, title: "Archive") {
                     [weak self] _, _, finish in
                     self?.parent.onArchive(thread, true)
@@ -240,10 +289,12 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 }
                 primaryAction.image = UIImage(systemName: "archivebox")
                 primaryAction.backgroundColor = .systemGray
+            case .delete:
+                preconditionFailure("Delete cannot be the primary full-swipe action")
             }
 
             let configuration = UISwipeActionsConfiguration(actions: [primaryAction, delete])
-            configuration.performsFirstActionWithFullSwipe = true
+            configuration.performsFirstActionWithFullSwipe = plan.performsPrimaryWithFullSwipe
             return configuration
         }
 
@@ -407,15 +458,19 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     )
                 }
                 if thread.canToggleSettlement {
-                    let isSettled = thread.isEffectivelySettled(at: .now)
+                    let wasEffectivelySettled = thread.isEffectivelySettled(at: .now)
                     actions.append(
                         UIAction(
-                            title: isSettled ? "Reopen" : "Settle",
+                            title: wasEffectivelySettled ? "Reopen" : "Settle",
                             image: UIImage(
-                                systemName: isSettled ? "arrow.counterclockwise" : "checkmark"
+                                systemName: wasEffectivelySettled ? "arrow.counterclockwise" : "checkmark"
                             )
                         ) { [weak self] _ in
-                            self?.parent.onSettle(thread, !isSettled)
+                            self?.parent.onSettle(
+                                thread,
+                                !wasEffectivelySettled,
+                                wasEffectivelySettled
+                            )
                         }
                     )
                 }
