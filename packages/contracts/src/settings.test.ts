@@ -6,6 +6,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
+  MAX_WALLPAPER_IMAGE_DATA_URL_CHARS,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -46,6 +47,36 @@ describe("ClientSettings glass opacity", () => {
   it.each([40, 75, 100])("accepts a glass opacity within the supported range: %s", (value) => {
     expect(decodeClientSettings({ glassOpacity: value }).glassOpacity).toBe(value);
     expect(decodeClientSettingsPatch({ glassOpacity: value }).glassOpacity).toBe(value);
+  });
+});
+
+describe("ClientSettings wallpaper", () => {
+  it("defaults to no wallpaper under a heavy theme wash", () => {
+    const decoded = decodeClientSettings({});
+    expect(decoded.wallpaperImage).toBe("");
+    expect(decoded.wallpaperOpacity).toBe(15);
+  });
+
+  it("accepts an image and clears it with an empty string", () => {
+    const image = "data:image/webp;base64,AAAA";
+    expect(decodeClientSettings({ wallpaperImage: image }).wallpaperImage).toBe(image);
+    expect(decodeClientSettingsPatch({ wallpaperImage: "" }).wallpaperImage).toBe("");
+  });
+
+  it("rejects an image beyond the storage budget", () => {
+    const oversized = "x".repeat(MAX_WALLPAPER_IMAGE_DATA_URL_CHARS + 1);
+    expect(() => decodeClientSettings({ wallpaperImage: oversized })).toThrow();
+    expect(() => decodeClientSettingsPatch({ wallpaperImage: oversized })).toThrow();
+  });
+
+  it.each([4, 81, 42.5])("rejects an invalid wallpaper opacity: %s", (value) => {
+    expect(() => decodeClientSettings({ wallpaperOpacity: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ wallpaperOpacity: value })).toThrow();
+  });
+
+  it.each([5, 45, 80])("accepts a wallpaper opacity within the supported range: %s", (value) => {
+    expect(decodeClientSettings({ wallpaperOpacity: value }).wallpaperOpacity).toBe(value);
+    expect(decodeClientSettingsPatch({ wallpaperOpacity: value }).wallpaperOpacity).toBe(value);
   });
 });
 

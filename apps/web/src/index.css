@@ -1468,6 +1468,73 @@ body {
   background-size: var(--surface-grain-size);
 }
 
+/* User wallpaper (Settings → Appearance): a fixed layer behind the whole app
+   that becomes the canvas — the image under a theme-colored gradient, the
+   chrome color ramping to the background, washing it at whatever strength
+   --wallpaper-opacity leaves. Unlike the grain above, a full-viewport fixed
+   layer is affordable here: it exists only while a wallpaper is set, and it
+   sits behind the app instead of compositing over every frame of content. */
+html[data-wallpaper]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(
+      to bottom,
+      color-mix(
+        in srgb,
+        var(--app-chrome-background) calc(100% - var(--wallpaper-opacity)),
+        transparent
+      ),
+      color-mix(in srgb, var(--background) calc(100% - var(--wallpaper-opacity)), transparent)
+    ),
+    var(--wallpaper-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+/* That layer paints above the root's background but below the body's, so the
+   body's fill has to clear while the root stays opaque as the color shown
+   until the image decodes. Both need !important: syncBrowserChromeTheme
+   writes these two colors as inline styles. The body's grain keeps rendering
+   over the wallpaper like it does over any other surface. */
+html[data-wallpaper] {
+  background-color: var(--app-chrome-background) !important;
+}
+
+html[data-wallpaper] body {
+  background-color: transparent !important;
+}
+
+/* The workspace column and the full-bleed wrappers inside it paint the canvas
+   color the layer above already carries, so they would bury it under an
+   opaque copy. Clearing them lets the wallpaper *be* the canvas — everything
+   that sits on top (cards, bubbles, the composer, popovers) keeps its own
+   paint and stays readable with no further changes. The chat header is the
+   one such surface that is not a direct child of the inset. */
+html[data-wallpaper] main[data-slot="sidebar-inset"],
+html[data-wallpaper] main[data-slot="sidebar-inset"] > .bg-background,
+html[data-wallpaper] [data-chat-header].bg-background {
+  background-color: transparent;
+}
+
+/* The sidebar is chrome rather than canvas, so it keeps a surface — a
+   translucent one at the glass opacity the user already controls, which is how
+   backdrops ghost through every other glass surface in the app. The fixed
+   container and its inner column both paint bg-sidebar; only one may keep
+   color, or the two translucent layers stack back into an opaque one. The
+   mobile sheet sidebar is deliberately untouched: it floats above content, so
+   translucency there would reveal the page, not the wallpaper. */
+html[data-wallpaper] [data-slot="sidebar-container"] {
+  background-color: transparent;
+}
+
+html[data-wallpaper] [data-slot="sidebar-inner"] {
+  background-color: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
+}
+
 pre,
 code {
   font-family: var(--font-mono);

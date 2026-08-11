@@ -256,14 +256,20 @@ function resolveBrowserChromeSurface(): HTMLElement {
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
   const rootStyles = getComputedStyle(document.documentElement);
-  const themeChromeColor = document.documentElement.dataset.themeId
-    ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
-    : null;
+  // A theme file names its own chrome color, and a wallpaper turns the shell
+  // surfaces probed below translucent — reporting one of those would hand the
+  // browser a color with alpha. Both cases resolve to the chrome color, which
+  // is what paints behind the app either way.
+  const chromeColor =
+    document.documentElement.dataset.themeId ||
+    document.documentElement.hasAttribute("data-wallpaper")
+      ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
+      : null;
   const surfaceColor = normalizeThemeColor(
     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
   );
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
-  const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
+  const backgroundColor = chromeColor ?? surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
 
   document.documentElement.style.backgroundColor = backgroundColor;

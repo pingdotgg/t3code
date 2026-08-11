@@ -26,12 +26,15 @@ import {
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
+  MAX_WALLPAPER_IMAGE_DATA_URL_CHARS,
+  MAX_WALLPAPER_OPACITY,
   MIN_CODE_FONT_SIZE,
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_TERMINAL_FONT_SIZE,
+  MIN_WALLPAPER_OPACITY,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -75,6 +78,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
+import { compressImageForStash } from "../../lib/imageCompression";
 import { isMacPlatform } from "../../lib/utils";
 import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
 import { useProjects } from "../../state/entities";
@@ -474,6 +478,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(!followSystem ? ["Follow system"] : []),
       ...(themeHalves !== null ? ["Theme mix"] : []),
       ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? ["Glass opacity"] : []),
+      ...(settings.wallpaperImage !== DEFAULT_UNIFIED_SETTINGS.wallpaperImage ||
+      settings.wallpaperOpacity !== DEFAULT_UNIFIED_SETTINGS.wallpaperOpacity
+        ? ["Wallpaper"]
+        : []),
       ...(settings.environmentIdentificationMode !==
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
@@ -558,6 +566,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
+      settings.wallpaperImage,
+      settings.wallpaperOpacity,
       settings.wordWrap,
       followSystem,
       theme,
@@ -633,6 +643,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      wallpaperImage: DEFAULT_UNIFIED_SETTINGS.wallpaperImage,
+      wallpaperOpacity: DEFAULT_UNIFIED_SETTINGS.wallpaperOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
@@ -962,6 +974,30 @@ export function AppearanceSettingsPanel() {
     "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
   } as CSSProperties;
+  const wallpaperInputRef = useRef<HTMLInputElement | null>(null);
+  const [wallpaperError, setWallpaperError] = useState<string | null>(null);
+  const hasWallpaper = settings.wallpaperImage !== "";
+  const wallpaperOpacityRatio =
+    (settings.wallpaperOpacity - MIN_WALLPAPER_OPACITY) /
+    (MAX_WALLPAPER_OPACITY - MIN_WALLPAPER_OPACITY);
+  const wallpaperOpacitySliderStyle = {
+    "--settings-slider-progress": `${wallpaperOpacityRatio * 100}%`,
+    "--settings-slider-fill-offset": `${0.5 - wallpaperOpacityRatio}rem`,
+  } as CSSProperties;
+
+  const chooseWallpaper = async (file: File) => {
+    const compressed = await compressImageForStash(file, MAX_WALLPAPER_IMAGE_DATA_URL_CHARS);
+    if (!compressed.ok) {
+      setWallpaperError(
+        compressed.reason === "unreadable"
+          ? "That file could not be read as an image."
+          : "That image is too large to store as a wallpaper.",
+      );
+      return;
+    }
+    setWallpaperError(null);
+    updateSettings({ wallpaperImage: compressed.image.dataUrl });
+  };
 
   return (
     <SettingsPageContainer>
@@ -1027,6 +1063,99 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        <SettingsRow
+          {...searchableSetting("wallpaper")}
+          description="Show an image behind the app. The theme color washes over it, and the sidebar and the app's glass surfaces let it ghost through."
+          status={
+            wallpaperError ? <span className="text-destructive">{wallpaperError}</span> : null
+          }
+          resetAction={
+            hasWallpaper ? (
+              <SettingResetButton
+                label="wallpaper"
+                onClick={() => {
+                  setWallpaperError(null);
+                  updateSettings({ wallpaperImage: "" });
+                }}
+              />
+            ) : null
+          }
+          control={
+            <div className="flex items-center gap-3">
+              {hasWallpaper ? (
+                <img
+                  alt="Current wallpaper"
+                  className="h-9 w-14 rounded-md border border-border object-cover"
+                  src={settings.wallpaperImage}
+                />
+              ) : null}
+              <input
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  // Cleared so picking the same file again still fires a change.
+                  event.currentTarget.value = "";
+                  if (file) void chooseWallpaper(file);
+                }}
+                ref={wallpaperInputRef}
+                type="file"
+              />
+              <Button variant="outline" onClick={() => wallpaperInputRef.current?.click()}>
+                {hasWallpaper ? "Change image…" : "Choose image…"}
+              </Button>
+            </div>
+          }
+        />
+
+        {hasWallpaper ? (
+          <SettingsRow
+            {...searchableSetting("setting-wallpaper-opacity")}
+            description="Control how strongly the wallpaper reads as the app canvas. Lower values let more of the theme color wash over the image."
+            resetAction={
+              settings.wallpaperOpacity !== DEFAULT_UNIFIED_SETTINGS.wallpaperOpacity ? (
+                <SettingResetButton
+                  label="wallpaper opacity"
+                  onClick={() =>
+                    updateSettings({ wallpaperOpacity: DEFAULT_UNIFIED_SETTINGS.wallpaperOpacity })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <div className="flex w-full items-center gap-3 sm:w-52">
+                <output
+                  className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
+                  htmlFor="wallpaper-opacity"
+                >
+                  {settings.wallpaperOpacity}%
+                </output>
+                <input
+                  aria-label="Wallpaper opacity"
+                  className="settings-slider min-w-0 flex-1"
+                  id="wallpaper-opacity"
+                  max={MAX_WALLPAPER_OPACITY}
+                  min={MIN_WALLPAPER_OPACITY}
+                  onChange={(event) => {
+                    const wallpaperOpacity = Number(event.currentTarget.value);
+                    if (
+                      Number.isInteger(wallpaperOpacity) &&
+                      wallpaperOpacity >= MIN_WALLPAPER_OPACITY &&
+                      wallpaperOpacity <= MAX_WALLPAPER_OPACITY
+                    ) {
+                      updateSettings({ wallpaperOpacity });
+                    }
+                  }}
+                  step={5}
+                  style={wallpaperOpacitySliderStyle}
+                  type="range"
+                  value={settings.wallpaperOpacity}
+                />
+              </div>
+            }
+          />
+        ) : null}
 
         {showEnvironmentIdentification ? (
           <SettingsRow

@@ -64,6 +64,35 @@ export const GlassOpacity = Schema.Int.check(
 export type GlassOpacity = typeof GlassOpacity.Type;
 export const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 /**
+ * An image shown behind the whole app, held as a data URL so a wallpaper
+ * travels with the settings it belongs to; "" means no wallpaper. The cap is
+ * the per-image budget the prompt stash already uses, which keeps the value
+ * inside the ~5MB storage quota clients persist settings into; clients
+ * compress images down to it before saving.
+ */
+export const MAX_WALLPAPER_IMAGE_DATA_URL_CHARS = 1_300_000;
+export const WallpaperImage = Schema.String.check(
+  Schema.isMaxLength(MAX_WALLPAPER_IMAGE_DATA_URL_CHARS),
+);
+export type WallpaperImage = typeof WallpaperImage.Type;
+/**
+ * How strongly the wallpaper reads as the app canvas, in percent: the theme's
+ * chrome color washes over the image at the remainder. The bounds skip the
+ * unusable extremes — below the floor a set wallpaper is invisible, which is
+ * what clearing it is for, and above the ceiling text that sits directly on
+ * the canvas loses its backing.
+ */
+export const MIN_WALLPAPER_OPACITY = 5;
+export const MAX_WALLPAPER_OPACITY = 80;
+export const WallpaperOpacity = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_WALLPAPER_OPACITY,
+    maximum: MAX_WALLPAPER_OPACITY,
+  }),
+);
+export type WallpaperOpacity = typeof WallpaperOpacity.Type;
+export const DEFAULT_WALLPAPER_OPACITY: WallpaperOpacity = 15;
+/**
  * Font size preferences, in CSS pixels. The ranges are deliberately narrow:
  * the interface size scales every rem-based dimension in the app, so the
  * bounds keep layouts intact rather than offering unusable extremes.
@@ -198,6 +227,10 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  wallpaperImage: WallpaperImage.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  wallpaperOpacity: WallpaperOpacity.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WALLPAPER_OPACITY)),
   ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
@@ -801,6 +834,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  wallpaperImage: Schema.optionalKey(WallpaperImage),
+  wallpaperOpacity: Schema.optionalKey(WallpaperOpacity),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

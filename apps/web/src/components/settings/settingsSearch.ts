@@ -57,6 +57,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "wallpaper",
+    title: "Wallpaper",
+    to: "/settings/appearance",
+  },
+  {
+    // Prefixed because the slider control already owns the `wallpaper-opacity`
+    // id. The slider only renders while a wallpaper is set, so the
+    // always-present picker row is the stable scroll destination.
+    id: "setting-wallpaper-opacity",
+    title: "Wallpaper opacity",
+    to: "/settings/appearance",
+    targetId: "wallpaper",
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

@@ -30,6 +30,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import { applyAppearanceWallpaper } from "~/appearanceWallpaper";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -131,6 +132,7 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <DocumentTitleSync />
         <GlassAppearanceSync />
+        <WallpaperAppearanceSync />
         <FontAppearanceSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
@@ -156,6 +158,23 @@ function GlassAppearanceSync() {
   useEffect(() => {
     document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);
   }, [glassOpacity]);
+
+  return null;
+}
+
+function WallpaperAppearanceSync() {
+  const wallpaperImage = useClientSettings((settings) => settings.wallpaperImage);
+  const wallpaperOpacity = useClientSettings((settings) => settings.wallpaperOpacity);
+
+  useEffect(() => {
+    applyAppearanceWallpaper(document.documentElement, {
+      image: wallpaperImage,
+      opacity: wallpaperOpacity,
+    });
+    // Setting or clearing a wallpaper changes which surface the browser chrome
+    // color is read from, so it has to be resolved again.
+    syncBrowserChromeTheme();
+  }, [wallpaperImage, wallpaperOpacity]);
 
   return null;
 }

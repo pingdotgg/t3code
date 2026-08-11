@@ -41,6 +41,8 @@ const clientSettings: ClientSettings = {
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
   timestampFormat: "24-hour",
+  wallpaperImage: "",
+  wallpaperOpacity: 15,
   wordWrap: true,
 };
 
