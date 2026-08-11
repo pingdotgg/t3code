@@ -263,6 +263,70 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("uses each thread's environment policy without client drift", () => {
+    const threeDayEnvironment = EnvironmentId.make("environment-three-days");
+    const sevenDayEnvironment = EnvironmentId.make("environment-seven-days");
+    const disabledEnvironment = EnvironmentId.make("environment-disabled");
+    const missingEnvironment = EnvironmentId.make("environment-missing-policy");
+    const sameAge = {
+      createdAt: "2026-06-05T00:00:00.000Z",
+      updatedAt: "2026-06-05T00:00:00.000Z",
+      latestUserMessageAt: "2026-06-05T00:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("same-age-turn"),
+        state: "completed",
+        requestedAt: "2026-06-05T00:00:00.000Z",
+        startedAt: "2026-06-05T00:00:01.000Z",
+        completedAt: "2026-06-05T00:01:00.000Z",
+        assistantMessageId: null,
+      },
+    } as const;
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          ...sameAge,
+          environmentId: threeDayEnvironment,
+          id: ThreadId.make("three-days"),
+          title: "Three days",
+        }),
+        makeThread({
+          ...sameAge,
+          environmentId: sevenDayEnvironment,
+          id: ThreadId.make("seven-days"),
+          title: "Seven days",
+        }),
+        makeThread({
+          ...sameAge,
+          environmentId: disabledEnvironment,
+          id: ThreadId.make("disabled"),
+          title: "Disabled",
+        }),
+        makeThread({
+          ...sameAge,
+          environmentId: missingEnvironment,
+          id: ThreadId.make("missing"),
+          title: "Missing",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      autoSettleAfterDaysByEnvironment: new Map([
+        [threeDayEnvironment, 3],
+        [sevenDayEnvironment, 7],
+        [disabledEnvironment, null],
+      ]),
+      now: "2026-06-10T00:00:00.000Z",
+    });
+
+    expect(Object.fromEntries(layout.items.map((item) => [item.thread.id, item.variant]))).toEqual({
+      disabled: "card",
+      "seven-days": "card",
+      missing: "slim",
+      "three-days": "slim",
+    });
+    expect(layout.settledCount).toBe(2);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

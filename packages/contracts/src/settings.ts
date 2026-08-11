@@ -43,16 +43,26 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 );
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
-export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
-export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
-export const SidebarAutoSettleAfterDays = Schema.Number.check(
+export const MIN_THREAD_AUTO_SETTLE_AFTER_DAYS = 1;
+export const MAX_THREAD_AUTO_SETTLE_AFTER_DAYS = 90;
+export const ThreadAutoSettleAfterDays = Schema.Number.check(
   Schema.isBetween({
-    minimum: MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
-    maximum: MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+    minimum: MIN_THREAD_AUTO_SETTLE_AFTER_DAYS,
+    maximum: MAX_THREAD_AUTO_SETTLE_AFTER_DAYS,
   }),
 );
-export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
-export const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+export type ThreadAutoSettleAfterDays = typeof ThreadAutoSettleAfterDays.Type;
+export const DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS: ThreadAutoSettleAfterDays = 3;
+/** @deprecated Use MIN_THREAD_AUTO_SETTLE_AFTER_DAYS. */
+export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = MIN_THREAD_AUTO_SETTLE_AFTER_DAYS;
+/** @deprecated Use MAX_THREAD_AUTO_SETTLE_AFTER_DAYS. */
+export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = MAX_THREAD_AUTO_SETTLE_AFTER_DAYS;
+/** @deprecated Use ThreadAutoSettleAfterDays. */
+export const SidebarAutoSettleAfterDays = ThreadAutoSettleAfterDays;
+/** @deprecated Use ThreadAutoSettleAfterDays. */
+export type SidebarAutoSettleAfterDays = ThreadAutoSettleAfterDays;
+/** @deprecated Use DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS. */
+export const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS;
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -177,8 +187,10 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
+  /** @deprecated Persisted for downgrade compatibility. Auto-settlement is
+      now configured per environment in ServerSettings.threadSettlement. */
+  sidebarAutoSettleAfterDays: Schema.NullOr(ThreadAutoSettleAfterDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS)),
   ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
@@ -537,6 +549,13 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+export const ThreadSettlementSettings = Schema.Struct({
+  autoSettleAfterDays: Schema.NullOr(ThreadAutoSettleAfterDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS)),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type ThreadSettlementSettings = typeof ThreadSettlementSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -546,6 +565,7 @@ export const ServerSettings = Schema.Struct({
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
+  threadSettlement: ThreadSettlementSettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
@@ -716,6 +736,11 @@ export const ServerSettingsPatch = Schema.Struct({
       overrides: Schema.optionalKey(BackgroundActivityOverrides),
     }),
   ),
+  threadSettlement: Schema.optionalKey(
+    Schema.Struct({
+      autoSettleAfterDays: Schema.optionalKey(Schema.NullOr(ThreadAutoSettleAfterDays)),
+    }),
+  ),
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
@@ -792,7 +817,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
-  sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(ThreadAutoSettleAfterDays)),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

@@ -478,6 +478,16 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const autoSettleAfterDaysByEnvironment = useMemo(
+    () =>
+      new Map(
+        [...serverConfigs].map(
+          ([environmentId, config]) =>
+            [environmentId, config.settings.threadSettlement.autoSettleAfterDays] as const,
+        ),
+      ),
+    [serverConfigs],
+  );
   const snoozeEnvironmentIds = useMemo(() => {
     const supported = new Set<EnvironmentId>();
     for (const [environmentId, config] of serverConfigs) {
@@ -537,6 +547,7 @@ function ThreadNavigationSidebarPane(
       matchedThreadKeys,
       changeRequestStateByKey,
       settlementEnvironmentIds,
+      autoSettleAfterDaysByEnvironment,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
       now: `${nowMinute}:00.000Z`,
@@ -557,6 +568,7 @@ function ThreadNavigationSidebarPane(
     matchedThreadKeys,
     settledVisibleCount,
     settlementEnvironmentIds,
+    autoSettleAfterDaysByEnvironment,
     snoozeEnvironmentIds,
     threadListV2Enabled,
     threads,

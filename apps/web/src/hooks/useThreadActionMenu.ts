@@ -12,6 +12,7 @@ import {
   type ChangeRequestStateLike,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useCallback } from "react";
 
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
@@ -30,6 +31,7 @@ import {
   readThreadShell,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
+import { environmentServerConfigsAtom } from "../state/server";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -79,9 +81,9 @@ export function useThreadActionMenu(input: {
   });
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({ type: "success", title: "Path copied", description: path });
@@ -114,6 +116,9 @@ export function useThreadActionMenu(input: {
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
+        const autoSettleAfterDays =
+          serverConfigs.get(threadRef.environmentId)?.settings.threadSettlement
+            .autoSettleAfterDays ?? null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
@@ -274,7 +279,6 @@ export function useThreadActionMenu(input: {
       })();
     },
     [
-      autoSettleAfterDays,
       changeRequestState,
       confirmThreadDelete,
       copyBranchToClipboard,
@@ -285,6 +289,7 @@ export function useThreadActionMenu(input: {
       onStartRename,
       pinThread,
       projectCwd,
+      serverConfigs,
       settleThread,
       snoozeThread,
       threadRef,

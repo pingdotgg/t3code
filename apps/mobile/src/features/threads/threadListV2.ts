@@ -10,7 +10,11 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS,
+  type EnvironmentId,
+  type ProjectId,
+} from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
@@ -306,9 +310,9 @@ export function buildThreadListV2ListItems(input: {
 
 /**
  * Partitions visible threads into the active card block (creation order) and
- * the settled recency tail, matching the web v2 list. `autoSettleAfterDays`
- * mirrors the web default of 3 — mobile has no client-settings sync yet, so
- * the default is fixed here rather than user-configurable.
+ * the settled recency tail, matching the web v2 list. Inactivity policy is
+ * resolved from each thread's owning environment. Missing policy data keeps
+ * the test-friendly and version-skew-compatible server default of three days.
  */
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -328,7 +332,7 @@ export function buildThreadListV2Items(input: {
   /** Environments whose server supports thread.snooze/unsnooze. Same
       contract as settlementEnvironmentIds. */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
-  readonly autoSettleAfterDays?: number;
+  readonly autoSettleAfterDaysByEnvironment?: ReadonlyMap<EnvironmentId, number | null>;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
@@ -348,7 +352,6 @@ export function buildThreadListV2Items(input: {
 }): ThreadListV2Layout {
   const now = input.now ?? new Date().toISOString();
   const snoozeNow = input.snoozeNow ?? now;
-  const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
@@ -380,6 +383,9 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
+    const autoSettleAfterDays = input.autoSettleAfterDaysByEnvironment?.has(thread.environmentId)
+      ? (input.autoSettleAfterDaysByEnvironment.get(thread.environmentId) ?? null)
+      : DEFAULT_THREAD_AUTO_SETTLE_AFTER_DAYS;
     const changeRequestState =
       input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
     // Visibility parity with web: snooze outranks everything, including a

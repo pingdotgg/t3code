@@ -68,7 +68,7 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
+  it("keeps the legacy auto-settle preference for downgrade compatibility", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
@@ -100,6 +100,36 @@ describe("ClientSettings sidebar", () => {
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {
     expect(() => decodeClientSettings({ sidebarAutoSettleAfterDays: value })).toThrow();
     expect(() => decodeClientSettingsPatch({ sidebarAutoSettleAfterDays: value })).toThrow();
+  });
+});
+
+describe("ServerSettings.threadSettlement", () => {
+  it("defaults inactivity classification to three days", () => {
+    expect(decodeServerSettings({}).threadSettlement).toEqual({
+      autoSettleAfterDays: 3,
+    });
+  });
+
+  it("accepts disabling and patching inactivity classification", () => {
+    expect(
+      decodeServerSettings({
+        threadSettlement: { autoSettleAfterDays: null },
+      }).threadSettlement.autoSettleAfterDays,
+    ).toBeNull();
+    expect(
+      decodeServerSettingsPatch({
+        threadSettlement: { autoSettleAfterDays: 14 },
+      }).threadSettlement,
+    ).toEqual({ autoSettleAfterDays: 14 });
+  });
+
+  it.each([-1, 0, 91])("rejects an inactivity threshold outside 1..90: %s", (value) => {
+    expect(() =>
+      decodeServerSettings({ threadSettlement: { autoSettleAfterDays: value } }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ threadSettlement: { autoSettleAfterDays: value } }),
+    ).toThrow();
   });
 });
 

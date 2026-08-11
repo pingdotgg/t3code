@@ -4063,7 +4063,7 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const autoSettleAfterDays = settings.threadSettlement.autoSettleAfterDays;
   const activeThreadPr = resolveThreadPr({
     threadBranch: activeThread?.branch ?? null,
     gitStatus: gitStatusQuery.data ?? null,
