@@ -499,6 +499,33 @@ class AppViewModel(
     }
   }
 
+  fun updateEnvironment(environmentId: String, label: String, httpBaseUrl: String) {
+    viewModelScope.launch {
+      runCatching { repository.updateEnvironment(environmentId, label, httpBaseUrl) }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun retryEnvironment(environmentId: String) {
+    viewModelScope.launch {
+      runCatching { repository.retry(environmentId) }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
+  fun removeEnvironment(environmentId: String) {
+    viewModelScope.launch {
+      runCatching { repository.forget(environmentId) }
+        .onSuccess {
+          launcherShortcutStore.removeEnvironment(environmentId)
+          mutableDispatchState.value = DispatchState.Idle
+        }
+        .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
+
   fun reportFailure(error: Throwable) = fail(error.safeMessage())
 
   fun clearDispatchFailure() {
@@ -2106,18 +2133,20 @@ class AppViewModel(
 
   fun refreshCloudEnvironments() {
     viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
       runCatching { repository.refreshCloudEnvironments() }
+        .onSuccess { mutableDispatchState.value = DispatchState.Idle }
         .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
     }
   }
 
-  fun connectRelay(environmentId: String) {
+  fun connectRelay(environmentId: String, openHome: Boolean = true) {
     viewModelScope.launch {
       mutableDispatchState.value = DispatchState.Sending
       runCatching { repository.connectRelay(environmentId) }
         .onSuccess {
           mutableDispatchState.value = DispatchState.Idle
-          mutableEvents.trySend(AppEvent.OpenHome)
+          if (openHome) mutableEvents.trySend(AppEvent.OpenHome)
         }
         .onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
     }

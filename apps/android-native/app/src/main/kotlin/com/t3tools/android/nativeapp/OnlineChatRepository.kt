@@ -359,6 +359,11 @@ class OnlineChatRepository(
 
   suspend fun retry() {
     val environmentId = requireNotNull(activeEnvironmentId) { "No saved environment." }
+    retry(environmentId)
+  }
+
+  suspend fun retry(environmentId: String) {
+    requireNotNull(environmentStore.load(environmentId)) { "Unknown environment: $environmentId" }
     signals[environmentId]?.trySend(SupervisorSignal.Retry)
   }
 
@@ -377,6 +382,14 @@ class OnlineChatRepository(
 
   suspend fun updateEnvironment(label: String, httpBaseUrl: String) = withContext(Dispatchers.IO) {
     val environmentId = requireNotNull(activeEnvironmentId) { "No saved environment." }
+    updateEnvironment(environmentId, label, httpBaseUrl)
+  }
+
+  suspend fun updateEnvironment(
+    environmentId: String,
+    label: String,
+    httpBaseUrl: String,
+  ) = withContext(Dispatchers.IO) {
     val environment = requireNotNull(environmentStore.load(environmentId)) { "No saved environment." }
     require(environment.kind == EnvironmentKind.Bearer) { "Relay environments are managed by T3 Connect." }
     val credential = requireNotNull(credentialStore.load(environment.environmentId)) {
@@ -384,7 +397,7 @@ class OnlineChatRepository(
     }
     val updated = environment.copy(label = label.trim(), httpBaseUrl = httpBaseUrl.trim())
     credentialStore.save(credential.copy(httpBaseUrl = updated.httpBaseUrl))
-    environmentStore.save(updated)
+    environmentStore.update(updated)
     synchronized(lock) {
       runtimes[environmentId]?.environment = updated
       publishLocked()

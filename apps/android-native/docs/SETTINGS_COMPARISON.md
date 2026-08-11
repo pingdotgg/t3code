@@ -1,56 +1,29 @@
-# T3 Code Android Native — Settings Parity & Feature Comparison
+# Native Android settings parity
 
-This document tracks feature parity and UI/functional differences between the React Native app (`apps/mobile`) and the Native Kotlin Android app (`apps/android-native`) for the **Settings** feature set.
+This document tracks the settings behavior shared by the React Native mobile client (`apps/mobile`) and the native Kotlin Android client (`apps/android-native`). The native UI follows the same product behavior while using Compose and Android-native navigation.
 
----
+## Current matrix
 
-## 📊 Summary Comparison Matrix
+| Setting | Native Android behavior | Parity note |
+| --- | --- | --- |
+| T3 Account | Clerk email-code and OAuth sign-in, account state, sign-out | Client path is implemented; production OAuth still requires the native redirect to be allowlisted in Clerk |
+| Environments | Dedicated screen with local environment cards, status, edit, reconnect, removal, add action, and empty state | Matches the React Native expandable-row flow |
+| T3 Connect environments | Separate relay section with refresh, connect/disconnect switches, saved-relay fallback, and discovery errors | Uses the existing native Clerk, DPoP, and relay client; end-to-end testing remains externally gated |
+| Project Grouping | Group by repository, repository path, or keep workspaces separate | Applied to Home, thread project labels, and the new-task project selector |
+| Usage | Cross-environment usage screen with selectable time windows | Present |
+| Appearance | Shared text size plus terminal and code/diff size overrides, previews, and code word breaking | Text size also controls Markdown and sent user messages; terminal controls share the same persisted setting |
+| Legacy thread presentation | Compact thread rows toggle | Native equivalent of choosing the denser thread-list presentation |
+| Archived Threads | Cross-environment archive loading, search/filter/sort, restore, and delete | Present |
+| Client Storage | Per-environment cache size/count, selective clear, and clear-all with confirmation | Clears offline snapshots without deleting connections, credentials, drafts, or preferences |
+| Legal | Legal, Privacy Policy, and Terms of Service links | Opens the canonical documents in the browser |
+| Version | Displays the native APK version | Expo OTA update checks do not apply to this independently distributed APK |
 
-| Setting / Feature                          | React Native (`apps/mobile`)                                               | Native Kotlin (`apps/android-native`)                           | Status & Differences                                                        |
-| :----------------------------------------- | :------------------------------------------------------------------------- | :-------------------------------------------------------------- | :-------------------------------------------------------------------------- |
-| **Account & T3 Connect**                   | Full Clerk authentication sheet & email/OAuth login                        | Custom `ConnectAuthScreen` with email verification code + OAuth | **Present in both** (Kotlin uses a native screen; RN uses Clerk Expo)       |
-| **Environments Management**                | Dedicated `SettingsEnvironments` route screen                              | Inline environment cards + `EnvironmentDrawer` bottom sheet     | **Present in both** (Kotlin allows inline switching & sheet editing)        |
-| **Device Notifications & Live Activities** | Gated toggles for iOS push notifications & Live Activities                 | ❌ Not included                                                 | **RN only** (iOS-specific features)                                         |
-| **Usage Stats**                            | `SettingsUsage` sub-screen                                                 | `UsageScreen` sub-screen                                        | **Present in both**                                                         |
-| **Appearance / Theming**                   | `SettingsAppearance` screen (System / Dark / Light, Theme Accent colors)   | Static "AMOLED dark" + **"Compact thread rows"** toggle         | **Different**: RN has theme/accent picker; Kotlin has compact row toggle    |
-| **Project Grouping**                       | `SettingsProjectGrouping` sub-screen (Group by project, collapse defaults) | ❌ Missing sub-screen (has an "Add project" shortcut button)    | **RN only** (Kotlin lists projects in filter bottom sheet)                  |
-| **Legacy Features**                        | **"Legacy Thread List"** toggle (flat vs grouped v1 thread list)           | ❌ Missing                                                      | **RN only**                                                                 |
-| **Archived Threads**                       | `SettingsArchive` sub-screen                                               | `ArchivedThreadsScreen` sub-screen                              | **Present in both** (Kotlin supports cross-environment search & unarchive)  |
-| **Storage Management**                     | `SettingsClientStorage` screen (DB size, vacuum, detailed cache clear)     | Inline stats + **"Clear cached snapshots"** button              | **RN has full storage detail screen**; Kotlin has inline clear cache button |
-| **Legal & Policies**                       | `SettingsLegal` screen with interactive document view                      | Static text note                                                | **RN has full document viewer**                                             |
-| **App OTA Updates**                        | Version row with hidden tap to check Expo updates                          | ❌ N/A (Native APK / ADB updates)                               | **RN only**                                                                 |
-| **Beta Toggles**                           | ❌ None                                                                    | **"Native beta features"** toggle                               | **Kotlin only**                                                             |
+## Platform-specific differences
 
----
+- React Native exposes notification and Live Activity controls where the host platform and account support them. Live Activities are iOS-only; the native Android client does not imitate them.
+- The native client intentionally uses the AMOLED dark surface established for this project. Its Appearance screen controls readability typography rather than duplicating unrelated theme choices.
+- T3 Connect OAuth cannot be accepted as device-verified until Clerk allows the experimental native application redirect. Direct environments and the relay client implementation do not depend on that approval.
 
-## 🔍 Detailed Feature Breakdown
+## Verification boundary
 
-### 1. Account & T3 Connect
-
-- **React Native:** Uses `@clerk/expo` and an Expo bottom sheet for authentication and managing cloud accounts.
-- **Kotlin Native:** Implements `ConnectAuthScreen` directly in Compose with email code authentication and Apple/GitHub/Google/Microsoft OAuth options.
-
-### 2. Environments Management
-
-- **React Native:** Links to a separate screen (`SettingsEnvironmentsRouteScreen`) listing saved remote connections.
-- **Kotlin Native:** Displays saved environments as interactive cards directly in the main Settings screen, with an `EnvironmentDrawer` modal sheet for editing label/URL or forgetting environments.
-
-### 3. Appearance & Theming
-
-- **React Native:** `SettingsAppearanceRouteScreen` supports choosing System/Light/Dark mode and selecting custom accent colors.
-- **Kotlin Native:** Fixed dark AMOLED color palette with a dedicated toggle for **Compact thread rows**.
-
-### 4. Project Grouping
-
-- **React Native:** `SettingsProjectGroupingRouteScreen` provides preferences for thread grouping logic and collapse defaults.
-- **Kotlin Native:** Provides an "Add project" button in Settings; project selection/filtering is handled via the Home thread filter bottom sheet.
-
-### 5. Storage & Persistence
-
-- **React Native:** `SettingsClientStorageRouteScreen` presents database metrics (SQLite size, cache allocations) and buttons for selective clearing and vacuuming.
-- **Kotlin Native:** Displays summary stats (environment count, pending task count) and a **"Clear cached snapshots"** button.
-
-### 6. Legal & Documentation
-
-- **React Native:** Navigates to `SettingsLegalRouteScreen` to read Terms of Service and Privacy Policy markdown documents.
-- **Kotlin Native:** Includes a static note regarding open-source licenses and privacy info.
+Settings presentation and pure grouping/appearance/environment-section behavior are covered by JVM tests and the debug APK build. Destructive environment removal and T3 Connect authentication should be manually accepted on an appropriate test account/device; Android instrumentation must not be run against a personal installation because persistence tests clear app data.

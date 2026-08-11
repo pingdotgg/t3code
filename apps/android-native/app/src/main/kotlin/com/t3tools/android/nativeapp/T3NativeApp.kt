@@ -412,6 +412,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
     composable(SETTINGS_ENVIRONMENTS) {
       EnvironmentSettingsScreen(
         runtime = runtime,
+        dispatchState = dispatchState,
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
         onAddEnvironment = { navController.navigate(ONBOARDING) },
@@ -2157,52 +2158,313 @@ private fun CodeAppearancePreview(fontSize: Float, wordBreak: Boolean) {
 @Composable
 private fun EnvironmentSettingsScreen(
   runtime: OnlineChatState,
+  dispatchState: DispatchState,
   viewModel: AppViewModel,
   onBack: () -> Unit,
   onAddEnvironment: () -> Unit,
 ) {
-  var showEditEnv by remember { mutableStateOf(false) }
+  val sections = splitEnvironmentSettings(
+    saved = runtime.environments,
+    listedRelay = if (runtime.cloud.signedIn) runtime.cloud.relayEnvironments else emptyList(),
+  )
+  var expandedId by remember { mutableStateOf<String?>(null) }
+  var removeTarget by remember { mutableStateOf<SavedEnvironment?>(null) }
+  val busy = dispatchState is DispatchState.Sending
   BackHandler(onBack = onBack)
-  Scaffold(topBar = { BackTopBar("Environments", onBack) }) { padding ->
+  Scaffold(
+    topBar = {
+      TopAppBar(
+        title = { Text("Environments", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) },
+        navigationIcon = {
+          IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
+          }
+        },
+        actions = {
+          IconButton(onClick = onAddEnvironment) {
+            Icon(Icons.Rounded.Add, contentDescription = "Add environment")
+          }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black),
+      )
+    },
+  ) { padding ->
     Column(
-      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp),
+      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
+      verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-      runtime.environments.forEach { environment ->
-        val selected = environment.environmentId == runtime.environment?.environmentId
-        val status = runtime.environmentStatuses[environment.environmentId]
-        Card(
-          onClick = { viewModel.selectEnvironment(environment.environmentId) },
-          colors = CardDefaults.cardColors(containerColor = if (selected) Color(0xFF1E293B) else Color(0xFF111113)),
+      if (sections.local.isEmpty()) {
+        EmptyEnvironmentSettingsCard()
+      } else {
+        Surface(
+          shape = RoundedCornerShape(24.dp),
+          color = Color(0xFF111113),
           modifier = Modifier.fillMaxWidth(),
         ) {
-          Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-              Text(environment.label, fontWeight = FontWeight.SemiBold)
-              Text(
-                status?.connectionPhase?.name ?: if (selected) "Selected" else "Saved",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
+          Column {
+            sections.local.forEachIndexed { index, environment ->
+              if (index > 0) HorizontalDivider(color = Color(0xFF27272A))
+              LocalEnvironmentSettingsRow(
+                environment = environment,
+                status = runtime.environmentStatuses[environment.environmentId],
+                expanded = expandedId == environment.environmentId,
+                busy = busy,
+                onToggle = {
+                  expandedId = environment.environmentId.takeUnless { it == expandedId }
+                },
+                onSave = { label, url ->
+                  viewModel.updateEnvironment(environment.environmentId, label, url)
+                },
+                onRetry = { viewModel.retryEnvironment(environment.environmentId) },
+                onRemove = { removeTarget = environment },
               )
             }
-            if (selected) Icon(Icons.Rounded.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
           }
         }
       }
-      if (runtime.environments.isEmpty()) {
-        Text("No saved environments", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(8.dp))
+
+      if (sections.connectedRelay.isNotEmpty() || runtime.cloud.signedIn) {
+        T3ConnectEnvironmentSection(
+          connected = sections.connectedRelay,
+          available = sections.availableRelay,
+          statuses = runtime.environmentStatuses,
+          discoveryError = runtime.cloud.lastError,
+          discoveryAvailable = runtime.cloud.signedIn,
+          busy = busy,
+          onRefresh = viewModel::refreshCloudEnvironments,
+          onConnect = { viewModel.connectRelay(it, openHome = false) },
+          onRetry = viewModel::retryEnvironment,
+          onRemove = { removeTarget = it },
+        )
       }
-      Button(onClick = onAddEnvironment, modifier = Modifier.fillMaxWidth()) { Text("Add environment") }
-      if (runtime.environment != null) {
-        OutlinedButton(onClick = { showEditEnv = true }, modifier = Modifier.fillMaxWidth()) { Text("Edit current") }
+
+      AuthError(dispatchState, viewModel::clearDispatchFailure)
+      RuntimeError(runtime.error, dispatchState)
+    }
+  }
+
+  removeTarget?.let { environment ->
+    AlertDialog(
+      onDismissRequest = { removeTarget = null },
+      title = { Text("Remove environment?") },
+      text = { Text("Disconnect and forget ${environment.label} on this device.") },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            expandedId = null
+            removeTarget = null
+            viewModel.removeEnvironment(environment.environmentId)
+          },
+        ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+      },
+      dismissButton = { TextButton(onClick = { removeTarget = null }) { Text("Cancel") } },
+    )
+  }
+}
+
+@Composable
+private fun EmptyEnvironmentSettingsCard() {
+  Column(
+    modifier = Modifier.fillMaxWidth().background(Color(0xFF111113), RoundedCornerShape(24.dp)).padding(24.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.spacedBy(12.dp),
+  ) {
+    Box(
+      modifier = Modifier.size(48.dp).background(Color(0xFF1C1C1F), RoundedCornerShape(16.dp)),
+      contentAlignment = Alignment.Center,
+    ) {
+      Icon(Icons.Rounded.Computer, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Text(
+      "No environments connected yet.\nTap + to add one.",
+      textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      style = MaterialTheme.typography.bodyMedium,
+    )
+  }
+}
+
+@Composable
+private fun LocalEnvironmentSettingsRow(
+  environment: SavedEnvironment,
+  status: EnvironmentConnectionStatus?,
+  expanded: Boolean,
+  busy: Boolean,
+  onToggle: () -> Unit,
+  onSave: (String, String) -> Unit,
+  onRetry: () -> Unit,
+  onRemove: () -> Unit,
+) {
+  var label by remember(environment.environmentId, environment.label) { mutableStateOf(environment.label) }
+  var url by remember(environment.environmentId, environment.httpBaseUrl) { mutableStateOf(environment.httpBaseUrl) }
+  Column(Modifier.fillMaxWidth()) {
+    Row(
+      modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(horizontal = 16.dp, vertical = 14.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      EnvironmentStatusDot(status?.connectionPhase)
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(environment.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(environment.httpBaseUrl, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+          environmentConnectionLabel(status),
+          style = MaterialTheme.typography.labelMedium,
+          color = if (status?.error != null) Color(0xFFF87171) else MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = if (expanded) Int.MAX_VALUE else 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      Icon(
+        Icons.Rounded.KeyboardArrowDown,
+        contentDescription = if (expanded) "Collapse environment" else "Expand environment",
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.size(20.dp).graphicsLayer { rotationZ = if (expanded) 180f else 0f },
+      )
+    }
+    AnimatedVisibility(visible = expanded) {
+      Column(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        EnvironmentEditField("Label", label, { label = it }, "My MacBook")
+        EnvironmentEditField("URL", url, { url = it }, "192.168.1.100:8080")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Button(
+            onClick = { onSave(label.trim(), url.trim()) },
+            enabled = !busy && label.isNotBlank() && url.isNotBlank(),
+            modifier = Modifier.weight(1f).height(44.dp),
+          ) {
+            Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Save")
+          }
+          OutlinedButton(onClick = onRetry, enabled = !busy, modifier = Modifier.height(44.dp)) {
+            Icon(Icons.Rounded.Refresh, contentDescription = "Reconnect", modifier = Modifier.size(18.dp))
+          }
+          OutlinedButton(onClick = onRemove, enabled = !busy, modifier = Modifier.height(44.dp)) {
+            Icon(Icons.Rounded.Delete, contentDescription = "Remove", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+          }
+        }
       }
     }
   }
-  if (showEditEnv) {
-    EnvironmentDrawer(runtime, viewModel, onAdd = {
-      showEditEnv = false
-      onAddEnvironment()
-    }, dismiss = { showEditEnv = false })
+}
+
+@Composable
+private fun EnvironmentEditField(
+  label: String,
+  value: String,
+  onValueChange: (String) -> Unit,
+  placeholder: String,
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    CompactInputField(value, onValueChange, placeholder, Modifier.fillMaxWidth())
+  }
+}
+
+@Composable
+private fun EnvironmentStatusDot(phase: ConnectionPhase?) {
+  val color = when (phase) {
+    ConnectionPhase.Connected -> Color(0xFF22C55E)
+    ConnectionPhase.Connecting, ConnectionPhase.Backoff -> Color(0xFFF59E0B)
+    ConnectionPhase.Blocked, ConnectionPhase.Error -> Color(0xFFEF4444)
+    else -> Color(0xFF71717A)
+  }
+  Box(Modifier.size(8.dp).background(color, CircleShape))
+}
+
+@Composable
+private fun T3ConnectEnvironmentSection(
+  connected: List<SavedEnvironment>,
+  available: List<RelayEnvironment>,
+  statuses: Map<String, EnvironmentConnectionStatus>,
+  discoveryError: String?,
+  discoveryAvailable: Boolean,
+  busy: Boolean,
+  onRefresh: () -> Unit,
+  onConnect: (String) -> Unit,
+  onRetry: (String) -> Unit,
+  onRemove: (SavedEnvironment) -> Unit,
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text("T3 CONNECT", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+      if (discoveryAvailable) {
+        IconButton(onClick = onRefresh, enabled = !busy) {
+          Icon(Icons.Rounded.Refresh, contentDescription = "Refresh T3 Connect environments", modifier = Modifier.size(18.dp))
+        }
+      }
+    }
+    Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF111113), modifier = Modifier.fillMaxWidth()) {
+      Column {
+        val rowCount = connected.size + available.size
+        connected.forEachIndexed { index, environment ->
+          if (index > 0) HorizontalDivider(color = Color(0xFF27272A))
+          T3ConnectEnvironmentRow(
+            label = environment.label,
+            status = environmentConnectionLabel(statuses[environment.environmentId]),
+            phase = statuses[environment.environmentId]?.connectionPhase,
+            checked = true,
+            busy = busy,
+            onCheckedChange = { enabled ->
+              if (enabled) onRetry(environment.environmentId) else onRemove(environment)
+            },
+          )
+        }
+        available.forEachIndexed { index, environment ->
+          if (connected.isNotEmpty() || index > 0) HorizontalDivider(color = Color(0xFF27272A))
+          T3ConnectEnvironmentRow(
+            label = environment.label.ifBlank { environment.environmentId },
+            status = "Available",
+            phase = null,
+            checked = false,
+            busy = busy,
+            onCheckedChange = { enabled -> if (enabled) onConnect(environment.environmentId) },
+          )
+        }
+        if (rowCount == 0 && discoveryError == null) {
+          Text("No additional linked cloud environments.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(20.dp))
+        }
+      }
+    }
+    discoveryError?.takeIf { discoveryAvailable }?.let { error ->
+      Column(
+        Modifier.fillMaxWidth().background(Color(0xFF111113), RoundedCornerShape(24.dp)).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Text("Could not load T3 Connect environments", fontWeight = FontWeight.SemiBold)
+        Text(error, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = onRefresh, enabled = !busy) { Text("Try again") }
+      }
+    }
+  }
+}
+
+@Composable
+private fun T3ConnectEnvironmentRow(
+  label: String,
+  status: String,
+  phase: ConnectionPhase?,
+  checked: Boolean,
+  busy: Boolean,
+  onCheckedChange: (Boolean) -> Unit,
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(12.dp),
+  ) {
+    EnvironmentStatusDot(phase)
+    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+      Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      Text(status, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+    Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = !busy)
   }
 }
 

@@ -1,6 +1,6 @@
-# T3 Code Native Android — Phase 4A
+# T3 Code Native Android
 
-Independent native Android client for T3 Code. Phase 3 is complete across project, files, Git, terminal, review, and attachment journeys. Phase 4A adds Android share targets, app shortcuts, and strict app links without changing the server contract.
+Independent native Android client for T3 Code. The formal Phase 2–4A roadmap is complete, followed by product-parity passes across the thread list, composers, settings, usage, archives, appearance, project grouping, and environment management.
 
 ## Modules
 
@@ -10,6 +10,12 @@ Independent native Android client for T3 Code. Phase 3 is complete across projec
 - `:app` — Compose UI, multi-environment supervisors, SQLite catalog/outbox/cache, app-private attachment storage, project/files/Git/terminal/review UI, T3 Connect client, and Android Keystore-backed credentials.
 
 The Kotlin implementation targets the current matching T3 server revision. Broader server-version compatibility is not promised until versioned wire artifacts exist.
+
+## Current product surface
+
+The native client supports direct and relay environments, durable offline drafts/outbox recovery, new and existing thread turns, thread organization and archived threads, project and worktree selection, workspace files/search, Git operations, terminal sessions, review diffs/comments, image attachments, Android share intake, launcher shortcuts, usage reporting, client storage controls, typography settings, and project grouping.
+
+The settings parity matrix lives in [`docs/SETTINGS_COMPARISON.md`](docs/SETTINGS_COMPARISON.md). T3 Connect is implemented through Clerk, DPoP, and the managed relay, but production OAuth remains externally gated until Clerk allowlists the experimental Android redirect.
 
 ## Wire protocol
 
@@ -95,11 +101,11 @@ The launcher exposes a static New task shortcut and up to three dynamic recent-t
 
 The Phase 4A capability matrix and S25 acceptance steps live in [`docs/PHASE4A.md`](docs/PHASE4A.md).
 
-## Phase 3E boundaries
+## Remaining product boundaries
 
 Gallery selection, explicit clipboard paste, draft previews/removal, attachment-only messages, durable draft/outbox recovery, retry/edit/delete cleanup, and sent-image rendering are in scope. Images are capped at eight per message and 10 MB each. The server remains authoritative for sent attachment ids and signed asset URLs.
 
-Camera capture, document/video attachments, Android share-target intake, and file editing remain outside Phase 3E. T3 Connect administrator approval is not a gate. Performance benchmarking follows Phase 3 completion rather than expanding this slice.
+Android share-target intake was added in Phase 4A. Camera capture, document/video attachments, and file editing remain intentional product boundaries. T3 Connect administrator approval is not a client implementation gate. If performance work resumes, first reproduce the documented long-thread debug trace with a release build before changing feed behavior.
 
 The Phase 3E capability matrix and device acceptance steps live in [`docs/PHASE3E.md`](docs/PHASE3E.md). Thread-feed parity and catch-up behavior live in [`docs/THREAD_FEED.md`](docs/THREAD_FEED.md). Earlier evidence remains in [`docs/PHASE3D.md`](docs/PHASE3D.md), [`docs/PHASE3C.md`](docs/PHASE3C.md), [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
 

@@ -41,6 +41,10 @@ class EnvironmentStore(
     database.selectEnvironment(environment.environmentId)
   }
 
+  fun update(environment: SavedEnvironment) {
+    database.saveEnvironment(environment)
+  }
+
   fun select(environmentId: String) {
     requireNotNull(load(environmentId)) { "Unknown environment: $environmentId" }
     database.selectEnvironment(environmentId)
