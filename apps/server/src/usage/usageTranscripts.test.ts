@@ -4,6 +4,7 @@ import {
   initialCodexScanState,
   parseClaudeLine,
   parseCodexLine,
+  parseGrokLine,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -233,6 +234,128 @@ describe("parseCodexLine", () => {
       );
       expect(record).not.toBeNull();
     });
+  });
+});
+
+describe("parseGrokLine", () => {
+  function grokLine(
+    overrides: {
+      costIsPartial?: boolean;
+      costUsdTicks?: number;
+      modelUsage?: Record<string, Record<string, unknown>>;
+    } = {},
+  ): string {
+    return JSON.stringify({
+      timestamp: 1_784_068_256,
+      method: "_x.ai/session/update",
+      params: {
+        sessionId: "019f62c1-26b5-7c51-85a5-526cbc9c4449",
+        _meta: {
+          eventId: "019f62c1-26b5-7c51-85a5-526cbc9c4449-46",
+          agentTimestampMs: 1_784_068_256_563,
+        },
+        update: {
+          usage: {
+            costIsPartial: overrides.costIsPartial,
+            costUsdTicks: overrides.costUsdTicks,
+            modelUsage: overrides.modelUsage ?? {
+              "grok-4.5": {
+                inputTokens: 13_887,
+                cachedReadTokens: 11_264,
+                cacheCreationTokens: 64,
+                outputTokens: 49,
+                reasoningTokens: 33,
+                modelCalls: 2,
+                costUsdTicks: 111_720_000,
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  it("extracts inclusive input, exact cost ticks, and event identity", () => {
+    const [record] = parseGrokLine(grokLine());
+
+    expect(record?.provider).toBe("grok");
+    expect(record?.model).toBe("grok-4.5");
+    expect(record?.sessionId).toBe("019f62c1-26b5-7c51-85a5-526cbc9c4449");
+    expect(record?.timestampMs).toBe(1_784_068_256_563);
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 2_559,
+      cachedInputTokens: 11_264,
+      cacheCreationTokens: 64,
+      outputTokens: 49,
+      reasoningTokens: 33,
+    });
+    expect(record?.recordCount).toBe(2);
+    expect(record?.reportedCostUsd).toBeCloseTo(0.011172, 9);
+    expect(record?.dedupeKey).toContain("019f62c1-26b5-7c51-85a5-526cbc9c4449-46");
+  });
+
+  it("expands a multi-model prompt into independently priced rows", () => {
+    const records = parseGrokLine(
+      grokLine({
+        modelUsage: {
+          "grok-build": {
+            inputTokens: 100,
+            cachedReadTokens: 20,
+            outputTokens: 10,
+            modelCalls: 1,
+            costUsdTicks: 10_000_000,
+          },
+          "grok-build-fast": {
+            inputTokens: 200,
+            cachedReadTokens: 50,
+            outputTokens: 20,
+            modelCalls: 3,
+            costUsdTicks: 20_000_000,
+          },
+        },
+      }),
+    );
+
+    expect(records.map((record) => record.model)).toEqual(["grok-build", "grok-build-fast"]);
+    expect(records.map((record) => record.reportedCostUsd)).toEqual([0.001, 0.002]);
+    expect(records.map((record) => record.recordCount)).toEqual([1, 3]);
+  });
+
+  it("uses aggregate cost when only one model row has billable usage", () => {
+    const [record] = parseGrokLine(
+      grokLine({
+        costUsdTicks: 10_000_000,
+        modelUsage: {
+          "grok-build": { inputTokens: 100, outputTokens: 10 },
+          "empty-stub": { inputTokens: 0, outputTokens: 0 },
+        },
+      }),
+    );
+
+    expect(record?.model).toBe("grok-build");
+    expect(record?.reportedCostUsd).toBe(0.001);
+  });
+
+  it("does not present a partial provider cost as complete", () => {
+    const [record] = parseGrokLine(grokLine({ costIsPartial: true }));
+    expect(record?.reportedCostUsd).toBeNull();
+  });
+
+  it("does not deduplicate identity-less updates by their payload", () => {
+    const parsed = JSON.parse(grokLine()) as {
+      params: { sessionId?: string; _meta?: { eventId?: string } };
+    };
+    delete parsed.params.sessionId;
+    delete parsed.params._meta;
+
+    const [record] = parseGrokLine(JSON.stringify(parsed));
+
+    expect(record?.dedupeKey).toBeNull();
+  });
+
+  it("ignores malformed and non-usage updates", () => {
+    expect(parseGrokLine("not json")).toEqual([]);
+    expect(parseGrokLine(JSON.stringify({ method: "session/update", params: {} }))).toEqual([]);
   });
 });
 

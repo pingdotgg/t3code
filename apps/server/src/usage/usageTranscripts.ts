@@ -14,6 +14,8 @@ export interface UsageRecord {
   readonly model: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
+  /** Distinct model responses represented by this aggregate record. */
+  readonly recordCount: number;
   readonly reportedCostUsd: number | null;
   /**
    * Key for cross-file de-duplication, or `null` when the record is inherently
@@ -68,7 +70,9 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  if (provider === "claude") return line.includes('"usage"');
+  if (provider === "codex") return line.includes('"token_count"');
+  return line.includes('"modelUsage"');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -131,6 +135,7 @@ export function parseClaudeLine(line: string): UsageRecord | null {
       // Anthropic folds thinking tokens into output and does not break them out.
       reasoningTokens: 0,
     },
+    recordCount: 1,
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     dedupeKey,
   };
@@ -289,12 +294,139 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     model: state.model,
     sessionId: state.sessionId,
     totals,
+    recordCount: 1,
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
     // Events surviving the fork-copy suppression above are unique to this
     // rollout, so they need no global dedup.
     dedupeKey: null,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Grok Build                                                                 */
+/* -------------------------------------------------------------------------- */
+
+const USD_TICKS_PER_DOLLAR = 10_000_000_000;
+
+function grokTimestampMs(
+  record: Record<string, unknown>,
+  params: Record<string, unknown>,
+): number | null {
+  const meta = params["_meta"];
+  if (typeof meta === "object" && meta !== null) {
+    const agentTimestampMs = (meta as Record<string, unknown>)["agentTimestampMs"];
+    if (typeof agentTimestampMs === "number" && Number.isFinite(agentTimestampMs)) {
+      return Math.trunc(agentTimestampMs);
+    }
+  }
+
+  const timestamp = record["timestamp"];
+  if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
+    // Grok's persisted ACP updates use Unix seconds. Accept milliseconds too
+    // so a format precision bump does not move records thousands of years out.
+    return Math.trunc(timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp);
+  }
+  return parseTimestampMs(timestamp);
+}
+
+function grokCostUsd(
+  usage: Record<string, unknown>,
+  aggregateUsage: Record<string, unknown>,
+  onlyModel: boolean,
+): number | null {
+  if (usage["costIsPartial"] === true || aggregateUsage["costIsPartial"] === true) return null;
+
+  const ticks = usage["costUsdTicks"] ?? (onlyModel ? aggregateUsage["costUsdTicks"] : undefined);
+  if (typeof ticks === "number" && Number.isFinite(ticks) && ticks >= 0) {
+    return ticks / USD_TICKS_PER_DOLLAR;
+  }
+
+  const dollars = usage["costUSD"] ?? usage["costUsd"];
+  return typeof dollars === "number" && Number.isFinite(dollars) && dollars >= 0 ? dollars : null;
+}
+
+/**
+ * Parses a completed Grok ACP prompt update.
+ *
+ * One update can include several model rows when subagents participated, so it
+ * expands to one record per model. Grok reports input inclusive of cache reads
+ * and writes, matching Codex rather than the headless CLI's projected shape.
+ */
+export function parseGrokLine(line: string): readonly UsageRecord[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== "object" || parsed === null) return [];
+
+  const record = parsed as Record<string, unknown>;
+  const paramsValue = record["params"];
+  if (typeof paramsValue !== "object" || paramsValue === null) return [];
+  const params = paramsValue as Record<string, unknown>;
+  const updateValue = params["update"];
+  if (typeof updateValue !== "object" || updateValue === null) return [];
+  const update = updateValue as Record<string, unknown>;
+  const aggregateUsageValue = update["usage"];
+  if (typeof aggregateUsageValue !== "object" || aggregateUsageValue === null) return [];
+  const aggregateUsage = aggregateUsageValue as Record<string, unknown>;
+  const modelUsageValue = aggregateUsage["modelUsage"];
+  if (typeof modelUsageValue !== "object" || modelUsageValue === null) return [];
+
+  const timestampMs = grokTimestampMs(record, params);
+  if (timestampMs === null) return [];
+
+  const sessionId = typeof params["sessionId"] === "string" ? params["sessionId"] : "";
+  const meta =
+    typeof params["_meta"] === "object" && params["_meta"] !== null
+      ? (params["_meta"] as Record<string, unknown>)
+      : null;
+  const eventId = typeof meta?.["eventId"] === "string" ? meta["eventId"] : null;
+  const rows: Array<{
+    readonly model: string;
+    readonly usage: Record<string, unknown>;
+    readonly totals: UsageTokenTotals;
+  }> = [];
+
+  for (const [model, usageValue] of Object.entries(modelUsageValue as Record<string, unknown>)) {
+    if (model.length === 0 || typeof usageValue !== "object" || usageValue === null) continue;
+    const usage = usageValue as Record<string, unknown>;
+    const inputTokens = int(usage["inputTokens"]);
+    const cachedInputTokens = int(usage["cachedReadTokens"] ?? usage["cacheReadInputTokens"]);
+    const cacheCreationTokens = int(usage["cacheCreationTokens"]);
+    const outputTokens = int(usage["outputTokens"]);
+    const totals: UsageTokenTotals = {
+      uncachedInputTokens: Math.max(0, inputTokens - cachedInputTokens - cacheCreationTokens),
+      cachedInputTokens,
+      cacheCreationTokens,
+      outputTokens,
+      reasoningTokens: Math.min(outputTokens, int(usage["reasoningTokens"])),
+    };
+    if (totalTokens(totals) === 0) continue;
+    rows.push({ model, usage, totals });
+  }
+
+  const records: UsageRecord[] = [];
+  for (const { model, usage, totals } of rows) {
+    const usageSignature = JSON.stringify(usage);
+    records.push({
+      provider: "grok",
+      timestampMs,
+      model,
+      sessionId,
+      totals,
+      recordCount: Math.max(1, int(usage["modelCalls"])),
+      reportedCostUsd: grokCostUsd(usage, aggregateUsage, rows.length === 1),
+      dedupeKey:
+        sessionId.length > 0 || eventId !== null
+          ? `${sessionId}:${eventId ?? timestampMs}:${model}:${usageSignature}`
+          : null,
+    });
+  }
+
+  return records;
 }
 
 export { EMPTY_TOTALS };

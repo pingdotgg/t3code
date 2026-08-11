@@ -1,23 +1,25 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
-import { ClaudeAI, type Icon, OpenAI } from "../Icons";
+import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
 
 /**
- * Series and table order. The chart layers both providers from a shared zero
+ * Series and table order. The chart layers all providers from a shared zero
  * baseline, so this only fixes the reading order of legends, tables and hover
  * rows; it does not decide which series sits above the other.
  */
-export const PROVIDER_ORDER: readonly UsageProviderKind[] = ["codex", "claude"];
+export const PROVIDER_ORDER: readonly UsageProviderKind[] = ["codex", "claude", "grok"];
 
 export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
   claude: "Claude Code",
   codex: "Codex",
+  grok: "Grok",
 };
 
-/** Claude's brand orange against a neutral white for Codex. */
+/** Provider colors used by the web chart and legend. */
 export const PROVIDER_COLOR: Record<UsageProviderKind, string> = {
   claude: "#d97757",
   codex: "#e6e6e6",
+  grok: "#8b8b8b",
 };
 
 /**
@@ -30,4 +32,5 @@ export const PROVIDER_COLOR: Record<UsageProviderKind, string> = {
 export const PROVIDER_MARK: Record<UsageProviderKind, Icon> = {
   claude: ClaudeAI,
   codex: OpenAI,
+  grok: GrokIcon,
 };

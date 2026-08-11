@@ -47,6 +47,7 @@ type SerializedRecord = readonly [
   reasoningTokens: number,
   dedupeKey: string | null,
   reportedCostUsd: number | null,
+  recordCount: number,
 ];
 
 interface SerializedFile {
@@ -96,6 +97,7 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
         record.totals.reasoningTokens,
         record.dedupeKey,
         record.reportedCostUsd,
+        record.recordCount,
       ]),
     };
   }
@@ -134,7 +136,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (typeof raw !== "object" || raw === null) continue;
     const entry = raw as Partial<SerializedFile>;
     if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
-    if (entry.p !== "claude" && entry.p !== "codex") continue;
+    if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok") continue;
     if (!isRecordArray(entry.r)) continue;
 
     const provider: UsageProviderKind = entry.p;
@@ -144,7 +146,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     // file would never be re-parsed, silently losing the dropped rows' usage.
     let corrupt = false;
     for (const row of entry.r) {
-      if (!isRecordArray(row) || row.length < 10) {
+      if (!isRecordArray(row) || row.length < 11) {
         corrupt = true;
         break;
       }
@@ -159,6 +161,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         reasoning,
         dedupeKey,
         reportedCostUsd,
+        recordCount,
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
@@ -170,7 +173,10 @@ export function decodeScanCache(document: unknown): ScanCache {
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
         !Number.isFinite(output) ||
-        !Number.isFinite(reasoning)
+        !Number.isFinite(reasoning) ||
+        !Number.isFinite(recordCount) ||
+        !Number.isInteger(recordCount) ||
+        recordCount <= 0
       ) {
         corrupt = true;
         break;
@@ -189,6 +195,7 @@ export function decodeScanCache(document: unknown): ScanCache {
           reasoningTokens: reasoning,
         },
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
+        recordCount,
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
     }

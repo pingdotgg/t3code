@@ -30,6 +30,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
       outputTokens: 50,
       reasoningTokens: 0,
     },
+    recordCount: 1,
     reportedCostUsd: null,
     dedupeKey: null,
     ...overrides,
@@ -98,6 +99,12 @@ describe("UsageAggregator", () => {
 
     expect(result.buckets[0]?.costUsd).toBe(1.25);
     expect(result.buckets[0]?.costSource).toBe("providerReported");
+  });
+
+  it("counts every model call represented by an aggregate record", () => {
+    const result = aggregate([record({ recordCount: 3 })]);
+
+    expect(result.buckets[0]?.records).toBe(3);
   });
 
   it("drops records outside the window", () => {
