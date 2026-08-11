@@ -16,32 +16,12 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useThreadShell } from "../../state/entities";
 import { useThreadListActions } from "../home/useThreadListActions";
 
+import { mergeAndroidPickerValue, type AndroidSnoozePicker } from "./SnoozeForRouteScreen.logic";
+
 type SnoozeForRouteParams = {
   readonly environmentId: string;
   readonly threadId: string;
 };
-
-type AndroidPicker = "date" | "time";
-
-function mergePickerValue(current: Date, selected: Date, part: AndroidPicker): Date {
-  if (part === "date") {
-    return new Date(
-      selected.getFullYear(),
-      selected.getMonth(),
-      selected.getDate(),
-      current.getHours(),
-      current.getMinutes(),
-    );
-  }
-
-  return new Date(
-    current.getFullYear(),
-    current.getMonth(),
-    current.getDate(),
-    selected.getHours(),
-    selected.getMinutes(),
-  );
-}
 
 function formatDate(value: Date): string {
   return value.toLocaleDateString(undefined, {
@@ -65,7 +45,7 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
   });
   const { snoozeThread } = useThreadListActions();
   const [value, setValue] = useState(() => resolveSnoozeForDefault(new Date()));
-  const [androidPicker, setAndroidPicker] = useState<AndroidPicker | null>(null);
+  const [androidPicker, setAndroidPicker] = useState<AndroidSnoozePicker | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -195,7 +175,7 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
           mode={androidPicker}
           onDismiss={() => setAndroidPicker(null)}
           onValueChange={(_event, selected) => {
-            handleValueChange(mergePickerValue(value, selected, androidPicker));
+            handleValueChange(mergeAndroidPickerValue(value, selected, androidPicker));
             setAndroidPicker(null);
           }}
           presentation="dialog"
