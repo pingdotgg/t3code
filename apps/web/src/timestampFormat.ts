@@ -20,6 +20,47 @@ export function getTimestampFormatOptions(
   };
 }
 
+/**
+ * Pick the locale to format wall-clock times in, given what the host reports as
+ * the OS locale.
+ *
+ * Passing `undefined` to `Intl` means "the runtime default", which is correct in
+ * a browser but wrong in the packaged desktop app: it ships only the `en-US`
+ * Chromium locale pak (see `DESKTOP_ELECTRON_LANGUAGES`), and Chromium resolves
+ * its default `Intl` locale from the application locale rather than from the OS.
+ * The default is therefore pinned to `en-US` however the machine is configured,
+ * so a `24-hour` region renders `3:44 PM` instead of `15:44`. The desktop bridge
+ * reports the real OS locale, which the pak trim does not affect.
+ *
+ * Returns `undefined` when there is nothing usable to report, which keeps the
+ * browser on its own default.
+ */
+export function resolveTimestampLocale(
+  systemLocale: string | null | undefined,
+): string | undefined {
+  const trimmed = systemLocale?.trim();
+  if (!trimmed) return undefined;
+
+  // macOS reports POSIX-style identifiers (`en_GB`) in some paths, which `Intl`
+  // rejects outright rather than normalizing.
+  const tag = trimmed.replace(/_/g, "-");
+  try {
+    // Throws on a structurally invalid tag. A well-formed tag that ICU has no
+    // data for still resolves here, and is left to ICU's own fallback.
+    Intl.DateTimeFormat.supportedLocalesOf([tag]);
+    return tag;
+  } catch {
+    return undefined;
+  }
+}
+
+function readHostSystemLocale(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.desktopBridge?.getSystemLocale?.() ?? null;
+}
+
+const timestampLocale = resolveTimestampLocale(readHostSystemLocale());
+
 const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 
 function getTimestampFormatter(
@@ -33,7 +74,7 @@ function getTimestampFormatter(
   }
 
   const formatter = new Intl.DateTimeFormat(
-    undefined,
+    timestampLocale,
     getTimestampFormatOptions(timestampFormat, includeSeconds),
   );
   timestampFormatterCache.set(cacheKey, formatter);
@@ -51,7 +92,7 @@ export function formatTimestamp(isoDate: string, timestampFormat: TimestampForma
   return getTimestampFormatter(timestampFormat, true).format(date);
 }
 
-const monthNameFormatter = new Intl.DateTimeFormat(undefined, { month: "long" });
+const monthNameFormatter = new Intl.DateTimeFormat(timestampLocale, { month: "long" });
 
 function ordinalSuffix(day: number): string {
   const lastTwo = day % 100;
