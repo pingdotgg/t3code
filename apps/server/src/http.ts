@@ -27,7 +27,11 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  contentDispositionForDownload,
+  resolveAsset,
+} from "./assets/AssetAccess.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -55,7 +59,9 @@ export function assetResponseHeaders(
     "X-Content-Type-Options": "nosniff",
     ...(download
       ? {
-          "Content-Disposition": `attachment; filename="${downloadName ?? filePath.replace(/^.*[/\\]/, "")}"`,
+          "Content-Disposition": contentDispositionForDownload(
+            downloadName ?? filePath.replace(/^.*[/\\]/, ""),
+          ),
         }
       : {}),
     ...(filePath.toLowerCase().endsWith(".svg")

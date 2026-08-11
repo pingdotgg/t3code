@@ -111,6 +111,31 @@ function sanitizeDownloadFileName(name: string): string {
   return sanitized.length > 0 ? sanitized.slice(0, 255) : "attachment.bin";
 }
 
+function asciiDownloadFileName(name: string): string {
+  const fallback = name
+    .normalize("NFKD")
+    // The legacy filename parameter must remain safe for Latin-1-only clients.
+    .replace(/[^\x20-\x7e]/gu, "_")
+    .replace(/["\\]/gu, "_")
+    .trim();
+  return fallback.length > 0 ? fallback : "attachment.bin";
+}
+
+function encodeDownloadFileName(name: string): string {
+  // encodeURIComponent emits UTF-8 percent escapes, while RFC 5987 also
+  // requires these otherwise-unescaped attr characters to be encoded.
+  return encodeURIComponent(name).replace(
+    /[!'()*]/gu,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+/** Build a Content-Disposition value that works for both old and UTF-8 clients. */
+export function contentDispositionForDownload(name: string): string {
+  const sanitized = sanitizeDownloadFileName(name);
+  return `attachment; filename="${asciiDownloadFileName(sanitized)}"; filename*=UTF-8''${encodeDownloadFileName(sanitized)}`;
+}
+
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
     return Option.getOrNull(decodeAssetClaims(base64UrlDecodeUtf8(encodedPayload)));

@@ -16,6 +16,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionStartInput,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -983,6 +984,27 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
       const imageOnlyInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
       assert.equal(imageOnlyInput.input?.startsWith('[Attached image "screenshot.png"'), true);
+
+      const fileAttachment = {
+        type: "file" as const,
+        id: "thread-attach-22345678-1234-1234-1234-123456789abc",
+        name: "report.csv",
+        mimeType: "text/csv",
+        sizeBytes: 456,
+      };
+      const maxLengthInput = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+
+      routing.codex.sendTurn.mockClear();
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: maxLengthInput,
+        attachments: [fileAttachment],
+      });
+
+      const nearLimitInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.equal(nearLimitInput.input?.startsWith(maxLengthInput), true);
+      assert.include(nearLimitInput.input ?? "", '[Attached file "report.csv" is saved at: ');
+      assert.deepEqual(nearLimitInput.attachments, []);
 
       yield* provider.stopSession({ threadId: session.threadId });
     }),

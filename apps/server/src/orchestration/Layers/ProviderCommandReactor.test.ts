@@ -18,6 +18,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -551,6 +552,43 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
+
+  effectIt.effect(
+    "forwards file attachments without adding handoff text before provider validation",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const messageText = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+        const attachment = {
+          type: "file" as const,
+          id: "user-message-file-12345678-1234-1234-1234-123456789abc",
+          name: "report.csv",
+          mimeType: "text/csv",
+          sizeBytes: 512,
+        };
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-file-near-limit"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-file-near-limit"),
+            role: "user",
+            text: messageText,
+            attachments: [attachment],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+          input: messageText,
+          attachments: [attachment],
+        });
+      }),
+  );
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {

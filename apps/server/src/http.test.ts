@@ -49,7 +49,20 @@ describe("assetResponseHeaders", () => {
     expect(assetResponseHeaders("/attachments/id.bin", true, "vendor-report.csv")).toEqual({
       "Cache-Control": "private, max-age=3600",
       "X-Content-Type-Options": "nosniff",
-      "Content-Disposition": 'attachment; filename="vendor-report.csv"',
+      "Content-Disposition":
+        "attachment; filename=\"vendor-report.csv\"; filename*=UTF-8''vendor-report.csv",
     });
+  });
+
+  it("encodes Unicode download names without putting non-Latin-1 bytes in the header", () => {
+    const contentDisposition = assetResponseHeaders("/attachments/id.bin", true, "报告 📄.pdf")[
+      "Content-Disposition"
+    ];
+
+    expect(contentDisposition).toBe(
+      "attachment; filename=\"__ _.pdf\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A%20%F0%9F%93%84.pdf",
+    );
+    // eslint-disable-next-line no-control-regex
+    expect(contentDisposition).not.toMatch(/[^\x00-\x7f]/u);
   });
 });

@@ -25,9 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
-import { appendFileAttachmentPromptText } from "../../attachmentPrompt.ts";
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { ServerConfig } from "../../config.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
@@ -322,7 +320,6 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
-  const serverConfig = yield* ServerConfig;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -756,19 +753,12 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(
-      appendFileAttachmentPromptText({
-        text: input.messageText,
-        attachmentsDir: serverConfig.attachmentsDir,
-        attachments: input.attachments ?? [],
-      }),
-    );
-    // Current provider adapters model attachments as image content blocks. A
-    // non-image file is instead handed to every provider by its persisted path
-    // in the prompt text above, which also works for remote agent processes.
-    const normalizedAttachments = (input.attachments ?? []).filter(
-      (attachment) => attachment.type === "image",
-    );
+    // ProviderService validates the user's text before appending persisted
+    // attachment paths. Keep the original text here so file metadata does not
+    // consume the provider input limit, and let that service filter native
+    // image content from reference-only file attachments.
+    const normalizedInput = toNonEmptyProviderInput(input.messageText);
+    const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
       .pipe(

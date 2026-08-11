@@ -47,6 +47,7 @@ import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
+import { clipboardHasText } from "./composerClipboard";
 import {
   type ComposerAttachment,
   type DraftId,
@@ -2463,7 +2464,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
-    event.preventDefault();
+    // Let the editor handle the text portion of a mixed clipboard payload.
+    // Only suppress the browser paste for file-only clipboard contents.
+    if (!clipboardHasText(event.clipboardData)) {
+      event.preventDefault();
+    }
     void addComposerFiles(files);
   };
 

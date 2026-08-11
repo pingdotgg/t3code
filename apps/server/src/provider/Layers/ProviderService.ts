@@ -676,13 +676,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     }
 
-    // Adapters inline attachment pixels into the model prompt, but the model's
-    // tools cannot dereference pixels. Appending the on-disk path is what lets
-    // a turn like "include this screenshot in the PR" copy the actual file.
+    // Adapters natively inline image attachments, but the model's tools cannot
+    // dereference those pixels. Appending the on-disk path is what lets a turn
+    // like "include this screenshot in the PR" copy the actual file. The same
+    // handoff makes arbitrary non-image files available to every provider.
     // This runs after schema decode, so the appended lines are exempt from the
     // PROVIDER_SEND_TURN_MAX_INPUT_CHARS check; attachment count is capped, so
-    // the overhead is bounded. Unresolvable ids are skipped here and surface
-    // as adapter errors when the file is read for inlining.
+    // the overhead is bounded. Non-image files are reference-only and are not
+    // passed to adapters that model native attachments as images.
     const attachmentPathLines = attachments.flatMap((attachment) => {
       const attachmentPath = resolveAttachmentPath({
         attachmentsDir: serverConfig.attachmentsDir,
@@ -699,18 +700,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             .filter((part): part is string => typeof part === "string" && part.length > 0)
             .join("\n\n");
 
+    const nativeAttachments = attachments.filter((attachment) => attachment.type === "image");
     const input = {
       ...parsed,
       ...(inputTextWithAttachmentPaths !== undefined
         ? { input: inputTextWithAttachmentPaths }
         : {}),
-      attachments,
+      attachments: nativeAttachments,
     };
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "send-turn",
       "provider.thread_id": input.threadId,
       "provider.interaction_mode": input.interactionMode,
-      "provider.attachment_count": input.attachments.length,
+      "provider.attachment_count": attachments.length,
     });
     let metricProvider = "unknown";
     let metricModel = input.modelSelection?.model;
@@ -754,7 +756,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         // often, since every toggle restarts the session. Recording it per turn
         // gives a usage-weighted view and lets it cross with interactionMode.
         runtimeMode: routed.runtimeMode,
-        attachmentCount: input.attachments.length,
+        attachmentCount: attachments.length,
         hasInput: typeof input.input === "string" && input.input.trim().length > 0,
       });
       return turn;
