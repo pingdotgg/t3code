@@ -19,6 +19,7 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { Button } from "../ui/button";
+import { ScrollArea } from "../ui/scroll-area";
 import { cn } from "../../lib/utils";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
@@ -109,17 +110,22 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const card = (
     <div
       className={cn(
-        "dropdown-glass isolate contain-paint overflow-hidden rounded-[20px]",
-        props.mode === "inline" ? "max-h-full" : "max-h-[calc(100dvh-6.5rem)]",
+        // A single-track grid, because a grid area is a definite containing block: the card's own
+        // height is "content, clamped by max-height", which percentages treat as indefinite — as
+        // a plain block (or even a flex column) every `h-full`/`max-h-full` down the chain
+        // resolved to nothing, the scroll area's viewport stayed at its content height, and the
+        // card's overflow-hidden clipped the content instead of scrolling it. `minmax(0,1fr)`
+        // still shrink-wraps short content while letting the clamp bite on tall content.
+        "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-[20px]",
+        // The popup's real ceiling is what base-ui measured for it — the anchor's clipping
+        // ancestors, which is how an open terminal drawer shrinks it — less the popover
+        // viewport's own p-2. The dvh term is the fallback's fallback, from before.
+        props.mode === "popover" &&
+          "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
       )}
       data-thread-details-card
     >
-      <div
-        className={cn(
-          "overflow-x-hidden overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-          props.mode === "inline" ? "max-h-full" : "max-h-[calc(100dvh-6.5rem)]",
-        )}
-      >
+      <ScrollArea scrollFade className="min-h-0">
         <section aria-labelledby="thread-details-workspace-heading">
           <div className="flex min-h-10 items-center justify-between gap-3 px-3.5 pb-1 pt-3">
             <h3
@@ -254,16 +260,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         {!props.draftId ? (
           <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
         ) : null}
-      </div>
+      </ScrollArea>
     </div>
   );
 
   if (props.mode === "popover") {
-    return (
-      <div className="max-h-[calc(100dvh-6.5rem)]" data-thread-details-panel="popover">
-        {card}
-      </div>
-    );
+    return <div data-thread-details-panel="popover">{card}</div>;
   }
 
   return (
