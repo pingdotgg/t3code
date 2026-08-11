@@ -140,7 +140,7 @@ index 919b984edc9f91ee9ac26faf257d8a721e26457c..5bb0cd6736ed6bc51db57e2a9326f758
  
  NS_ASSUME_NONNULL_END
 diff --git a/ios/RNSScreenStackHeaderConfig.mm b/ios/RNSScreenStackHeaderConfig.mm
-index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbffcd7e3334 100644
+index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb2199dcbd58 100644
 --- a/ios/RNSScreenStackHeaderConfig.mm
 +++ b/ios/RNSScreenStackHeaderConfig.mm
 @@ -25,11 +25,33 @@
@@ -226,7 +226,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
  
  // appearance does not apply to the tvOS so we need to use lagacy customization
  #if TARGET_OS_TV
-@@ -637,10 +675,364 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -637,10 +675,384 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -312,9 +312,24 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
 +  if (existingMailSearchToolbar == nil) {
 +    existingMailSearchToolbar = [vc.view viewWithTag:RNSMailSearchToolbarViewTag];
 +  }
-+  [existingMailSearchToolbar removeFromSuperview];
++  // Reuse the live toolbar when nothing it was built from changed: rebuilding
++  // replaces the fallback UISearchTextField with a fresh empty one, dropping
++  // the user's in-progress search text and first responder on every unrelated
++  // header update. Keyed on the config instance (the button/search blocks
++  // capture its event emitter), the toolbar config values, and the host width
++  // (the width constraint constant is resolved from it at build time).
++  static char RNSAppliedMailSearchToolbarConfigKey;
++  NSArray *mailSearchToolbarKey = mailSearchToolbarConfig != nil
++      ? @[ @((uintptr_t)config), mailSearchToolbarConfig, @(chromeHostView.bounds.size.width) ]
++      : nil;
++  BOOL reuseMailSearchToolbar = existingMailSearchToolbar != nil && mailSearchToolbarKey != nil &&
++      [objc_getAssociatedObject(existingMailSearchToolbar, &RNSAppliedMailSearchToolbarConfigKey)
++          isEqual:mailSearchToolbarKey];
++  if (!reuseMailSearchToolbar) {
++    [existingMailSearchToolbar removeFromSuperview];
++  }
 +
-+  if (mailSearchToolbarConfig != nil) {
++  if (mailSearchToolbarConfig != nil && !reuseMailSearchToolbar) {
 +#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
 +    if (@available(iOS 26.0, *)) {
 +      CGFloat horizontalInset = 18.0;
@@ -347,6 +362,11 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
 +
 +      UIView *toolbarHost = [[UIView alloc] init];
 +      toolbarHost.tag = RNSMailSearchToolbarViewTag;
++      objc_setAssociatedObject(
++          toolbarHost,
++          &RNSAppliedMailSearchToolbarConfigKey,
++          mailSearchToolbarKey,
++          OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 +      toolbarHost.translatesAutoresizingMaskIntoConstraints = NO;
 +      [chromeHostView addSubview:toolbarHost];
 +      // The screen stays mounted beneath pushed routes, so its keyboard layout
@@ -595,7 +615,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
  
    // Setting navigation bar visibility is split to mitigate iOS 26 bug with bar button items
    // (setting nav bar visibility should be done after `navitem.*BarButtonItems`).
-@@ -773,6 +1165,7 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -773,6 +1185,7 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
  
  - (NSArray<UIBarButtonItem *> *)barButtonItemsFromConfigs:(NSArray<NSDictionary<NSString *, id> *> *)dicts
                                           withCurrentItems:(NSArray<UIBarButtonItem *> *)currentItems
@@ -603,7 +623,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
  {
    if (dicts.count == 0) {
      return currentItems;
-@@ -781,7 +1174,197 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -781,7 +1194,197 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    [items addObjectsFromArray:currentItems];
    for (NSUInteger i = 0; i < dicts.count; i++) {
      NSDictionary *dict = dicts[i];
@@ -802,7 +822,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
        RNSBarButtonItem *item = [[RNSBarButtonItem alloc] initWithConfig:dict
            action:^(NSString *buttonId) {
              auto eventEmitter = std::static_pointer_cast<const facebook::react::RNSScreenStackHeaderConfigEventEmitter>(
-@@ -803,19 +1386,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -803,19 +1406,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
            }
            imageLoader:_imageLoader];
        NSNumber *index = dict[@"index"];
@@ -832,7 +852,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
          [items insertObject:item atIndex:index.integerValue];
        } else {
          [items addObject:item];
-@@ -825,6 +1412,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -825,6 +1432,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    return items;
  }
  
@@ -880,7 +900,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
  RNS_IGNORE_SUPER_CALL_BEGIN
  - (void)insertReactSubview:(RNSScreenStackHeaderSubview *)subview atIndex:(NSInteger)atIndex
  {
-@@ -1013,6 +1641,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1013,6 +1661,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    }
  
    _title = RCTNSStringFromStringNilIfEmpty(newScreenProps.title);
@@ -889,7 +909,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
    if (newScreenProps.titleFontFamily != oldScreenProps.titleFontFamily) {
      _titleFontFamily = RCTNSStringFromStringNilIfEmpty(newScreenProps.titleFontFamily);
    }
-@@ -1038,6 +1668,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1038,6 +1688,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    _disableBackButtonMenu = newScreenProps.disableBackButtonMenu;
    _backButtonDisplayMode =
        [RNSConvert UINavigationItemBackButtonDisplayModeFromCppEquivalent:newScreenProps.backButtonDisplayMode];
@@ -897,7 +917,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..d563871dd634e2d356810c0c55fcfbff
  
    if (newScreenProps.userInterfaceStyle != oldScreenProps.userInterfaceStyle) {
      _userInterfaceStyle = [RNSConvert UIUserInterfaceStyleFromCppEquivalent:newScreenProps.userInterfaceStyle];
-@@ -1084,6 +1715,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1084,6 +1735,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
      _headerRightBarButtonItems = array;
    }
  
