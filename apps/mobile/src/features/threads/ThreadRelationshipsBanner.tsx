@@ -115,7 +115,10 @@ export function ThreadRelationshipsBanner(props: {
     setVisible(false);
     void Haptics.selectionAsync();
     if (archivedThread) {
-      navigation.navigate("SettingsSheet", { screen: "SettingsArchive" });
+      navigation.navigate("SettingsSheet", {
+        screen: "SettingsContent",
+        params: { screen: "SettingsArchive" },
+      });
       return;
     }
     navigation.navigate("Thread", {
