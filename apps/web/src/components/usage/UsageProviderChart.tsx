@@ -1,4 +1,11 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import {
+  buildUsageChartGeometry,
+  USAGE_CHART_PLOT_TOP,
+  USAGE_CHART_TICK_COUNT,
+  USAGE_CHART_VIEW_HEIGHT,
+  USAGE_CHART_VIEW_WIDTH,
+  type UsageChartMetric,
+} from "@t3tools/shared/usageChart";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
@@ -11,12 +18,7 @@ import {
 } from "@t3tools/shared/usageFormat";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
-const VIEW_WIDTH = 960;
-const VIEW_HEIGHT = 260;
-const TICK_COUNT = 4;
-const PLOT_TOP = 8;
-
-export type UsageChartMetric = "tokens" | "cost";
+export type { UsageChartMetric } from "@t3tools/shared/usageChart";
 
 interface UsageProviderChartProps {
   readonly days: readonly string[];
@@ -27,163 +29,6 @@ interface UsageProviderChartProps {
   readonly referenceTime: string | undefined;
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
-}
-
-/** One day's per-provider values, shared by the paths and the hover readout. */
-export interface DayColumn {
-  readonly bands: readonly {
-    readonly provider: UsageProviderKind;
-    readonly value: number;
-  }[];
-  readonly total: number;
-}
-
-interface Point {
-  readonly x: number;
-  readonly y: number;
-}
-
-function valueFor(
-  totals: DailyTotals | HourlyTotals | undefined,
-  provider: UsageProviderKind,
-  metric: UsageChartMetric,
-): number {
-  const entry = totals?.byProvider.get(provider);
-  if (entry === undefined) return 0;
-  return metric === "tokens" ? entry.totalTokens : entry.costUsd;
-}
-
-function buildPeriodColumns(
-  periods: readonly string[],
-  byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
-  metric: UsageChartMetric,
-): readonly DayColumn[] {
-  return periods.map((period) => {
-    const entry = byPeriod.get(period);
-    const bands = PROVIDER_ORDER.map((provider) => ({
-      provider,
-      value: valueFor(entry, provider, metric),
-    }));
-    return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
-  });
-}
-
-/** Shape-preserving cubic tangents that cannot overshoot spiky usage data. */
-function monotoneTangents(points: readonly Point[]): readonly number[] {
-  const count = points.length;
-  if (count < 2) return [0];
-
-  const slopes: number[] = [];
-  for (let index = 0; index < count - 1; index += 1) {
-    const dx = (points[index + 1]?.x ?? 0) - (points[index]?.x ?? 0);
-    const dy = (points[index + 1]?.y ?? 0) - (points[index]?.y ?? 0);
-    slopes.push(dx === 0 ? 0 : dy / dx);
-  }
-
-  const tangents: number[] = Array.from({ length: count }, () => 0);
-  tangents[0] = slopes[0] ?? 0;
-  tangents[count - 1] = slopes[count - 2] ?? 0;
-  for (let index = 1; index < count - 1; index += 1) {
-    const previous = slopes[index - 1] ?? 0;
-    const next = slopes[index] ?? 0;
-    tangents[index] = previous * next <= 0 ? 0 : (previous + next) / 2;
-  }
-
-  for (let index = 0; index < count - 1; index += 1) {
-    const slope = slopes[index] ?? 0;
-    if (slope === 0) {
-      tangents[index] = 0;
-      tangents[index + 1] = 0;
-      continue;
-    }
-    const a = (tangents[index] ?? 0) / slope;
-    const b = (tangents[index + 1] ?? 0) / slope;
-    const magnitude = a * a + b * b;
-    if (magnitude > 9) {
-      const scale = 3 / Math.sqrt(magnitude);
-      tangents[index] = scale * a * slope;
-      tangents[index + 1] = scale * b * slope;
-    }
-  }
-
-  return tangents;
-}
-
-interface CurveSegment {
-  readonly from: Point;
-  readonly c1: Point;
-  readonly c2: Point;
-  readonly to: Point;
-}
-
-function smoothCurve(points: readonly Point[]): readonly CurveSegment[] {
-  if (points.length < 2) return [];
-  const tangents = monotoneTangents(points);
-  const segments: CurveSegment[] = [];
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const from = points[index];
-    const to = points[index + 1];
-    if (from === undefined || to === undefined) continue;
-    const dx = to.x - from.x;
-    segments.push({
-      from,
-      c1: { x: from.x + dx / 3, y: from.y + ((tangents[index] ?? 0) * dx) / 3 },
-      c2: { x: to.x - dx / 3, y: to.y - ((tangents[index + 1] ?? 0) * dx) / 3 },
-      to,
-    });
-  }
-  return segments;
-}
-
-function curvePath(segments: readonly CurveSegment[]): string {
-  const first = segments[0];
-  if (first === undefined) return "";
-  let path = `M${first.from.x.toFixed(2)},${first.from.y.toFixed(2)}`;
-  for (const segment of segments) {
-    path += ` C${segment.c1.x.toFixed(2)},${segment.c1.y.toFixed(2)} ${segment.c2.x.toFixed(2)},${segment.c2.y.toFixed(2)} ${segment.to.x.toFixed(2)},${segment.to.y.toFixed(2)}`;
-  }
-  return path;
-}
-
-/**
- * Builds a scale whose maximum is a readable 1/2/5 x 10^n step at or above the
- * peak.
- *
- * Rounding the maximum *up* is the point: stopping at the last step below the
- * peak leaves the tallest day drawn past the top of the plot, where it is
- * clipped.
- */
-export function niceScale(peak: number, count: number): { max: number; ticks: readonly number[] } {
-  if (peak <= 0) return { max: 0, ticks: [0] };
-
-  const rawStep = peak / count;
-  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
-  const normalized = rawStep / magnitude;
-  const step = (normalized > 5 ? 10 : normalized > 2 ? 5 : normalized > 1 ? 2 : 1) * magnitude;
-
-  const max = Math.ceil(peak / step) * step;
-  const ticks: number[] = [];
-  for (let value = 0; value <= max + step * 1e-6; value += step) ticks.push(value);
-  return { max, ticks };
-}
-
-/**
- * Turns the merged daily totals into one column per day.
- *
- * Values are absolute, not cumulative: each provider is drawn from the same
- * zero baseline so the chart never implies that one provider is always larger.
- *
- * The chart paths and the hover readout both consume this, so the number under
- * the cursor is by construction the number that was plotted rather than a
- * second derivation that can drift from it.
- */
-export function buildDayColumns(
-  days: readonly string[],
-  byDay: ReadonlyMap<string, DailyTotals>,
-  metric: UsageChartMetric,
-): readonly DayColumn[] {
-  return buildPeriodColumns(days, byDay, metric);
 }
 
 export function UsageProviderChart({
@@ -197,11 +42,16 @@ export function UsageProviderChart({
   timeZone,
 }: UsageProviderChartProps) {
   const periods = resolution === "hour" ? hours : days;
-  const byPeriod = useMemo(
+  const chartTotals = useMemo<readonly DailyTotals[]>(
     () =>
       resolution === "hour"
-        ? new Map(hourly.map((entry) => [entry.hourStart, entry]))
-        : new Map(daily.map((entry) => [entry.day, entry])),
+        ? hourly.map((entry) => ({
+            day: entry.hourStart,
+            costUsd: entry.costUsd,
+            totalTokens: entry.totalTokens,
+            byProvider: entry.byProvider,
+          }))
+        : daily,
     [daily, hourly, resolution],
   );
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -209,58 +59,26 @@ export function UsageProviderChart({
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
 
-  const { paths, series, stepX, ticks, toY } = useMemo(() => {
-    if (periods.length === 0) {
-      return {
-        paths: [],
-        series: [] as readonly DayColumn[],
-        stepX: 0,
-        ticks: [0] as readonly number[],
-        toY: () => VIEW_HEIGHT,
-      };
-    }
-
-    const columns = buildPeriodColumns(periods, byPeriod, metric);
-    // The scale tops out at the largest single provider-period, not the sum:
-    // layered series each measure from zero, so a combined peak would leave
-    // the plot permanently half empty.
-    const peak = columns.reduce(
-      (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
-      0,
-    );
-    const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
-    const step = periods.length === 1 ? 0 : VIEW_WIDTH / (periods.length - 1);
-    // Leave room above the top gridline so the constant-width stroke is not
-    // clipped when a series reaches the peak.
-    const toY = (value: number) =>
-      max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
-
-    const built = PROVIDER_ORDER.map((provider, providerIndex) => {
-      const line = curvePath(
-        smoothCurve(
-          columns.map((column, periodIndex) => ({
-            x: periodIndex * step,
-            y: toY(column.bands[providerIndex]?.value ?? 0),
-          })),
-        ),
-      );
-      return {
-        provider,
-        total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
-        area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
-        line,
-      };
-    });
-
-    // Paint the heavier series first so the lighter one is not buried.
-    return {
-      paths: built.toSorted((a, b) => b.total - a.total),
-      series: columns,
-      stepX: step,
-      ticks: tickValues,
-      toY,
-    };
-  }, [byPeriod, metric, periods]);
+  const {
+    columns: series,
+    layers,
+    ticks,
+    stepX,
+    toY,
+  } = useMemo(
+    () =>
+      buildUsageChartGeometry({
+        days: periods,
+        daily: chartTotals,
+        metric,
+        providers: PROVIDER_ORDER,
+        width: USAGE_CHART_VIEW_WIDTH,
+        height: USAGE_CHART_VIEW_HEIGHT,
+        plotTop: USAGE_CHART_PLOT_TOP,
+        tickCount: USAGE_CHART_TICK_COUNT,
+      }),
+    [chartTotals, metric, periods],
+  );
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
@@ -338,7 +156,7 @@ export function UsageProviderChart({
             <span
               key={tick}
               className="absolute right-0 -translate-y-1/2 text-[10px] text-muted-foreground tabular-nums"
-              style={{ top: `${(toY(tick) / VIEW_HEIGHT) * 100}%` }}
+              style={{ top: `${(toY(tick) / USAGE_CHART_VIEW_HEIGHT) * 100}%` }}
             >
               {tick === 0 ? "0" : format(tick)}
             </span>
@@ -356,7 +174,7 @@ export function UsageProviderChart({
         >
           <svg
             className="h-full w-full"
-            viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+            viewBox={`0 0 ${USAGE_CHART_VIEW_WIDTH} ${USAGE_CHART_VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             role="img"
             aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
@@ -367,7 +185,7 @@ export function UsageProviderChart({
                 <line
                   key={tick}
                   x1={0}
-                  x2={VIEW_WIDTH}
+                  x2={USAGE_CHART_VIEW_WIDTH}
                   y1={y}
                   y2={y}
                   stroke="currentColor"
@@ -378,32 +196,32 @@ export function UsageProviderChart({
               );
             })}
 
-            {/* Fills first, then every stroke, so no series covers another's line. */}
-            {paths.map(({ provider, area }) => (
-              <path
-                key={provider}
-                d={area}
-                fill={PROVIDER_PRESENTATION[provider].color}
-                fillOpacity={0.12}
-              />
-            ))}
-            {paths.map(({ provider, line }) => (
-              <path
-                key={provider}
-                d={line}
-                fill="none"
-                stroke={PROVIDER_PRESENTATION[provider].color}
-                strokeWidth={2}
-                vectorEffect="non-scaling-stroke"
-              />
-            ))}
+            {layers.map((layer) =>
+              layer.kind === "fill" ? (
+                <path
+                  key={`fill-${layer.provider}`}
+                  d={layer.path}
+                  fill={PROVIDER_PRESENTATION[layer.provider].color}
+                  fillOpacity={layer.opacity}
+                />
+              ) : (
+                <path
+                  key={`stroke-${layer.provider}`}
+                  d={layer.path}
+                  fill="none"
+                  stroke={PROVIDER_PRESENTATION[layer.provider].color}
+                  strokeWidth={layer.width}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ),
+            )}
 
             {hoverIndex === null ? null : (
               <line
                 x1={hoverIndex * stepX}
                 x2={hoverIndex * stepX}
-                y1={PLOT_TOP}
-                y2={VIEW_HEIGHT}
+                y1={USAGE_CHART_PLOT_TOP}
+                y2={USAGE_CHART_VIEW_HEIGHT}
                 stroke="currentColor"
                 strokeWidth={1}
                 className="text-muted-foreground"

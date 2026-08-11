@@ -1,5 +1,6 @@
 import { useNavigation } from "@react-navigation/native";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
+import type { UsageChartMetric } from "@t3tools/shared/usageChart";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -21,7 +22,6 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
-import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
