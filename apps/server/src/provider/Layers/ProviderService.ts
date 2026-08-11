@@ -569,12 +569,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const persistedResumeCursor = persistedBinding?.resumeCursor;
         const hasPersistedResumeCursor =
           persistedResumeCursor !== null && persistedResumeCursor !== undefined;
+        const hasRequestedResumeCursor =
+          input.resumeCursor !== null && input.resumeCursor !== undefined;
         let canReusePersistedState = persistedBinding?.providerInstanceId === resolvedInstanceId;
         // Instance ids are routing labels, while continuation identities describe
         // where provider-owned resume state lives. A persisted cursor may cross
         // labels only when both instances can resolve that same state.
         if (
           persistedBinding !== undefined &&
+          !hasRequestedResumeCursor &&
           hasPersistedResumeCursor &&
           persistedBinding.providerInstanceId !== resolvedInstanceId
         ) {

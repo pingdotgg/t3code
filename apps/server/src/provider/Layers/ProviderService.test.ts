@@ -778,6 +778,59 @@ it.effect("preserves a persisted binding when continuation identities are incomp
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("uses a requested cursor without validating stale persisted resume state", () => {
+  const sourceInstanceId = ProviderInstanceId.make("codex_removed");
+  const targetInstanceId = ProviderInstanceId.make("codex_proxy");
+  const target = makeFakeCodexAdapter();
+  const registry = makeMultiInstanceRegistry([
+    {
+      instanceId: targetInstanceId,
+      adapter: target.adapter,
+      continuationKey: "codex:home:/tmp/proxy-codex-home",
+    },
+  ]);
+  const layer = makeIsolatedProviderServiceLayer(registry.registry);
+
+  return Effect.gen(function* () {
+    const provider = yield* ProviderService.ProviderService;
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+    const threadId = asThreadId("thread-requested-cursor-instance-switch");
+    const requestedResumeCursor = { threadId: "codex-session-requested" };
+    yield* directory.upsert({
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: sourceInstanceId,
+      runtimeMode: "full-access",
+      status: "stopped",
+      resumeCursor: { threadId: "codex-session-stale" },
+      runtimePayload: { cwd: "/tmp/stale-project" },
+    });
+    registry.getInstanceInfo.mockClear();
+    target.startSession.mockClear();
+
+    yield* provider.startSession(threadId, {
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: targetInstanceId,
+      resumeCursor: requestedResumeCursor,
+      runtimeMode: "full-access",
+    });
+
+    assert.equal(target.startSession.mock.calls.length, 1);
+    assert.deepEqual(target.startSession.mock.calls[0]?.[0], {
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: targetInstanceId,
+      resumeCursor: requestedResumeCursor,
+      runtimeMode: "full-access",
+    });
+    assert.deepEqual(
+      registry.getInstanceInfo.mock.calls.map(([instanceId]) => instanceId),
+      [targetInstanceId],
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("keeps fresh-start behavior when a cross-instance binding has no cursor", () => {
   const sourceInstanceId = ProviderInstanceId.make("codex_personal");
   const targetInstanceId = ProviderInstanceId.make("codex_proxy");
