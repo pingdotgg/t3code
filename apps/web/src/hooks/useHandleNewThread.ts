@@ -30,7 +30,7 @@ import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefau
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { getClientSettings, useClientSettings } from "./useSettings";
+import { useClientSettings } from "./useSettings";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -272,9 +272,8 @@ export function useNewThreadHandler() {
           // default panel layout too — otherwise turning the preference on
           // appears to do nothing until the project's next real thread. A
           // draft that already has a layout keeps it.
-          applyNewThreadPanelDefaults(
+          void applyNewThreadPanelDefaults(
             scopeThreadRef(projectRef.environmentId, emptyStoredDraftThread.threadId),
-            getClientSettings(),
           );
           const opened = {
             draftId: emptyStoredDraftThread.draftId,
@@ -325,9 +324,8 @@ export function useNewThreadHandler() {
         });
         // Presented as a new chat like the reuse path above, so it gets the
         // configured default panel layout too.
-        applyNewThreadPanelDefaults(
+        void applyNewThreadPanelDefaults(
           scopeThreadRef(projectRef.environmentId, latestActiveDraftThread.threadId),
-          getClientSettings(),
         );
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
@@ -392,10 +390,7 @@ export function useNewThreadHandler() {
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
-        applyNewThreadPanelDefaults(
-          scopeThreadRef(projectRef.environmentId, threadId),
-          getClientSettings(),
-        );
+        void applyNewThreadPanelDefaults(scopeThreadRef(projectRef.environmentId, threadId));
         if (carryModelSelection) {
           // After sticky state so the viewed thread's exact selection
           // (model + options like effort and context window) wins over the

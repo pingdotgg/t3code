@@ -180,7 +180,6 @@ import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import {
-  getClientSettings,
   useClientSettings,
   useClientSettingsHydrated,
   useEnvironmentSettings,
@@ -1867,10 +1866,7 @@ function ChatViewContent(props: ChatViewProps) {
       // opens with the configured panel layout, exactly like the new-thread
       // handler. A chat that already has a layout keeps it.
       const applyPanelDefaults = (threadId: ThreadId) => {
-        applyNewThreadPanelDefaults(
-          scopeThreadRef(activeProjectRef.environmentId, threadId),
-          getClientSettings(),
-        );
+        void applyNewThreadPanelDefaults(scopeThreadRef(activeProjectRef.environmentId, threadId));
       };
       const logicalProjectKey = deriveLogicalProjectKeyFromSettings(
         activeProject,
@@ -5737,10 +5733,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (failure === null) {
       // The implementation runs in a chat that did not exist a moment ago, so it
       // opens with the configured panel layout like any other new chat.
-      applyNewThreadPanelDefaults(
-        scopeThreadRef(activeThread.environmentId, nextThreadId),
-        getClientSettings(),
-      );
+      void applyNewThreadPanelDefaults(scopeThreadRef(activeThread.environmentId, nextThreadId));
       const navigateResult = await settlePromise(() =>
         navigate({
           to: "/$environmentId/$threadId",

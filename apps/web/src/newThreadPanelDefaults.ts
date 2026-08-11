@@ -8,19 +8,21 @@
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import type { ClientSettings } from "@t3tools/contracts/settings";
 
+import { getHydratedClientSettings } from "./hooks/useSettings";
 import { useRightPanelStore } from "./rightPanelStore";
 import { useTerminalUiStateStore } from "./terminalUiStateStore";
-
-export type NewThreadPanelDefaults = Pick<
-  ClientSettings,
-  "newThreadOpenFilesPanel" | "newThreadOpenTerminal"
->;
 
 // The chats this defaulting has already decided on. Both stores drop a thread's
 // entry once its layout returns to the all-closed default, so store contents
 // alone cannot tell an untouched chat from one the user emptied on purpose.
+//
+// The record is per session. A draft the user emptied and then reloaded is
+// defaulted one more time, because nothing else survives that reload either:
+// the stores persist the emptied layout as no entry at all, and the terminal
+// store keeps its closed ids out of what it persists. Holding the decision
+// durably would mean carrying a marker per draft through the persisted composer
+// draft schema, which is a bigger change than the miss is worth.
 const decidedThreadKeys = new Set<string>();
 
 // A layout the user has already shaped: an entry in either store, or a terminal
@@ -35,10 +37,12 @@ function hasPanelState(threadKey: string): boolean {
   );
 }
 
-export function applyNewThreadPanelDefaults(
-  threadRef: ScopedThreadRef,
-  settings: NewThreadPanelDefaults,
-): void {
+export async function applyNewThreadPanelDefaults(threadRef: ScopedThreadRef): Promise<void> {
+  // Client settings hydrate asynchronously and read as the defaults — both of
+  // these off — until that lands. The index route opens its draft inside that
+  // window, so reading the snapshot directly would skip the first chat of the
+  // session and never come back to it.
+  const settings = await getHydratedClientSettings();
   if (!settings.newThreadOpenFilesPanel && !settings.newThreadOpenTerminal) return;
   // "New chat" hands back an unused draft rather than minting one whenever it
   // can, so the defaults must never re-force a layout: whatever that draft
