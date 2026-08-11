@@ -266,6 +266,132 @@ function minutesBefore(now: number, minutes: number): string {
   return new Date(now - minutes * 60_000).toISOString();
 }
 
+function showcaseUsageTimestamp(now: number, daysAgo: number): string {
+  const date = new Date(now);
+  date.setUTCHours(18, 0, 0, 0);
+  date.setUTCDate(date.getUTCDate() - daysAgo);
+  return date.toISOString();
+}
+
+/**
+ * Seeds provider homes used by Usage screenshots. Keeping both paths below the
+ * disposable showcase root prevents the server from scanning a developer's
+ * real Codex or Claude transcripts while the capture harness is running.
+ */
+export async function seedShowcaseUsageFixture(input: {
+  readonly baseDir: string;
+  readonly now?: number;
+}): Promise<void> {
+  const now = input.now ?? Date.now();
+  const userdataDir = NodePath.join(input.baseDir, "userdata");
+  const codexHome = NodePath.join(input.baseDir, "showcase-providers", "codex");
+  const claudeHome = NodePath.join(input.baseDir, "showcase-providers", "claude");
+  const codexTranscriptDir = NodePath.join(codexHome, "sessions", "showcase");
+  const claudeTranscriptDir = NodePath.join(claudeHome, ".claude", "projects", "showcase");
+
+  await Promise.all([
+    NodeFSP.mkdir(userdataDir, { recursive: true }),
+    NodeFSP.mkdir(codexTranscriptDir, { recursive: true }),
+    NodeFSP.mkdir(claudeTranscriptDir, { recursive: true }),
+  ]);
+
+  const codexMultipliers = [2, 3, 4, 5, 6, 7, 8, 9, 4, 6] as const;
+  const codexLines: string[] = [
+    JSON.stringify({
+      type: "session_meta",
+      timestamp: showcaseUsageTimestamp(now, codexMultipliers.length - 1),
+      payload: { id: "showcase-codex-session" },
+    }),
+  ];
+  for (const [index, multiplier] of codexMultipliers.entries()) {
+    const timestamp = showcaseUsageTimestamp(now, codexMultipliers.length - index - 1);
+    codexLines.push(
+      JSON.stringify({ type: "turn_context", timestamp, payload: { model: "gpt-5.4" } }),
+      JSON.stringify({
+        type: "event_msg",
+        timestamp,
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: {
+              input_tokens: 10_000 * multiplier,
+              cached_input_tokens: 2_000 * multiplier,
+              output_tokens: 2_000 * multiplier,
+              reasoning_output_tokens: 600 * multiplier,
+            },
+          },
+        },
+      }),
+    );
+  }
+
+  const claudeCosts = [0.09, 0.14, 0.11, 0.16, 0.13, 0.2, 0.17, 0.23, 0.19, 0.26] as const;
+  const claudeLines = claudeCosts.map((costUSD, index) => {
+    const multiplier = index + 2;
+    return JSON.stringify({
+      type: "assistant",
+      timestamp: showcaseUsageTimestamp(now, claudeCosts.length - index - 1),
+      sessionId: "showcase-claude-session",
+      requestId: `showcase-request-${index + 1}`,
+      costUSD,
+      message: {
+        id: `showcase-message-${index + 1}`,
+        model: "claude-sonnet-4-5-20250929",
+        usage: {
+          input_tokens: 4_000 * multiplier,
+          cache_read_input_tokens: 1_000 * multiplier,
+          cache_creation_input_tokens: 500 * multiplier,
+          output_tokens: 1_200 * multiplier,
+        },
+      },
+    });
+  });
+
+  await Promise.all([
+    NodeFSP.writeFile(
+      NodePath.join(userdataDir, "settings.json"),
+      `${JSON.stringify(
+        {
+          enableProviderUpdateChecks: false,
+          providers: {
+            codex: { enabled: false, homePath: codexHome },
+            claudeAgent: { enabled: false, homePath: claudeHome },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    ),
+    NodeFSP.writeFile(
+      NodePath.join(userdataDir, "usage-model-rates.json"),
+      `${JSON.stringify({
+        fetchedAtMs: now,
+        document: {
+          "gpt-5.4": {
+            input_cost_per_token: 0.000002,
+            output_cost_per_token: 0.000008,
+            cache_read_input_token_cost: 0.0000005,
+          },
+          "claude-sonnet-4-5-20250929": {
+            input_cost_per_token: 0.000003,
+            output_cost_per_token: 0.000015,
+            cache_read_input_token_cost: 0.0000003,
+            cache_creation_input_token_cost: 0.00000375,
+          },
+        },
+      })}\n`,
+    ),
+    NodeFSP.writeFile(
+      NodePath.join(codexTranscriptDir, "usage.jsonl"),
+      `${codexLines.join("\n")}\n`,
+    ),
+    NodeFSP.writeFile(
+      NodePath.join(claudeTranscriptDir, "usage.jsonl"),
+      `${claudeLines.join("\n")}\n`,
+    ),
+  ]);
+}
+
 async function runGit(workspaceRoot: string, args: ReadonlyArray<string>): Promise<void> {
   await execFile("git", [...args], {
     cwd: workspaceRoot,

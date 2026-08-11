@@ -22,7 +22,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
-import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
+import { getRecentUsageDays } from "./usageBreakdown";
+import { PROVIDER_LABEL, PROVIDER_ORDER, useProviderColors } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -140,7 +141,11 @@ export function UsageRouteScreen() {
             />
             <ProviderSection merged={merged} metric={metric} />
             <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
-            <ModelsSection merged={merged} />
+            <BreakdownSection
+              merged={merged}
+              isPast24Hours={isPast24Hours}
+              timeZone={window.timeZone}
+            />
           </>
         )}
       </ScrollView>
@@ -413,38 +418,146 @@ function MetricCell(props: {
   );
 }
 
-function ModelsSection(props: { readonly merged: MergedUsage }) {
+function BreakdownSection(props: {
+  readonly merged: MergedUsage;
+  readonly isPast24Hours: boolean;
+  readonly timeZone: string;
+}) {
   const { merged } = props;
   const colors = useProviderColors();
-  if (merged.models.length === 0) return null;
+  const [breakdown, setBreakdown] = useState<"model" | "day">("model");
+  const recentPeriods = useMemo(
+    () =>
+      getRecentUsageDays(
+        props.isPast24Hours
+          ? merged.hourly.map((hour) => ({
+              day: hour.hourStart,
+              costUsd: hour.costUsd,
+              totalTokens: hour.totalTokens,
+              byProvider: hour.byProvider,
+            }))
+          : merged.daily,
+      ),
+    [merged.daily, merged.hourly, props.isPast24Hours],
+  );
 
   return (
-    <SettingsSection title="By model" card>
-      {merged.models.map((model, index) => (
-        <View
-          key={`${model.provider}:${model.model}`}
-          className={
-            index === 0
-              ? "flex-row items-center gap-3 p-4"
-              : "flex-row items-center gap-3 border-t border-border-subtle p-4"
-          }
-        >
-          <View
-            className="size-2.5 shrink-0 rounded-full"
-            style={{ backgroundColor: colors[model.provider] }}
-          />
-          <View className="min-w-0 flex-1 gap-0.5">
-            <Text className="text-base text-foreground" numberOfLines={1}>
-              {model.model}
-            </Text>
-            <Text className="text-sm text-foreground-muted">
-              {formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)} tokens
-            </Text>
-          </View>
-          <Text className="text-base tabular-nums text-foreground">{formatUsd(model.costUsd)}</Text>
+    <View className="gap-2">
+      <View className="flex-row items-center justify-between gap-3 px-2">
+        <Text className="text-sm font-t3-medium text-foreground-muted">Breakdown</Text>
+        <View className="flex-row overflow-hidden rounded-full bg-subtle">
+          {(["model", "day"] as const).map((option) => {
+            const active = breakdown === option;
+            return (
+              <Pressable
+                key={option}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => setBreakdown(option)}
+                className={active ? "rounded-full bg-subtle-strong px-3 py-1.5" : "px-3 py-1.5"}
+              >
+                <Text
+                  className={
+                    active
+                      ? "text-xs font-t3-medium text-foreground"
+                      : "text-xs text-foreground-muted"
+                  }
+                >
+                  {option === "model" ? "Model" : props.isPast24Hours ? "Hour" : "Day"}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
-      ))}
-    </SettingsSection>
+      </View>
+
+      <View className="overflow-hidden rounded-[24px] border-continuous bg-card">
+        {breakdown === "model" ? (
+          merged.models.length === 0 ? (
+            <EmptyBreakdown />
+          ) : (
+            merged.models.map((model, index) => (
+              <View
+                key={`${model.provider}:${model.model}`}
+                className={
+                  index === 0
+                    ? "flex-row items-center gap-3 p-4"
+                    : "flex-row items-center gap-3 border-t border-border-subtle p-4"
+                }
+              >
+                <View
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: colors[model.provider] }}
+                />
+                <View className="min-w-0 flex-1 gap-0.5">
+                  <Text className="text-base text-foreground" numberOfLines={1}>
+                    {model.model}
+                  </Text>
+                  <Text className="text-sm text-foreground-muted">
+                    {formatPercent(model.costShare)} of cost · {formatTokens(model.totalTokens)}{" "}
+                    tokens
+                  </Text>
+                </View>
+                <Text className="text-base tabular-nums text-foreground">
+                  {formatUsd(model.costUsd)}
+                </Text>
+              </View>
+            ))
+          )
+        ) : recentPeriods.length === 0 ? (
+          <EmptyBreakdown />
+        ) : (
+          recentPeriods.map((period, index) => {
+            const providerCosts = PROVIDER_ORDER.map((provider) => ({
+              label: PROVIDER_LABEL[provider],
+              cost: formatUsd(period.byProvider.get(provider)?.costUsd ?? 0),
+            }));
+            const formattedPeriod = props.isPast24Hours
+              ? formatHourShort(period.day, props.timeZone)
+              : formatDayShort(period.day);
+            const totalCost = formatUsd(period.costUsd);
+            const tokens = formatTokens(period.totalTokens);
+
+            return (
+              <View
+                key={period.day}
+                accessible
+                accessibilityLabel={`${formattedPeriod}. ${providerCosts
+                  .map((provider) => `${provider.label} ${provider.cost}`)
+                  .join(". ")}. Total ${totalCost}. ${tokens} tokens.`}
+                className={
+                  index === 0
+                    ? "flex-row items-center gap-3 p-4"
+                    : "flex-row items-center gap-3 border-t border-border-subtle p-4"
+                }
+              >
+                <View className="min-w-0 flex-1 gap-0.5">
+                  <View className="flex-row items-center justify-between gap-3">
+                    <Text className="text-base text-foreground">{formattedPeriod}</Text>
+                    <Text className="shrink-0 text-base tabular-nums text-foreground">
+                      {totalCost} · {tokens} tokens
+                    </Text>
+                  </View>
+                  <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+                    {providerCosts
+                      .map((provider) => `${provider.label} ${provider.cost}`)
+                      .join(" · ")}
+                  </Text>
+                </View>
+              </View>
+            );
+          })
+        )}
+      </View>
+    </View>
+  );
+}
+
+function EmptyBreakdown() {
+  return (
+    <View className="items-center p-6">
+      <Text className="text-base text-foreground-muted">No activity in this window.</Text>
+    </View>
   );
 }
 
