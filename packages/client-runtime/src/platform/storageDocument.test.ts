@@ -60,6 +60,7 @@ describe("ConnectionCatalogDocument", () => {
         profile: BEARER_PROFILE,
         credential: BEARER_CREDENTIAL,
       }),
+      { enabled: true },
     );
 
     expect(document.targets).toEqual([BEARER_TARGET]);
@@ -76,6 +77,7 @@ describe("ConnectionCatalogDocument", () => {
     const bearer = registerConnectionInCatalog(
       {
         ...EMPTY_CONNECTION_CATALOG_DOCUMENT,
+        disabledEnvironmentIds: [ENVIRONMENT_ID],
         remoteDpopTokens: [REMOTE_TOKEN],
       },
       new BearerConnectionRegistration({
@@ -83,6 +85,7 @@ describe("ConnectionCatalogDocument", () => {
         profile: BEARER_PROFILE,
         credential: BEARER_CREDENTIAL,
       }),
+      { enabled: false },
     );
     const relayTarget = new RelayConnectionTarget({
       environmentId: ENVIRONMENT_ID,
@@ -91,8 +94,11 @@ describe("ConnectionCatalogDocument", () => {
     const relay = registerConnectionInCatalog(
       bearer,
       new RelayConnectionRegistration({ target: relayTarget }),
+      { enabled: true },
     );
 
+    expect(bearer.disabledEnvironmentIds).toEqual([ENVIRONMENT_ID]);
+    expect(relay.disabledEnvironmentIds).toEqual([]);
     expect(relay.targets).toEqual([relayTarget]);
     expect(relay.profiles).toEqual([]);
     expect(relay.credentials).toEqual([]);
@@ -110,6 +116,7 @@ describe("ConnectionCatalogDocument", () => {
         profile: BEARER_PROFILE,
         credential: BEARER_CREDENTIAL,
       }),
+      { enabled: true },
     );
 
     expect(removeConnectionFromCatalog(registered, BEARER_TARGET)).toEqual(
@@ -137,6 +144,7 @@ describe("ConnectionCatalogDocument", () => {
     const document = registerConnectionInCatalog(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
       new SshConnectionRegistration({ target, profile }),
+      { enabled: true },
     );
 
     expect(document.targets).toEqual([target]);

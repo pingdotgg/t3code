@@ -10,6 +10,7 @@ import { makeCatalogBackend, makeCatalogStore } from "./storage";
 const emptyCatalog = {
   schemaVersion: 1,
   targets: [],
+  disabledEnvironmentIds: [],
   profiles: [],
   credentials: [],
   remoteDpopTokens: [],

@@ -18,6 +18,7 @@ function connectedEnvironment(
     connectionState: input.connectionState ?? "connected",
     connectionError: input.connectionError ?? null,
     connectionErrorTraceId: input.connectionErrorTraceId ?? null,
+    enabled: input.enabled ?? true,
   };
 }
 

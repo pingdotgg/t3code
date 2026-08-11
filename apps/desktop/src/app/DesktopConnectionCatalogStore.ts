@@ -369,6 +369,7 @@ const migrateSavedEnvironmentRecords = Effect.fn(
   return {
     schemaVersion: 1,
     targets,
+    disabledEnvironmentIds: [],
     profiles,
     credentials,
     remoteDpopTokens: [],

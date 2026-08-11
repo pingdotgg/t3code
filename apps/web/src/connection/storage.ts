@@ -1,6 +1,7 @@
 import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
+  ConnectionActivationStore,
   ConnectionPersistenceError,
   ConnectionRegistrationStore,
   ConnectionTargetStore,
@@ -99,6 +100,8 @@ function persistenceError(
     | "list-targets"
     | "register-connection"
     | "remove-connection"
+    | "list-activation"
+    | "set-activation"
     | "load-shell"
     | "save-shell"
     | "load-thread"
@@ -370,6 +373,21 @@ export const connectionStorageLayer = Layer.effectContext(
     );
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
 
+    const activationStore = ConnectionActivationStore.of({
+      listDisabled: catalog.read.pipe(
+        Effect.map((document) => new Set(document.disabledEnvironmentIds)),
+        Effect.mapError((cause) => persistenceError("list-activation", cause)),
+      ),
+      setEnabled: (environmentId, enabled) =>
+        catalog
+          .update((document) => ({
+            ...document,
+            disabledEnvironmentIds: enabled
+              ? document.disabledEnvironmentIds.filter((candidate) => candidate !== environmentId)
+              : [...new Set([...document.disabledEnvironmentIds, environmentId])],
+          }))
+          .pipe(Effect.mapError((cause) => persistenceError("set-activation", cause))),
+    });
     const targetStore = ConnectionTargetStore.of({
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
@@ -377,9 +395,9 @@ export const connectionStorageLayer = Layer.effectContext(
       ),
     });
     const registrationStore = ConnectionRegistrationStore.of({
-      register: (registration) =>
+      register: (registration, options) =>
         catalog
-          .update((document) => registerConnectionInCatalog(document, registration))
+          .update((document) => registerConnectionInCatalog(document, registration, options))
           .pipe(Effect.mapError((cause) => persistenceError("register-connection", cause))),
       remove: (target) =>
         catalog
@@ -664,6 +682,7 @@ export const connectionStorageLayer = Layer.effectContext(
 
     return Context.make(ConnectionTargetStore, targetStore).pipe(
       Context.add(ConnectionRegistrationStore, registrationStore),
+      Context.add(ConnectionActivationStore, activationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),

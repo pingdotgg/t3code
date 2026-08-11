@@ -21,6 +21,8 @@ export class ConnectionPersistenceError extends Schema.TaggedErrorClass<Connecti
       "list-targets",
       "register-connection",
       "remove-connection",
+      "list-activation",
+      "set-activation",
       "load-shell",
       "save-shell",
       "load-thread",
@@ -50,10 +52,22 @@ export class ConnectionRegistrationStore extends Context.Service<
   {
     readonly register: (
       registration: ConnectionRegistration,
+      options: { readonly enabled: boolean },
     ) => Effect.Effect<void, ConnectionPersistenceError>;
     readonly remove: (target: ConnectionTarget) => Effect.Effect<void, ConnectionPersistenceError>;
   }
 >()("@t3tools/client-runtime/platform/persistence/ConnectionRegistrationStore") {}
+
+export class ConnectionActivationStore extends Context.Service<
+  ConnectionActivationStore,
+  {
+    readonly listDisabled: Effect.Effect<ReadonlySet<EnvironmentId>, ConnectionPersistenceError>;
+    readonly setEnabled: (
+      environmentId: EnvironmentId,
+      enabled: boolean,
+    ) => Effect.Effect<void, ConnectionPersistenceError>;
+  }
+>()("@t3tools/client-runtime/platform/persistence/ConnectionActivationStore") {}
 
 export class EnvironmentCacheStore extends Context.Service<
   EnvironmentCacheStore,

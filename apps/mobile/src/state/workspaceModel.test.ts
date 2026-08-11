@@ -14,6 +14,7 @@ const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 
 function environment(
   phase: EnvironmentPresentation["connection"]["phase"],
+  enabled = true,
 ): EnvironmentPresentation {
   const connectionId = `bearer:${ENVIRONMENT_ID}`;
   return {
@@ -21,6 +22,7 @@ function environment(
     label: "Julius's MacBook Pro",
     displayUrl: "https://environment.example.test",
     relayManaged: false,
+    enabled,
     entry: {
       target: new BearerConnectionTarget({
         environmentId: ENVIRONMENT_ID,
@@ -69,6 +71,11 @@ describe("mobile workspace projection", () => {
 
     expect(projected.connectionState).toBe("offline");
     expect(projected.connectionError).toBeNull();
+  });
+
+  it("projects activation independently from connection phase", () => {
+    expect(projectWorkspaceEnvironment(environment("available", true)).enabled).toBe(true);
+    expect(projectWorkspaceEnvironment(environment("connected", false)).enabled).toBe(false);
   });
 
   it("reports offline before stale connected presentations", () => {

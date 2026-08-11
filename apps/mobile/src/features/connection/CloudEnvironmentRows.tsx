@@ -4,12 +4,12 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
-  Switch,
   type NativeSyntheticEvent,
   type TextLayoutEventData,
   View,
@@ -23,11 +23,16 @@ import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-typ
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import { EnvironmentActivationSwitch } from "./EnvironmentActivationSwitch";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
 interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
+  readonly onSetEnvironmentEnabled: (
+    environmentId: EnvironmentId,
+    enabled: boolean,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
   readonly showcaseSignedIn?: boolean;
   /**
@@ -92,11 +97,6 @@ function CloudEnvironmentRowsContent(
     [controller],
   );
 
-  const handleDisconnectCloudEnvironment = useCallback(
-    (environmentId: EnvironmentId) => controller.removeEnvironment(environmentId),
-    [controller],
-  );
-
   const handleToggleCloudError = useCallback((environmentId: string) => {
     setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
   }, []);
@@ -139,8 +139,10 @@ function CloudEnvironmentRowsContent(
               key={environment.environmentId}
               environment={environment}
               borderTop={index !== 0}
-              onConnect={() => props.onReconnectEnvironment(environment.environmentId)}
-              onDisconnect={() => handleDisconnectCloudEnvironment(environment.environmentId)}
+              onReconnect={() => props.onReconnectEnvironment(environment.environmentId)}
+              onSetEnabled={(enabled) =>
+                props.onSetEnvironmentEnabled(environment.environmentId, enabled)
+              }
               errorExpanded={expandedErrorId === environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environmentId)}
             />
@@ -203,27 +205,25 @@ function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
-  readonly onConnect: () => void;
-  readonly onDisconnect: () => void;
+  readonly onReconnect: () => void;
+  readonly onSetEnabled: (enabled: boolean) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly onToggleError: () => void;
 }) {
   return (
     <CloudEnvironmentRowShell
       borderTop={props.borderTop}
-      connectionError={props.environment.connectionError}
-      connectionErrorTraceId={props.environment.connectionErrorTraceId}
-      connectionState={props.environment.connectionState}
+      connectionError={props.environment.enabled ? props.environment.connectionError : null}
+      connectionErrorTraceId={
+        props.environment.enabled ? props.environment.connectionErrorTraceId : null
+      }
+      connectionState={props.environment.enabled ? props.environment.connectionState : "available"}
       errorExpanded={props.errorExpanded}
       label={props.environment.environmentLabel}
-      onValueChange={(enabled) => {
-        if (enabled) {
-          props.onConnect();
-          return;
-        }
-        props.onDisconnect();
-      }}
+      onRetry={props.onReconnect}
+      onValueChange={props.onSetEnabled}
       onToggleError={props.onToggleError}
-      value={props.environment.connectionState !== "available"}
+      statusText={props.environment.enabled ? undefined : "Disabled"}
+      value={props.environment.enabled}
     />
   );
 }
@@ -232,7 +232,7 @@ function CloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
-  readonly onConnect: () => void;
+  readonly onConnect: () => Promise<AtomCommandResult<unknown, unknown>>;
   readonly onToggleError: () => void;
 }) {
   const presentation = availableCloudEnvironmentPresentation({
@@ -250,11 +250,7 @@ function CloudEnvironmentRow(props: {
       connectionState={presentation.connectionState}
       errorExpanded={props.errorExpanded}
       label={props.environment.environment.label}
-      onValueChange={(enabled) => {
-        if (enabled) {
-          props.onConnect();
-        }
-      }}
+      onValueChange={() => props.onConnect()}
       onToggleError={props.onToggleError}
       statusText={presentation.statusText}
       value={false}
@@ -267,11 +263,11 @@ function CloudEnvironmentRowShell(props: {
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
-  readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
+  readonly onRetry?: () => void;
   readonly onToggleError: () => void;
-  readonly onValueChange: (enabled: boolean) => void;
+  readonly onValueChange: (enabled: boolean) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly statusText?: string;
   readonly value: boolean;
 }) {
@@ -346,7 +342,10 @@ function CloudEnvironmentRowShell(props: {
         ) : null}
         <StatusContainer
           {...(errorCanExpand
-            ? { accessibilityRole: "button" as const, onPress: props.onToggleError }
+            ? {
+                accessibilityRole: "button" as const,
+                onPress: props.onToggleError,
+              }
             : {})}
           className="min-w-0 flex-row items-start gap-1"
         >
@@ -364,7 +363,9 @@ function CloudEnvironmentRowShell(props: {
                   className={cn("text-xs underline decoration-dotted", statusClassName)}
                   onLongPress={(event) => {
                     event.stopPropagation();
-                    copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
+                    copyTextWithHaptic(errorTraceId, {
+                      target: "connection-trace-id",
+                    });
                   }}
                   onPress={(event) => {
                     event.stopPropagation();
@@ -388,13 +389,23 @@ function CloudEnvironmentRowShell(props: {
             />
           ) : null}
         </StatusContainer>
+        {props.connectionError && props.onRetry ? (
+          <Pressable
+            accessibilityLabel={`Retry ${props.label}`}
+            accessibilityRole="button"
+            className="mt-1 self-start rounded-full bg-subtle px-3 py-1.5 active:opacity-70"
+            onPress={props.onRetry}
+          >
+            <Text className="text-xs font-t3-bold text-foreground">Retry</Text>
+          </Pressable>
+        ) : null}
       </View>
-      <Switch
-        disabled={props.disabled}
-        ios_backgroundColor={track}
+      <EnvironmentActivationSwitch
+        accessibilityLabel={`${props.label} enabled`}
+        activeTrackColor={activeTrack}
+        enabled={props.value}
+        inactiveTrackColor={track}
         onValueChange={props.onValueChange}
-        trackColor={{ false: track, true: activeTrack }}
-        value={props.value}
       />
     </View>
   );

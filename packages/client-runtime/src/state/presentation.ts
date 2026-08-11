@@ -26,6 +26,9 @@ export function createEnvironmentPresentationAtoms<E>(input: {
   readonly stateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<SupervisorConnectionState, E>>;
+  readonly enabledAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<boolean | null, E>>;
   /** Authoritative live server config, including streamed provider/settings updates. */
   readonly serverConfigValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
 }) {
@@ -35,12 +38,15 @@ export function createEnvironmentPresentationAtoms<E>(input: {
       if (entry === undefined) {
         return null;
       }
+      const enabled =
+        Option.getOrNull(AsyncResult.value(get(input.enabledAtom(environmentId)))) ?? false;
       const state = Option.getOrElse(
         AsyncResult.value(get(input.stateAtom(environmentId))),
         () => AVAILABLE_CONNECTION_STATE,
       );
       return {
         entry,
+        enabled,
         connection: presentEnvironmentConnection(state),
         serverConfig: get(input.serverConfigValueAtom(environmentId)),
       } satisfies EnvironmentPresentation;

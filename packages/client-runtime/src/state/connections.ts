@@ -76,6 +76,23 @@ export function createEnvironmentCatalogAtoms<R, E>(
       { initialValue: AVAILABLE_CONNECTION_STATE },
     ),
   );
+  const enabledAtom = Atom.family((environmentId: EnvironmentIdType) =>
+    runtime.atom(
+      followStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              SubscriptionRef.changes(supervisor.state).pipe(
+                Stream.map((state) => state.desired),
+              ),
+            ),
+          ),
+        ),
+      ),
+      { initialValue: null as boolean | null },
+    ),
+  );
 
   const register = createRuntimeCommand(runtime, {
     label: "environment-catalog:register",
@@ -115,6 +132,15 @@ export function createEnvironmentCatalogAtoms<R, E>(
         Effect.flatMap((registry) => registry.retryNow(environmentId)),
       ),
   });
+  const setEnabled = createRuntimeCommand(runtime, {
+    label: "environment-catalog:set-enabled",
+    scheduler: commandScheduler,
+    concurrency: serial,
+    execute: (input: { readonly environmentId: EnvironmentIdType; readonly enabled: boolean }) =>
+      EnvironmentRegistry.EnvironmentRegistry.pipe(
+        Effect.flatMap((registry) => registry.setEnabled(input.environmentId, input.enabled)),
+      ),
+  });
 
   return {
     catalogAtom,
@@ -122,9 +148,11 @@ export function createEnvironmentCatalogAtoms<R, E>(
     networkStatusAtom,
     networkStatusValueAtom,
     stateAtom,
+    enabledAtom,
     register,
     remove,
     removeRelayEnvironments,
     retryNow,
+    setEnabled,
   };
 }
