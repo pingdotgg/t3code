@@ -5,6 +5,7 @@ import {
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
+  visibleSettingsSearchItems,
 } from "./settingsSearch";
 
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
@@ -63,6 +64,15 @@ describe("searchSettings", () => {
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("only exposes archive confirmation for the legacy sidebar", () => {
+    expect(
+      visibleSettingsSearchItems(false).some((item) => item.id === "archive-confirmation"),
+    ).toBe(false);
+    expect(
+      visibleSettingsSearchItems(true).some((item) => item.id === "archive-confirmation"),
+    ).toBe(true);
   });
 
   it("serves anchor props to panels from the catalog", () => {

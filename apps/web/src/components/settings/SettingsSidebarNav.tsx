@@ -34,12 +34,14 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { useLegacySidebarEnabled } from "../../hooks/useSettings";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
+  visibleSettingsSearchItems,
 } from "./settingsSearch";
 
 const SETTINGS_SECTION_ICONS: Readonly<
@@ -77,7 +79,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const results = useMemo(() => searchSettings(query), [query]);
+  const legacySidebarEnabled = useLegacySidebarEnabled();
+  const results = useMemo(
+    () => searchSettings(query, visibleSettingsSearchItems(legacySidebarEnabled)),
+    [legacySidebarEnabled, query],
+  );
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
 

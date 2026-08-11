@@ -12,6 +12,7 @@ export interface SettingsSearchItem {
   readonly title: string;
   readonly to: SettingsPath;
   readonly targetId?: string;
+  readonly requiresLegacySidebar?: boolean;
 }
 
 /**
@@ -138,6 +139,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "archive-confirmation",
     title: "Archive confirmation",
     to: "/settings/general",
+    requiresLegacySidebar: true,
   },
   {
     id: "delete-confirmation",
@@ -232,4 +234,12 @@ export function searchSettings(
   if (normalizedQuery.length === 0) return [];
 
   return items.filter((item) => normalizeSearchText(item.title).includes(normalizedQuery));
+}
+
+export function visibleSettingsSearchItems(
+  legacySidebarEnabled: boolean,
+  items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
+): ReadonlyArray<SettingsSearchItem> {
+  if (legacySidebarEnabled) return items;
+  return items.filter((item) => item.requiresLegacySidebar !== true);
 }

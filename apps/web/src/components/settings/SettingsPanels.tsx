@@ -2150,31 +2150,33 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        <SettingsRow
-          {...searchableSetting("archive-confirmation")}
-          description="Require a second click on the inline archive action before a thread is archived."
-          resetAction={
-            settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
-              <SettingResetButton
-                label="archive confirmation"
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
-                  })
+        {settings.legacySidebarEnabled ? (
+          <SettingsRow
+            {...searchableSetting("archive-confirmation")}
+            description="Require a second click on the inline archive action before a thread is archived."
+            resetAction={
+              settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
+                <SettingResetButton
+                  label="archive confirmation"
+                  onClick={() =>
+                    updateSettings({
+                      confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.confirmThreadArchive}
+                onCheckedChange={(checked) =>
+                  updateSettings({ confirmThreadArchive: Boolean(checked) })
                 }
+                aria-label="Confirm thread archiving"
               />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadArchive}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadArchive: Boolean(checked) })
-              }
-              aria-label="Confirm thread archiving"
-            />
-          }
-        />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("delete-confirmation")}
