@@ -8,12 +8,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { OrderedProviderSettingsRow } from "../settings/ProviderSettingsPanel.logic";
 import {
-  buildProviderUsageStripItems,
   cancelProviderResetAttempt,
   confirmProviderResetAttempt,
   createProviderResetAttemptState,
   settleProviderResetAttempt,
-} from "./ProviderUsageStrip.logic";
+} from "../usage/ProviderQuotaSection.logic";
+import { buildProviderUsageStripItems } from "./ProviderUsageStrip.logic";
 
 const codex = ProviderDriverKind.make("codex");
 const claude = ProviderDriverKind.make("claudeAgent");
