@@ -140,27 +140,28 @@ function createCanvas(width: number, height: number): Canvas2D | null {
  * and it keeps alpha, so screenshots with transparency survive intact.
  * Browsers that can't encode it silently fall back to JPEG.
  */
-async function encodeToDataUrl(
+async function encodeCanvas(
   canvas: OffscreenCanvas | HTMLCanvasElement,
   quality: number,
   mimeType: string,
-): Promise<{ dataUrl: string; mimeType: string } | null> {
+  budgetChars: number,
+): Promise<{ dataUrl: string | null; mimeType: string } | null> {
   if (typeof HTMLCanvasElement !== "undefined" && canvas instanceof HTMLCanvasElement) {
     const dataUrl = canvas.toDataURL(mimeType, quality);
     // toDataURL silently returns a PNG when the requested type is unsupported.
     if (!dataUrl.startsWith(`data:${mimeType}`)) return null;
-    return { dataUrl, mimeType };
+    return { dataUrl: dataUrl.length <= budgetChars ? dataUrl : null, mimeType };
   }
   const blob = await (canvas as OffscreenCanvas).convertToBlob({ type: mimeType, quality });
   if (blob.type && blob.type !== mimeType) return null;
+  const dataUrlLength = `data:${mimeType};base64,`.length + 4 * Math.ceil(blob.size / 3);
+  if (dataUrlLength > budgetChars) return { dataUrl: null, mimeType };
   return { dataUrl: await blobToDataUrl(blob, mimeType), mimeType };
 }
 
 /**
  * Draws `bitmap` scaled to fit `maxDimension` and encodes it, stepping
- * quality down until the data URL fits `budgetChars`. Returns the smallest
- * encoding produced, even if it still exceeds the budget, so the caller can
- * decide whether to keep or drop it.
+ * quality down until the data URL fits `budgetChars`.
  */
 async function encodeWithinBudget(
   bitmap: ImageBitmap,
@@ -175,7 +176,7 @@ async function encodeWithinBudget(
 
   // Probe WebP once; JPEG (no alpha) needs a white matte, so the fill has to
   // happen before drawing and depends on which codec we end up using.
-  const probe = await encodeToDataUrl(target.canvas, QUALITY_STEPS[0], "image/webp");
+  const probe = await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp", 0);
   const mimeType = probe ? "image/webp" : "image/jpeg";
 
   if (mimeType === "image/jpeg") {
@@ -184,18 +185,14 @@ async function encodeWithinBudget(
   }
   target.context.drawImage(bitmap, 0, 0, width, height);
 
-  let smallest: { dataUrl: string; mimeType: string } | null = null;
   for (const quality of QUALITY_STEPS) {
-    const encoded = await encodeToDataUrl(target.canvas, quality, mimeType);
+    const encoded = await encodeCanvas(target.canvas, quality, mimeType, budgetChars);
     if (!encoded) break;
-    if (smallest === null || encoded.dataUrl.length < smallest.dataUrl.length) {
-      smallest = encoded;
-    }
-    if (encoded.dataUrl.length <= budgetChars) {
-      return encoded;
+    if (encoded.dataUrl !== null) {
+      return { dataUrl: encoded.dataUrl, mimeType: encoded.mimeType };
     }
   }
-  return smallest;
+  return null;
 }
 
 type ReencodeResult =
