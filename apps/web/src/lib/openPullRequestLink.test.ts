@@ -51,6 +51,21 @@ describe("parseChangeRequestUrl", () => {
     });
   });
 
+  it("reads a pull request on an Enterprise host named nothing like GitHub", () => {
+    // A `ghe.com` tenant and a GHES install the CLI refined are as much GitHub as github.com is,
+    // and neither carries the name in its hostname.
+    expect(parseChangeRequestUrl("https://acme.ghe.com/platform/api/pull/7")).toEqual({
+      host: "acme.ghe.com",
+      repository: "platform/api",
+      number: 7,
+    });
+    expect(parseChangeRequestUrl("https://git.corp.test/platform/api/pull/7")).toEqual({
+      host: "git.corp.test",
+      repository: "platform/api",
+      number: 7,
+    });
+  });
+
   it("reads a GitLab merge request, nested groups and all", () => {
     expect(
       parseChangeRequestUrl("https://gitlab.com/t3tools/platform/t3code/-/merge_requests/42"),
@@ -123,8 +138,6 @@ describe("parseChangeRequestUrl", () => {
       "https://github.com/t3tools/t3code/pull/abc",
       "https://gitlab.com/t3tools/t3code/-/snippets/12",
       "https://gitlab.com/t3tools/t3code/-/issues/12",
-      // A path shape that means nothing off its own host.
-      "https://blog.example.test/2026/updates/pull/3",
       // A lookalike is deliberately not fought here: `github.com.evil.test` reads as a GitHub
       // Enterprise install and there is no way to tell it from one. It is `findProjectForChange
       // Request` that refuses it, because no project in the workspace is checked out from it.
