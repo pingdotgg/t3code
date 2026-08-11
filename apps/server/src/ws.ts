@@ -954,6 +954,19 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
+              // The thread's workspace as it stands BEFORE the worktree is
+              // created — creating one takes seconds, and the attach below
+              // must not overwrite a `thread.meta.update` that lands meanwhile.
+              const threadBeforePrepare = yield* projectionSnapshotQuery.getThreadShellById(
+                command.threadId,
+              );
+              const expectedWorkspace = Option.match(threadBeforePrepare, {
+                onNone: () => ({ branch: null, worktreePath: null }),
+                onSome: (thread) => ({
+                  branch: thread.branch,
+                  worktreePath: thread.worktreePath,
+                }),
+              });
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
               // "Start from origin" is a stored default; repos without an
               // origin remote fall back to the local base branch instead of
@@ -995,6 +1008,8 @@ const makeWsRpcLayer = (
                 threadId: command.threadId,
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
+                expectedBranch: expectedWorkspace.branch,
+                expectedWorktreePath: expectedWorkspace.worktreePath,
               });
               yield* refreshGitStatus(targetWorktreePath);
             }

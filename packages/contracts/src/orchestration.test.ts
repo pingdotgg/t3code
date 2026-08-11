@@ -727,10 +727,13 @@ it.effect("accepts thread.worktree.attach-managed from the server", () =>
       threadId: "thread-1",
       branch: "t3code/1234abcd",
       worktreePath: "/tmp/worktrees/thread-1",
+      expectedBranch: null,
+      expectedWorktreePath: null,
     });
     assert.strictEqual(parsed.type, "thread.worktree.attach-managed");
     if (parsed.type === "thread.worktree.attach-managed") {
       assert.strictEqual(parsed.worktreePath, "/tmp/worktrees/thread-1");
+      assert.strictEqual(parsed.expectedWorktreePath, null);
     }
   }),
 );

@@ -1036,12 +1036,19 @@ const ThreadRevertCompleteCommand = Schema.Struct({
 // user's own worktree and have the driver reset away uncommitted work. This
 // command is absent from ClientOrchestrationCommand, so dispatchCommand
 // rejects it at the RPC boundary — only in-process server code can send it.
+// `expected*` carry the thread's workspace as the bootstrap observed it just
+// BEFORE it started creating the worktree. Creating one takes seconds and a
+// `thread.meta.update` can land in that window, so the decider compares before
+// applying: a stale attach must not revert the user's newer pick, nor mark
+// THEIR worktree driver-owned.
 const ThreadWorktreeAttachManagedCommand = Schema.Struct({
   type: Schema.Literal("thread.worktree.attach-managed"),
   commandId: CommandId,
   threadId: ThreadId,
   branch: TrimmedNonEmptyString,
   worktreePath: TrimmedNonEmptyString,
+  expectedBranch: Schema.NullOr(TrimmedNonEmptyString),
+  expectedWorktreePath: Schema.NullOr(TrimmedNonEmptyString),
 });
 
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({

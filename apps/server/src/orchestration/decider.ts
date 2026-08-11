@@ -855,11 +855,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.worktree.attach-managed": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      // The attach describes a worktree whose creation took seconds; a
+      // `thread.meta.update` repointing the thread can have landed since. An
+      // unconditional apply would revert that newer pick AND mark the user's
+      // own worktree driver-owned — the marker is exactly what makes drivers
+      // drop their clean-tree guards, so it must never land on a path the
+      // bootstrap did not create. When the expectation no longer holds this
+      // projects as a no-op: the fresh worktree stays unmarked (drivers keep
+      // guarding it) and the user's selection stands.
+      const attachIsCurrent =
+        thread.branch === command.expectedBranch &&
+        thread.worktreePath === command.expectedWorktreePath;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -872,13 +883,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         // branch and path already travel on: one event, one row write, and no
         // window where the thread points at the worktree unmarked.
         type: "thread.meta-updated",
-        payload: {
-          threadId: command.threadId,
-          branch: command.branch,
-          worktreePath: command.worktreePath,
-          worktreeManaged: true,
-          updatedAt: occurredAt,
-        },
+        payload: attachIsCurrent
+          ? {
+              threadId: command.threadId,
+              branch: command.branch,
+              worktreePath: command.worktreePath,
+              worktreeManaged: true,
+              updatedAt: occurredAt,
+            }
+          : { threadId: command.threadId, updatedAt: thread.updatedAt },
       };
     }
 

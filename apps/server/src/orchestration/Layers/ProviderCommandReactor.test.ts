@@ -1522,6 +1522,8 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         branch: "feature/bootstrap-worktree",
         worktreePath: "/tmp/provider-project-worktree",
+        expectedBranch: null,
+        expectedWorktreePath: null,
       }),
     );
 
@@ -1641,6 +1643,8 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         branch: "feature/bootstrap-worktree",
         worktreePath: "/tmp/provider-project-worktree",
+        expectedBranch: null,
+        expectedWorktreePath: null,
       }),
     );
 
@@ -1689,6 +1693,8 @@ describe("ProviderCommandReactor", () => {
         threadId: ThreadId.make("thread-1"),
         branch: "t3code/1234abcd",
         worktreePath: "/tmp/provider-project-worktree",
+        expectedBranch: null,
+        expectedWorktreePath: null,
       }),
     );
 
