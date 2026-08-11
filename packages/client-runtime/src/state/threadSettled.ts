@@ -40,9 +40,6 @@ export interface SettledThreadView extends QueuedThreadShell {
   readonly pendingBackgroundTasks?: ReadonlyArray<{ readonly taskId: string }> | null;
 }
 
-/** @deprecated Prefer SettledThreadView. */
-type SettlementThreadShell = SettledThreadView;
-
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
 /** Returns whether the change request state settles the thread immediately. */
@@ -55,7 +52,7 @@ export function changeRequestAutoSettles(
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-export function threadLastActivityAt(shell: SettlementThreadShell): string | null {
+export function threadLastActivityAt(shell: SettledThreadView): string | null {
   const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
   const candidates = [
     shell.latestUserMessageAt,
@@ -128,27 +125,24 @@ export function hasQueuedTurnStart(
 }
 
 /**
+ * A shell waiting on provider background tasks (e.g. a Claude background
+ * shell that outlived its turn) is ready/completed on the wire but not done:
+ * the provider wakes it with a follow-up turn when the task finishes.
+ */
+export function hasPendingBackgroundTasks(
+  shell: Pick<SettledThreadView, "pendingBackgroundTasks">,
+): boolean {
+  return (shell.pendingBackgroundTasks?.length ?? 0) > 0;
+}
+
+/**
  * A thread may be settled only when none of effectiveSettled's activity
  * blockers hold. This is deliberately the same list: anything the partition
  * refuses to CLASSIFY as settled must also be refused as a settle TARGET.
  * The server enforces its own invariants; this client-side twin exists so
  * the UI can disable/reject before a round trip.
  */
-/**
- * A shell waiting on provider background tasks (e.g. a Claude background
- * shell that outlived its turn) is ready/completed on the wire but not done:
- * the provider wakes it with a follow-up turn when the task finishes.
- */
-export function hasPendingBackgroundTasks(
-  shell: Pick<SettlementThreadShell, "pendingBackgroundTasks">,
-): boolean {
-  return (shell.pendingBackgroundTasks?.length ?? 0) > 0;
-}
-
-export function canSettle(
-  shell: SettlementThreadShell,
-  options: { readonly now: string },
-): boolean {
+export function canSettle(shell: SettledThreadView, options: { readonly now: string }): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (shell.session?.status === "starting" || shell.session?.status === "running") return false;
   if (
@@ -312,7 +306,7 @@ export function threadWokeAt(
  * user-input request), so an override never goes stale silently.
  */
 export function effectiveSettled(
-  shell: SettlementThreadShell,
+  shell: SettledThreadView,
   options: {
     readonly now: string;
     readonly autoSettleAfterDays: number | null;

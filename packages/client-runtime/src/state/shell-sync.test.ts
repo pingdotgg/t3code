@@ -307,7 +307,9 @@ describe("environment shell synchronization", () => {
         load: () =>
           Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
             Effect.map((count) =>
-              Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: count * 10 }),
+              count === 3
+                ? Option.none()
+                : Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: count * 10 }),
             ),
           ),
       });
@@ -399,8 +401,14 @@ describe("environment shell synchronization", () => {
         if ((yield* Ref.get(capturedAfterSequences)).length >= 5) break;
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20, 30]);
+      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20, undefined]);
       expect(yield* Ref.get(loaderCalls)).toBe(3);
+      yield* Queue.offer(events, { kind: "snapshot", snapshot: LIVE_SHELL_SNAPSHOT });
+      yield* Queue.offer(events, { kind: "synchronized" });
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((value) => value.status === "live"),
+        Stream.runHead,
+      );
       const refreshed = Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot);
       expect(
         refreshed.threads.every((thread) => (thread.pendingBackgroundTasks?.length ?? 0) === 0),
