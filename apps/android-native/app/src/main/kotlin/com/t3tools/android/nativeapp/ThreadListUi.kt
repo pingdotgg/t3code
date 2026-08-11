@@ -7,6 +7,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -167,6 +168,7 @@ fun ThreadListV2Row(
   newPinOrderKey: String? = null,
   canMovePinnedUp: Boolean = false,
   canMovePinnedDown: Boolean = false,
+  selected: Boolean = false,
   onOpen: () -> Unit,
   onAction: (command: String, value: String?) -> Unit,
   onRenameThread: (String) -> Unit,
@@ -199,6 +201,7 @@ fun ThreadListV2Row(
           projectTitle = projectTitle,
           providerDriver = providerDriver,
           faviconUrl = faviconUrl,
+          selected = selected,
         )
       }
     } else {
@@ -238,6 +241,7 @@ fun ThreadListV2Row(
           projectTitle = projectTitle,
           providerDriver = providerDriver,
           faviconUrl = faviconUrl,
+          selected = selected,
         )
       }
     }
@@ -422,6 +426,7 @@ private fun ThreadListV2RowContent(
   projectTitle: String?,
   providerDriver: String?,
   faviconUrl: String? = null,
+  selected: Boolean = false,
 ) {
   val thread = item.thread
   val status = resolveThreadListV2Status(thread)
@@ -448,7 +453,9 @@ private fun ThreadListV2RowContent(
     compact || item.variant == ThreadListV2Variant.Slim -> 8.dp
     else -> 10.dp
   }
-  val surface = if (item.variant == ThreadListV2Variant.Slim) {
+  val surface = if (selected) {
+    Color(0xFF172554)
+  } else if (item.variant == ThreadListV2Variant.Slim) {
     Color(0xFF0A0A0C)
   } else {
     MaterialTheme.colorScheme.surface
@@ -460,6 +467,7 @@ private fun ThreadListV2RowContent(
     modifier = Modifier.fillMaxWidth(),
     colors = CardDefaults.cardColors(containerColor = surface),
     shape = RoundedCornerShape(12.dp),
+    border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
   ) {
     if (item.variant == ThreadListV2Variant.Slim) {
       Row(

@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -147,6 +148,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -183,6 +185,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -240,6 +243,49 @@ private data class NewTaskDrawerState(val projectId: String?)
 private const val THREAD_TERMINAL = "thread/{threadId}/terminal/{terminalId}"
 private const val THREAD_REVIEW = "thread/{threadId}/review"
 
+private fun isWorkspaceRoute(route: String?): Boolean = when (route) {
+  HOME,
+  THREAD,
+  THREAD_FILES,
+  THREAD_GIT_COMMIT,
+  THREAD_GIT_BRANCHES,
+  THREAD_TERMINAL,
+  THREAD_REVIEW,
+  -> true
+  else -> false
+}
+
+private enum class HomePane { Screen, Sidebar }
+
+@Composable
+private fun WideWorkspaceEmptyDetail(onNewTask: () -> Unit) {
+  Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Column(
+      modifier = Modifier.widthIn(max = 360.dp).padding(32.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      Icon(
+        Icons.Rounded.ChatBubbleOutline,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.size(36.dp),
+      )
+      Text("Select a thread", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+      Text(
+        "Choose a thread from the sidebar or start a new task.",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+      )
+      Button(onClick = onNewTask) {
+        Icon(painterResource(R.drawable.ic_new_task), contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("New Task")
+      }
+    }
+  }
+}
+
 @Composable
 fun T3NativeApp(viewModel: AppViewModel) {
   val runtime by viewModel.runtime.collectAsState()
@@ -247,6 +293,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
   val gitState by viewModel.gitState.collectAsState()
   val incomingShares by viewModel.incomingShares.collectAsState()
   val navController = rememberNavController()
+  val currentBackStackEntry by navController.currentBackStackEntryAsState()
   val start = remember { if (runtime.environment == null) ONBOARDING else HOME }
   var newTaskDrawer by remember { mutableStateOf<NewTaskDrawerState?>(null) }
   var gitDrawerThreadId by remember { mutableStateOf<String?>(null) }
@@ -309,8 +356,51 @@ fun T3NativeApp(viewModel: AppViewModel) {
     }
   }
 
-  Box(Modifier.fillMaxSize()) {
-    NavHost(
+  BoxWithConstraints(Modifier.fillMaxSize()) {
+    val adaptiveLayout = remember(maxWidth, maxHeight) {
+      deriveAdaptiveWorkspaceLayout(maxWidth.value, maxHeight.value)
+    }
+    val workspaceSplit = adaptiveLayout.usesSplitView &&
+      isWorkspaceRoute(currentBackStackEntry?.destination?.route)
+    val navigateToThread: (String) -> Unit = { threadId ->
+      if (workspaceSplit) {
+        val alreadyOpen = currentBackStackEntry?.destination?.route == THREAD &&
+          runtime.selectedThreadId == threadId
+        if (!alreadyOpen) {
+          navController.navigate("thread/${Uri.encode(threadId)}") {
+            popUpTo(HOME)
+            launchSingleTop = true
+          }
+        }
+      } else {
+        navController.navigate("thread/${Uri.encode(threadId)}")
+      }
+    }
+
+    Row(Modifier.fillMaxSize()) {
+      if (workspaceSplit) {
+        HomeScreen(
+          runtime = runtime,
+          dispatchState = dispatchState,
+          viewModel = viewModel,
+          homeListTopRequest = homeListTopRequest,
+          onNewTask = {
+            reopenGitDrawerThreadId = null
+            newTaskDrawer = NewTaskDrawerState(null)
+          },
+          onOpenThread = navigateToThread,
+          pendingShares = incomingShares,
+          onOpenShare = { navController.navigate("share/${Uri.encode(it)}") },
+          onAddEnvironment = { navController.navigate(ONBOARDING) },
+          onSettings = { navController.navigate(SETTINGS) },
+          pane = HomePane.Sidebar,
+          selectedThreadId = runtime.selectedThreadId,
+          modifier = Modifier.width(requireNotNull(adaptiveLayout.sidebarWidth).dp).fillMaxHeight(),
+        )
+        VerticalDivider(color = Color(0xFF27272A), modifier = Modifier.fillMaxHeight())
+      }
+      Box(Modifier.weight(1f).fillMaxHeight()) {
+        NavHost(
       navController = navController,
       startDestination = start,
       enterTransition = {
@@ -355,7 +445,15 @@ fun T3NativeApp(viewModel: AppViewModel) {
       )
     }
     composable(HOME) {
-      HomeScreen(
+      if (workspaceSplit) {
+        WideWorkspaceEmptyDetail(
+          onNewTask = {
+            reopenGitDrawerThreadId = null
+            newTaskDrawer = NewTaskDrawerState(null)
+          },
+        )
+      } else {
+        HomeScreen(
         runtime = runtime,
         dispatchState = dispatchState,
         viewModel = viewModel,
@@ -364,12 +462,13 @@ fun T3NativeApp(viewModel: AppViewModel) {
           reopenGitDrawerThreadId = null
           newTaskDrawer = NewTaskDrawerState(null)
         },
-        onOpenThread = { navController.navigate("thread/$it") },
+        onOpenThread = navigateToThread,
         pendingShares = incomingShares,
         onOpenShare = { navController.navigate("share/${Uri.encode(it)}") },
         onAddEnvironment = { navController.navigate(ONBOARDING) },
         onSettings = { navController.navigate(SETTINGS) },
-      )
+        )
+      }
     }
     composable(
       route = INCOMING_SHARE,
@@ -485,6 +584,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
         onTerminal = {
           navController.navigate("thread/$threadId/terminal/$DEFAULT_TERMINAL_ID")
         },
+        wideContent = workspaceSplit,
       )
     }
     composable(
@@ -599,6 +699,8 @@ fun T3NativeApp(viewModel: AppViewModel) {
         )
       }
     }
+        }
+      }
     }
     newTaskDrawer?.let { drawer ->
       NewTaskDrawer(
@@ -1079,6 +1181,9 @@ private fun HomeScreen(
   onOpenShare: (String) -> Unit,
   onAddEnvironment: () -> Unit,
   onSettings: () -> Unit,
+  pane: HomePane = HomePane.Screen,
+  selectedThreadId: String? = null,
+  modifier: Modifier = Modifier,
 ) {
   val allDrafts by viewModel.allDrafts.collectAsState()
   val activeEnvId = runtime.environment?.environmentId
@@ -1175,6 +1280,7 @@ private fun HomeScreen(
   val isFiltered = filterStatus != ThreadFilterStatus.All || filterProjectKey != null
 
   Scaffold(
+    modifier = modifier,
     topBar = {
       TopAppBar(
         title = {
@@ -1239,6 +1345,7 @@ private fun HomeScreen(
         Row(
           modifier = Modifier
             .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 2.dp),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
           verticalAlignment = Alignment.CenterVertically,
@@ -1272,7 +1379,11 @@ private fun HomeScreen(
       LazyColumn(
         state = threadListState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+        contentPadding = PaddingValues(
+          start = if (pane == HomePane.Sidebar) 12.dp else 16.dp,
+          end = if (pane == HomePane.Sidebar) 12.dp else 16.dp,
+          bottom = 96.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
         pendingShares.firstOrNull()?.let { share ->
@@ -1320,6 +1431,8 @@ private fun HomeScreen(
           capabilities = caps,
           compact = runtime.settings.compactThreadRows,
           projectGroupLabels = projectGroupLabels,
+          selectedThreadId = selectedThreadId,
+          pane = pane,
           onOpenThread = onOpenThread,
         )
 
@@ -1356,6 +1469,8 @@ private fun HomeScreen(
               capabilities = caps,
               compact = true,
               projectGroupLabels = projectGroupLabels,
+              selectedThreadId = selectedThreadId,
+              pane = pane,
               onOpenThread = onOpenThread,
             )
           }
@@ -1379,6 +1494,8 @@ private fun HomeScreen(
               capabilities = caps,
               compact = true,
               projectGroupLabels = projectGroupLabels,
+              selectedThreadId = selectedThreadId,
+              pane = pane,
               onOpenThread = onOpenThread,
             )
             if (layout.hiddenSettledCount > 0) {
@@ -1430,6 +1547,8 @@ private fun LazyListScope.threadListRows(
   capabilities: ThreadCapabilities,
   compact: Boolean,
   projectGroupLabels: Map<String, String>,
+  selectedThreadId: String?,
+  pane: HomePane,
   onOpenThread: (String) -> Unit,
 ) {
   val orderedPinned = sortPinnedThreads(
@@ -1453,6 +1572,7 @@ private fun LazyListScope.threadListRows(
       newPinOrderKey = pinOrderKeyBetween(null, firstPinKey),
       canMovePinnedUp = capabilities.pinReorder && pinnedIndex > 0,
       canMovePinnedDown = capabilities.pinReorder && pinnedIndex in 0 until orderedPinned.lastIndex,
+      selected = pane == HomePane.Sidebar && item.thread.id == selectedThreadId,
       onOpen = { onOpenThread(item.thread.id) },
       onAction = { command, value ->
         viewModel.threadAction(command, item.thread.id, value)
@@ -3440,6 +3560,7 @@ private fun ThreadScreen(
   onFiles: () -> Unit,
   onGit: () -> Unit,
   onTerminal: () -> Unit,
+  wideContent: Boolean = false,
 ) {
   val liveDetail = runtime.thread.detail
   var leaving by remember(threadId) { mutableStateOf(false) }
@@ -3539,12 +3660,18 @@ private fun ThreadScreen(
       if (runtime.threadSyncPhase == SyncPhase.Synchronizing) {
         LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
       }
-      if (detail == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-          Text(runtime.error ?: "Opening thread…")
-        }
+      val contentModifier = if (wideContent) {
+        Modifier.align(Alignment.Center).fillMaxHeight().widthIn(max = 960.dp).fillMaxWidth()
       } else {
-        SubcomposeLayout(Modifier.fillMaxSize()) { constraints ->
+        Modifier.fillMaxSize()
+      }
+      Box(contentModifier) {
+        if (detail == null) {
+          Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(runtime.error ?: "Opening thread…")
+          }
+        } else {
+          SubcomposeLayout(Modifier.fillMaxSize()) { constraints ->
           val composer = subcompose("composer") {
             Column(Modifier.fillMaxWidth()) {
               ThreadRequests(detail, viewModel)
@@ -3592,9 +3719,10 @@ private fun ThreadScreen(
               bottomAnchorKey = composer.height,
             )
           }.single().measure(constraints)
-          layout(constraints.maxWidth, constraints.maxHeight) {
-            feed.placeRelative(0, 0)
-            composer.placeRelative(0, constraints.maxHeight - composer.height)
+            layout(constraints.maxWidth, constraints.maxHeight) {
+              feed.placeRelative(0, 0)
+              composer.placeRelative(0, constraints.maxHeight - composer.height)
+            }
           }
         }
       }
