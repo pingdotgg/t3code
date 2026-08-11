@@ -30,6 +30,7 @@ import {
   readThreadShell,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
+import { openSnoozeForDialog } from "../snoozeForDialog";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -148,10 +149,8 @@ export function useThreadActionMenu(input: {
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const action: ThreadActionMenuId = clicked.value;
-        if (action.startsWith("snooze:")) {
-          const preset = snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
-          if (!preset) return;
-          const result = await snoozeThread(threadRef, preset.snoozedUntil);
+        const snoozeUntil = async (snoozedUntil: string) => {
+          const result = await snoozeThread(threadRef, snoozedUntil);
           if (result._tag === "Failure") {
             if (!isAtomCommandInterrupted(result)) {
               failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
@@ -161,7 +160,7 @@ export function useThreadActionMenu(input: {
           toastManager.add(
             stackedThreadToast({
               type: "success",
-              title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat)}`,
+              title: `Snoozed until ${snoozeWakeDescription(snoozedUntil, new Date(), timestampFormat)}`,
               timeout: 5_000,
               actionProps: {
                 children: "Undo",
@@ -175,6 +174,17 @@ export function useThreadActionMenu(input: {
               },
             }),
           );
+        };
+        if (action.startsWith("snooze:")) {
+          const preset = snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
+          if (!preset) return;
+          await snoozeUntil(preset.snoozedUntil);
+          return;
+        }
+        if (action === "snooze-for") {
+          openSnoozeForDialog({
+            onSnooze: (snoozedUntil) => void snoozeUntil(snoozedUntil),
+          });
           return;
         }
         const reportFailure = async (

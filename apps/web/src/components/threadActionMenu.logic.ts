@@ -14,6 +14,7 @@ export type ThreadActionMenuId =
   | "unsettle"
   | "snooze"
   | `snooze:${string}`
+  | "snooze-for"
   | "unsnooze"
   | "rename"
   | "regenerate-title"
@@ -87,10 +88,13 @@ export function buildThreadActionMenuItems(
                 label: "Snooze",
                 icon: "clock",
                 disabled: !state.canSnoozeNow,
-                children: state.snoozePresets.map((preset) => ({
-                  id: `snooze:${preset.id}` as const,
-                  label: `${preset.label} (${preset.whenLabel})`,
-                })),
+                children: [
+                  ...state.snoozePresets.map((preset) => ({
+                    id: `snooze:${preset.id}` as const,
+                    label: `${preset.label} (${preset.whenLabel})`,
+                  })),
+                  { id: "snooze-for" as const, label: "Snooze for…" },
+                ],
               },
         ]
       : []),

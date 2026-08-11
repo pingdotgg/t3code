@@ -357,6 +357,7 @@ export function effectiveSettled(
 }
 
 const HOUR_MS = 60 * 60 * 1_000;
+const SNOOZE_FOR_STEP_MS = 15 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
@@ -370,6 +371,21 @@ export interface SnoozePreset {
   readonly whenLabel: string;
   /** ISO wake time. */
   readonly snoozedUntil: string;
+}
+
+/**
+ * Initial value for a custom snooze. Rounding the absolute instant avoids
+ * manufacturing a nonexistent local wall time at a daylight-saving edge.
+ */
+export function resolveSnoozeForDefault(now: Date): Date {
+  return new Date(Math.ceil((now.getTime() + HOUR_MS) / SNOOZE_FOR_STEP_MS) * SNOOZE_FOR_STEP_MS);
+}
+
+/** Shared validation copy for custom snooze forms on every client. */
+export function snoozeForTimeError(value: Date, options: { readonly now: Date }): string | null {
+  if (Number.isNaN(value.getTime())) return "Choose a valid date and time.";
+  if (value.getTime() <= options.now.getTime()) return "Choose a time in the future.";
+  return null;
 }
 
 function snoozeTimeOfDayLabel(date: Date): string {
