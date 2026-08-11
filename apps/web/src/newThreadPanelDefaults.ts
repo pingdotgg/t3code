@@ -43,15 +43,18 @@ export async function applyNewThreadPanelDefaults(threadRef: ScopedThreadRef): P
   // window, so reading the snapshot directly would skip the first chat of the
   // session and never come back to it.
   const settings = await getHydratedClientSettings();
-  if (!settings.newThreadOpenFilesPanel && !settings.newThreadOpenTerminal) return;
   // "New chat" hands back an unused draft rather than minting one whenever it
   // can, so the defaults must never re-force a layout: whatever that draft
   // already has wins, including a panel the user deliberately closed. Recording
   // the chat before acting on it keeps that true once the stores have forgotten
   // an emptied layout — the decision is made once per chat, not once per press.
+  // An all-closed decision counts too: a chat first opened while both defaults
+  // were off is decided all-closed, so enabling a default later does not open a
+  // panel in that already-shaped draft.
   const threadKey = scopedThreadKey(threadRef);
   if (decidedThreadKeys.has(threadKey)) return;
   decidedThreadKeys.add(threadKey);
+  if (!settings.newThreadOpenFilesPanel && !settings.newThreadOpenTerminal) return;
   if (hasPanelState(threadKey)) return;
   if (settings.newThreadOpenFilesPanel) {
     useRightPanelStore.getState().open(threadRef, "files");

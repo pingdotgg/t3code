@@ -169,6 +169,19 @@ describe("applyNewThreadPanelDefaults", () => {
     expect(rightPanelState().isOpen).toBe(false);
   });
 
+  it("decides an all-closed layout once, so enabling a default later leaves the draft alone", async () => {
+    // First opened while both defaults are off: the chat is decided, all-closed.
+    useSettings(BOTH_OFF);
+    await applyNewThreadPanelDefaults(threadRef);
+
+    // The user turns a default on; "New chat" hands back the same unused draft. The layout was
+    // already decided, so this must not open a panel in a chat that has been on screen.
+    useSettings(FILES_ONLY);
+    await applyNewThreadPanelDefaults(threadRef);
+
+    expect(rightPanelState()).toEqual({ isOpen: false, activeSurfaceId: null, surfaces: [] });
+  });
+
   it("does not re-default a chat whose layout the user emptied", async () => {
     useSettings(FILES_ONLY);
     await applyNewThreadPanelDefaults(threadRef);
