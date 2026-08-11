@@ -566,31 +566,65 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        const persistedResumeCursor = persistedBinding?.resumeCursor;
+        const hasPersistedResumeCursor =
+          persistedResumeCursor !== null && persistedResumeCursor !== undefined;
+        let canReusePersistedState = persistedBinding?.providerInstanceId === resolvedInstanceId;
+        // Instance ids are routing labels, while continuation identities describe
+        // where provider-owned resume state lives. A persisted cursor may cross
+        // labels only when both instances can resolve that same state.
+        if (
+          persistedBinding !== undefined &&
+          hasPersistedResumeCursor &&
+          persistedBinding.providerInstanceId !== resolvedInstanceId
+        ) {
+          const previousInstanceId = yield* requireBindingInstanceId(
+            "ProviderService.startSession",
+            persistedBinding,
+          );
+          const previousInstanceInfo = yield* registry
+            .getInstanceInfo(previousInstanceId)
+            .pipe(
+              Effect.mapError((cause) =>
+                toValidationError(
+                  "ProviderService.startSession",
+                  `Thread '${threadId}' cannot switch to instance '${resolvedInstanceId}' because previous provider instance '${previousInstanceId}' is unavailable and its persisted resume state cannot be verified.`,
+                  cause,
+                ),
+              ),
+            );
+          if (
+            previousInstanceInfo.continuationIdentity.driverKind !==
+              instanceInfo.continuationIdentity.driverKind ||
+            previousInstanceInfo.continuationIdentity.continuationKey !==
+              instanceInfo.continuationIdentity.continuationKey
+          ) {
+            return yield* toValidationError(
+              "ProviderService.startSession",
+              `Thread '${threadId}' cannot switch from instance '${previousInstanceId}' to '${resolvedInstanceId}' because their provider resume state is incompatible.`,
+            );
+          }
+          canReusePersistedState = true;
+        }
         const effectiveResumeCursor =
           input.resumeCursor ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
-            : undefined);
+          (canReusePersistedState ? persistedBinding?.resumeCursor : undefined);
         const effectiveCwd =
           input.cwd ??
-          (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? readPersistedCwd(persistedBinding.runtimePayload)
-            : undefined);
+          (canReusePersistedState ? readPersistedCwd(persistedBinding?.runtimePayload) : undefined);
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
           "provider.resume_cursor.source":
             input.resumeCursor !== undefined
               ? "request"
-              : effectiveResumeCursor !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
+              : effectiveResumeCursor !== undefined && canReusePersistedState
                 ? "persisted"
                 : "none",
           "provider.resume_cursor.present": effectiveResumeCursor !== undefined,
           "provider.cwd.source":
             input.cwd !== undefined
               ? "request"
-              : effectiveCwd !== undefined &&
-                  persistedBinding?.providerInstanceId === resolvedInstanceId
+              : effectiveCwd !== undefined && canReusePersistedState
                 ? "persisted"
                 : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
