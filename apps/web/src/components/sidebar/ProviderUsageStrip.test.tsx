@@ -6,11 +6,10 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ProviderUsageStripItem } from "./ProviderUsageStrip.logic";
 import {
-  prepareProviderResetConsumption,
   providerUsageTooltip,
   ProviderUsageStrip,
   ProviderUsageStripView,
@@ -61,13 +60,11 @@ describe("ProviderUsageStripView", () => {
   it("renders a stable one-line logo/value strip without visible provider names or headings", () => {
     const markup = renderToStaticMarkup(
       <ProviderUsageStripView
-        canOperate={false}
-        isSmallScreen={false}
         items={[
           item({ id: "codex-personal", percentage: 100 }),
           item({ id: "codex-work", percentage: null }),
         ]}
-        onConsumeReset={async () => null}
+        onSelect={() => {}}
       />,
     );
 
@@ -85,13 +82,11 @@ describe("ProviderUsageStripView", () => {
   it("labels available and unavailable buttons with the instance and window", () => {
     const markup = renderToStaticMarkup(
       <ProviderUsageStripView
-        canOperate={false}
-        isSmallScreen
         items={[
           item({ id: "codex-personal", percentage: 100 }),
           item({ id: "codex-work", percentage: null }),
         ]}
-        onConsumeReset={async () => null}
+        onSelect={() => {}}
       />,
     );
 
@@ -123,28 +118,26 @@ describe("ProviderUsageStripView", () => {
     expect(providerUsageTooltip(withSnapshot)).not.toContain(value);
   });
 
-  it("forwards composed popover trigger semantics to the rendered provider button", () => {
+  it("keeps provider indicators navigation-only instead of opening a competing detail overlay", () => {
     const markup = renderToStaticMarkup(
       <ProviderUsageStripView
-        canOperate={false}
-        isSmallScreen={false}
         items={[item({ id: "codex-personal", percentage: 100 })]}
-        onConsumeReset={async () => null}
+        onSelect={() => {}}
       />,
     );
 
-    expect(markup).toContain('aria-haspopup="dialog"');
-    expect(markup).toContain('data-base-ui-click-trigger=""');
+    expect(markup).not.toContain('aria-haspopup="dialog"');
+    expect(markup).not.toContain('data-base-ui-click-trigger=""');
+    expect(markup).not.toContain('data-slot="popover-popup"');
+    expect(markup).not.toContain('data-slot="sheet-popup"');
   });
 
   it("keeps every footer menu child semantic and places the strip before Usage", () => {
     const markup = renderToStaticMarkup(
       <SidebarMenu data-testid="footer-menu">
         <ProviderUsageStripView
-          canOperate={false}
-          isSmallScreen={false}
           items={[item({ id: "codex-personal", percentage: 100 })]}
-          onConsumeReset={async () => null}
+          onSelect={() => {}}
         />
         <SidebarMenuItem>Usage</SidebarMenuItem>
       </SidebarMenu>,
@@ -185,7 +178,7 @@ describe("ProviderUsageStrip", () => {
   });
 
   it("does not build default provider rows before a primary environment exists", () => {
-    expect(renderToStaticMarkup(<ProviderUsageStrip />)).not.toContain(
+    expect(renderToStaticMarkup(<ProviderUsageStrip onSelect={() => {}} />)).not.toContain(
       'data-slot="provider-usage-strip"',
     );
   });
@@ -193,7 +186,7 @@ describe("ProviderUsageStrip", () => {
   it("does not build provider rows while the primary config is loading", () => {
     mocks.primaryEnvironment = { serverConfig: null };
 
-    expect(renderToStaticMarkup(<ProviderUsageStrip />)).not.toContain(
+    expect(renderToStaticMarkup(<ProviderUsageStrip onSelect={() => {}} />)).not.toContain(
       'data-slot="provider-usage-strip"',
     );
   });
@@ -201,80 +194,8 @@ describe("ProviderUsageStrip", () => {
   it("builds provider rows from the real primary config", () => {
     mocks.primaryEnvironment = { serverConfig: codexConfig };
 
-    expect(renderToStaticMarkup(<ProviderUsageStrip />)).toContain(
+    expect(renderToStaticMarkup(<ProviderUsageStrip onSelect={() => {}} />)).toContain(
       'aria-label="Work Codex: usage remaining unavailable"',
     );
-  });
-});
-
-describe("prepareProviderResetConsumption", () => {
-  const nativeRandomUuid = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
-
-  afterEach(() => {
-    if (nativeRandomUuid === undefined) {
-      delete (globalThis.crypto as { randomUUID?: () => string }).randomUUID;
-    } else {
-      Object.defineProperty(globalThis.crypto, "randomUUID", nativeRandomUuid);
-    }
-  });
-
-  it("builds a valid consume request when native crypto.randomUUID is unavailable", () => {
-    Object.defineProperty(globalThis.crypto, "randomUUID", {
-      configurable: true,
-      value: undefined,
-    });
-
-    const prepared = prepareProviderResetConsumption({
-      attempt: { idempotencyKey: null, pending: false, feedback: null },
-      instanceId: ProviderInstanceId.make("codex-work"),
-      creditId: "credit-1",
-    });
-
-    expect(prepared.input).toMatchObject({
-      instanceId: ProviderInstanceId.make("codex-work"),
-      creditId: "credit-1",
-    });
-    expect(prepared.input.idempotencyKey).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
-    );
-    expect(prepared.attempt).toEqual({
-      idempotencyKey: prepared.input.idempotencyKey,
-      creditId: "credit-1",
-      pending: true,
-      feedback: null,
-    });
-  });
-
-  it("uses a new idempotency key when a failed attempt switches reset credits", () => {
-    const first = prepareProviderResetConsumption({
-      attempt: { idempotencyKey: null, pending: false, feedback: null },
-      instanceId: ProviderInstanceId.make("codex-work"),
-      creditId: "credit-1",
-    });
-    const failedAttempt = {
-      ...first.attempt,
-      pending: false,
-      feedback: "Offline",
-    };
-
-    const second = prepareProviderResetConsumption({
-      attempt: failedAttempt,
-      instanceId: ProviderInstanceId.make("codex-work"),
-      creditId: "credit-2",
-    });
-
-    expect(second.input.idempotencyKey).not.toBe(first.input.idempotencyKey);
-    expect(second.attempt.creditId).toBe("credit-2");
-  });
-
-  it("builds a count-only reset request without a credit id", () => {
-    const prepared = prepareProviderResetConsumption({
-      attempt: { idempotencyKey: null, pending: false, feedback: null },
-      instanceId: ProviderInstanceId.make("codex-work"),
-      creditId: null,
-    });
-
-    expect(prepared.input.creditId).toBeNull();
-    expect(prepared.attempt.creditId).toBeNull();
   });
 });

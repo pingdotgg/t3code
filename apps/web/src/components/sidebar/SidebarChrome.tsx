@@ -1,3 +1,4 @@
+import type { ProviderInstanceId } from "@t3tools/contracts";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -150,11 +151,20 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
+    closeMobileSidebar();
     void navigate({ to: "/usage" });
-  }, [isMobile, navigate, setOpenMobile]);
+  }, [closeMobileSidebar, navigate]);
+  const handleProviderUsageClick = useCallback(
+    (provider: ProviderInstanceId) => {
+      closeMobileSidebar();
+      void navigate({
+        to: "/usage",
+        search: { provider },
+        hash: "provider-limits",
+      });
+    },
+    [closeMobileSidebar, navigate],
+  );
 
   const handleBackClick = useCallback(() => {
     closeMobileSidebar();
@@ -165,7 +175,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <ProviderUsageStrip />
+      <ProviderUsageStrip onSelect={handleProviderUsageClick} />
       <SidebarMenu className="flex-row items-center">
         {currentFooterPage ? (
           <SidebarMenuItem className="min-w-0 flex-1">
