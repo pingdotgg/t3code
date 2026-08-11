@@ -1,3 +1,4 @@
+import Accessibility
 import SwiftUI
 import UIKit
 
@@ -41,19 +42,25 @@ struct HomeThreadSettleUndoRestoration: Equatable, Sendable {
 struct HomeThreadSettleUndoState: Equatable, Sendable {
     private(set) var notice: HomeThreadSettleUndoNotice?
     private(set) var latestSettleRequestID: UUID?
+    private(set) var latestSettleThreadID: String?
 
     @discardableResult
-    mutating func beginSettleRequest(id: UUID = UUID()) -> UUID {
+    mutating func beginSettleRequest(
+        threadID: String? = nil,
+        id: UUID = UUID()
+    ) -> UUID {
         latestSettleRequestID = id
+        latestSettleThreadID = threadID
         return id
     }
 
     mutating func beginSettleRequest(
         ifSettling settled: Bool,
+        threadID: String? = nil,
         id: UUID = UUID()
     ) -> UUID? {
         guard settled else { return nil }
-        return beginSettleRequest(id: id)
+        return beginSettleRequest(threadID: threadID, id: id)
     }
 
     @discardableResult
@@ -66,6 +73,7 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
         id: UUID = UUID()
     ) -> HomeThreadSettleUndoNotice? {
         guard requestID == latestSettleRequestID else { return nil }
+        if let latestSettleThreadID, latestSettleThreadID != threadID { return nil }
         let notice = HomeThreadSettleUndoNotice(
             id: id,
             threadID: threadID,
@@ -74,6 +82,8 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
             restoresSnoozeUntil: restoresSnoozeUntil
         )
         self.notice = notice
+        latestSettleRequestID = nil
+        latestSettleThreadID = nil
         return notice
     }
 
@@ -89,6 +99,10 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
     }
 
     mutating func dismiss(threadID: String) {
+        if latestSettleThreadID == threadID {
+            latestSettleRequestID = nil
+            latestSettleThreadID = nil
+        }
         guard notice?.threadID == threadID else { return }
         notice = nil
     }
@@ -129,11 +143,6 @@ struct HomeThreadDeleteConfirmation: Equatable, Sendable {
 
     mutating func cancel() {
         request = nil
-    }
-
-    mutating func takeConfirmedRequest() -> HomeThreadDeleteRequest? {
-        defer { request = nil }
-        return request
     }
 }
 
@@ -294,10 +303,9 @@ public struct WorkspaceView: View {
                 deleteConfirmation.cancel()
             }
             Button("Delete", role: .destructive) {
-                guard let confirmed = deleteConfirmation.takeConfirmedRequest(),
-                      confirmed == request else { return }
-                settleUndo.dismiss(threadID: confirmed.id)
-                Task { await model.deleteThread(confirmed.id) }
+                deleteConfirmation.cancel()
+                settleUndo.dismiss(threadID: request.id)
+                Task { await model.deleteThread(request.id) }
             }
         } message: { request in
             Text("“\(request.title)” will be permanently deleted.")
@@ -409,7 +417,10 @@ public struct WorkspaceView: View {
                 },
                 onSettle: { thread, settled, wasSettled in
                     if !settled { settleUndo.dismiss(threadID: thread.id) }
-                    let requestID = settleUndo.beginSettleRequest(ifSettling: settled)
+                    let requestID = settleUndo.beginSettleRequest(
+                        ifSettling: settled,
+                        threadID: thread.id
+                    )
                     let restoration = HomeThreadSettleUndoRestoration.capture(from: thread)
                     Task {
                         let didSucceed = await model.setSettled(thread.id, settled: settled)
@@ -434,10 +445,11 @@ public struct WorkspaceView: View {
                             )
                         }
                         guard notice != nil else { return }
-                        UIAccessibility.post(
-                            notification: .announcement,
-                            argument: "\(thread.title) settled. Undo available."
+                        var announcement = AttributedString(
+                            "\(thread.title) settled. Undo available."
                         )
+                        announcement.accessibilitySpeechAnnouncementPriority = .high
+                        AccessibilityNotification.Announcement(announcement).post()
                     }
                 },
                 onSnooze: { thread, until in

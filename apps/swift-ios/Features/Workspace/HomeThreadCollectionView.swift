@@ -33,7 +33,7 @@ struct HomeThreadSwipeActionPlan: Equatable, Sendable {
         }
         return HomeThreadSwipeActionPlan(
             actions: [primary, .delete],
-            performsFirstActionWithFullSwipe: true
+            performsFirstActionWithFullSwipe: primary == .settle || primary == .reopen
         )
     }
 }

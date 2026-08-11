@@ -20,12 +20,10 @@ struct DailyUXSidebarTests {
         confirmation.present(threadID: "thread-2", title: "Keep me")
         confirmation.cancel()
         #expect(confirmation.request == nil)
-        #expect(confirmation.takeConfirmedRequest() == nil)
 
         confirmation.present(threadID: "thread-3", title: "Replace me")
         confirmation.present(threadID: "thread-4", title: "Delete me")
-        #expect(confirmation.takeConfirmedRequest()?.id == "thread-4")
-        #expect(confirmation.takeConfirmedRequest() == nil)
+        #expect(confirmation.request?.id == "thread-4")
     }
 
     private let now = Date(timeIntervalSince1970: 2_000_000)
@@ -97,6 +95,11 @@ struct DailyUXSidebarTests {
         #expect(pinnedPlan.actions == [.unpin, .delete])
         #expect(archiveOnlyPlan.actions == [.archive, .delete])
         #expect(activePlan.performsFirstActionWithFullSwipe)
+        #expect(settledPlan.performsFirstActionWithFullSwipe)
+        #expect(settledButWorkingPlan.performsFirstActionWithFullSwipe)
+        #expect(!archivedPlan.performsFirstActionWithFullSwipe)
+        #expect(!pinnedPlan.performsFirstActionWithFullSwipe)
+        #expect(!archiveOnlyPlan.performsFirstActionWithFullSwipe)
     }
 
     @Test
@@ -164,22 +167,46 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func dismissingAThreadCancelsOnlyItsPendingSettleNotice() {
+        var state = HomeThreadSettleUndoState()
+        let targetRequestID = state.beginSettleRequest(threadID: "target")
+
+        state.dismiss(threadID: "other")
+        #expect(state.latestSettleRequestID == targetRequestID)
+        #expect(state.latestSettleThreadID == "target")
+
+        state.dismiss(threadID: "target")
+        #expect(state.latestSettleRequestID == nil)
+        #expect(state.latestSettleThreadID == nil)
+        #expect(
+            state.present(
+                requestID: targetRequestID,
+                threadID: "target",
+                title: "Target",
+                restoresPin: false,
+                restoresSnoozeUntil: nil
+            ) == nil
+        )
+    }
+
+    @Test
     func settleUndoTargetsOnlyTheLatestNoticeOnce() {
         let firstID = UUID()
         let secondID = UUID()
         var state = HomeThreadSettleUndoState()
-        let requestID = state.beginSettleRequest()
+        let firstRequestID = state.beginSettleRequest()
 
         state.present(
-            requestID: requestID,
+            requestID: firstRequestID,
             threadID: "first",
             title: "First thread",
             restoresPin: false,
             restoresSnoozeUntil: nil,
             id: firstID
         )
+        let secondRequestID = state.beginSettleRequest()
         state.present(
-            requestID: requestID,
+            requestID: secondRequestID,
             threadID: "second",
             title: "Second thread",
             restoresPin: true,
