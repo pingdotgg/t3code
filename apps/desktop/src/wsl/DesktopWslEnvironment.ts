@@ -475,7 +475,7 @@ const ensureNodePtyImpl = (
       return {
         ok: false,
         reason:
-          "WSL server dependencies could not be loaded (for example \"effect\"). The server's bundled node_modules is not readable by the WSL distro's Node — this is a packaging problem with this build. Please report it.",
+          'WSL server dependencies could not be loaded (for example "node-pty"). The native packages the server needs are not unpacked where the WSL distro\'s Node can read them — this is a packaging problem with this build. Please report it.',
         fatal: true,
       } as const;
     }
