@@ -30,6 +30,15 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("separates provider quota reads from reset operations", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverGetProviderQuota)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverConsumeProviderQuotaReset)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("allows relay status reads without granting relay installation access", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudGetRelayClientStatus)).toBe(
       AuthRelayReadScope,
