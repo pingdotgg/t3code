@@ -71,6 +71,9 @@ const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
   "DBUS_SESSION_BUS_ADDRESS",
   "DISPLAY",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
   "SSH_AUTH_SOCK",
   "HOMEBREW_PREFIX",
   "HOMEBREW_CELLAR",
@@ -84,6 +87,8 @@ const LOGIN_SHELL_ENV_NAMES = [
   "WAYLAND_DISPLAY",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
+const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
+const FALLBACK_LOCALE = "C.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
@@ -462,6 +467,9 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "HOMEBREW_PREFIX",
       "HOMEBREW_CELLAR",
       "HOMEBREW_REPOSITORY",
+      "LANG",
+      "LC_ALL",
+      "LC_CTYPE",
       "XDG_CONFIG_HOME",
       "XDG_DATA_HOME",
       "XDG_RUNTIME_DIR",
@@ -470,6 +478,17 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
       }
+    }
+
+    // GUI launches inherit no locale from launchd, so spawned agents land in the C
+    // locale and pbcopy decodes their UTF-8 output as MacRoman. C.UTF-8 is what
+    // /etc/zprofile already falls back to: it fixes the codeset while keeping
+    // C-stable collation and formatting, so output parsing is unaffected.
+    if (
+      config.platform === "darwin" &&
+      LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))
+    ) {
+      config.env.LANG = FALLBACK_LOCALE;
     }
 
     if (

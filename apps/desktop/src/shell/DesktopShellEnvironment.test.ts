@@ -152,6 +152,85 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates the locale from the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LANG: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "de_DE.UTF-8");
+    }),
+  );
+
+  it.effect("preserves an inherited locale over the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        LANG: "en_US.UTF-8",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LANG: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "en_US.UTF-8");
+    }),
+  );
+
+  it.effect("falls back to C.UTF-8 when no locale is available on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" }),
+      });
+
+      assert.equal(env.LANG, "C.UTF-8");
+      assert.equal(env.LC_ALL, undefined);
+      assert.equal(env.LC_CTYPE, undefined);
+    }),
+  );
+
+  it.effect("does not apply the locale fallback on linux", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () => envOutput({ PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin" }),
+      });
+
+      assert.equal(env.LANG, undefined);
+    }),
+  );
+
   it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on linux", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
