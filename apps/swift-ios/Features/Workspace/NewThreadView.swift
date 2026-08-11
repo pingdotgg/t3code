@@ -609,9 +609,16 @@ public struct NewThreadView: View {
     }
 
     private func refreshAutomaticProjectIfNeeded() {
+        guard isAwaitingRecentProject else { return }
         let nextProjectID = DailyUXCreationContext.recentProjects(
             in: model.snapshot
         ).first?.project.id
+        guard let nextProjectID else { return }
+        if nextProjectID == projectID {
+            isAwaitingRecentProject = false
+            return
+        }
+        let draftRestoreIsComplete = restoredDraftProjectID == projectID
         guard DailyUXCreationContext.shouldAdoptAutomaticProject(
             currentProjectID: projectID,
             nextRecentProjectID: nextProjectID,
@@ -621,12 +628,14 @@ public struct NewThreadView: View {
             workspaceSelectionIsExplicit: workspaceSelectionIsExplicit,
             hasDraftContent: !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !attachments.isEmpty,
-            draftRestoreIsComplete: restoredDraftProjectID == projectID
+            draftRestoreIsComplete: draftRestoreIsComplete
         ) else {
+            if draftRestoreIsComplete {
+                isAwaitingRecentProject = false
+            }
             return
         }
         isAwaitingRecentProject = false
-        guard let nextProjectID else { return }
         selectInitialProject(nextProjectID)
     }
 
@@ -787,8 +796,9 @@ public struct NewThreadView: View {
         if liveDraft != context.baseline {
             scheduleDraftSave()
         }
-        await loadBranches()
         refreshAutomaticProjectIfNeeded()
+        guard projectID == requestedProjectID else { return }
+        await loadBranches()
     }
 
     private var currentDraftKey: String? {

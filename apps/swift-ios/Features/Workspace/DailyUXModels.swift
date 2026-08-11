@@ -129,8 +129,12 @@ enum DailyUXCreationContext {
             .sorted(by: recentUseOrder)
             .compactMap { thread in
                 guard let group = groupByProjectID[thread.projectID],
-                      seenGroupIDs.insert(group.id).inserted,
-                      let project = availableProjectByID[thread.projectID] else {
+                      let sourceProject = availableProjectByID[thread.projectID],
+                      let project = DailyUXProjectGrouping.physicalRepresentative(
+                          for: sourceProject,
+                          in: group
+                      ),
+                      seenGroupIDs.insert(group.id).inserted else {
                     return nil
                 }
                 return DailyUXRecentProject(group: group, project: project)
@@ -143,8 +147,16 @@ enum DailyUXCreationContext {
     ) -> FeatureProject? {
         let availableProjects = projects(in: snapshot)
         if let requestedProjectID,
-           let requestedProject = availableProjects.first(where: { $0.id == requestedProjectID }) {
-            return requestedProject
+           let requestedProject = availableProjects.first(where: { $0.id == requestedProjectID }),
+           let group = DailyUXProjectGrouping.group(
+               containing: requestedProjectID,
+               in: projectGroups(in: snapshot)
+           ),
+           let representative = DailyUXProjectGrouping.physicalRepresentative(
+               for: requestedProject,
+               in: group
+           ) {
+            return representative
         }
 
         return recentProjects(in: snapshot).first?.project
@@ -335,6 +347,17 @@ enum DailyUXProjectGrouping {
     ) -> FeatureProject? {
         groups.first { $0.id == groupID }?
             .preferredProject(environmentID: preferredEnvironmentID)
+    }
+
+    static func physicalRepresentative(
+        for project: FeatureProject,
+        in group: DailyUXProjectGroup
+    ) -> FeatureProject? {
+        let path = normalizedPath(project.path)
+        return group.projects.first {
+            $0.environmentID == project.environmentID
+                && normalizedPath($0.path) == path
+        }
     }
 
     private static func physicalKey(_ project: FeatureProject) -> String {

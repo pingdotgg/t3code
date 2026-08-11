@@ -269,6 +269,42 @@ struct DailyUXNewTaskTests {
                 draftRestoreIsComplete: false
             )
         )
+        #expect(
+            !DailyUXCreationContext.shouldAdoptAutomaticProject(
+                currentProjectID: "fallback",
+                nextRecentProjectID: "recent",
+                isAwaitingRecentActivity: true,
+                projectSelectionIsExplicit: false,
+                modelSelectionIsExplicit: false,
+                workspaceSelectionIsExplicit: false,
+                hasDraftContent: true,
+                draftRestoreIsComplete: true
+            )
+        )
+        #expect(
+            !DailyUXCreationContext.shouldAdoptAutomaticProject(
+                currentProjectID: "fallback",
+                nextRecentProjectID: "fallback",
+                isAwaitingRecentActivity: true,
+                projectSelectionIsExplicit: false,
+                modelSelectionIsExplicit: false,
+                workspaceSelectionIsExplicit: false,
+                hasDraftContent: false,
+                draftRestoreIsComplete: true
+            )
+        )
+        #expect(
+            !DailyUXCreationContext.shouldAdoptAutomaticProject(
+                currentProjectID: "fallback",
+                nextRecentProjectID: nil,
+                isAwaitingRecentActivity: true,
+                projectSelectionIsExplicit: false,
+                modelSelectionIsExplicit: false,
+                workspaceSelectionIsExplicit: false,
+                hasDraftContent: false,
+                draftRestoreIsComplete: true
+            )
+        )
     }
 
     @Test
@@ -664,6 +700,21 @@ struct DailyUXNewTaskTests {
 
         #expect(group.projects.map(\.id) == ["remote", "current"])
         #expect(group.memberProjectIDs == ["stale", "current", "remote"])
+
+        let snapshot = rankedSnapshot(
+            projects: [stale, current, remote],
+            threads: [rankedThread("recent", projectID: stale.id, activity: 20)]
+        )
+        #expect(
+            DailyUXCreationContext.recentProjects(in: snapshot).first?.project.id
+                == current.id
+        )
+        #expect(
+            DailyUXCreationContext.initialProject(
+                in: snapshot,
+                requestedProjectID: stale.id
+            )?.id == current.id
+        )
     }
 
     @Test
