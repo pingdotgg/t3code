@@ -5,6 +5,7 @@ import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import {
   formatDayShort,
   formatHourShort,
+  formatRelativeHourShort,
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
@@ -23,6 +24,7 @@ interface UsageProviderChartProps {
   readonly hours: readonly string[];
   readonly hourly: readonly HourlyTotals[];
   readonly metric: UsageChartMetric;
+  readonly referenceTime: string | undefined;
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
 }
@@ -200,6 +202,7 @@ export function UsageProviderChart({
   hours,
   hourly,
   metric,
+  referenceTime,
   resolution,
   timeZone,
 }: UsageProviderChartProps) {
@@ -283,6 +286,10 @@ export function UsageProviderChart({
   const hoverLeft = periods.length <= 1 ? 0 : ((hoverIndex ?? 0) / (periods.length - 1)) * 100;
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
+  const formatTooltipPeriod = (period: string) =>
+    resolution === "hour" && referenceTime !== undefined
+      ? formatRelativeHourShort(period, referenceTime, timeZone)
+      : formatPeriod(period);
 
   return (
     <div className="flex flex-col gap-1">
@@ -367,7 +374,7 @@ export function UsageProviderChart({
                 transform: hoverLeft > 60 ? "translateX(-100%)" : "translateX(0)",
               }}
             >
-              <div className="mb-1 text-muted-foreground">{formatPeriod(hoveredPeriod)}</div>
+              <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
               {PROVIDER_ORDER.map((provider) => {
                 const Mark = PROVIDER_MARK[provider];
                 return (

@@ -138,7 +138,7 @@ export function UsagePage() {
                   : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`}
               </p>
               <div className="flex items-center gap-2">
-                <div className="flex overflow-hidden rounded-md border border-border">
+                <div className="flex rounded-md border border-border">
                   {WINDOW_OPTIONS.map((option) => (
                     <button
                       key={option.days}
@@ -146,7 +146,7 @@ export function UsagePage() {
                       aria-pressed={option.days === windowDays}
                       onClick={() => selectWindow(option.days)}
                       className={cn(
-                        "cursor-pointer px-3 py-1.5 text-xs",
+                        "relative cursor-pointer px-3 py-1.5 text-xs outline-none first:rounded-s-[calc(var(--radius-md)-1px)] last:rounded-e-[calc(var(--radius-md)-1px)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                         option.days === windowDays
                           ? "bg-muted text-foreground"
                           : "text-muted-foreground hover:text-foreground",
@@ -268,6 +268,7 @@ export function UsagePage() {
                       hours={hours}
                       hourly={merged.hourly}
                       metric={metric}
+                      referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
                     />

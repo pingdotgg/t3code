@@ -117,6 +117,34 @@ export function formatDateTimeShort(instant: string, timeZone?: string): string 
   }).format(date);
 }
 
+/** An hourly tooltip label relative to the rolling window's end date. */
+export function formatRelativeHourShort(
+  hourStart: string,
+  relativeTo: string,
+  timeZone?: string,
+): string {
+  const instant = new Date(hourStart);
+  const reference = new Date(relativeTo);
+  if (Number.isNaN(instant.getTime()) || Number.isNaN(reference.getTime())) {
+    return formatDateTimeShort(hourStart, timeZone);
+  }
+
+  const dayFormat = new Intl.DateTimeFormat("en-CA", {
+    ...(timeZone === undefined ? {} : { timeZone }),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const instantDay = Date.parse(`${dayFormat.format(instant)}T00:00:00Z`);
+  const referenceDay = Date.parse(`${dayFormat.format(reference)}T00:00:00Z`);
+  const calendarDaysAgo = Math.round((referenceDay - instantDay) / (24 * HOUR_MS));
+  const hour = formatHourShort(hourStart, timeZone);
+
+  if (calendarDaysAgo === 0) return `${hour} today`;
+  if (calendarDaysAgo === 1) return `${hour} yesterday`;
+  return formatDateTimeShort(hourStart, timeZone);
+}
+
 /**
  * The window the page requests, expressed in the viewer's own time zone so days
  * line up with what they actually experienced.

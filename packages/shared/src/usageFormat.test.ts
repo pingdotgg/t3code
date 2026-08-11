@@ -5,6 +5,7 @@ import {
   enumerateHourStarts,
   formatDateTimeShort,
   formatHourShort,
+  formatRelativeHourShort,
   makeWindow,
 } from "./usageFormat.ts";
 
@@ -21,6 +22,24 @@ describe("hourly usage formatting", () => {
     expect(formatHourShort("2026-08-11T00:37:00.000Z", "UTC")).toBe("12 AM");
     expect(formatHourShort("2026-08-11T12:37:00.000Z", "UTC")).toBe("12 PM");
     expect(formatDateTimeShort("2026-08-11T17:37:00.000Z", "UTC")).toBe("Aug 11, 5 PM");
+  });
+
+  it("makes hourly tooltip dates relative to the window in its requested time zone", () => {
+    const windowEnd = "2026-08-11T14:37:00.000Z";
+
+    expect(formatRelativeHourShort("2026-08-10T17:37:00.000Z", windowEnd, "UTC")).toBe(
+      "5 PM yesterday",
+    );
+    expect(formatRelativeHourShort("2026-08-11T14:37:00.000Z", windowEnd, "UTC")).toBe(
+      "2 PM today",
+    );
+    expect(
+      formatRelativeHourShort(
+        "2026-08-11T01:37:00.000Z",
+        "2026-08-11T10:37:00.000Z",
+        "America/Los_Angeles",
+      ),
+    ).toBe("6 PM yesterday");
   });
 
   it("builds an exact minute-aligned 24-hour request", () => {
