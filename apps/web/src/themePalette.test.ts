@@ -10,12 +10,15 @@ import {
   getThemePreferenceMode,
   isKnownThemePreference,
   getCustomThemes,
+  getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
   canonicalThemePreference,
   parseThemeFile,
   parseThemeHalves,
   removeCustomTheme,
+  removeCustomThemes,
+  replaceCustomThemeCollection,
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
@@ -277,6 +280,28 @@ describe("theme files", () => {
     });
   });
 
+  it("serializes a theme back into the importable file shape", () => {
+    const theme = {
+      ...parseThemeFile({
+        version: THEME_FILE_VERSION,
+        id: "community-demo",
+        name: "Community Demo",
+        appearance: "dark",
+        colors: { canvas: "#111111" },
+      }),
+      collection: { id: "open-vsx:demo.theme", label: "Demo Theme" },
+    };
+    const serialized = serializeThemeFile(theme);
+    expect(JSON.parse(serialized)).toMatchObject({
+      version: THEME_FILE_VERSION,
+      id: theme.id,
+      name: theme.label,
+      appearance: "dark",
+      collection: theme.collection,
+    });
+    expect(parseThemeFile(JSON.parse(serialized)).collection).toEqual(theme.collection);
+  });
+
   it("keeps sidebar artwork disabled for custom theme files", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,
@@ -491,6 +516,178 @@ describe("theme files", () => {
     vi.unstubAllGlobals();
   });
 
+  it("preserves valid imported-theme collections and drops malformed metadata", () => {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) =>
+          key === CUSTOM_THEMES_STORAGE_KEY
+            ? JSON.stringify([
+                {
+                  id: "github-dark",
+                  label: "GitHub Dark",
+                  appearance: "dark",
+                  colors: { canvas: "#0d1117" },
+                  collection: { id: "open-vsx:github.github-vscode-theme", label: "GitHub Theme" },
+                },
+                {
+                  id: "github-light",
+                  label: "GitHub Light",
+                  appearance: "light",
+                  colors: { canvas: "#ffffff" },
+                  collection: { id: "bad collection id", label: "GitHub Theme" },
+                },
+              ])
+            : null,
+      },
+    });
+
+    invalidateCustomThemes();
+    expect(getCustomThemes()).toMatchObject([
+      { collection: { id: "open-vsx:github.github-vscode-theme", label: "GitHub Theme" } },
+      { id: "github-light" },
+    ]);
+    expect(getCustomThemes()[1]).not.toHaveProperty("collection");
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
+  it("atomically replaces an imported collection and removes stale variants", () => {
+    const collection = { id: "open-vsx:demo.theme", label: "Demo Theme" };
+    const personalTheme = {
+      id: "personal",
+      label: "Personal",
+      appearance: "dark",
+      colors: { canvas: "#111111", futureRole: "hsl(10 20% 30%)" },
+      futureMetadata: { version: 2 },
+    };
+    const stored = new Map<string, string>([
+      [
+        CUSTOM_THEMES_STORAGE_KEY,
+        JSON.stringify([
+          personalTheme,
+          {
+            id: "old-light",
+            label: "Old Light",
+            appearance: "light",
+            colors: { canvas: "#ffffff" },
+            collection,
+          },
+          {
+            id: "removed-dark",
+            label: "Removed Dark",
+            appearance: "dark",
+            colors: { canvas: "#000000" },
+            collection,
+          },
+        ]),
+      ],
+    ]);
+    const setItem = vi.fn((key: string, value: string) => stored.set(key, value));
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem,
+      },
+    });
+
+    invalidateCustomThemes();
+    const expectedCollection = getStoredCustomThemeCollection(collection.id);
+    getCustomThemes();
+    const concurrentlyAddedTheme = {
+      id: "other-tab",
+      label: "Other Tab",
+      appearance: "dark",
+      colors: { canvas: "#222222" },
+    };
+    stored.set(
+      CUSTOM_THEMES_STORAGE_KEY,
+      JSON.stringify([
+        ...JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]"),
+        concurrentlyAddedTheme,
+      ]),
+    );
+    const replacement = [
+      {
+        ...parseThemeFile({
+          version: THEME_FILE_VERSION,
+          id: "old-light",
+          name: "New Light",
+          appearance: "light",
+          colors: { canvas: "#fafafa" },
+        }),
+        collection,
+      },
+      {
+        ...parseThemeFile({
+          version: THEME_FILE_VERSION,
+          id: "new-dark",
+          name: "New Dark",
+          appearance: "dark",
+          colors: { canvas: "#101010" },
+        }),
+        collection,
+      },
+    ];
+
+    expect(
+      replaceCustomThemeCollection(collection.id, replacement, { expectedCollection }),
+    ).toEqual(replacement);
+    expect(getCustomThemes().map((theme) => theme.id)).toEqual([
+      "personal",
+      "old-light",
+      "new-dark",
+      "other-tab",
+    ]);
+    expect(setItem).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")[0]).toEqual(personalTheme);
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
+  it("replaces collection entries even when their stored collection label is malformed", () => {
+    const collection = { id: "open-vsx:demo.theme", label: "Demo Theme" };
+    const stored = new Map<string, string>([
+      [
+        CUSTOM_THEMES_STORAGE_KEY,
+        JSON.stringify([
+          {
+            id: "old-light",
+            label: "Old Light",
+            appearance: "light",
+            colors: { canvas: "#ffffff" },
+            collection: { id: collection.id, label: 42 },
+          },
+        ]),
+      ],
+    ]);
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+      },
+    });
+
+    invalidateCustomThemes();
+    const replacement = {
+      ...parseThemeFile({
+        version: THEME_FILE_VERSION,
+        id: "old-light",
+        name: "New Light",
+        appearance: "light",
+        colors: { canvas: "#fafafa" },
+      }),
+      collection,
+    };
+
+    expect(replaceCustomThemeCollection(collection.id, [replacement])).toEqual([replacement]);
+    expect(getCustomThemes()).toEqual([replacement]);
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
   it("canonicalizes explicit writes without migrating untouched themes", () => {
     const stored = new Map<string, string>();
     const untouchedTheme = {
@@ -546,6 +743,56 @@ describe("theme files", () => {
     });
     removeCustomTheme("aurora");
     expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")).toEqual([untouchedTheme]);
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
+  it("removes multiple custom themes atomically while preserving unrelated entries", () => {
+    const collection = { id: "open-vsx:demo.theme", label: "Demo Theme" };
+    const personalTheme = {
+      id: "personal",
+      label: "Personal",
+      appearance: "dark",
+      colors: { canvas: "#111111", futureRole: "hsl(10 20% 30%)" },
+      futureMetadata: { version: 2 },
+    };
+    const stored = new Map<string, string>([
+      [
+        CUSTOM_THEMES_STORAGE_KEY,
+        JSON.stringify([
+          personalTheme,
+          {
+            id: "demo-light",
+            label: "Demo Light",
+            appearance: "light",
+            colors: { canvas: "#ffffff" },
+            collection,
+          },
+          {
+            id: "demo-dark",
+            label: "Demo Dark",
+            appearance: "dark",
+            colors: { canvas: "#000000" },
+            collection,
+          },
+        ]),
+      ],
+    ]);
+    const setItem = vi.fn((key: string, value: string) => stored.set(key, value));
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem,
+      },
+    });
+
+    invalidateCustomThemes();
+    removeCustomThemes(["demo-light", "demo-dark"]);
+
+    expect(setItem).toHaveBeenCalledOnce();
+    expect(getCustomThemes()).toEqual([expect.objectContaining({ id: "personal" })]);
+    expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")).toEqual([personalTheme]);
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
