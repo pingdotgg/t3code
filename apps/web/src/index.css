@@ -9,9 +9,12 @@
      so window controls, navigation, titles, and actions sit on a single line.
      Kept just tall enough to clear the 12px macOS traffic lights and a 24px
      control with breathing room; anything more reads as a second toolbar.
-     Changing this requires moving `trafficLightPosition.y` in the desktop main
-     process by the same amount, or the window controls fall off the row. */
-  --spacing-titlebar: 44px;
+     This is an on-screen height: `TITLEBAR_ROW_CLASS` divides it by the page
+     zoom so the row keeps agreeing with the OS-drawn window controls, which
+     zoom does not scale. Changing it requires moving `TITLEBAR_ROW_HEIGHT` in
+     the desktop main process by the same amount, or the controls fall off the
+     row. */
+  --spacing-titlebar: 36px;
   --animate-skeleton: skeleton 2s -1s infinite linear;
   --animate-status-pulse: status-pulse 2s infinite;
   /* Opacity-only, 3s cadence — cheap to composite and matches the Working badge. */
