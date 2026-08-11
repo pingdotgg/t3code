@@ -2,7 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import ChatMarkdown from "./components/ChatMarkdown";
-import { extractCodexFileCitationPaths } from "./markdown-codex-file-citations";
+import {
+  codexFileCitationHref,
+  extractCodexFileCitationPaths,
+} from "./markdown-codex-file-citations";
 
 const WORKING_DIRECTORY = "/Users/example/project";
 
@@ -53,6 +56,68 @@ describe("Codex file citations", () => {
 
     expect(html).toContain("chat-markdown-file-link");
     expect(html).toContain('href="C:/Users/me/report.docx"');
+  });
+
+  it("keeps native Windows separators, which Markdown would otherwise read as escapes", () => {
+    const html = renderMessage(
+      ':codex-file-citation{path="C:\\repo\\.env" purpose="output"}',
+      "C:\\repo",
+    );
+
+    expect(html).toContain("chat-markdown-file-link");
+    expect(html).toContain('href="C:\\repo\\.env"');
+    expect(html).toContain(">.env</span>");
+  });
+
+  it("keeps the leading pair of a UNC path, which Markdown would collapse to one", () => {
+    const html = renderMessage(
+      ':codex-file-citation{path="\\\\server\\share\\report.docx" purpose="output"}',
+    );
+
+    expect(html).toContain("chat-markdown-file-link");
+    expect(html).toContain('href="\\\\server\\share\\report.docx"');
+  });
+
+  it("keeps an entity-like filename, which Markdown would otherwise decode", () => {
+    const html = renderMessage(':codex-file-citation{path="/tmp/report&amp;notes.pdf"}');
+
+    expect(html).toContain("chat-markdown-file-link");
+    expect(html).toContain('href="/tmp/report&amp;amp;notes.pdf"');
+    expect(html).toContain(">report&amp;amp;notes.pdf</span>");
+  });
+
+  it("gives each directive its own path when a message cites more than one", () => {
+    const html = renderMessage(
+      'Wrote :codex-file-citation{path="https://example.com/skip.pdf"}, ' +
+        ':codex-file-citation{path="C:\\first\\.env" purpose="output"}, and ' +
+        ':codex-file-citation{path="C:\\second\\.env" purpose="output"}.',
+      "C:\\repo",
+    );
+
+    expect(html).toContain('href="C:\\first\\.env"');
+    expect(html).toContain('href="C:\\second\\.env"');
+  });
+
+  it("reads a citation on a later line of the same paragraph", () => {
+    const html = renderMessage(
+      'Wrote the report.\n:codex-file-citation{path="C:\\repo\\.env" purpose="output"}',
+      "C:\\repo",
+    );
+
+    expect(html).toContain('href="C:\\repo\\.env"');
+  });
+
+  it("reads a citation inside a blockquote, whose markers are not in the text node", () => {
+    const html = renderMessage('> Wrote :codex-file-citation{path="C:\\repo\\.env"}', "C:\\repo");
+
+    expect(html).toContain('href="C:\\repo\\.env"');
+  });
+
+  it("leaves a path that cannot be encoded as the text it is, rather than throwing", () => {
+    const html = renderMessage(':codex-file-citation{path="/tmp/\uD800.txt" purpose="output"}');
+
+    expect(html).not.toContain("chat-markdown-file-link");
+    expect(html).toContain(":codex-file-citation{path=");
   });
 
   it("renders citations in chat-style messages, where single newlines are hard breaks", () => {
@@ -112,5 +177,17 @@ describe("extractCodexFileCitationPaths", () => {
           'four :codex-file-citation{path="src/d.ts',
       ),
     ).toEqual(["src/a.ts", 'src/b "quoted".ts']);
+  });
+
+  it("reads a native Windows path without spending its separators", () => {
+    expect(
+      extractCodexFileCitationPaths(':codex-file-citation{path="C:\\repo\\.env" purpose="output"}'),
+    ).toEqual(["C:\\repo\\.env"]);
+  });
+});
+
+describe("codexFileCitationHref", () => {
+  it("has no href for a path no URL can carry", () => {
+    expect(codexFileCitationHref("/tmp/\uD800.txt")).toBeNull();
   });
 });

@@ -21,21 +21,30 @@ const CODEX_FILE_CITATION_PATTERN = /:codex-file-citation\{([^{}\r\n]*)\}/g;
 // the end of the directive. Matching lazily up to that lookahead keeps `report.docx" purpose="out`
 // out of the path while still allowing a quote inside the path itself.
 const CITATION_PATH_ATTRIBUTE_PATTERN = /(?:^|\s)path="(.*?)"(?=\s*$|\s+[A-Za-z_][\w-]*=)/;
-// Markdown consumes a backslash before ASCII punctuation before this plugin sees the text, so a
-// directive that escaped its quotes arrives unescaped. Stripping the escapes here too keeps the
-// raw-source scan below reading the same path the rewritten nodes point at.
-const MARKDOWN_ESCAPE_PATTERN = /\\([!-/:-@[-`{-~])/g;
+// The directive quotes its path, so a quote inside the path arrives backslash-escaped. Every other
+// backslash is a separator: `C:\repo\.env` and `\\server\share\report.docx` are the Windows paths
+// they look like, not escape sequences.
+const CITATION_ESCAPED_QUOTE_PATTERN = /\\"/g;
 // A citation path is a filesystem path, not a URL. Percent-encoding the characters that URL
 // parsing would otherwise claim — a Windows drive colon read as a scheme, `#` and `?` read as a
 // fragment and a query — keeps the path intact through react-markdown's URL transform and the
 // sanitizer, and `resolveMarkdownFileLinkMeta` decodes it back on the other side.
 const URL_SYNTAX_CHARACTER_PATTERN = /[:#?]/g;
 
+interface MarkdownAstNodePoint {
+  readonly offset?: number;
+}
+
 interface MarkdownAstNode {
   type?: string;
   value?: unknown;
   url?: string;
+  position?: { readonly start?: MarkdownAstNodePoint; readonly end?: MarkdownAstNodePoint };
   children?: MarkdownAstNode[];
+}
+
+interface MarkdownFile {
+  readonly value?: unknown;
 }
 
 interface RemarkCodexFileCitationsOptions {
@@ -44,13 +53,21 @@ interface RemarkCodexFileCitationsOptions {
 
 function readCitationPath(attributes: string): string | null {
   const path = CITATION_PATH_ATTRIBUTE_PATTERN.exec(attributes)?.[1]
-    ?.replace(MARKDOWN_ESCAPE_PATTERN, "$1")
+    ?.replace(CITATION_ESCAPED_QUOTE_PATTERN, '"')
     .trim();
   return path ? path : null;
 }
 
-export function codexFileCitationHref(path: string): string {
-  return encodeURI(path).replace(URL_SYNTAX_CHARACTER_PATTERN, encodeURIComponent);
+/**
+ * The href for a cited path, or null when the path cannot have one: `encodeURI` throws on an
+ * unpaired surrogate, and a path no URL can carry is not a file the chip could open.
+ */
+export function codexFileCitationHref(path: string): string | null {
+  try {
+    return encodeURI(path).replace(URL_SYNTAX_CHARACTER_PATTERN, encodeURIComponent);
+  } catch {
+    return null;
+  }
 }
 
 /** The cited paths, read straight from the message text, for the file-link metadata lookup. */
@@ -63,13 +80,30 @@ export function extractCodexFileCitationPaths(text: string): string[] {
   return paths;
 }
 
-function rewriteCitations(value: string, cwd: string | undefined): MarkdownAstNode[] | null {
+/**
+ * Markdown spends a text node's backslash escapes and character references before this plugin sees
+ * it, and a citation path is neither: `C:\repo\.env` arrives as `C:\repo.env` and
+ * `report&amp;notes.pdf` as `report&notes.pdf`, each of which names a different file. So the path is
+ * read from the source the node was parsed from, and the parsed value only says where in the node
+ * the directive sits. The two readings are paired in order, which only holds while both see the
+ * same directives — when they disagree, the text stays text rather than pointing at another file.
+ */
+function rewriteCitations(
+  value: string,
+  source: string,
+  cwd: string | undefined,
+): MarkdownAstNode[] | null {
+  const matches = [...value.matchAll(CODEX_FILE_CITATION_PATTERN)];
+  const sourceMatches = [...source.matchAll(CODEX_FILE_CITATION_PATTERN)];
+  if (matches.length !== sourceMatches.length) return null;
+
   const nodes: MarkdownAstNode[] = [];
   let cursor = 0;
-  for (const match of value.matchAll(CODEX_FILE_CITATION_PATTERN)) {
-    const path = readCitationPath(match[1] ?? "");
+  for (const [index, match] of matches.entries()) {
+    const path = readCitationPath(sourceMatches[index]?.[1] ?? "");
     if (!path) continue;
     const href = codexFileCitationHref(path);
+    if (!href) continue;
     const fileLinkMeta = resolveMarkdownFileLinkMeta(href, cwd);
     if (!fileLinkMeta) continue;
 
@@ -90,7 +124,10 @@ function rewriteCitations(value: string, cwd: string | undefined): MarkdownAstNo
 }
 
 export function remarkCodexFileCitations(options: RemarkCodexFileCitationsOptions = {}) {
-  return (tree: MarkdownAstNode) => {
+  return (tree: MarkdownAstNode, file: MarkdownFile) => {
+    if (typeof file.value !== "string") return;
+    const markdown = file.value;
+
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
       if (!node.children) return;
 
@@ -100,7 +137,12 @@ export function remarkCodexFileCitations(options: RemarkCodexFileCitationsOption
       const childInsideLink = insideLink || node.type === "link" || node.type === "linkReference";
       node.children = node.children.flatMap((child) => {
         if (child.type === "text" && typeof child.value === "string" && !childInsideLink) {
-          return rewriteCitations(child.value, options.cwd) ?? child;
+          // A text node another plugin produced has no position, and so no source to read the
+          // path from; it keeps its text.
+          const start = child.position?.start?.offset;
+          const end = child.position?.end?.offset;
+          if (start === undefined || end === undefined) return child;
+          return rewriteCitations(child.value, markdown.slice(start, end), options.cwd) ?? child;
         }
         visit(child, childInsideLink);
         return child;

@@ -1349,9 +1349,12 @@ function ChatMarkdown({
   );
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
+    // Citations run first because they read each directive from the source the text node was
+    // parsed from, and a plugin that rewrites text nodes — `remarkBreaks` splitting them on
+    // newlines — leaves the replacements without the position that source is found by.
     () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
       [remarkCodexFileCitations, { cwd }],
+      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
     ],
     [cwd, lineBreaks],
   );
@@ -1364,7 +1367,9 @@ function ChatMarkdown({
     // Markdown link syntax — their hrefs are read from the directives themselves.
     const hrefs = [
       ...extractMarkdownLinkHrefs(text),
-      ...extractCodexFileCitationPaths(text).map(codexFileCitationHref),
+      ...extractCodexFileCitationPaths(text)
+        .map(codexFileCitationHref)
+        .filter((href) => href !== null),
     ];
     for (const href of hrefs) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
