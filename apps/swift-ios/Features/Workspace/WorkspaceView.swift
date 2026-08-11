@@ -17,7 +17,54 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     }
 }
 
+struct HomeThreadSettleUndoNotice: Equatable, Identifiable, Sendable {
+    let id: UUID
+    let threadID: String
+    let title: String
+    let restoresPin: Bool
+}
+
+struct HomeThreadSettleUndoState: Equatable, Sendable {
+    private(set) var notice: HomeThreadSettleUndoNotice?
+
+    @discardableResult
+    mutating func present(
+        threadID: String,
+        title: String,
+        restoresPin: Bool,
+        id: UUID = UUID()
+    ) -> HomeThreadSettleUndoNotice {
+        let notice = HomeThreadSettleUndoNotice(
+            id: id,
+            threadID: threadID,
+            title: title,
+            restoresPin: restoresPin
+        )
+        self.notice = notice
+        return notice
+    }
+
+    mutating func expire(id: UUID) {
+        guard notice?.id == id else { return }
+        notice = nil
+    }
+
+    mutating func takeUndo(id: UUID) -> HomeThreadSettleUndoNotice? {
+        guard notice?.id == id else { return nil }
+        defer { notice = nil }
+        return notice
+    }
+
+    static func shouldPresent(
+        afterRequesting settled: Bool,
+        updatedThread: FeatureThread?
+    ) -> Bool {
+        settled && updatedThread?.isSettled == true
+    }
+}
+
 public struct WorkspaceView: View {
+    @SwiftUI.Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @Bindable var model: FeatureRootModel
@@ -43,6 +90,7 @@ public struct WorkspaceView: View {
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
     @State private var homePresentationCache = HomePresentationCache()
+    @State private var settleUndo = HomeThreadSettleUndoState()
     @FocusState private var isSearchFocused: Bool
 
     public init(
@@ -186,6 +234,17 @@ public struct WorkspaceView: View {
                 return
             }
         }
+        .task(id: settleUndo.notice?.id) {
+            guard let notice = settleUndo.notice else { return }
+            do {
+                try await Task.sleep(for: settleUndoLifetime)
+                withAnimation(accessibilityReduceMotion ? nil : .easeIn(duration: 0.16)) {
+                    settleUndo.expire(id: notice.id)
+                }
+            } catch {
+                return
+            }
+        }
     }
 
     private var sidebar: some View {
@@ -202,6 +261,11 @@ public struct WorkspaceView: View {
             composeButton
                 .padding(.trailing, 16)
                 .padding(.bottom, 14)
+
+            settleUndoToast
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 78)
         }
         .background(T3Colors.background)
         .toolbar(.hidden, for: .navigationBar)
@@ -244,7 +308,27 @@ public struct WorkspaceView: View {
                     Task { await model.setArchived(thread.id, archived: archived) }
                 },
                 onSettle: { thread, settled in
-                    Task { await model.setSettled(thread.id, settled: settled) }
+                    Task {
+                        await model.setSettled(thread.id, settled: settled)
+                        let updatedThread = model.snapshot.threads.first {
+                            $0.id == thread.id
+                        }
+                        guard HomeThreadSettleUndoState.shouldPresent(
+                            afterRequesting: settled,
+                            updatedThread: updatedThread
+                        ) else { return }
+                        _ = withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.18)) {
+                            settleUndo.present(
+                                threadID: thread.id,
+                                title: thread.title,
+                                restoresPin: thread.pinnedAt != nil
+                            )
+                        }
+                        UIAccessibility.post(
+                            notification: .announcement,
+                            argument: "\(thread.title) settled. Undo available."
+                        )
+                    }
                 },
                 onSnooze: { thread, until in
                     Task { await model.setSnoozed(thread.id, until: until) }
@@ -258,6 +342,81 @@ public struct WorkspaceView: View {
             )
         }
         .background(T3Colors.background)
+    }
+
+    @ViewBuilder
+    private var settleUndoToast: some View {
+        if let notice = settleUndo.notice {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 10) {
+                        settleUndoDescription(notice)
+                        settleUndoButton(notice)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        settleUndoDescription(notice)
+                        Spacer(minLength: 8)
+                        settleUndoButton(notice)
+                    }
+                }
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 10)
+            .padding(.vertical, 10)
+            .background(T3Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: 14))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(T3Colors.border, lineWidth: 1)
+            }
+            .shadow(color: T3Colors.shadow, radius: 14, y: 6)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private func settleUndoDescription(_ notice: HomeThreadSettleUndoNotice) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(T3Colors.success)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Thread settled")
+                    .font(T3Typography.supportingStrong)
+                    .foregroundStyle(T3Colors.textPrimary)
+                Text(notice.title)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private func settleUndoButton(_ notice: HomeThreadSettleUndoNotice) -> some View {
+        Button("Undo") {
+            guard settleUndo.notice?.id == notice.id else { return }
+            withAnimation(accessibilityReduceMotion ? nil : .easeIn(duration: 0.16)) {
+                _ = settleUndo.takeUndo(id: notice.id)
+            }
+            Task {
+                await model.setSettled(notice.threadID, settled: false)
+                let reopened = model.snapshot.threads.first { $0.id == notice.threadID }
+                guard reopened?.isSettled == false, notice.restoresPin else { return }
+                await model.setPinned(notice.threadID, pinned: true)
+            }
+        }
+        .font(T3Typography.supportingStrong)
+        .buttonStyle(.bordered)
+        .accessibilityLabel("Undo settle \(notice.title)")
+    }
+
+    private var settleUndoLifetime: Duration {
+        if UIAccessibility.isVoiceOverRunning || UIAccessibility.isSwitchControlRunning {
+            return .seconds(15)
+        }
+        return .seconds(5)
     }
 
     @ViewBuilder

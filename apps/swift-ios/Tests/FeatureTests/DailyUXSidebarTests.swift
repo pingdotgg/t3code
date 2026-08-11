@@ -7,6 +7,84 @@ struct DailyUXSidebarTests {
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
     @Test
+    func settleUndoTargetsOnlyTheLatestNoticeOnce() {
+        let firstID = UUID()
+        let secondID = UUID()
+        var state = HomeThreadSettleUndoState()
+
+        state.present(
+            threadID: "first",
+            title: "First thread",
+            restoresPin: false,
+            id: firstID
+        )
+        state.present(
+            threadID: "second",
+            title: "Second thread",
+            restoresPin: true,
+            id: secondID
+        )
+
+        state.expire(id: firstID)
+        #expect(state.notice?.threadID == "second")
+        #expect(state.takeUndo(id: firstID) == nil)
+        #expect(state.takeUndo(id: secondID)?.restoresPin == true)
+        #expect(state.takeUndo(id: secondID) == nil)
+    }
+
+    @Test
+    func settleUndoExpiresOnlyItsCurrentNotice() {
+        let noticeID = UUID()
+        var state = HomeThreadSettleUndoState()
+
+        state.present(
+            threadID: "thread",
+            title: "Thread",
+            restoresPin: false,
+            id: noticeID
+        )
+        state.expire(id: noticeID)
+
+        #expect(state.notice == nil)
+    }
+
+    @Test
+    func settleUndoAppearsOnlyAfterAConfirmedSettlement() {
+        let settled = thread(
+            id: "settled",
+            created: -20,
+            updated: -10,
+            isSettled: true
+        )
+        let active = thread(id: "active", created: -20, updated: -10)
+
+        #expect(
+            HomeThreadSettleUndoState.shouldPresent(
+                afterRequesting: true,
+                updatedThread: settled
+            )
+        )
+        #expect(
+            !HomeThreadSettleUndoState.shouldPresent(
+                afterRequesting: false,
+                updatedThread: settled
+            )
+        )
+        #expect(
+            !HomeThreadSettleUndoState.shouldPresent(
+                afterRequesting: true,
+                updatedThread: active
+            )
+        )
+        #expect(
+            !HomeThreadSettleUndoState.shouldPresent(
+                afterRequesting: true,
+                updatedThread: nil
+            )
+        )
+    }
+
+    @Test
     func activeOrderUsesCreationTimeAndDoesNotJumpWithActivity() {
         let olderCreationRecentActivity = thread(
             id: "old",
