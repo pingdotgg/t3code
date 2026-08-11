@@ -23,7 +23,10 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  scopeThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import {
   scopeProjectRef,
   scopeThreadRef,
@@ -99,6 +102,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -130,7 +134,12 @@ import {
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
-  searchSidebarThreadsByTitle,
+  applyProjectSuggestionToQuery,
+  filterProjectSuggestions,
+  getTrailingProjectOperatorToken,
+  parseSidebarSearchQuery,
+  resolveProjectFilterKeys,
+  searchSidebarThreads,
   resolveWorkingStartedAt,
   sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
@@ -1540,9 +1549,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               tabIndex={-1}
               aria-selected={props.isHighlighted}
               aria-current={props.isRouteActive ? "page" : undefined}
-              aria-label={
-                props.projectTitle ? `${thread.title}, ${props.projectTitle}` : thread.title
-              }
+              aria-label={[
+                thread.title,
+                props.projectTitle,
+                thread.archivedAt !== null ? "archived" : null,
+              ]
+                .filter(Boolean)
+                .join(", ")}
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
               className={cn(
@@ -1562,6 +1575,11 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+          {thread.archivedAt !== null ? (
+            <span className="shrink-0 rounded border border-sidebar-border px-1 text-[10px] font-medium text-sidebar-muted-foreground/80">
+              Archived
+            </span>
+          ) : null}
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
             {threadTimeLabel(thread)}
           </span>
@@ -1580,6 +1598,47 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           terminalProcessCount={runningTerminalIds.length}
         />
       </Tooltip>
+    </li>
+  );
+});
+
+const SidebarProjectSuggestionRow = memo(function SidebarProjectSuggestionRow(props: {
+  group: SidebarProjectSnapshot;
+  isHighlighted: boolean;
+  resultId: string;
+  onHighlight: () => void;
+  onSelect: () => void;
+}) {
+  return (
+    <li role="presentation" className="list-none">
+      <button
+        id={props.resultId}
+        type="button"
+        role="option"
+        // aria-activedescendant option, same as the thread rows: focus stays
+        // on the search input, which owns all keyboard interaction.
+        tabIndex={-1}
+        aria-selected={props.isHighlighted}
+        aria-label={`Filter by project ${props.group.displayName}`}
+        onMouseMove={props.onHighlight}
+        onClick={props.onSelect}
+        className={cn(
+          "flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm outline-none",
+          props.isHighlighted
+            ? "bg-sidebar-row-active text-sidebar-foreground"
+            : "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+        )}
+      >
+        <ProjectFavicon
+          environmentId={props.group.environmentId}
+          cwd={props.group.workspaceRoot}
+          faviconPath={props.group.faviconPath}
+          className="size-4 shrink-0"
+          fallbackIcon={FolderIcon}
+        />
+        <span className="min-w-0 flex-1 truncate">{props.group.displayName}</span>
+        <span className="shrink-0 text-xs text-muted-foreground/55">Filter by project</span>
+      </button>
     </li>
   );
 });
@@ -1876,14 +1935,11 @@ export default function Sidebar() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const {
-    pinnedThreads,
-    reorderablePinnedKeys,
-    activeThreads,
-    snoozedThreads,
-    settledThreads,
-    snoozeNow,
-  } = useMemo(() => {
+  // The partition is UNSCOPED: search with an explicit in: filter must see
+  // every project, so the project-scope menu applies afterwards (filtering a
+  // sorted list and sorting a filtered list agree — the comparators are
+  // per-thread). The scope-independent work then never reruns on scope flips.
+  const threadPartition = useMemo(() => {
     const now = `${nowMinute}:00.000Z`;
     // Snooze classification uses a REAL clock, not the quantized minute:
     // wake times are second-precise and a woken thread must not linger on
@@ -1891,12 +1947,7 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
+    const visible = threads.filter((thread) => thread.archivedAt === null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
@@ -1941,7 +1992,7 @@ export default function Sidebar() {
     // sort, or mixed-version fleets would render different pinned orders on
     // web and mobile from the same data.
     return {
-      pinnedThreads: sortPinnedThreadsForSidebar(pinned),
+      pinned: sortPinnedThreadsForSidebar(pinned),
       reorderablePinnedKeys: new Set(
         pinned
           .filter(
@@ -1951,41 +2002,150 @@ export default function Sidebar() {
           )
           .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
       ),
-      activeThreads: sortThreadsForSidebar(active),
+      active: sortThreadsForSidebar(active),
       // Soonest wake first: "what comes back next" is the shelf's question.
-      snoozedThreads: snoozed.toSorted(
+      snoozed: snoozed.toSorted(
         (left, right) =>
           firstValidTimestampMs(left.snoozedUntil ?? null) -
           firstValidTimestampMs(right.snoozedUntil ?? null),
       ),
-      settledThreads: sortSettledThreadsForSidebar(settled),
+      settled: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
   }, [
     autoSettleAfterDays,
     changeRequestStateByKey,
     nowMinute,
-    scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
     threads,
   ]);
+  const { reorderablePinnedKeys, snoozeNow } = threadPartition;
+  const { pinnedThreads, activeThreads, snoozedThreads, settledThreads } = useMemo(() => {
+    const inProjectScope = (thread: EnvironmentThreadShell) =>
+      scopedProjectKeys === null ||
+      scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`);
+    return {
+      pinnedThreads: threadPartition.pinned.filter(inProjectScope),
+      activeThreads: threadPartition.active.filter(inProjectScope),
+      snoozedThreads: threadPartition.snoozed.filter(inProjectScope),
+      settledThreads: threadPartition.settled.filter(inProjectScope),
+    };
+  }, [scopedProjectKeys, threadPartition]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
-  const searchableThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
-    [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
+  const parsedThreadSearchQuery = useMemo(() => {
+    // nowMinute keeps relative date operators (after:7d) honest while a
+    // query sits open across minute boundaries.
+    void nowMinute;
+    return parseSidebarSearchQuery(threadSearchQuery, new Date());
+  }, [nowMinute, threadSearchQuery]);
+  // Archived threads live in a separate query-style snapshot, not the live
+  // shell stream, so search subscribes only while a query is active — the
+  // sidebar otherwise never pays for archive data. Archive/unarchive actions
+  // refresh these atoms (useThreadActions), so hits stay current in-session.
+  const archivedSearchEnvironmentIds = useMemo(
+    () => (isSearchingThreads ? environments.map((environment) => environment.environmentId) : []),
+    [environments, isSearchingThreads],
   );
-  const threadSearchResults = useMemo(
-    () => searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery),
-    [searchableThreads, threadSearchQuery],
+  const archivedThreadSnapshots = useArchivedThreadSnapshots(archivedSearchEnvironmentIds);
+  const archivedSearchableThreads = useMemo(() => {
+    if (archivedThreadSnapshots.snapshots.length === 0) return [];
+    // A shell can linger in the live stream with archivedAt freshly set (or
+    // appear in both after an unarchive races the snapshot refresh); the
+    // live stream wins so a thread never renders twice.
+    const liveThreadKeys = new Set(
+      threads.map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    );
+    return archivedThreadSnapshots.snapshots
+      .flatMap((entry) =>
+        entry.snapshot.threads
+          .filter(
+            (thread) =>
+              !liveThreadKeys.has(scopedThreadKey(scopeThreadRef(entry.environmentId, thread.id))),
+          )
+          .map((thread) => scopeThreadShell(entry.environmentId, thread)),
+      )
+      .toSorted(
+        (left, right) =>
+          firstValidTimestampMs(right.archivedAt, right.updatedAt) -
+          firstValidTimestampMs(left.archivedAt, left.updatedAt),
+      );
+  }, [archivedThreadSnapshots.snapshots, threads]);
+  const threadSearchProjectFilterKeys = useMemo(
+    () => resolveProjectFilterKeys(projectGroups, parsedThreadSearchQuery.projectQueries),
+    [parsedThreadSearchQuery.projectQueries, projectGroups],
   );
-  const threadSearchResultOrderKey = threadSearchResults
-    .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
-    .join("\0");
+  const threadSearchResults = useMemo(() => {
+    if (!isSearchingThreads) return [];
+    // Lifecycle order stays the spine of the result list; archived history
+    // trails it, most recently archived first.
+    const orderedThreads = [
+      ...threadPartition.pinned,
+      ...threadPartition.active,
+      ...threadPartition.snoozed,
+      ...threadPartition.settled,
+      ...archivedSearchableThreads,
+    ];
+    // An explicit in: filter overrides the ambient project-scope menu;
+    // without one, search respects the scope exactly like the list does.
+    const scoped = orderedThreads.filter((thread) => {
+      const projectKey = `${thread.environmentId}:${thread.projectId}`;
+      return threadSearchProjectFilterKeys === null
+        ? scopedProjectKeys === null || scopedProjectKeys.has(projectKey)
+        : threadSearchProjectFilterKeys.has(projectKey);
+    });
+    return searchSidebarThreads(scoped, parsedThreadSearchQuery);
+  }, [
+    archivedSearchableThreads,
+    isSearchingThreads,
+    parsedThreadSearchQuery,
+    scopedProjectKeys,
+    threadPartition,
+    threadSearchProjectFilterKeys,
+  ]);
+  const trailingProjectOperatorToken = useMemo(
+    () => getTrailingProjectOperatorToken(threadSearchQuery),
+    [threadSearchQuery],
+  );
+  const projectSearchSuggestions = useMemo(() => {
+    if (!isSearchingThreads || projectGroups.length === 0) return [];
+    // While the caret is inside an in: token the autocomplete lists projects
+    // matching the partial value (all of them for a bare `in:`).
+    if (trailingProjectOperatorToken !== null) {
+      return filterProjectSuggestions(
+        projectGroups,
+        trailingProjectOperatorToken.partialValue,
+      ).slice(0, 8);
+    }
+    // Bare text that happens to match a project name offers "Filter by
+    // project" above the thread results — how the operator gets discovered.
+    const parsed = parsedThreadSearchQuery;
+    const isPlainTextQuery =
+      parsed.projectQueries.length === 0 &&
+      parsed.agentQueries.length === 0 &&
+      parsed.updatedStartMs === null &&
+      parsed.updatedEndMs === null &&
+      parsed.text.length > 0;
+    if (!isPlainTextQuery) return [];
+    // Name-only: a folder path that happens to contain the typed words must
+    // not push project suggestions into a regular text search.
+    return filterProjectSuggestions(projectGroups, parsed.text, {
+      matchWorkspaceRoot: false,
+    }).slice(0, 2);
+  }, [isSearchingThreads, parsedThreadSearchQuery, projectGroups, trailingProjectOperatorToken]);
+  // Suggestions and thread results share one listbox and one active index:
+  // suggestions occupy [0, suggestionCount), results follow.
+  const searchListItemCount = projectSearchSuggestions.length + threadSearchResults.length;
+  const threadSearchResultOrderKey = [
+    ...projectSearchSuggestions.map((group) => `project:${group.projectKey}`),
+    ...threadSearchResults.map((thread) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+    ),
+  ].join("\0");
 
   useEffect(() => {
     setActiveSearchResultIndex(0);
@@ -2002,9 +2162,11 @@ export default function Sidebar() {
   // moment a snooze expires instead of on the next minute tick. Sorted
   // soonest-first, so entry 0 is the boundary.
   useEffect(() => {
+    // Unscoped on purpose: a thread hidden by the project-scope menu still
+    // wakes on time, so flipping the scope later never shows a stale shelf.
     const nextWakeAtMs =
-      snoozedThreads.length > 0 && snoozedThreads[0]?.snoozedUntil != null
-        ? Date.parse(snoozedThreads[0].snoozedUntil)
+      threadPartition.snoozed.length > 0 && threadPartition.snoozed[0]?.snoozedUntil != null
+        ? Date.parse(threadPartition.snoozed[0].snoozedUntil)
         : Number.NaN;
     if (Number.isNaN(nextWakeAtMs)) return;
     // setTimeout delays are signed 32-bit: anything larger overflows and
@@ -2014,7 +2176,7 @@ export default function Sidebar() {
     const delayMs = Math.min(Math.max(0, nextWakeAtMs - Date.now()) + 50, 2_147_483_647);
     const id = window.setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
     return () => window.clearTimeout(id);
-  }, [snoozedThreads]);
+  }, [threadPartition.snoozed]);
 
   // The settled tail renders in pages: history shouldn't dominate the
   // sidebar, and the common lookups are recent. Expansion resets when the
@@ -2211,6 +2373,15 @@ export default function Sidebar() {
     },
     [clearThreadSearch, navigateToThread],
   );
+  // Picking a suggestion rewrites the query (committing the in: filter) and
+  // keeps typing flowing — focus never leaves the input.
+  const applyProjectSearchSuggestion = useCallback((projectName: string) => {
+    setThreadSearchQuery((query) =>
+      applyProjectSuggestionToQuery(query, getTrailingProjectOperatorToken(query), projectName),
+    );
+    setActiveSearchResultIndex(0);
+    threadSearchInputRef.current?.focus();
+  }, []);
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
       // IME composition (Japanese/Chinese input) uses the same keys; committing
@@ -2222,29 +2393,38 @@ export default function Sidebar() {
         clearThreadSearch();
         return;
       }
-      if (threadSearchResults.length === 0) return;
+      if (searchListItemCount === 0) return;
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveSearchResultIndex((index) => (index + 1) % threadSearchResults.length);
+        setActiveSearchResultIndex((index) => (index + 1) % searchListItemCount);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setActiveSearchResultIndex(
-          (index) => (index - 1 + threadSearchResults.length) % threadSearchResults.length,
+          (index) => (index - 1 + searchListItemCount) % searchListItemCount,
         );
         return;
       }
       if (event.key === "Enter") {
         event.preventDefault();
-        const result = threadSearchResults[activeSearchResultIndex];
+        const suggestion = projectSearchSuggestions[activeSearchResultIndex];
+        if (suggestion) {
+          applyProjectSearchSuggestion(suggestion.displayName);
+          return;
+        }
+        const result =
+          threadSearchResults[activeSearchResultIndex - projectSearchSuggestions.length];
         if (result) selectThreadSearchResult(result);
       }
     },
     [
       activeSearchResultIndex,
+      applyProjectSearchSuggestion,
       clearThreadSearch,
       isSearchingThreads,
+      projectSearchSuggestions,
+      searchListItemCount,
       selectThreadSearchResult,
       threadSearchResults,
     ],
@@ -3214,14 +3394,14 @@ export default function Sidebar() {
                   aria-label="Search threads"
                   role="combobox"
                   aria-autocomplete="list"
-                  aria-expanded={isSearchingThreads && threadSearchResults.length > 0}
+                  aria-expanded={isSearchingThreads && searchListItemCount > 0}
                   aria-controls={
-                    isSearchingThreads && threadSearchResults.length > 0
+                    isSearchingThreads && searchListItemCount > 0
                       ? "sidebar-thread-search-results"
                       : undefined
                   }
                   aria-activedescendant={
-                    isSearchingThreads && threadSearchResults[activeSearchResultIndex]
+                    isSearchingThreads && activeSearchResultIndex < searchListItemCount
                       ? `sidebar-thread-search-result-${activeSearchResultIndex}`
                       : undefined
                   }
@@ -3373,7 +3553,7 @@ export default function Sidebar() {
       >
         <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0">
           {isSearchingThreads ? (
-            threadSearchResults.length > 0 ? (
+            searchListItemCount > 0 ? (
               <TooltipProvider
                 key="sidebar-thread-search-tooltips-150"
                 delay={150}
@@ -3386,7 +3566,18 @@ export default function Sidebar() {
                   aria-label="Thread search results"
                   className="flex flex-col gap-px"
                 >
-                  {threadSearchResults.map((thread, index) => {
+                  {projectSearchSuggestions.map((group, index) => (
+                    <SidebarProjectSuggestionRow
+                      key={`project-suggestion-${group.projectKey}`}
+                      group={group}
+                      isHighlighted={activeSearchResultIndex === index}
+                      resultId={`sidebar-thread-search-result-${index}`}
+                      onHighlight={() => setActiveSearchResultIndex(index)}
+                      onSelect={() => applyProjectSearchSuggestion(group.displayName)}
+                    />
+                  ))}
+                  {threadSearchResults.map((thread, threadIndex) => {
+                    const index = projectSearchSuggestions.length + threadIndex;
                     const threadKey = scopedThreadKey(
                       scopeThreadRef(thread.environmentId, thread.id),
                     );
