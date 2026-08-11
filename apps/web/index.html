@@ -198,6 +198,9 @@
           }
         };
 
+        if (/^win(dows)?/i.test(navigator.platform)) {
+          document.documentElement.classList.add("windows");
+        }
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;

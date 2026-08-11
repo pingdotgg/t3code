@@ -75,7 +75,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "../../lib/utils";
 import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -96,6 +96,7 @@ import { Input } from "../ui/input";
 import {
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
+  WINDOWS_SANS_FONT_STACK,
   isFontFamilyAvailable,
   isMonospaceFamily,
   resolveDefaultFamilyLabel,
@@ -1078,15 +1079,15 @@ export function AppearanceSettingsPanel() {
 
 function useFontDefaultFamilies() {
   const settings = usePrimarySettings();
-  // An unset preference shows the font it resolves to on this machine; the
-  // default stacks are the platform's own faces, so the name is probed, not
-  // hardcoded.
+  const sansStack = isWindowsPlatform(navigator.platform)
+    ? WINDOWS_SANS_FONT_STACK
+    : DEFAULT_SANS_FONT_STACK;
   const defaults = useMemo(
     () => ({
-      sans: resolveDefaultFamilyLabel(DEFAULT_SANS_FONT_STACK) ?? "System default",
+      sans: resolveDefaultFamilyLabel(sansStack) ?? "System default",
       code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
     }),
-    [],
+    [sansStack],
   );
   return {
     sans: defaults.sans,
