@@ -1567,7 +1567,7 @@ function ChatViewContent(props: ChatViewProps) {
     projectedRuntime: activeRuntime,
     shellRuntime: activeThread?.runtime,
   });
-  const hasStartedModelSession = modelChangeRuntime !== null || threadHasStarted(activeThread);
+  const hasStartedModelSession = modelChangeRuntime !== null;
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
@@ -5122,6 +5122,7 @@ function ChatViewContent(props: ChatViewProps) {
         nextModelSelection: ctxSelectedModelSelection,
       });
       if (modelChangeBlockReason) {
+        notifyDirectAnnotationAttached();
         toastManager.add({
           type: "warning",
           title: modelChangeBlockReason.title,
