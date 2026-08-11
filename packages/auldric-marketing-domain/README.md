@@ -1,8 +1,9 @@
 # Auldric Marketing organization storage boundary
 
 This package owns the issue #5 identity-routing and physical organization-database foundation, the
-issue #8 canonical Marketing content store, and the issue #9 bounded evidence-context core. It does
-not authenticate a request and cannot decode or mint a T3 actor.
+issue #8 canonical Marketing content store, the issue #9 bounded evidence-context core, and the
+dependency-safe pure portion of issue #18's Day 0 kernel. It does not authenticate a request and
+cannot decode or mint a T3 actor.
 
 The server composition root must instantiate `makeOrganizationWorkspaceStore` with an
 `authorize(requestAuthority, requirement)` adapter. `requestAuthority` is generic so the adapter
@@ -125,3 +126,28 @@ Evidence-owned source heads use `evidence/source-state@1`. Accepted reusable fac
 from #11 review/audit and #19 workflow/artifact registrations. There is no provider, prompt,
 session, transport, client, Dev, or production endpoint integration in this package. Issue #6 must
 provide the approved Marketing request seam before a production caller can use it.
+
+## Pure Day 0 kernel
+
+`compileMarketingDay0` consumes one exact `auldric-marketing-evidence-context-v1` packet and
+verifies its packet digest, complete token count, budget, and included evidence/fact bindings before
+using it. The compiler accepts exactly two injected, versioned route projections—Marketing Strategy
+and GTM—with injected readiness. It deliberately does not own or seed issue #19's workflow catalog.
+
+Receipt-backed commercial evidence selects the useful-context contract: a direct point of view,
+one confidence-bearing testable hypothesis with disconfirmation signals, two to four ordered
+immediate actions, and exactly one recommended route. Every consequential statement/action cites
+an included evidence receipt digest. With no included evidence or accepted fact, the output remains
+contextless: point of view, hypothesis, and route stay pending, actions stay empty, and at most three
+deterministically ranked decision-changing questions remain. Both paths preserve exact source
+states, evidence references, accepted facts, assumptions, conflicts, gaps, readiness, unresolved
+decisions, and a deterministic Day 0 receipt.
+
+The route review state is pending and activation is always dormant. The separate
+`prepareMarketingDay0RouteReview` function can produce an explicit accept or override intent pinned
+to the Day 0 digest and an expected canonical version, but that intent is only
+`pending-canonical-save`. It is not a persisted review, an approval, or an activation receipt. Issue
+#11 must supply consequential review/audit composition and #19 must supply approved workflow
+definitions/readiness before a later adapter can save the intent and activate a selected workflow.
+The pure kernel performs no I/O, persistence, provider/prompt/session/transport work, endpoint
+handling, UI work, 90-day planning, or Dev handoff.

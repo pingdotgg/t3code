@@ -1,7 +1,9 @@
 # Marketing workflows and artifacts
 
-This is the approved requirements checkpoint for issues #18 and #19, pending donor classification
-under #14 and implementation through supported T3 seams.
+This is the approved requirements checkpoint for issues #18 and #19. Issue #14 approved the
+bounded Marketing requirements for a fresh rebuild. The dependency-safe pure Day 0 kernel now
+exists; persistence, review composition, workflow catalogs, activation, artifacts, and UI remain
+pending through their owning issues and supported T3 seams.
 
 ## Canonical chain
 
@@ -33,3 +35,19 @@ selected workflow—not Day 0—owns the durable 90-day plan and dashboard.
 
 The first approved workflow scope is Marketing Strategy and GTM. Broader donor workflows remain
 parked until #14 classifies them and an executable issue owns them.
+
+## Implemented pure Day 0 boundary
+
+The package-level `compileMarketingDay0` compiler consumes and verifies one exact #9 evidence packet
+and receipt. Useful context produces the complete point-of-view, hypothesis, disconfirmation,
+two-to-four action, and single-route recommendation contract. Contextless or unavailable-source
+input keeps the point of view, hypothesis, and route pending, creates no immediate action, and keeps
+at most three decision-changing questions. Both paths expose exact source/evidence references,
+assumptions, conflicts, gaps, unresolved decisions, readiness, pending review, and a deterministic
+receipt.
+
+Marketing Strategy and GTM definitions/readiness are injected as versioned projections. The kernel
+does not implement #19's catalog. Route accept/override preparation is explicit and expected-version
+pinned, but remains `pending-canonical-save`; activation is always dormant. Therefore this boundary
+does not yet claim durable Day 0 revisions, saved route review, workflow activation, a 90-day plan,
+or a dashboard. #11 and #19 must provide their approved contracts before that composition can land.

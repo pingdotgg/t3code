@@ -32,21 +32,26 @@ machine-verifiable baseline.
   independent source states, deterministic whole-item budgets, evidence receipts, registered
   source/fact schemas, and explicit accepted-fact transitions over the canonical store. No T3
   production request or prompt path imports it; #6 composition remains pending.
+- The dependency-safe pure portion of issue #18's Day 0 kernel in the same package: exact #9 packet
+  and receipt verification, deterministic useful-context and contextless Operating Packets,
+  injected versioned Strategy/GTM route projections, pending route review, and dormant
+  expected-version accept/override intents. It performs no persistence or activation; #11 review
+  composition and #19 catalogs/readiness remain pending.
 - This reviewed Marketing-domain authority and requirements spine.
 
 ## Capability status
 
-| Capability                                          | Owner    | Current status                                                 |
-| --------------------------------------------------- | -------- | -------------------------------------------------------------- |
-| Explicit `dev \| marketing` product-domain seam     | #4       | Boundary implemented; #21 UI pending                           |
-| Marketing identities and authorization              | #5, #6   | #5 storage boundary implemented; #6 server composition pending |
-| Canonical organization-owned Marketing persistence  | #8       | Store/read-back foundation implemented; composition pending    |
-| Bounded Marketing evidence context                  | #9       | Package core implemented; #6 production composition pending    |
-| Marketing continuity and immutable provenance       | #7, #11  | Not implemented                                                |
-| Day 0, Marketing Strategy, GTM, and typed artifacts | #18, #19 | Not implemented                                                |
-| Approved Marketing-to-Dev brief handoff             | #20      | Not implemented                                                |
-| In-product Marketing UI                             | #13      | Not implemented                                                |
-| Public Auldric information/access-state surface     | #27      | Static site; capabilities gated                                |
+| Capability                                          | Owner    | Current status                                                    |
+| --------------------------------------------------- | -------- | ----------------------------------------------------------------- |
+| Explicit `dev \| marketing` product-domain seam     | #4       | Boundary implemented; #21 UI pending                              |
+| Marketing identities and authorization              | #5, #6   | #5 storage boundary implemented; #6 server composition pending    |
+| Canonical organization-owned Marketing persistence  | #8       | Store/read-back foundation implemented; composition pending       |
+| Bounded Marketing evidence context                  | #9       | Package core implemented; #6 production composition pending       |
+| Marketing continuity and immutable provenance       | #7, #11  | Not implemented                                                   |
+| Day 0, Marketing Strategy, GTM, and typed artifacts | #18, #19 | Pure Day 0 kernel only; persistence, catalogs, activation pending |
+| Approved Marketing-to-Dev brief handoff             | #20      | Not implemented                                                   |
+| In-product Marketing UI                             | #13      | Not implemented                                                   |
+| Public Auldric information/access-state surface     | #27      | Static site; capabilities gated                                   |
 
 Do not turn a target contract, donor document, mock, generated view, or completed legacy PR into a
 current-state claim. Capability becomes current only after its owning issue supplies implementation,

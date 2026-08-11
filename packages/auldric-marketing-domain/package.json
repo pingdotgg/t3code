@@ -43,6 +43,14 @@
       "types": "./src/evidenceContextService.ts",
       "import": "./src/evidenceContextService.ts"
     },
+    "./day0": {
+      "types": "./src/day0.ts",
+      "import": "./src/day0.ts"
+    },
+    "./day0-errors": {
+      "types": "./src/day0Errors.ts",
+      "import": "./src/day0Errors.ts"
+    },
     "./workspace-store": {
       "types": "./src/workspaceStore.ts",
       "import": "./src/workspaceStore.ts"
