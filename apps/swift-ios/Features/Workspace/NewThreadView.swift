@@ -11,6 +11,7 @@ public struct NewThreadView: View {
 
     @State private var projectID = ""
     @State private var projectSelectionIsExplicit = false
+    @State private var isAwaitingRecentProject = false
     @State private var prompt = ""
     @State private var selection: FeatureSelection?
     @State private var selectionIsExplicit = false
@@ -90,10 +91,14 @@ public struct NewThreadView: View {
         }
         .onAppear {
             if projectID.isEmpty {
+                let recentProject = DailyUXCreationContext.recentProjects(
+                    in: model.snapshot
+                ).first?.project
                 let initialID = DailyUXCreationContext.initialProject(
                     in: model.snapshot,
                     requestedProjectID: initialProjectID
                 )?.id ?? ""
+                isAwaitingRecentProject = initialProjectID == nil && recentProject == nil
                 selectInitialProject(initialID)
             }
         }
@@ -101,10 +106,14 @@ public struct NewThreadView: View {
         .onChange(of: creationProjectIDs) { _, ids in
             guard !ids.contains(projectID) else { return }
             if projectID.isEmpty {
+                let recentProject = DailyUXCreationContext.recentProjects(
+                    in: model.snapshot
+                ).first?.project
                 let initialID = DailyUXCreationContext.initialProject(
                     in: model.snapshot,
                     requestedProjectID: initialProjectID
                 )?.id ?? ""
+                isAwaitingRecentProject = initialProjectID == nil && recentProject == nil
                 selectInitialProject(initialID)
                 return
             }
@@ -567,6 +576,7 @@ public struct NewThreadView: View {
     private func selectProject(_ id: String) -> Bool {
         guard creationProjects.contains(where: { $0.id == id }) else { return false }
         projectSelectionIsExplicit = true
+        isAwaitingRecentProject = false
         guard id != projectID else { return true }
         persistCurrentDraftImmediately()
         projectID = id
@@ -599,17 +609,24 @@ public struct NewThreadView: View {
     }
 
     private func refreshAutomaticProjectIfNeeded() {
-        guard initialProjectID == nil,
-              !projectSelectionIsExplicit,
-              prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              attachments.isEmpty,
-              let nextProjectID = DailyUXCreationContext.initialProject(
-                  in: model.snapshot,
-                  requestedProjectID: nil
-              )?.id,
-              nextProjectID != projectID else {
+        let nextProjectID = DailyUXCreationContext.recentProjects(
+            in: model.snapshot
+        ).first?.project.id
+        guard DailyUXCreationContext.shouldAdoptAutomaticProject(
+            currentProjectID: projectID,
+            nextRecentProjectID: nextProjectID,
+            isAwaitingRecentActivity: isAwaitingRecentProject,
+            projectSelectionIsExplicit: projectSelectionIsExplicit,
+            modelSelectionIsExplicit: selectionIsExplicit,
+            workspaceSelectionIsExplicit: workspaceSelectionIsExplicit,
+            hasDraftContent: !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !attachments.isEmpty,
+            draftRestoreIsComplete: restoredDraftProjectID == projectID
+        ) else {
             return
         }
+        isAwaitingRecentProject = false
+        guard let nextProjectID else { return }
         selectInitialProject(nextProjectID)
     }
 
@@ -771,6 +788,7 @@ public struct NewThreadView: View {
             scheduleDraftSave()
         }
         await loadBranches()
+        refreshAutomaticProjectIfNeeded()
     }
 
     private var currentDraftKey: String? {

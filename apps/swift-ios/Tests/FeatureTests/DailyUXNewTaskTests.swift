@@ -203,6 +203,75 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
+    func recentProjectRankingKeepsTheExactWorktreeUsedByTheThread() {
+        let root = rankedProject(
+            "root",
+            name: "Project",
+            repositoryKey: "github.com/example/project"
+        )
+        let worktree = rankedProject(
+            "worktree",
+            name: "Project",
+            repositoryKey: "github.com/example/project"
+        )
+        let value = rankedSnapshot(
+            projects: [root, worktree],
+            threads: [rankedThread("recent", projectID: worktree.id, activity: 20)]
+        )
+
+        #expect(DailyUXCreationContext.recentProjects(in: value).first?.project.id == worktree.id)
+        #expect(
+            DailyUXCreationContext.initialProject(
+                in: value,
+                requestedProjectID: worktree.id
+            )?.id == worktree.id
+        )
+    }
+
+    @Test
+    func automaticProjectAdoptionWaitsForRestoreAndStopsAfterExplicitChoices() {
+        #expect(
+            DailyUXCreationContext.shouldAdoptAutomaticProject(
+                currentProjectID: "fallback",
+                nextRecentProjectID: "recent",
+                isAwaitingRecentActivity: true,
+                projectSelectionIsExplicit: false,
+                modelSelectionIsExplicit: false,
+                workspaceSelectionIsExplicit: false,
+                hasDraftContent: false,
+                draftRestoreIsComplete: true
+            )
+        )
+
+        for explicitChoice in 0..<3 {
+            #expect(
+                !DailyUXCreationContext.shouldAdoptAutomaticProject(
+                    currentProjectID: "fallback",
+                    nextRecentProjectID: "recent",
+                    isAwaitingRecentActivity: true,
+                    projectSelectionIsExplicit: explicitChoice == 0,
+                    modelSelectionIsExplicit: explicitChoice == 1,
+                    workspaceSelectionIsExplicit: explicitChoice == 2,
+                    hasDraftContent: false,
+                    draftRestoreIsComplete: true
+                )
+            )
+        }
+        #expect(
+            !DailyUXCreationContext.shouldAdoptAutomaticProject(
+                currentProjectID: "fallback",
+                nextRecentProjectID: "recent",
+                isAwaitingRecentActivity: true,
+                projectSelectionIsExplicit: false,
+                modelSelectionIsExplicit: false,
+                workspaceSelectionIsExplicit: false,
+                hasDraftContent: false,
+                draftRestoreIsComplete: false
+            )
+        )
+    }
+
+    @Test
     func requestNormalizesLegacyModesAndKeepsImageBytes() {
         let image = FeatureDraftAttachment(
             data: Data([1, 2, 3]),

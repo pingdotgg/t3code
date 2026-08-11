@@ -114,14 +114,14 @@ enum DailyUXCreationContext {
 
     static func recentProjects(in snapshot: FeatureSnapshot) -> [DailyUXRecentProject] {
         let groups = projectGroups(in: snapshot)
+        let availableProjectByID = projects(in: snapshot).reduce(
+            into: [String: FeatureProject]()
+        ) { $0[$1.id] = $1 }
         let groupByProjectID = groups.reduce(into: [String: DailyUXProjectGroup]()) {
             result, group in
             for projectID in group.memberProjectIDs {
                 result[projectID] = group
             }
-        }
-        let projectEnvironmentByID = snapshot.projects.reduce(into: [String: String]()) {
-            $0[$1.id] = $1.environmentID
         }
         var seenGroupIDs = Set<String>()
 
@@ -130,10 +130,7 @@ enum DailyUXCreationContext {
             .compactMap { thread in
                 guard let group = groupByProjectID[thread.projectID],
                       seenGroupIDs.insert(group.id).inserted,
-                      let project = group.preferredProject(
-                          environmentID: thread.environmentID
-                              ?? projectEnvironmentByID[thread.projectID]
-                      ) else {
+                      let project = availableProjectByID[thread.projectID] else {
                     return nil
                 }
                 return DailyUXRecentProject(group: group, project: project)
@@ -144,20 +141,14 @@ enum DailyUXCreationContext {
         in snapshot: FeatureSnapshot,
         requestedProjectID: String?
     ) -> FeatureProject? {
-        let groups = projectGroups(in: snapshot)
-
+        let availableProjects = projects(in: snapshot)
         if let requestedProjectID,
-           let requestedGroup = DailyUXProjectGrouping.group(
-               containing: requestedProjectID,
-               in: groups
-           ) {
-            let requestedEnvironmentID = snapshot.projects
-                .first(where: { $0.id == requestedProjectID })?
-                .environmentID
-            return requestedGroup.preferredProject(environmentID: requestedEnvironmentID)
+           let requestedProject = availableProjects.first(where: { $0.id == requestedProjectID }) {
+            return requestedProject
         }
 
-        return recentProjects(in: snapshot).first?.project ?? groups.first?.projects.first
+        return recentProjects(in: snapshot).first?.project
+            ?? projectGroups(in: snapshot).first?.projects.first
     }
 
     static func logicalProjectID(
@@ -184,6 +175,29 @@ enum DailyUXCreationContext {
         if lhsDate != rhsDate { return lhsDate > rhsDate }
         return lhs.id < rhs.id
     }
+
+    static func shouldAdoptAutomaticProject(
+        currentProjectID: String,
+        nextRecentProjectID: String?,
+        isAwaitingRecentActivity: Bool,
+        projectSelectionIsExplicit: Bool,
+        modelSelectionIsExplicit: Bool,
+        workspaceSelectionIsExplicit: Bool,
+        hasDraftContent: Bool,
+        draftRestoreIsComplete: Bool
+    ) -> Bool {
+        guard isAwaitingRecentActivity,
+              let nextRecentProjectID,
+              nextRecentProjectID != currentProjectID else {
+            return false
+        }
+        return !projectSelectionIsExplicit
+            && !modelSelectionIsExplicit
+            && !workspaceSelectionIsExplicit
+            && !hasDraftContent
+            && draftRestoreIsComplete
+    }
+
     static func providers(
         for project: FeatureProject?,
         in snapshot: FeatureSnapshot
