@@ -112,6 +112,9 @@ import {
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import * as OpenAiRealtime from "./voice/OpenAiRealtime.ts";
+import * as OpenAiRealtimeCredential from "./voice/OpenAiRealtimeCredential.ts";
+import { voiceHttpApiLayer, voiceNoStoreResponseLayer } from "./voice/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
@@ -352,6 +355,17 @@ const AuthLayerLive = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
+const OpenAiRealtimeCredentialLayerLive = OpenAiRealtimeCredential.layer.pipe(
+  Layer.provide(ServerSecretStore.layer),
+);
+
+const OpenAiRealtimeLayerLive = OpenAiRealtime.layer.pipe(
+  Layer.provide(OpenAiRealtimeCredentialLayerLive),
+  Layer.provide(OpenAiRealtime.rateLimiterLayer),
+);
+
+const VoiceLayerLive = Layer.mergeAll(OpenAiRealtimeCredentialLayerLive, OpenAiRealtimeLayerLive);
+
 const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   RelayClientLive,
   CloudManagedEndpointRuntime.layer.pipe(
@@ -446,6 +460,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
+      Layer.provide(voiceHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -462,6 +477,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
   Layer.provide(commandReadinessLayer),
+  Layer.provide(voiceNoStoreResponseLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),
 );
@@ -656,9 +672,12 @@ export const makeServerLayer = Layer.unwrap(
       ).pipe(Effect.asVoid),
     }).pipe(Layer.provideMerge(RuntimeDependenciesLive), Layer.provide(launcherLayer));
 
-    const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
-      disableLogger: !config.logWebSocketEvents,
-    }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
+    const routesLayer = HttpRouter.serve(
+      makeRoutesLayer.pipe(Layer.provide(launcherLayer), Layer.provide(VoiceLayerLive)),
+      {
+        disableLogger: !config.logWebSocketEvents,
+      },
+    ).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,

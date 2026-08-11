@@ -31,6 +31,22 @@
       "types": "./src/operations/projects.ts",
       "default": "./src/operations/projects.ts"
     },
+    "./operations/thread-supervisor": {
+      "types": "./src/operations/threadSupervisor.ts",
+      "default": "./src/operations/threadSupervisor.ts"
+    },
+    "./operations/thread-tasks": {
+      "types": "./src/operations/threadTasks.ts",
+      "default": "./src/operations/threadTasks.ts"
+    },
+    "./operations/voice-supervisor-repository": {
+      "types": "./src/operations/voiceSupervisorRepository.ts",
+      "default": "./src/operations/voiceSupervisorRepository.ts"
+    },
+    "./operations/voice-supervisor-tools": {
+      "types": "./src/operations/voiceSupervisorTools.ts",
+      "default": "./src/operations/voiceSupervisorTools.ts"
+    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
@@ -143,9 +159,33 @@
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
     },
+    "./state/thread-operational-status": {
+      "types": "./src/state/threadOperationalStatus.ts",
+      "default": "./src/state/threadOperationalStatus.ts"
+    },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
+    },
+    "./state/voice": {
+      "types": "./src/state/voiceHttp.ts",
+      "default": "./src/state/voiceHttp.ts"
+    },
+    "./voice/realtime-events": {
+      "types": "./src/voice/realtimeEvents.ts",
+      "default": "./src/voice/realtimeEvents.ts"
+    },
+    "./voice/realtime-transport": {
+      "types": "./src/voice/realtimeTransport.ts",
+      "default": "./src/voice/realtimeTransport.ts"
+    },
+    "./voice/voice-supervisor-host": {
+      "types": "./src/voice/voiceSupervisorHost.ts",
+      "default": "./src/voice/voiceSupervisorHost.ts"
+    },
+    "./voice/voice-supervisor-state": {
+      "types": "./src/voice/voiceSupervisorState.ts",
+      "default": "./src/voice/voiceSupervisorState.ts"
     }
   },
   "scripts": {

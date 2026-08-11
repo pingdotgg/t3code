@@ -139,6 +139,7 @@ patchedDependencies:
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.25.2: patches/react-native-screens@4.25.2.patch
+  react-native-webrtc@124.0.7: patches/react-native-webrtc@124.0.7.patch
 
 peerDependencyRules:
   allowAny:

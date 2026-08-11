@@ -21,6 +21,7 @@ import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPrompt
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
+import { VoiceSupervisorHost } from "../components/voice/VoiceSupervisorHost";
 import { Button } from "../components/ui/button";
 import {
   AnchoredToastProvider,
@@ -145,6 +146,7 @@ function RootRouteView() {
         {/* Above the router: a theme draft is judged by walking the app, so the
             editor has to survive navigation away from settings. */}
         <ThemeEditorHost />
+        <VoiceSupervisorHost />
       </AnchoredToastProvider>
     </ToastProvider>
   );

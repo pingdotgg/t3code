@@ -29,6 +29,7 @@ import {
 } from "../ui/sidebar";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { VoicePanelSidebarMenuItem } from "../voice/VoicePanelSidebarMenuItem";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -166,6 +167,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
+        <VoicePanelSidebarMenuItem onSelect={closeMobileSidebar} />
         {currentFooterPage === "pull-requests" ? (
           <SidebarMenuItem>
             <SidebarMenuButton onClick={handleBackClick}>

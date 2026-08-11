@@ -35,6 +35,7 @@ import {
   FolderPlusIcon,
   LinkIcon,
   MessageSquareIcon,
+  Mic2Icon,
   PaletteIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -102,6 +103,8 @@ import {
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
+  buildVoiceCommandPaletteAction,
+  dispatchVoiceToggleKeybinding,
   enumerateCommandPaletteItems,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
@@ -142,6 +145,7 @@ import {
   buildSidebarProjectSnapshots,
 } from "../sidebarProjectGrouping";
 import type { Project } from "../types";
+import { useVoicePanelStore } from "../voice/voicePanelStore";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 
@@ -433,6 +437,16 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           previewOpen,
         },
       });
+      if (
+        dispatchVoiceToggleKeybinding({
+          command,
+          event,
+          closeCommandPalette: () => setOpen(false),
+          toggleVoicePanel: () => useVoicePanelStore.getState().toggleVoicePanel(),
+        })
+      ) {
+        return;
+      }
       if (command === "themeEditor.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -453,7 +467,16 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, previewOpen, resolvedTheme, terminalOpen, theme, themeHalves, toggleMode]);
+  }, [
+    keybindings,
+    previewOpen,
+    resolvedTheme,
+    setOpen,
+    terminalOpen,
+    theme,
+    themeHalves,
+    toggleMode,
+  ]);
 
   useEffect(
     () =>
@@ -1420,6 +1443,13 @@ function OpenCommandPaletteDialog(props: {
       openOverlayMode("files");
     },
   });
+
+  actionItems.push(
+    buildVoiceCommandPaletteAction({
+      icon: <Mic2Icon className={ITEM_ICON_CLASS} />,
+      toggleVoicePanel: () => useVoicePanelStore.getState().toggleVoicePanel(),
+    }),
+  );
 
   actionItems.push({
     kind: "action",

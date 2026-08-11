@@ -16,6 +16,7 @@ import {
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
+  DESKTOP_MACOS_MICROPHONE_USAGE_DESCRIPTION,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
@@ -432,6 +433,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
+    assert.include(entitlements, "<key>com.apple.security.device.audio-input</key>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
   });
 
@@ -530,6 +532,28 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(mac.protocols, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("packages the exact macOS microphone usage description", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      const description =
+        "Allow T3 Code to use your microphone for voice conversations with coding agents.";
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(DESKTOP_MACOS_MICROPHONE_USAGE_DESCRIPTION, description);
+      assert.deepStrictEqual(mac.extendInfo, {
+        NSMicrophoneUsageDescription: description,
+      });
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 

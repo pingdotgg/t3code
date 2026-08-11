@@ -3,6 +3,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/voice"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/archived";
@@ -23,6 +24,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
+  "/settings/voice": "Voice",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
@@ -178,6 +180,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "providers",
     title: "Providers",
     to: "/settings/providers",
+  },
+  {
+    id: "voice",
+    title: "Voice",
+    to: "/settings/voice",
+    targetId: "voice-host-environment",
+  },
+  {
+    id: "voice-host-environment",
+    title: "Voice host environment",
+    to: "/settings/voice",
+  },
+  {
+    id: "openai-api-key",
+    title: "OpenAI API key",
+    to: "/settings/voice",
   },
   {
     id: "source-control",

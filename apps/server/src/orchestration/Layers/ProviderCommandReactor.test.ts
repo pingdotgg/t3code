@@ -2452,7 +2452,7 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set"),
@@ -2470,7 +2470,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.turn.interrupt",
         commandId: CommandId.make("cmd-turn-interrupt"),
@@ -2480,9 +2480,94 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+    await harness.drain();
+
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
+      turnId: "turn-1",
+    });
+  });
+
+  it("preserves session-wide interrupt behavior when no turn id is captured", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-without-turn-id"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-without-turn-id"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.interruptTurn.mock.calls).toEqual([[{ threadId: "thread-1" }]]);
+  });
+
+  it("does not redirect a captured interrupt to a newer active turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-newer-turn"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-2"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-stale"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+    ).toMatchObject({
+      turnId: "turn-1",
+      payload: {
+        detail: "The active turn changed before the interrupt could be applied.",
+      },
     });
   });
 
@@ -2806,7 +2891,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
@@ -2824,7 +2909,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -2857,7 +2942,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),

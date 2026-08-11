@@ -49,6 +49,8 @@ const appendCredentialResponseHeaders = HttpEffect.appendPreResponseHandler((_re
   Effect.succeed(HttpServerResponse.setHeaders(response, CREDENTIAL_RESPONSE_HEADERS)),
 );
 
+export const appendEnvironmentNoStoreResponseHeaders = appendCredentialResponseHeaders;
+
 const appendDpopChallengeHeader = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, "www-authenticate", "DPoP")),
 );

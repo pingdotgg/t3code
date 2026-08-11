@@ -1203,8 +1203,22 @@ const make = Effect.gen(function* () {
       });
     }
 
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    const requestedTurnId = event.payload.turnId;
+    if (requestedTurnId !== undefined && thread.session?.activeTurnId !== requestedTurnId) {
+      return yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.interrupt.failed",
+        summary: "Provider turn interrupt failed",
+        detail: "The active turn changed before the interrupt could be applied.",
+        turnId: requestedTurnId,
+        createdAt: event.payload.createdAt,
+      });
+    }
+
+    yield* providerService.interruptTurn({
+      threadId: event.payload.threadId,
+      ...(requestedTurnId !== undefined ? { turnId: requestedTurnId } : {}),
+    });
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

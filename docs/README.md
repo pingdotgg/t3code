@@ -4,6 +4,7 @@
 
 - [Install and first run](./user/install.md)
 - [Permission modes](./user/permission-modes.md)
+- [Voice supervisor](./user/voice-supervisor.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Review usage](./user/usage.md)
@@ -33,6 +34,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Environment auth](./internals/environment-auth.md)
+- [Realtime voice architecture](./internals/realtime-voice.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [CI gates](./internals/ci.md)
 

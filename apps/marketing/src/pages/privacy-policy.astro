@@ -21,8 +21,8 @@ const sections = [
   description="How T3 Tools, Inc. handles information when you use T3 Code, app.t3.codes, and t3.codes."
   heading="T3 Code Privacy Policy"
   lede="This Privacy Policy describes how T3 Tools, Inc. collects, uses, and shares personal information when you use the T3 Code desktop, mobile, and hosted web applications, visit the t3.codes marketing site, or use the optional T3 Connect service."
-  effectiveDate="2026-07-14"
-  lastUpdated="2026-07-14"
+  effectiveDate="2026-08-11"
+  lastUpdated="2026-08-11"
   sections={sections}
 >
   <section id="introduction">
@@ -82,6 +82,18 @@ const sections = [
               headline.
             </li>
             <li>
+              <strong>Optional Voice Supervisor content.</strong> If you start Voice Supervisor in a
+              supported web, desktop, or mobile client, the feature processes microphone audio, the
+              voice conversation, separate input transcripts, response audio and transcripts, and
+              bounded work context returned by supervisor tools. That context may include project
+              and thread labels, availability, and status from environments known to the client,
+              including cached stale or disconnected context. Current plan text is returned only
+              after the requested thread is revalidated as live. User-authored labels and plan text
+              may themselves contain sensitive information. When the selected environment requests
+              a voice-session credential, it also sends OpenAI a stable, hashed pseudonymous safety
+              identifier derived from the environment ID.
+            </li>
+            <li>
               <strong>Information you provide to us.</strong> We collect information that you choose
               to provide when you request support, send feedback, or otherwise communicate with us.
             </li>
@@ -127,6 +139,15 @@ const sections = [
               are processed on your device.
             </li>
             <li>
+              <strong>Microphone.</strong> Used only after you choose <strong>Start voice</strong> on
+              web or desktop, or <strong>Start</strong> on mobile, in the optional Voice Supervisor.
+              <strong>Mute</strong> stops sending microphone audio but does not end the session or
+              release microphone capture. <strong>Stop</strong> ends the session and releases
+              microphone capture, audio, and network resources. <strong>Hide</strong> on web or
+              desktop, or Back or navigation away on mobile, closes only the voice interface; it
+              does not mute or stop an active session or release microphone capture.
+            </li>
+            <li>
               <strong>Photos and files.</strong> Items you select are accessed only to preview them or
               attach them to a request you initiate.
             </li>
@@ -164,8 +185,10 @@ const sections = [
 
           <h3>Training of AI Models</h3>
           <p>
-            We do not use your personal information, source code, prompts, or agent responses to
-            train artificial-intelligence models.
+            T3 Tools does not use your personal information, source code, prompts, agent responses,
+            microphone audio, voice transcripts, or voice responses to train artificial-intelligence
+            models. This statement describes T3 Tools' own use; providers you choose process content
+            under their own API terms and data controls.
           </p>
 
           <h3>Compliance and Protection</h3>
@@ -200,6 +223,24 @@ const sections = [
             artificial-intelligence providers configured in your environment. Because you bring and
             configure your own coding-agent harness and provider, the applicable third parties vary.
             Those providers process information under their own terms and privacy policies.
+          </p>
+          <p>
+            If you start Voice Supervisor, OpenAI Realtime is the fixed provider for the voice
+            conversation even when the coding threads being supervised use another provider. The
+            web, desktop, or mobile client sends microphone audio and bounded supervisor tool
+            results directly to OpenAI and receives response audio directly over WebRTC. OpenAI also
+            processes the separate input transcript, response transcript, and stable hashed
+            environment safety identifier described above. The selected T3 environment requests the
+            short-lived session credential, but neither that environment nor T3 Connect proxies the
+            voice audio.
+          </p>
+          <p>
+            For current information about OpenAI API processing, review the{" "}<a
+              href="https://openai.com/policies/services-agreement/">OpenAI Services Agreement</a
+            >{" "}and{" "}<a
+              href="https://developers.openai.com/api/docs/guides/your-data#storage-requirements-and-retention-controls-per-endpoint"
+              >OpenAI API data controls by endpoint</a
+            >.
           </p>
 
           <h3>Third-Party Service Providers</h3>
@@ -324,8 +365,8 @@ const sections = [
           <p>
             You may use local or direct connections without signing in to a T3 account. You can
             disconnect environments, sign out, disable optional notifications and Live Activities,
-            and clear local caches from Settings. You can grant or revoke camera, photo, local-network,
-            and notification permissions in your device settings.
+            and clear local caches from Settings. You can grant or revoke camera, microphone, photo,
+            local-network, and notification permissions in your device settings.
           </p>
 
           <h3>Cookies and Local Data</h3>

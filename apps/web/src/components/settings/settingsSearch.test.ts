@@ -85,4 +85,19 @@ describe("searchSettings", () => {
       targetId: "appearance",
     });
   });
+
+  it("registers voice configuration and its stable anchors", () => {
+    expect(searchSettings("voice").map((item) => item.id)).toEqual([
+      "voice",
+      "voice-host-environment",
+    ]);
+    expect(searchSettings("openai api key")[0]).toMatchObject({
+      id: "openai-api-key",
+      to: "/settings/voice",
+    });
+    expect(searchableSetting("voice-host-environment")).toEqual({
+      id: "voice-host-environment",
+      title: "Voice host environment",
+    });
+  });
 });

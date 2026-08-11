@@ -14,6 +14,7 @@ import {
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
+  Mic2Icon,
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
@@ -34,6 +35,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { VoicePanelSidebarMenuItem } from "../voice/VoicePanelSidebarMenuItem";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
@@ -49,6 +51,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/appearance": PaletteIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/providers": BotIcon,
+  "/settings/voice": Mic2Icon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
   "/settings/archived": ArchiveIcon,
@@ -186,6 +189,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     }
     void navigate({ to: "/" });
   }, [canGoBack, isMobile, navigate, setOpenMobile]);
+  const closeMobileSidebar = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  }, [isMobile, setOpenMobile]);
 
   return (
     <>
@@ -295,6 +303,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       </SidebarContent>
       <SidebarFooter className="p-[var(--sidebar-content-inset)]">
         <T3ConnectSidebarSignIn />
+        <SidebarMenu>
+          <VoicePanelSidebarMenuItem onSelect={closeMobileSidebar} />
+        </SidebarMenu>
         <div className="flex items-center gap-1">
           <SidebarMenu className="min-w-0 flex-1">
             <SidebarMenuItem>

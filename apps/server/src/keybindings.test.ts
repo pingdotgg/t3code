@@ -206,6 +206,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("terminal.splitVertical"), "mod+shift+d");
       assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("modelPicker.jump.9"), "mod+9");
+      assert.isFalse(defaultsByCommand.has("voice.toggle"));
     }),
   );
 
@@ -363,6 +364,30 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         { key: "mod+shift+r", command: "script.run-tests.run" },
       ]);
       assert.isTrue(resolved.some((entry) => entry.command === "script.run-tests.run"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("persists and reloads a custom voice toggle through the generic service", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, []);
+
+      const loaded = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings.Keybindings;
+        yield* keybindings.upsertKeybindingRule({
+          key: "mod+alt+v",
+          command: "voice.toggle",
+        });
+        return yield* keybindings.loadConfigState;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepEqual(persisted, [{ key: "mod+alt+v", command: "voice.toggle" }]);
+      assert.isTrue(
+        loaded.keybindings.some(
+          (binding) => binding.command === "voice.toggle" && binding.shortcut.key === "v",
+        ),
+      );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 

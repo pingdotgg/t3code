@@ -62,11 +62,13 @@ export function ControlPill(props: {
         : iconColor;
 
   const isCircle =
-    variant === "circle" || variant === "danger" || (variant === "primary" && !props.label);
+    variant === "circle" ||
+    (variant === "danger" && !props.label) ||
+    (variant === "primary" && !props.label);
   const containerClassName = cn(
     isCircle
       ? "h-11 w-11 items-center justify-center rounded-full"
-      : variant === "primary"
+      : variant === "primary" || variant === "danger"
         ? "h-11 flex-row items-center justify-center gap-2 rounded-full px-5"
         : "h-11 flex-row items-center justify-center gap-2 rounded-full px-3.5",
     variant === "primary"
@@ -84,7 +86,9 @@ export function ControlPill(props: {
       ? props.disabled
         ? "text-foreground-muted"
         : "text-primary-foreground"
-      : "",
+      : variant === "danger"
+        ? "text-danger-foreground"
+        : "",
   );
 
   return (

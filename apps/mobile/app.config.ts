@@ -289,6 +289,11 @@ const config: ExpoConfig = {
         },
       },
     ],
+    // This must be listed before expo-camera and expo-image-picker. Expo runs
+    // same-type mods last-registered-first, so the voice config runs after
+    // their intentionally disabled recording permissions and restores only
+    // the global microphone access needed for voice conversations.
+    "./plugins/withVoiceSupervisorNativeConfig.cjs",
     [
       "expo-camera",
       {

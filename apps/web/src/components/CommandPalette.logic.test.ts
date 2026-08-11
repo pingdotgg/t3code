@@ -4,11 +4,101 @@ import type { Thread } from "../types";
 import {
   buildBrowseGroups,
   buildThreadActionItems,
+  buildVoiceCommandPaletteAction,
+  dispatchVoiceToggleKeybinding,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("voice command palette entry point", () => {
+  it("builds a discoverable voice action that toggles the shared panel", async () => {
+    const toggleVoicePanel = vi.fn();
+    const action = buildVoiceCommandPaletteAction({ icon: null, toggleVoicePanel });
+
+    expect(action).toMatchObject({
+      value: "action:voice-supervisor",
+      title: "Toggle voice supervisor",
+      shortcutCommand: "voice.toggle",
+    });
+    expect(action.searchTerms).toEqual(expect.arrayContaining(["voice", "microphone"]));
+    await action.run();
+    expect(toggleVoicePanel).toHaveBeenCalledOnce();
+  });
+
+  it("closes the palette before dispatching a non-repeated voice toggle", () => {
+    const order: string[] = [];
+    const event = {
+      defaultPrevented: false,
+      isComposing: false,
+      repeat: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    };
+
+    expect(
+      dispatchVoiceToggleKeybinding({
+        command: "voice.toggle",
+        event,
+        closeCommandPalette: () => order.push("close"),
+        toggleVoicePanel: () => order.push("toggle"),
+      }),
+    ).toBe(true);
+    expect(order).toEqual(["close", "toggle"]);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(event.stopPropagation).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["an already handled event", { defaultPrevented: true }],
+    ["composition", { isComposing: true }],
+    ["key repeat", { repeat: true }],
+  ])("ignores %s", (_label, override) => {
+    const event = {
+      defaultPrevented: false,
+      isComposing: false,
+      repeat: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      ...override,
+    };
+    const closeCommandPalette = vi.fn();
+    const toggleVoicePanel = vi.fn();
+
+    expect(
+      dispatchVoiceToggleKeybinding({
+        command: "voice.toggle",
+        event,
+        closeCommandPalette,
+        toggleVoicePanel,
+      }),
+    ).toBe(false);
+    expect(closeCommandPalette).not.toHaveBeenCalled();
+    expect(toggleVoicePanel).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not claim other global commands", () => {
+    const event = {
+      defaultPrevented: false,
+      isComposing: false,
+      repeat: false,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    };
+
+    expect(
+      dispatchVoiceToggleKeybinding({
+        command: "themeEditor.toggle",
+        event,
+        closeCommandPalette: vi.fn(),
+        toggleVoicePanel: vi.fn(),
+      }),
+    ).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+});
 
 describe("reduceCommandPaletteUiState", () => {
   const closedState = { open: false, mode: "command", openIntent: null } as const;

@@ -668,6 +668,19 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("dispatches a configured voice toggle without relying on a default", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("v", { altKey: true }), command: "voice.toggle" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "v", ctrlKey: true, altKey: true }), keybindings, {
+        platform: "Linux",
+      }),
+      "voice.toggle",
+    );
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 
