@@ -1,6 +1,6 @@
 # T3 Code Native Android
 
-Independent native Android client for T3 Code. The formal Phase 2–4A roadmap is complete, followed by product-parity passes across the thread list, composers, settings, usage, archives, appearance, project grouping, and environment management.
+Independent native Android client for T3 Code. The formal Phase 2–4A roadmap is complete, followed by product-parity passes across threads, composers, settings, usage, archives, appearance, project grouping, environment management, and adaptive large-screen navigation.
 
 ## Modules
 
@@ -13,9 +13,15 @@ The Kotlin implementation targets the current matching T3 server revision. Broad
 
 ## Current product surface
 
-The native client supports direct and relay environments, durable offline drafts/outbox recovery, new and existing thread turns, thread organization and archived threads, project and worktree selection, workspace files/search, Git operations, terminal sessions, review diffs/comments, image attachments, Android share intake, launcher shortcuts, usage reporting, client storage controls, typography settings, and project grouping.
+The native client supports direct and relay environments, durable offline drafts/outbox recovery, new and existing thread turns, thread organization and archived threads, project and branch/worktree selection, workspace files/search, Git operations, terminal sessions, review diffs/comments, image attachments, Android share intake, launcher shortcuts, usage reporting, client storage controls, typography settings, and project grouping.
 
-The settings parity matrix lives in [`docs/SETTINGS_COMPARISON.md`](docs/SETTINGS_COMPARISON.md). T3 Connect is implemented through Clerk, DPoP, and the managed relay, but production OAuth remains externally gated until Clerk allowlists the experimental Android redirect.
+The settings parity matrix lives in [`docs/SETTINGS_COMPARISON.md`](docs/SETTINGS_COMPARISON.md). The final validation record and known boundaries live in [`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md). T3 Connect is implemented through Clerk, DPoP, and the managed relay, but production OAuth remains externally gated until Clerk allowlists the native Android redirect.
+
+## Adaptive workspace
+
+The app uses compact navigation on phones. At an available window size of at least 720 dp wide and 600 dp high, it switches to a persistent thread sidebar sized to 32% of the window and clamped between 280 and 380 dp. The sidebar remains visible through thread, files, Git, terminal, and review screens. Settings, onboarding, and other account-level flows continue to use the full window.
+
+The layout responds to the current window rather than device type, so the same behavior covers tablets, foldables, freeform windows, and Samsung DeX. Resizing preserves the selected thread and ViewModel-owned drafts.
 
 ## Wire protocol
 
@@ -101,11 +107,11 @@ The launcher exposes a static New task shortcut and up to three dynamic recent-t
 
 The Phase 4A capability matrix and S25 acceptance steps live in [`docs/PHASE4A.md`](docs/PHASE4A.md).
 
-## Remaining product boundaries
+## Product boundaries
 
-Gallery selection, explicit clipboard paste, draft previews/removal, attachment-only messages, durable draft/outbox recovery, retry/edit/delete cleanup, and sent-image rendering are in scope. Images are capped at eight per message and 10 MB each. The server remains authoritative for sent attachment ids and signed asset URLs.
+Gallery selection, explicit clipboard paste, attachment previews/removal, attachment-only messages, durable draft/outbox recovery, retry/edit/delete cleanup, and sent-image rendering are implemented. Images are capped at eight per message and 10 MB each. The server remains authoritative for sent attachment ids and signed asset URLs.
 
-Android share-target intake was added in Phase 4A. Camera capture, document/video attachments, and file editing remain intentional product boundaries. T3 Connect administrator approval is not a client implementation gate. If performance work resumes, first reproduce the documented long-thread debug trace with a release build before changing feed behavior.
+Camera capture, document/video attachments, direct sharing to an existing thread, and file editing remain intentional product boundaries. Production signing and store automation are not configured for this independent APK. T3 Connect administrator approval is an external deployment gate rather than missing client implementation. If performance work resumes, first reproduce the documented long-thread debug trace with a release build before changing feed behavior.
 
 The Phase 3E capability matrix and device acceptance steps live in [`docs/PHASE3E.md`](docs/PHASE3E.md). Thread-feed parity and catch-up behavior live in [`docs/THREAD_FEED.md`](docs/THREAD_FEED.md). Earlier evidence remains in [`docs/PHASE3D.md`](docs/PHASE3D.md), [`docs/PHASE3C.md`](docs/PHASE3C.md), [`docs/PHASE3B.md`](docs/PHASE3B.md), [`docs/PHASE3A.md`](docs/PHASE3A.md), and [`docs/PHASE2.md`](docs/PHASE2.md).
 

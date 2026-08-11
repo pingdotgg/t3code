@@ -9,7 +9,7 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 
-/** Port of mobile `threadListV2.ts` for the experimental Android home list. */
+/** Native counterpart of mobile `threadListV2.ts`. */
 enum class ThreadListV2Status {
   Approval,
   Input,

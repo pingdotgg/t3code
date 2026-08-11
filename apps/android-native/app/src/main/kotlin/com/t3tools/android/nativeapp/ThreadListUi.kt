@@ -2,6 +2,8 @@
 
 package com.t3tools.android.nativeapp
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -82,11 +84,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -1054,7 +1054,7 @@ private fun ThreadContextMenuBottomSheet(
 ) {
   val thread = item.thread
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-  val clipboardManager = LocalClipboardManager.current
+  val clipboardManager = LocalContext.current.getSystemService(ClipboardManager::class.java)
   var snoozeMenuOpen by remember(thread.id) { mutableStateOf(false) }
 
   ModalBottomSheet(
@@ -1247,7 +1247,7 @@ private fun ThreadContextMenuBottomSheet(
             label = "Copy branch ($branch)",
             onClick = {
               onDismiss()
-              clipboardManager.setText(AnnotatedString(branch))
+              clipboardManager.setPrimaryClip(ClipData.newPlainText("Branch", branch))
             },
           )
         }
@@ -1258,7 +1258,7 @@ private fun ThreadContextMenuBottomSheet(
             label = "Copy workspace path",
             onClick = {
               onDismiss()
-              clipboardManager.setText(AnnotatedString(path))
+              clipboardManager.setPrimaryClip(ClipData.newPlainText("Workspace path", path))
             },
           )
         }

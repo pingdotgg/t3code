@@ -3585,7 +3585,8 @@ private fun ThreadScreen(
     if (detail != null) focusManager.clearFocus(force = true)
   }
   BackHandler(onBack = leaveThread)
-  val environmentId = runtime.environment?.environmentId ?: return
+  val environment = runtime.environment ?: return
+  val environmentId = environment.environmentId
   val draftRevision by viewModel.draftRevision.collectAsState()
   val draftKey = remember(environmentId, threadId) { DraftStore.threadKey(environmentId, threadId) }
   var draft by remember(draftKey) { mutableStateOf(viewModel.loadDraft(draftKey)) }
@@ -3594,7 +3595,7 @@ private fun ThreadScreen(
   val activeThread = runtime.shell.threads[threadId]
   val titleText = activeThread?.title ?: detail?.summary?.title ?: "Thread"
   val branchName = gitState.status?.refName ?: activeThread?.branch ?: "main"
-  val envLabel = runtime.environment?.label ?: "Environment"
+  val envLabel = environment.label
 
   Scaffold(
     topBar = {

@@ -13,8 +13,8 @@ android {
     applicationId = "com.t3tools.t3code.native.experimental"
     minSdk = 26
     targetSdk = 35
-    versionCode = 1
-    versionName = "0.6.0-phase4a"
+    versionCode = 2
+    versionName = "0.7.0"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
