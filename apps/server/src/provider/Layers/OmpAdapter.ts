@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import { applyOmpAcpModelSelection, makeOmpAcpRuntime } from "../acp/OmpAcpSupport.ts";
 import type { OmpAdapterShape } from "../Services/OmpAdapter.ts";
-import { makeAcpProviderAdapter, type AcpProviderAdapterLiveOptions } from "./CursorAdapter.ts";
+import { makeAcpProviderAdapter, type AcpProviderAdapterLiveOptions } from "./AcpAdapter.ts";
 
 const PROVIDER = ProviderDriverKind.make("omp");
 
