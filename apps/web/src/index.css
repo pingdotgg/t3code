@@ -148,10 +148,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --animate-ghost-pulse: ghost-pulse 2.4s infinite;
   --animate-status-ping: status-ping 2s infinite;
   /* Thread alert splash: a sidebar row lighting up for a task that finished
-     while the user was away. Runs three times and stops — this marks a thread
-     worth a look, and a permanent animation in a list reads as an error. The
-     lasting signal is the tint the row keeps underneath. */
-  --animate-thread-alert-splash: thread-alert-splash 1.6s ease-out 3;
+     while the user was away. The highlight is removed after at most five
+     seconds (three once the window has focus), so the cycle is sized to pulse
+     steadily for that window rather than to end on its own. */
+  --animate-thread-alert-splash: thread-alert-splash 1s ease-out infinite;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);

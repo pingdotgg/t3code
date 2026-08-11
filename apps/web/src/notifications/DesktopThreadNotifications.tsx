@@ -20,7 +20,16 @@ import {
   type ThreadPhaseSnapshot,
 } from "./desktopNotifications.logic";
 import { playAlertChime } from "./alertSound";
-import { clearThreadAlert, markThreadAlert } from "./threadAlertStore";
+import {
+  clearThreadAlert,
+  markThreadAlert,
+  markThreadAlertsFocused,
+  pruneExpiredThreadAlerts,
+  readThreadAlerts,
+  subscribeThreadAlerts,
+  THREAD_ALERT_FOCUSED_TTL_MS,
+  THREAD_ALERT_MAX_TTL_MS,
+} from "./threadAlertStore";
 
 /**
  * Latest assistant text for a thread, but only when that thread's detail atom
@@ -81,17 +90,19 @@ function DesktopThreadNotifications() {
 
     const reconcile = (threads: ReadonlyArray<EnvironmentThreadShell>) => {
       const settings = getClientSettings();
+      const windowFocused = document.visibilityState === "visible" && document.hasFocus();
       const { notifications, playAlertSound, next } = reconcileThreadNotifications({
         previous: phases,
         threads,
         projectTitles: buildProjectTitleMap(readProjects()),
         settings: selectThreadNotificationSettings(settings),
-        windowFocused: document.visibilityState === "visible" && document.hasFocus(),
+        windowFocused,
         activeThreadRef: activeThreadRefMirror.current,
         readResponseText: readLoadedResponseText,
       });
       phases = next;
 
+      const nowMs = Date.now();
       const showNotification = window.desktopBridge?.showNotification;
       for (const notification of notifications) {
         // Mark the row before the banner: the highlight is what survives Do
@@ -100,6 +111,7 @@ function DesktopThreadNotifications() {
           markThreadAlert(
             notification.threadRef,
             notification.kind === "task-failed" ? "failed" : "completed",
+            { nowMs, windowFocused },
           );
         }
 
@@ -135,6 +147,73 @@ function DesktopThreadNotifications() {
     }
     clearThreadAlert(activeThreadRef);
   }, [activeThreadRef]);
+
+  // Highlights are bounded twice over: they fade shortly after the window has
+  // focus (the user is looking, so the signal has landed), and in any case
+  // never outlive the hard ceiling. A single timer drives both, rather than
+  // one per alert, and only runs while something is actually highlighted.
+  useEffect(() => {
+    const isFocused = () => document.visibilityState === "visible" && document.hasFocus();
+
+    let timeoutId: number | null = null;
+
+    const cancelPending = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
+
+    const scheduleNextPrune = () => {
+      cancelPending();
+      const alerts = readThreadAlerts();
+      const deadlines: number[] = [];
+      const nowMs = Date.now();
+
+      for (const alert of Object.values(alerts)) {
+        deadlines.push(alert.markedAtMs + THREAD_ALERT_MAX_TTL_MS);
+        if (alert.focusedAtMs !== null) {
+          deadlines.push(alert.focusedAtMs + THREAD_ALERT_FOCUSED_TTL_MS);
+        }
+      }
+      if (deadlines.length === 0) {
+        return;
+      }
+
+      const nextDeadline = Math.min(...deadlines);
+      timeoutId = window.setTimeout(
+        () => {
+          timeoutId = null;
+          pruneExpiredThreadAlerts(Date.now());
+          scheduleNextPrune();
+        },
+        Math.max(0, nextDeadline - nowMs),
+      );
+    };
+
+    const handleFocusChange = () => {
+      if (isFocused()) {
+        markThreadAlertsFocused(Date.now());
+      }
+      pruneExpiredThreadAlerts(Date.now());
+      scheduleNextPrune();
+    };
+
+    window.addEventListener("focus", handleFocusChange);
+    window.addEventListener("blur", scheduleNextPrune);
+    document.addEventListener("visibilitychange", handleFocusChange);
+    // New alerts arrive without a focus event, so reschedule when the set changes.
+    const unsubscribe = subscribeThreadAlerts(handleFocusChange);
+    handleFocusChange();
+
+    return () => {
+      cancelPending();
+      unsubscribe();
+      window.removeEventListener("focus", handleFocusChange);
+      window.removeEventListener("blur", scheduleNextPrune);
+      document.removeEventListener("visibilitychange", handleFocusChange);
+    };
+  }, []);
 
   useEffect(() => {
     const onNotificationActivated = window.desktopBridge?.onNotificationActivated;
