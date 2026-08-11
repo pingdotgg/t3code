@@ -26,7 +26,6 @@ import {
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
-  MAX_WALLPAPER_IMAGE_DATA_URL_CHARS,
   MAX_WALLPAPER_OPACITY,
   MIN_CODE_FONT_SIZE,
   MIN_GLASS_OPACITY,
@@ -78,7 +77,6 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { compressImageForStash } from "../../lib/imageCompression";
 import { isMacPlatform } from "../../lib/utils";
 import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
 import { useProjects } from "../../state/entities";
@@ -107,6 +105,7 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
+import { previewAppearanceWallpaperOpacity } from "../../appearanceWallpaper";
 import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import {
@@ -130,6 +129,7 @@ import {
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
+  prepareWallpaperImage,
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
   rememberEnabledProjectGroupingMode,
@@ -976,27 +976,49 @@ export function AppearanceSettingsPanel() {
   } as CSSProperties;
   const wallpaperInputRef = useRef<HTMLInputElement | null>(null);
   const [wallpaperError, setWallpaperError] = useState<string | null>(null);
+  // Bumped by every pick and by clearing, so a compression that resolves after
+  // the user has moved on cannot commit its image over the newer choice.
+  const wallpaperRequestRef = useRef(0);
+  // Held while the opacity slider is being dragged; see commitWallpaperOpacity.
+  const [wallpaperOpacityDraft, setWallpaperOpacityDraft] = useState<number | null>(null);
   const hasWallpaper = settings.wallpaperImage !== "";
+  const wallpaperOpacity = wallpaperOpacityDraft ?? settings.wallpaperOpacity;
   const wallpaperOpacityRatio =
-    (settings.wallpaperOpacity - MIN_WALLPAPER_OPACITY) /
-    (MAX_WALLPAPER_OPACITY - MIN_WALLPAPER_OPACITY);
+    (wallpaperOpacity - MIN_WALLPAPER_OPACITY) / (MAX_WALLPAPER_OPACITY - MIN_WALLPAPER_OPACITY);
   const wallpaperOpacitySliderStyle = {
     "--settings-slider-progress": `${wallpaperOpacityRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - wallpaperOpacityRatio}rem`,
   } as CSSProperties;
 
   const chooseWallpaper = async (file: File) => {
-    const compressed = await compressImageForStash(file, MAX_WALLPAPER_IMAGE_DATA_URL_CHARS);
-    if (!compressed.ok) {
+    const request = (wallpaperRequestRef.current += 1);
+    const prepared = await prepareWallpaperImage(file);
+    if (request !== wallpaperRequestRef.current) return;
+    if (!prepared.ok) {
       setWallpaperError(
-        compressed.reason === "unreadable"
+        prepared.reason === "unreadable"
           ? "That file could not be read as an image."
           : "That image is too large to store as a wallpaper.",
       );
       return;
     }
     setWallpaperError(null);
-    updateSettings({ wallpaperImage: compressed.image.dataUrl });
+    updateSettings({ wallpaperImage: prepared.dataUrl });
+  };
+
+  const clearWallpaper = () => {
+    wallpaperRequestRef.current += 1;
+    setWallpaperError(null);
+    updateSettings({ wallpaperImage: "" });
+  };
+
+  // Dragging previews off the root element and only settles into the settings
+  // once the slider is released, so a drag writes the wallpaper's data URL to
+  // storage once instead of on every step.
+  const commitWallpaperOpacity = () => {
+    if (wallpaperOpacityDraft === null) return;
+    setWallpaperOpacityDraft(null);
+    updateSettings({ wallpaperOpacity: wallpaperOpacityDraft });
   };
 
   return (
@@ -1071,15 +1093,7 @@ export function AppearanceSettingsPanel() {
             wallpaperError ? <span className="text-destructive">{wallpaperError}</span> : null
           }
           resetAction={
-            hasWallpaper ? (
-              <SettingResetButton
-                label="wallpaper"
-                onClick={() => {
-                  setWallpaperError(null);
-                  updateSettings({ wallpaperImage: "" });
-                }}
-              />
-            ) : null
+            hasWallpaper ? <SettingResetButton label="wallpaper" onClick={clearWallpaper} /> : null
           }
           control={
             <div className="flex items-center gap-3">
@@ -1129,7 +1143,7 @@ export function AppearanceSettingsPanel() {
                   className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
                   htmlFor="wallpaper-opacity"
                 >
-                  {settings.wallpaperOpacity}%
+                  {wallpaperOpacity}%
                 </output>
                 <input
                   aria-label="Wallpaper opacity"
@@ -1137,20 +1151,24 @@ export function AppearanceSettingsPanel() {
                   id="wallpaper-opacity"
                   max={MAX_WALLPAPER_OPACITY}
                   min={MIN_WALLPAPER_OPACITY}
+                  onBlur={commitWallpaperOpacity}
                   onChange={(event) => {
-                    const wallpaperOpacity = Number(event.currentTarget.value);
+                    const nextOpacity = Number(event.currentTarget.value);
                     if (
-                      Number.isInteger(wallpaperOpacity) &&
-                      wallpaperOpacity >= MIN_WALLPAPER_OPACITY &&
-                      wallpaperOpacity <= MAX_WALLPAPER_OPACITY
+                      Number.isInteger(nextOpacity) &&
+                      nextOpacity >= MIN_WALLPAPER_OPACITY &&
+                      nextOpacity <= MAX_WALLPAPER_OPACITY
                     ) {
-                      updateSettings({ wallpaperOpacity });
+                      setWallpaperOpacityDraft(nextOpacity);
+                      previewAppearanceWallpaperOpacity(document.documentElement, nextOpacity);
                     }
                   }}
+                  onKeyUp={commitWallpaperOpacity}
+                  onPointerUp={commitWallpaperOpacity}
                   step={5}
                   style={wallpaperOpacitySliderStyle}
                   type="range"
-                  value={settings.wallpaperOpacity}
+                  value={wallpaperOpacity}
                 />
               </div>
             }

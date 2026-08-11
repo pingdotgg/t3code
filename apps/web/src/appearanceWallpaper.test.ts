@@ -4,6 +4,7 @@ import {
   applyAppearanceWallpaper,
   clampWallpaperOpacity,
   cssWallpaperImage,
+  previewAppearanceWallpaperOpacity,
 } from "./appearanceWallpaper";
 
 /** The unit suite runs without a DOM, so stand in for the pieces used here. */
@@ -65,6 +66,16 @@ describe("applyAppearanceWallpaper", () => {
     expect(dataset.wallpaper).toBe("");
     expect(variables.get("--wallpaper-image")).toBe('url("data:image/webp;base64,AAAA")');
     expect(variables.get("--wallpaper-opacity")).toBe("45%");
+  });
+
+  it("previews a new opacity without rewriting the image", () => {
+    const { root, variables } = createRoot();
+
+    applyAppearanceWallpaper(root, { image: "data:image/webp;base64,AAAA", opacity: 45 });
+    previewAppearanceWallpaperOpacity(root, 70);
+
+    expect(variables.get("--wallpaper-opacity")).toBe("70%");
+    expect(variables.get("--wallpaper-image")).toBe('url("data:image/webp;base64,AAAA")');
   });
 
   it("removes the marker and both variables when the image is cleared", () => {

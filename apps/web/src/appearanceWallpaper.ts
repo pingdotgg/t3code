@@ -60,3 +60,14 @@ export function applyAppearanceWallpaper(
   root.style.setProperty("--wallpaper-image", image);
   root.style.setProperty("--wallpaper-opacity", `${clampWallpaperOpacity(preferences.opacity)}%`);
 }
+
+/**
+ * Repaint the wash without touching the stored preference. The opacity slider
+ * previews through this while it is being dragged: the image rides along in
+ * the same persisted settings blob, so committing each step would rewrite the
+ * whole data URL a dozen times per drag. The settled value lands through
+ * `applyAppearanceWallpaper` once the drag ends.
+ */
+export function previewAppearanceWallpaperOpacity(root: HTMLElement, opacity: number): void {
+  root.style.setProperty("--wallpaper-opacity", `${clampWallpaperOpacity(opacity)}%`);
+}

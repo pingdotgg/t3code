@@ -7,13 +7,15 @@ import {
 } from "@t3tools/contracts";
 import { getBackgroundActivityPresetSettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { MAX_COMPRESSIBLE_SOURCE_BYTES } from "../../lib/imageCompression";
 import {
   backgroundActivitySharedPolicySettings,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
+  prepareWallpaperImage,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
@@ -226,5 +228,55 @@ describe("buildProviderInstanceUpdatePatch", () => {
 
     expect(patch.providerInstances?.[instanceId]).toEqual(nextInstance);
     expect(patch.providers).toBeUndefined();
+  });
+});
+
+/**
+ * The decoder is stubbed rather than exercised: jsdom has no image codec, so
+ * `createImageBitmap` stands in for the browser accepting or refusing a file.
+ */
+describe("prepareWallpaperImage", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("refuses a file past the source ceiling before reading it", async () => {
+    const file = new File([new Uint8Array(8)], "huge.png", { type: "image/png" });
+    Object.defineProperty(file, "size", { value: MAX_COMPRESSIBLE_SOURCE_BYTES + 1 });
+    const read = vi.spyOn(file, "arrayBuffer");
+    const decode = vi.fn();
+    vi.stubGlobal("createImageBitmap", decode);
+
+    expect(await prepareWallpaperImage(file)).toEqual({ ok: false, reason: "too-large" });
+    // Reading it into a base64 string is the part that could take the tab down.
+    expect(read).not.toHaveBeenCalled();
+    expect(decode).not.toHaveBeenCalled();
+  });
+
+  it("rejects an under-budget file the browser cannot decode as an image", async () => {
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() => Promise.reject(new Error("unsupported source image"))),
+    );
+
+    expect(
+      await prepareWallpaperImage(new File(["plain text"], "notes.png", { type: "image/png" })),
+    ).toEqual({ ok: false, reason: "unreadable" });
+  });
+
+  it("stores an under-budget image verbatim once it decodes", async () => {
+    const close = vi.fn();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(() => Promise.resolve({ width: 16, height: 16, close })),
+    );
+
+    const result = await prepareWallpaperImage(
+      new File([new Uint8Array([1, 2, 3, 4])], "shot.png", { type: "image/png" }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.dataUrl).toBe("data:image/png;base64,AQIDBA==");
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

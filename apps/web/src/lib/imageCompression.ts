@@ -296,6 +296,22 @@ export async function compressImageForStash(
 }
 
 /**
+ * Whether the browser can decode `file` as an image. Callers that persist a
+ * file verbatim need this: `compressImageForStash` only decodes what it has to
+ * re-encode, so an under-budget file is otherwise taken at its word — and a
+ * picker's `accept` filter is a hint, not a guarantee.
+ */
+export async function isDecodableImage(file: File): Promise<boolean> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    bitmap.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Shrinks `file` until its binary size fits `maxBytes`, returning a new
  * `File` (WebP or JPEG). Files already within the limit pass through
  * untouched, preserving their exact bytes and format. Sources above

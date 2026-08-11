@@ -8,7 +8,10 @@ import type {
   SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  MAX_WALLPAPER_IMAGE_DATA_URL_CHARS,
+} from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -17,6 +20,12 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import {
+  compressImageForStash,
+  type ImageCompressionFailureReason,
+  isDecodableImage,
+  MAX_COMPRESSIBLE_SOURCE_BYTES,
+} from "../../lib/imageCompression";
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -246,4 +255,36 @@ export function backgroundActivityOverrideSettings(
       overrides: nextOverrides as BackgroundActivitySettings["overrides"],
     },
   };
+}
+
+// ── Wallpaper ────────────────────────────────────────────────────────
+
+export type PreparedWallpaperImage =
+  | { readonly ok: true; readonly dataUrl: string }
+  | { readonly ok: false; readonly reason: ImageCompressionFailureReason };
+
+/**
+ * The data URL to persist for a picked wallpaper file.
+ *
+ * Two things the compressor does not do on its own. The source ceiling is
+ * checked before the file is touched, because reading it into a base64 string
+ * is itself what would take the tab down — past that point there is nothing
+ * left to protect. And a file small enough to store verbatim never reaches the
+ * decoder, so it is probed here: `accept="image/*"` only filters the picker,
+ * and persisting a mislabeled file would leave a wallpaper that renders as a
+ * broken image with no error ever shown.
+ */
+export async function prepareWallpaperImage(file: File): Promise<PreparedWallpaperImage> {
+  if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
+    return { ok: false, reason: "too-large" };
+  }
+  const compressed = await compressImageForStash(file, MAX_WALLPAPER_IMAGE_DATA_URL_CHARS);
+  if (!compressed.ok) {
+    return compressed;
+  }
+  // Re-encoding already decoded the file, so only the verbatim path is unproven.
+  if (!compressed.image.recompressed && !(await isDecodableImage(file))) {
+    return { ok: false, reason: "unreadable" };
+  }
+  return { ok: true, dataUrl: compressed.image.dataUrl };
 }
