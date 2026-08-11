@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
 
@@ -13,8 +14,8 @@ export interface ProviderSkillRoot {
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SkillFrontmatter = Schema.Struct({
-  name: Schema.optional(Schema.String),
-  description: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.Unknown),
+  description: Schema.optional(Schema.Unknown),
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownOption(SkillFrontmatter);
 
@@ -41,8 +42,10 @@ function parseSkillFrontmatter(contents: string): ParsedSkillFrontmatter {
     return { kind: "malformed" };
   }
 
-  const name = decoded.value.name?.trim();
-  const description = decoded.value.description?.trim();
+  const name = Predicate.isString(decoded.value.name) ? decoded.value.name.trim() : undefined;
+  const description = Predicate.isString(decoded.value.description)
+    ? decoded.value.description.trim()
+    : undefined;
   return {
     kind: "parsed",
     ...(name ? { name } : {}),
@@ -72,6 +75,8 @@ export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(func
       }
 
       const frontmatter = parseSkillFrontmatter(contents);
+      // Syntactically malformed frontmatter is skipped instead of surfacing a
+      // potentially broken skill under its directory name.
       if (frontmatter.kind === "malformed") {
         continue;
       }

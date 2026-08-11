@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -60,6 +61,34 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
         skills.find((skill) => skill.name === "shared")?.path,
         path.join(roots[3]!, "shared", "SKILL.md"),
       );
+    }),
+  );
+
+  it.effect("uses USERPROFILE as the user home on Windows", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-windows-home-" });
+      const userProfile = path.join(tempDir, "user-profile");
+      const fallbackHome = path.join(tempDir, "server-home");
+      const skillsRoot = path.join(userProfile, ".agents", "skills");
+      yield* writeSkill(skillsRoot, "windows-user", "From USERPROFILE.");
+
+      const skills = yield* discoverGrokSkills(
+        undefined,
+        { USERPROFILE: userProfile },
+        fallbackHome,
+      ).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+      assert.deepEqual(skills, [
+        {
+          name: "windows-user",
+          description: "From USERPROFILE.",
+          path: path.join(skillsRoot, "windows-user", "SKILL.md"),
+          scope: "user",
+          enabled: true,
+        },
+      ]);
     }),
   );
 });

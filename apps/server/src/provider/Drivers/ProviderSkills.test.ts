@@ -62,6 +62,7 @@ it.layer(NodeServices.layer)("discoverSkillsFromRoots", (it) => {
       const userSkillPath = path.join(userRoot, "deploy", "SKILL.md");
       const projectSkillPath = path.join(projectRoot, "deploy", "SKILL.md");
       const malformedSkillPath = path.join(projectRoot, "broken", "SKILL.md");
+      const nonStringFieldsSkillPath = path.join(projectRoot, "fallback-name", "SKILL.md");
 
       yield* fs.makeDirectory(path.dirname(userSkillPath), { recursive: true });
       yield* fs.writeFileString(
@@ -75,6 +76,11 @@ it.layer(NodeServices.layer)("discoverSkillsFromRoots", (it) => {
       );
       yield* fs.makeDirectory(path.dirname(malformedSkillPath), { recursive: true });
       yield* fs.writeFileString(malformedSkillPath, "---\nname: [unclosed\n---\n");
+      yield* fs.makeDirectory(path.dirname(nonStringFieldsSkillPath), { recursive: true });
+      yield* fs.writeFileString(
+        nonStringFieldsSkillPath,
+        ["---", "name: 2024", "description:", "  nested: value", "---"].join("\n"),
+      );
 
       const skills = yield* discoverSkillsFromRoots([
         { directory: path.join(tempDir, "missing"), scope: "user" },
@@ -87,6 +93,12 @@ it.layer(NodeServices.layer)("discoverSkillsFromRoots", (it) => {
           name: "deploy",
           description: "Project deploy.",
           path: projectSkillPath,
+          scope: "project",
+          enabled: true,
+        },
+        {
+          name: "fallback-name",
+          path: nonStringFieldsSkillPath,
           scope: "project",
           enabled: true,
         },
