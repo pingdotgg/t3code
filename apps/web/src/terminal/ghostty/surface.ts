@@ -208,6 +208,63 @@ export function terminalScrollbarOffsetAtPointer(
   return Math.round((thumbTop / travel) * geometry.maxOffset);
 }
 
+/**
+ * Snapshot of where the user is looking in scrollback.
+ *
+ * Terminal output, reflow, and full buffer replays can re-pin the Ghostty
+ * viewport to the live prompt. Capture/restore keeps the user's place when
+ * they have scrolled into history (see #6096).
+ */
+export type TerminalScrollAnchor =
+  | { readonly kind: "follow" }
+  | {
+      readonly kind: "offset";
+      readonly offset: number;
+      readonly total: number;
+      readonly len: number;
+    };
+
+export function captureTerminalScrollAnchor(
+  isFollowing: boolean,
+  state: GhosttyScrollbar | null,
+): TerminalScrollAnchor {
+  if (isFollowing || state === null) return { kind: "follow" };
+  const total = Math.max(0, state.total);
+  const len = Math.max(0, Math.min(state.len, total));
+  const maxOffset = Math.max(0, total - len);
+  return {
+    kind: "offset",
+    offset: Math.max(0, Math.min(state.offset, maxOffset)),
+    total,
+    len,
+  };
+}
+
+/** Rows to pass to a delta scroll so the viewport returns to `anchor`. */
+export function terminalScrollDeltaToRestore(
+  anchor: TerminalScrollAnchor,
+  state: GhosttyScrollbar | null,
+): number {
+  if (anchor.kind === "follow" || state === null) return 0;
+  const total = Math.max(0, state.total);
+  const len = Math.max(0, Math.min(state.len, total));
+  const maxOffset = Math.max(0, total - len);
+  if (maxOffset === 0) return 0;
+
+  let target: number;
+  const priorMax = Math.max(0, anchor.total - anchor.len);
+  if (priorMax > 0 && (total < anchor.total || anchor.offset > maxOffset)) {
+    // Scrollback was trimmed or rebuilt shorter — keep the same relative place.
+    const fraction = anchor.offset / priorMax;
+    target = Math.round(fraction * maxOffset);
+  } else {
+    // Normal append/reflow: absolute offset still points at the same history.
+    target = anchor.offset;
+  }
+  target = Math.max(0, Math.min(target, maxOffset));
+  return target - state.offset;
+}
+
 export function terminalGridCellAt(options: {
   bounds: { left: number; top: number };
   clientX: number;
@@ -647,7 +704,10 @@ export class GhosttyTerminalSurface {
 
   write(data: string): void {
     if (this.disposed) return;
+    // New PTY bytes can re-pin Ghostty to the live prompt; keep scrollback place.
+    const anchor = this.captureScrollAnchor();
     this.core.write(data);
+    this.restoreScrollAnchor(anchor);
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
@@ -657,7 +717,11 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
+    // Full history replay rebuilds the screen; restore relative place when the
+    // user was reading scrollback (e.g. buffer trim forcing a non-prefix rewrite).
+    const anchor = this.captureScrollAnchor();
     this.core.resetAndWrite(data);
+    this.restoreScrollAnchor(anchor);
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
@@ -741,6 +805,8 @@ export class GhosttyTerminalSurface {
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
     if (width <= 0 || height <= 0) return false;
+    // Reflow on resize can re-pin to the active prompt; remember scroll place first.
+    const anchor = this.captureScrollAnchor();
     const ratio = window.devicePixelRatio || 1;
     const pixelWidth = Math.max(1, Math.round(width * ratio));
     const pixelHeight = Math.max(1, Math.round(height * ratio));
@@ -774,6 +840,7 @@ export class GhosttyTerminalSurface {
       this.scrollbarDirty = true;
       shouldRender = true;
     }
+    this.restoreScrollAnchor(anchor);
     // Rendering synchronously keeps the repaint inside the same frame as the
     // layout change: ResizeObserver fires before paint, so the browser never
     // composites the old backing store stretched into the new element box.
@@ -854,6 +921,27 @@ export class GhosttyTerminalSurface {
 
   isAtBottom(): boolean {
     return this.core.isViewportActive();
+  }
+
+  private captureScrollAnchor(): TerminalScrollAnchor {
+    return captureTerminalScrollAnchor(this.core.isViewportActive(), this.core.scrollbarState());
+  }
+
+  private restoreScrollAnchor(anchor: TerminalScrollAnchor): void {
+    if (anchor.kind === "follow") {
+      // Resize/write can unpin the live prompt; re-stick when the user was following.
+      if (!this.core.isViewportActive()) {
+        this.core.scrollToBottom();
+        this.forceFullRender = true;
+        this.scrollbarDirty = true;
+      }
+      return;
+    }
+    const delta = terminalScrollDeltaToRestore(anchor, this.core.scrollbarState());
+    if (delta === 0) return;
+    this.core.scroll(delta);
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
   }
 
   dispose(): void {

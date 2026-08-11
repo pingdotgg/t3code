@@ -3,7 +3,10 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
+import {
+  terminalBufferWritePlan,
+  type TerminalSessionState,
+} from "@t3tools/client-runtime/state/terminal";
 import {
   Plus,
   SquareSplitHorizontal,
@@ -806,13 +809,13 @@ export function TerminalViewport({
       return;
     }
 
-    if (
-      current.buffer.length >= previous.buffer.length &&
-      current.buffer.startsWith(previous.buffer)
-    ) {
-      terminal.write(current.buffer.slice(previous.buffer.length));
-    } else {
-      writeTerminalBuffer(terminal, current.buffer);
+    // Prefer append (including after head-trim of the history ring) so the
+    // Ghostty viewport is not resetAndWrite'd back to the live prompt (#6096).
+    const plan = terminalBufferWritePlan(previous.buffer, current.buffer);
+    if (plan.kind === "append") {
+      if (plan.data.length > 0) terminal.write(plan.data);
+    } else if (plan.kind === "replace") {
+      writeTerminalBuffer(terminal, plan.data);
     }
     terminal.clearSelection();
 

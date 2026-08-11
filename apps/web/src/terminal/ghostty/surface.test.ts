@@ -5,6 +5,7 @@ import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
   advanceTerminalSelectionClickSequence,
+  captureTerminalScrollAnchor,
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
@@ -18,6 +19,7 @@ import {
   terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
+  terminalScrollDeltaToRestore,
   terminalLinkAtColumn,
   terminalLinkAtPosition,
   terminalLinkAtPositionWithRange,
@@ -489,5 +491,60 @@ describe("terminal scrollbar", () => {
       maxOffset: 9_980,
     });
     expect(terminalScrollbarOffsetAtPointer(state, 200, 191, 9)).toBe(9_980);
+  });
+});
+
+describe("terminal scroll anchor restore", () => {
+  it("captures follow when the viewport is pinned to the live prompt", () => {
+    expect(captureTerminalScrollAnchor(true, { total: 100, offset: 80, len: 20 })).toEqual({
+      kind: "follow",
+    });
+  });
+
+  it("captures a clamped offset when the user is reading history", () => {
+    expect(captureTerminalScrollAnchor(false, { total: 100, offset: 40, len: 20 })).toEqual({
+      kind: "offset",
+      offset: 40,
+      total: 100,
+      len: 20,
+    });
+    expect(captureTerminalScrollAnchor(false, { total: 50, offset: 999, len: 20 })).toEqual({
+      kind: "offset",
+      offset: 30,
+      total: 50,
+      len: 20,
+    });
+  });
+
+  it("does not move when still following or when already at the anchor", () => {
+    expect(
+      terminalScrollDeltaToRestore({ kind: "follow" }, { total: 100, offset: 80, len: 20 }),
+    ).toBe(0);
+    expect(
+      terminalScrollDeltaToRestore(
+        { kind: "offset", offset: 36, total: 51, len: 10 },
+        { total: 51, offset: 36, len: 10 },
+      ),
+    ).toBe(0);
+  });
+
+  it("restores absolute offset after append when output re-pins to the bottom", () => {
+    // User was at offset 36; write re-pinned to bottom (offset 50 of 60 with len 10).
+    expect(
+      terminalScrollDeltaToRestore(
+        { kind: "offset", offset: 36, total: 51, len: 10 },
+        { total: 60, offset: 50, len: 10 },
+      ),
+    ).toBe(-14);
+  });
+
+  it("restores a proportional place after scrollback is trimmed shorter", () => {
+    // Mid-history (offset 40 of max 80) → after trim, mid of new max 40 → target 20.
+    expect(
+      terminalScrollDeltaToRestore(
+        { kind: "offset", offset: 40, total: 100, len: 20 },
+        { total: 60, offset: 40, len: 20 },
+      ),
+    ).toBe(-20);
   });
 });
