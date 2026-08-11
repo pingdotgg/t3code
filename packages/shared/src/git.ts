@@ -19,6 +19,9 @@ const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
   `^${WORKTREE_BRANCH_PREFIX}\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
 );
 
+/** The length `sanitizeBranchFragment` truncates to. */
+export const BRANCH_FRAGMENT_MAX_CHARS = 64;
+
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
  * Strips quotes, collapses separators, limits to 64 chars.
@@ -35,7 +38,7 @@ export function sanitizeBranchFragment(raw: string): string {
     .replace(/\/+/g, "/")
     .replace(/-+/g, "-")
     .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
+    .slice(0, BRANCH_FRAGMENT_MAX_CHARS)
     .replace(/[./_-]+$/g, "");
 
   return branchFragment.length > 0 ? branchFragment : "update";

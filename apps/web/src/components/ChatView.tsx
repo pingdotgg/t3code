@@ -4074,11 +4074,15 @@ function ChatViewContent(props: ChatViewProps) {
   // startFromOrigin is independent of the branch, so seed it here: the draft was
   // created with the "local" default (startFromOrigin false), but the Aether
   // overlay makes the effective mode "worktree", which must honor the user's
-  // newWorktreesStartFromOrigin preference. Scoped to the auto-default so an
-  // explicit pick (which sets startFromOrigin itself) is untouched.
+  // newWorktreesStartFromOrigin preference. Gated on `startFromOriginUserSet`
+  // exactly as the mode overlay is gated on `envModeUserSet`: once the user has
+  // toggled the control, their pick is what makes the draft differ from the
+  // preference — which is the very condition this effect fires on, so without
+  // the flag every explicit toggle is reset on the next render.
   useEffect(() => {
     if (!providerDefaultsToWorktree) return;
     if (envMode !== "worktree") return;
+    if (draftThread?.startFromOriginUserSet === true) return;
     const desiredStartFromOrigin = resolveNewDraftStartFromOrigin({
       envMode: "worktree",
       newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
@@ -4089,6 +4093,7 @@ function ChatViewContent(props: ChatViewProps) {
     providerDefaultsToWorktree,
     envMode,
     draftThread?.startFromOrigin,
+    draftThread?.startFromOriginUserSet,
     primaryServerSettings.newWorktreesStartFromOrigin,
     composerDraftTarget,
     setDraftThreadContext,
@@ -5966,6 +5971,9 @@ function ChatViewContent(props: ChatViewProps) {
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, {
         startFromOrigin: nextStartFromOrigin,
+        // An explicit toggle freezes the value so the Aether worktree overlay
+        // can no longer re-seed it from the preference (user choice wins).
+        startFromOriginUserSet: true,
       });
     }
   };

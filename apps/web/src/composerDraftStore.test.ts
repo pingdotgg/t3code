@@ -1109,6 +1109,32 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThread(draftId)?.envModeUserSet).toBe(false);
   });
 
+  it("defaults startFromOriginUserSet to false and flips it on an explicit toggle", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId, envMode: "worktree" });
+
+    // Freshly seeded: still the auto/default value, so the Aether worktree
+    // overlay may seed it from the newWorktreesStartFromOrigin preference.
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOriginUserSet).toBe(
+      false,
+    );
+
+    store.setDraftThreadContext(draftId, {
+      startFromOrigin: true,
+      startFromOriginUserSet: true,
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      startFromOrigin: true,
+      startFromOriginUserSet: true,
+    });
+
+    // A later context update that omits the flag preserves the user-set value.
+    store.setDraftThreadContext(draftId, { envMode: "local" });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOriginUserSet).toBe(
+      true,
+    );
+  });
+
   it("migrates a legacy persisted draft (absent envModeUserSet) to user-set, keeping an explicit false", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {

@@ -12,7 +12,7 @@
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { sanitizeBranchFragment } from "@t3tools/shared/git";
+import { BRANCH_FRAGMENT_MAX_CHARS, sanitizeBranchFragment } from "@t3tools/shared/git";
 
 import type * as TextGeneration from "./TextGeneration.ts";
 import {
@@ -63,9 +63,20 @@ export function stubPrContent(input: {
   return { title, body: sections.join("\n\n") };
 }
 
-/** Deterministic branch name: message slug + ISO date, re-sanitized as one fragment. */
+/**
+ * Deterministic branch name: message slug + ISO date, re-sanitized as one
+ * fragment. The slug is truncated with room for the suffix RESERVED — the
+ * sanitizer caps at 64 chars, so slugging first and trimming after cut the
+ * date off any message at or past the cap and returned the same branch for
+ * every date.
+ */
 export function stubBranchName(message: string, isoDate: string): string {
-  return sanitizeBranchFragment(`${sanitizeBranchFragment(message)}-${isoDate}`);
+  const dateSuffix = `-${isoDate}`;
+  const messageSlug = sanitizeBranchFragment(message).slice(
+    0,
+    BRANCH_FRAGMENT_MAX_CHARS - dateSuffix.length,
+  );
+  return sanitizeBranchFragment(`${messageSlug}${dateSuffix}`);
 }
 
 export function makeAetherTextGeneration(): TextGeneration.TextGeneration["Service"] {
