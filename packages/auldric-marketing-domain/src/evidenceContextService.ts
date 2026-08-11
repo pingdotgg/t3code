@@ -3,12 +3,13 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
-  type MarketingCanonicalInventoryItem,
   type MarketingCanonicalRecord,
   type MarketingCanonicalRegistryKey,
   MarketingCanonicalRegistryKey as MarketingCanonicalRegistryKeySchema,
   type MarketingCanonicalRevisionReference,
   MarketingCanonicalRevisionReference as MarketingCanonicalRevisionReferenceSchema,
+  type MarketingCanonicalVersion,
+  MarketingCanonicalVersion as MarketingCanonicalVersionSchema,
   type MarketingReviewRevisionReference,
   MarketingReviewRevisionReference as MarketingReviewRevisionReferenceSchema,
   type MarketingSourceLineageReference,
@@ -43,12 +44,17 @@ import {
   type MarketingEvidenceAssumption,
   type MarketingEvidenceConflict,
   type MarketingEvidenceContextPacket,
-  type MarketingEvidenceGap,
   type MarketingEvidenceFactValue,
+  type MarketingEvidencePlanReference,
+  MarketingEvidencePlanReference as MarketingEvidencePlanReferenceSchema,
   type MarketingEvidencePlanSelection,
-  MarketingEvidencePlanSelection as MarketingEvidencePlanSelectionSchema,
+  type MarketingEvidenceRetrievalQuery,
+  MarketingEvidenceRetrievalQuery as MarketingEvidenceRetrievalQuerySchema,
+  type MarketingEvidenceSha256,
+  MarketingEvidenceSha256 as MarketingEvidenceSha256Schema,
   MarketingEvidenceStableKey,
-  type MarketingPlanReadiness,
+  type MarketingSystemEvidenceGap,
+  type MarketingUserEvidenceGap,
   type MarketingRetrievedEvidence,
   MarketingRetrievedEvidence as MarketingRetrievedEvidenceSchema,
   type MarketingSourceObservation,
@@ -56,6 +62,7 @@ import {
 } from "./evidenceContext.ts";
 import {
   type MarketingEvidenceContextError,
+  MarketingEvidenceSafeReference,
   MarketingEvidenceServiceError,
   MarketingEvidenceSourceAdapterError,
 } from "./evidenceContextErrors.ts";
@@ -65,17 +72,12 @@ import {
   type MarketingWorkspaceSelection,
 } from "./identity.ts";
 
-const RetrievalText = (maximum: number) =>
-  Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty(), Schema.isMaxLength(maximum));
-
-export const MarketingEvidenceRetrievalQuery = Schema.Struct({
-  purpose: RetrievalText(2_000),
-  terms: Schema.Array(RetrievalText(200)).check(Schema.isMaxLength(24)),
-});
-export type MarketingEvidenceRetrievalQuery = typeof MarketingEvidenceRetrievalQuery.Type;
+export { MarketingEvidenceRetrievalQuery } from "./evidenceContext.ts";
 
 export interface MarketingEvidenceSourceAdapter<RequestAuthority> {
   readonly key: MarketingCanonicalRegistryKey;
+  readonly version: MarketingCanonicalVersion;
+  readonly configurationSha256: MarketingEvidenceSha256;
   readonly retrieve: (input: {
     readonly requestAuthority: RequestAuthority;
     readonly selection: MarketingWorkspaceSelection;
@@ -95,13 +97,6 @@ export interface MarketingEvidenceSourceAdapter<RequestAuthority> {
 export interface MarketingEvidenceContextServiceConfig<RequestAuthority> {
   readonly canonicalStore: MarketingCanonicalStore<RequestAuthority>;
   readonly sourceAdapters: ReadonlyArray<MarketingEvidenceSourceAdapter<RequestAuthority>>;
-  readonly projectReadiness?: (input: {
-    readonly requestAuthority: RequestAuthority;
-    readonly selection: MarketingWorkspaceSelection;
-    readonly plan?: MarketingEvidencePlanSelection;
-    readonly planRecord?: MarketingCanonicalRecord;
-    readonly asOf: DateTime.Utc;
-  }) => Effect.Effect<MarketingPlanReadiness, MarketingEvidenceServiceError>;
 }
 
 export type MarketingEvidenceContextServiceError =
@@ -120,11 +115,11 @@ export interface CompileMarketingEvidenceServiceInput<
 > extends InspectMarketingEvidenceSourcesInput<RequestAuthority> {
   readonly acceptedFactKeys: ReadonlyArray<MarketingEvidenceStableKey>;
   readonly query: MarketingEvidenceRetrievalQuery;
-  readonly plan?: MarketingEvidencePlanSelection;
+  readonly plan?: MarketingEvidencePlanReference;
   readonly budget?: MarketingContextBudget;
   readonly assumptions?: ReadonlyArray<MarketingEvidenceAssumption>;
   readonly conflicts?: ReadonlyArray<MarketingEvidenceConflict>;
-  readonly gaps?: ReadonlyArray<MarketingEvidenceGap>;
+  readonly gaps?: ReadonlyArray<MarketingUserEvidenceGap>;
   readonly questions?: ReadonlyArray<MarketingDecisionChangingQuestion>;
   readonly disconfirmationSignals?: ReadonlyArray<MarketingDisconfirmationSignal>;
   readonly unresolvedDecisions?: ReadonlyArray<MarketingUnresolvedDecision>;
@@ -192,8 +187,8 @@ const decodeFactKeys = Schema.decodeUnknownSync(
     Schema.isMaxLength(MARKETING_EVIDENCE_MAX_FACT_ALLOWLIST),
   ),
 );
-const decodeQuery = Schema.decodeUnknownSync(MarketingEvidenceRetrievalQuery);
-const decodePlan = Schema.decodeUnknownSync(MarketingEvidencePlanSelectionSchema);
+const decodeQuery = Schema.decodeUnknownSync(MarketingEvidenceRetrievalQuerySchema);
+const decodePlanReference = Schema.decodeUnknownSync(MarketingEvidencePlanReferenceSchema);
 const decodeBudget = Schema.decodeUnknownSync(MarketingContextBudgetSchema);
 const decodeExpectedVersion = Schema.decodeUnknownSync(MarketingExpectedVersion);
 const decodeRevisionReference = Schema.decodeUnknownSync(MarketingCanonicalRevisionReferenceSchema);
@@ -215,15 +210,23 @@ const decodeRetrievedEvidence = Schema.decodeUnknownSync(
 );
 const decodeStableKey = Schema.decodeUnknownSync(MarketingEvidenceStableKey);
 const decodeDecisionId = Schema.decodeUnknownSync(MarketingDecisionId);
+const decodeSafeReference = Schema.decodeUnknownSync(MarketingEvidenceSafeReference);
 const isAdapterKey = Schema.is(MarketingCanonicalRegistryKeySchema);
+const isSafeReference = Schema.is(MarketingEvidenceSafeReference);
 
 function failure(
   reason: MarketingEvidenceServiceError["reason"],
   reference?: string,
 ): MarketingEvidenceServiceError {
+  const safe =
+    reference === undefined
+      ? undefined
+      : isSafeReference(reference)
+        ? MarketingEvidenceSafeReference.make(reference)
+        : safeReference("redacted-reference");
   return new MarketingEvidenceServiceError({
     reason,
-    ...(reference === undefined ? {} : { reference }),
+    ...(safe === undefined ? {} : { reference: safe }),
   });
 }
 
@@ -235,6 +238,10 @@ function decodeServiceInput<A>(
     try: decode,
     catch: () => failure("invalid_service_input", reference),
   });
+}
+
+function safeReference(value: string): MarketingEvidenceSafeReference {
+  return decodeSafeReference(value);
 }
 
 function normalizeText(value: string): string {
@@ -251,6 +258,7 @@ function candidateByteLength(candidate: MarketingRetrievedEvidence): number {
       },
       locator: normalizeText(candidate.locator),
       excerpt: normalizeText(candidate.excerpt),
+      excerptSha256: candidate.excerptSha256,
       contentSha256: candidate.contentSha256,
       observedAt: DateTime.formatIso(candidate.observedAt),
       quality: candidate.quality,
@@ -324,22 +332,6 @@ function recordRevision(record: MarketingCanonicalRecord): MarketingCanonicalRev
   return { revisionId: record.revisionId, version: record.version };
 }
 
-function inventoryRevision(
-  item: MarketingCanonicalInventoryItem,
-): MarketingCanonicalRevisionReference {
-  return { revisionId: item.revisionId, version: item.version };
-}
-
-function itemKey(kind: string, id: string): string {
-  return `${kind}:${id}`;
-}
-
-function inventoryMap(inventory: ReadonlyArray<MarketingCanonicalInventoryItem>) {
-  return new Map(
-    inventory.map((item) => [itemKey(item.object.kind, item.object.id), item] as const),
-  );
-}
-
 function sourceStateReason(
   source: MarketingSourceObservation,
 ): "inaccessible" | "unindexed" | "stale-policy" | undefined {
@@ -358,7 +350,7 @@ function sourceStateReason(
 function sourceGap(
   source: MarketingSourceObservation,
   reason: "inaccessible" | "unindexed" | "stale-policy",
-): MarketingEvidenceGap {
+): MarketingSystemEvidenceGap {
   const suffix = source.source.sourceId.toLowerCase().replaceAll("_", "-");
   const summaries = {
     inaccessible: "An allowlisted source is unavailable or not currently authorized.",
@@ -366,15 +358,17 @@ function sourceGap(
     "stale-policy": "An allowlisted source is outside the current-freshness policy.",
   } as const;
   return {
+    namespace: "system",
     key: MarketingEvidenceStableKey.make(`source-${suffix}-${reason}`),
     summary: summaries[reason],
     blocks: false,
   };
 }
 
-function adapterFailureGap(source: MarketingSourceObservation): MarketingEvidenceGap {
+function adapterFailureGap(source: MarketingSourceObservation): MarketingSystemEvidenceGap {
   const suffix = source.source.sourceId.toLowerCase().replaceAll("_", "-");
   return {
+    namespace: "system",
     key: MarketingEvidenceStableKey.make(`source-${suffix}-retrieval-failed`),
     summary: "An authorized source could not be retrieved for this evidence snapshot.",
     blocks: false,
@@ -412,7 +406,7 @@ const validateSourceRecord = Effect.fn("MarketingEvidenceContextService.validate
 const parseFactRecord = Effect.fn("MarketingEvidenceContextService.parseFactRecord")(function* (
   record: MarketingCanonicalRecord,
   stableKey: MarketingEvidenceStableKey,
-  sourceHeads: ReadonlyMap<string, MarketingCanonicalInventoryItem>,
+  sourceHeads: ReadonlyMap<string, MarketingCanonicalRevisionReference>,
 ) {
   if (
     record.object.kind !== "decision" ||
@@ -437,7 +431,7 @@ const parseFactRecord = Effect.fn("MarketingEvidenceContextService.parseFactReco
       supportState = "unavailable";
       break;
     }
-    if (!sameRevision(inventoryRevision(head), support.revision)) supportState = "stale";
+    if (!sameRevision(head, support.revision)) supportState = "stale";
   }
   return {
     withdrawn: false,
@@ -462,22 +456,24 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
     MarketingCanonicalRegistryKey,
     MarketingEvidenceSourceAdapter<RequestAuthority>
   >();
+  const isAdapterVersion = Schema.is(MarketingCanonicalVersionSchema);
+  const isConfigurationDigest = Schema.is(MarketingEvidenceSha256Schema);
   for (const adapter of config.sourceAdapters) {
-    if (!isAdapterKey(adapter.key))
-      throw new Error(`Invalid evidence source adapter: ${adapter.key}`);
-    if (adapters.has(adapter.key))
-      throw new Error(`Duplicate evidence source adapter: ${adapter.key}`);
+    if (
+      !isAdapterKey(adapter.key) ||
+      !isAdapterVersion(adapter.version) ||
+      !isConfigurationDigest(adapter.configurationSha256)
+    ) {
+      throw new Error("Invalid evidence source adapter registration");
+    }
+    if (adapters.has(adapter.key)) {
+      throw new Error("Duplicate evidence source adapter registration");
+    }
     adapters.set(adapter.key, adapter);
   }
 
-  const listSnapshot = (input: {
-    readonly requestAuthority: RequestAuthority;
-    readonly selection: MarketingWorkspaceSelection;
-  }) => config.canonicalStore.listInventory(input);
-
   const loadSources = Effect.fn("MarketingEvidenceContextService.loadSources")(function* (
     input: InspectMarketingEvidenceSourcesInput<RequestAuthority>,
-    inventory: ReadonlyArray<MarketingCanonicalInventoryItem>,
     asOf: DateTime.Utc,
   ) {
     const sourceAllowlist = yield* decodeServiceInput(
@@ -492,14 +488,9 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
     if (unique.size !== sourceAllowlist.length) {
       return yield* failure("invalid_service_input", "duplicate-source-allowlist-entry");
     }
-    const snapshot = inventoryMap(inventory);
+
     const sources: MarketingSourceObservation[] = [];
     for (const exact of sourceAllowlist) {
-      const item = snapshot.get(itemKey("source", exact.sourceId));
-      if (item === undefined) return yield* failure("source_not_found", exact.sourceId);
-      if (!sameRevision(inventoryRevision(item), exact.revision)) {
-        return yield* failure("canonical_snapshot_changed", exact.sourceId);
-      }
       const record = yield* config.canonicalStore.read({
         requestAuthority: input.requestAuthority,
         selection: input.selection,
@@ -517,20 +508,31 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
     return { sourceAllowlist, sources };
   });
 
+  const verifySourceHeads = Effect.fn("MarketingEvidenceContextService.verifySourceHeads")(
+    function* (
+      input: InspectMarketingEvidenceSourcesInput<RequestAuthority>,
+      sourceAllowlist: ReadonlyArray<MarketingSourceLineageReference>,
+    ) {
+      for (const source of sourceAllowlist) {
+        const record = yield* config.canonicalStore.read({
+          requestAuthority: input.requestAuthority,
+          selection: input.selection,
+          object: { kind: "source", id: source.sourceId },
+        });
+        if (!sameRevision(recordRevision(record), source.revision)) {
+          return yield* failure("canonical_snapshot_changed", source.sourceId);
+        }
+      }
+    },
+  );
+
   const inspectSources: MarketingEvidenceContextService<RequestAuthority>["inspectSources"] = (
     input,
   ) =>
     Effect.gen(function* () {
-      const inventory = yield* listSnapshot(input);
       const asOf = yield* DateTime.now;
-      const loaded = yield* loadSources(input, inventory, asOf);
-      const ending = inventoryMap(yield* listSnapshot(input));
-      for (const source of loaded.sourceAllowlist) {
-        const item = ending.get(itemKey("source", source.sourceId));
-        if (item === undefined || !sameRevision(inventoryRevision(item), source.revision)) {
-          return yield* failure("canonical_snapshot_changed", source.sourceId);
-        }
-      }
+      const loaded = yield* loadSources(input, asOf);
+      yield* verifySourceHeads(input, loaded.sourceAllowlist);
       return { asOf, sources: loaded.sources };
     });
 
@@ -549,61 +551,52 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         () => decodeQuery(input.query),
         "retrieval-query",
       );
-      const query: MarketingEvidenceRetrievalQuery = {
-        purpose: normalizeText(decodedQuery.purpose),
-        terms: [...new Set(decodedQuery.terms.map(normalizeText))].sort(compareCanonicalText),
-      };
+      const query = yield* decodeServiceInput(
+        () =>
+          decodeQuery({
+            purpose: normalizeText(decodedQuery.purpose),
+            terms: [...new Set(decodedQuery.terms.map(normalizeText))].sort(compareCanonicalText),
+          }),
+        "normalized-retrieval-query",
+      );
       const budget = yield* decodeServiceInput(
         () => decodeBudget(input.budget ?? DEFAULT_MARKETING_CONTEXT_BUDGET),
         "context-budget",
       );
-      const inventory = yield* listSnapshot(input);
       const asOf = yield* DateTime.now;
-      const loaded = yield* loadSources(input, inventory, asOf);
-      const recordsRead: MarketingCanonicalRecord[] = [];
+      const loaded = yield* loadSources(input, asOf);
+      const sourceHeads = new Map<string, MarketingCanonicalRevisionReference>(
+        loaded.sourceAllowlist.map((source) => [source.sourceId, source.revision] as const),
+      );
+
       let planRecord: MarketingCanonicalRecord | undefined;
-      const plan =
-        input.plan === undefined
-          ? undefined
-          : yield* decodeServiceInput(() => decodePlan(input.plan), "plan-selection");
-      if (plan !== undefined) {
-        const item = inventoryMap(inventory).get(itemKey("plan", plan.planId));
-        if (item === undefined) return yield* failure("canonical_snapshot_changed", plan.planId);
-        if (!sameRevision(inventoryRevision(item), plan.revision)) {
-          return yield* failure("canonical_snapshot_changed", plan.planId);
-        }
+      let plan: MarketingEvidencePlanSelection | undefined;
+      if (input.plan !== undefined) {
+        const reference = yield* decodeServiceInput(
+          () => decodePlanReference(input.plan),
+          "plan-selection",
+        );
         const record = yield* config.canonicalStore.read({
           requestAuthority: input.requestAuthority,
           selection: input.selection,
-          object: { kind: "plan", id: plan.planId },
+          object: { kind: "plan", id: reference.planId },
         });
-        if (!sameRevision(recordRevision(record), plan.revision)) {
-          return yield* failure("canonical_snapshot_changed", plan.planId);
+        if (
+          record.object.kind !== "plan" ||
+          record.object.id !== reference.planId ||
+          !sameRevision(recordRevision(record), reference.revision)
+        ) {
+          return yield* failure("canonical_snapshot_changed", reference.planId);
         }
         planRecord = record;
-        recordsRead.push(record);
-      }
-      const readiness =
-        plan === undefined || config.projectReadiness === undefined
-          ? ({ state: "not-evaluated" } as const)
-          : yield* config.projectReadiness({
-              requestAuthority: input.requestAuthority,
-              selection: input.selection,
-              ...(plan === undefined ? {} : { plan }),
-              ...(planRecord === undefined ? {} : { planRecord }),
-              asOf,
-            });
-      const sourceHeads = new Map<string, MarketingCanonicalInventoryItem>();
-      for (const item of inventory) {
-        if (item.object.kind === "source") sourceHeads.set(item.object.id, item);
+        plan = { ...reference, stageSemantics: "not-evaluated" };
       }
 
       const acceptedFacts: MarketingAcceptedFact[] = [];
-      const supportHeadSnapshot = new Map<
-        string,
-        MarketingCanonicalRevisionReference | undefined
+      const selectedFactHeads = new Map<
+        MarketingEvidenceStableKey,
+        MarketingCanonicalRecord | undefined
       >();
-      const missingFactKeys = new Set<MarketingEvidenceStableKey>();
       const sourceExclusions: Array<{
         source: MarketingSourceLineageReference;
         reason: "inaccessible" | "unindexed" | "stale-policy";
@@ -613,51 +606,34 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         decisionId: MarketingDecisionId;
         revision: MarketingCanonicalRevisionReference;
       }> = [];
-      const automaticGaps: MarketingEvidenceGap[] = [];
+      const automaticGaps: MarketingSystemEvidenceGap[] = [];
       if (plan === undefined) {
         automaticGaps.push({
+          namespace: "system",
           key: MarketingEvidenceStableKey.make("missing-plan"),
           summary: "No exact canonical Marketing plan was selected for this context snapshot.",
           blocks: false,
         });
       }
+
       for (const stableKey of factKeys) {
-        const canonicalKey = MarketingEvidenceFactCanonicalKey(stableKey);
-        const item = inventory.find(
-          (candidate) =>
-            candidate.object.kind === "decision" && candidate.canonicalKey === canonicalKey,
-        );
-        if (item === undefined) {
-          missingFactKeys.add(stableKey);
+        const record = yield* config.canonicalStore.findByCanonicalKey({
+          requestAuthority: input.requestAuthority,
+          selection: input.selection,
+          canonicalKey: MarketingEvidenceFactCanonicalKey(stableKey),
+        });
+        selectedFactHeads.set(stableKey, record);
+        if (record === undefined) {
           automaticGaps.push({
+            namespace: "system",
             key: stableKey,
             summary: "A requested accepted fact does not exist in the canonical workspace.",
-            blocks: false,
+            blocks: true,
           });
           continue;
         }
-        const record = yield* config.canonicalStore.read({
-          requestAuthority: input.requestAuthority,
-          selection: input.selection,
-          object: item.object,
-        });
-        if (!sameRevision(recordRevision(record), inventoryRevision(item))) {
-          return yield* failure("canonical_snapshot_changed", stableKey);
-        }
-        recordsRead.push(record);
         const parsed = yield* parseFactRecord(record, stableKey, sourceHeads);
-        if (parsed.fact !== undefined) {
-          acceptedFacts.push(parsed.fact);
-          for (const support of parsed.fact.support) {
-            if (!supportHeadSnapshot.has(support.sourceId)) {
-              const head = sourceHeads.get(support.sourceId);
-              supportHeadSnapshot.set(
-                support.sourceId,
-                head === undefined ? undefined : inventoryRevision(head),
-              );
-            }
-          }
-        }
+        if (parsed.fact !== undefined) acceptedFacts.push(parsed.fact);
         if (parsed.withdrawn) {
           supersededFacts.push({
             stableKey,
@@ -668,6 +644,12 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
       }
 
       const candidates: MarketingRetrievedEvidence[] = [];
+      const adapterProvenance: Array<{
+        source: MarketingSourceLineageReference;
+        adapterKey: MarketingCanonicalRegistryKey;
+        adapterVersion: MarketingCanonicalVersion;
+        configurationSha256: MarketingEvidenceSha256;
+      }> = [];
       const activeSourceCount = Math.max(
         1,
         loaded.sources.filter((source) => sourceStateReason(source) === undefined).length,
@@ -683,6 +665,7 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         1,
         Math.floor(budget.maxCandidateBytes / activeSourceCount),
       );
+
       for (const source of loaded.sources) {
         const stateReason = sourceStateReason(source);
         if (stateReason !== undefined) {
@@ -692,8 +675,14 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         }
         const adapter = adapters.get(source.adapterKey);
         if (adapter === undefined) {
-          return yield* failure("adapter_not_registered", source.adapterKey);
+          return yield* failure("adapter_not_registered", "adapter-registration");
         }
+        adapterProvenance.push({
+          source: source.source,
+          adapterKey: adapter.key,
+          adapterVersion: adapter.version,
+          configurationSha256: adapter.configurationSha256,
+        });
         const retrieved = yield* Effect.result(
           adapter.retrieve({
             requestAuthority: input.requestAuthority,
@@ -711,7 +700,7 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         }
         const adapterCandidates = yield* Effect.try({
           try: () => decodeRetrievedEvidence(retrieved.success),
-          catch: () => failure("adapter_output_invalid", source.adapterKey),
+          catch: () => failure("adapter_output_invalid", "adapter-output"),
         });
         if (
           adapterCandidates.length > maxItemsPerAdapter ||
@@ -720,54 +709,48 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
             0,
           ) > maxBytesPerAdapter
         ) {
-          return yield* failure("adapter_bounds_exceeded", source.adapterKey);
+          return yield* failure("adapter_bounds_exceeded", "adapter-bounds");
         }
         for (const candidate of adapterCandidates) {
           if (
             !sameRevision(candidate.source.revision, source.source.revision) ||
             candidate.source.sourceId !== source.source.sourceId
           ) {
-            return yield* failure("adapter_source_mismatch", source.adapterKey);
+            return yield* failure("adapter_source_mismatch", "adapter-source");
           }
           if (candidate.observedAt.epochMilliseconds > asOf.epochMilliseconds) {
-            return yield* failure("adapter_output_invalid", source.adapterKey);
+            return yield* failure("adapter_output_invalid", "adapter-timestamp");
           }
           candidates.push(candidate);
         }
       }
 
-      const ending = inventoryMap(yield* listSnapshot(input));
-      for (const source of loaded.sourceAllowlist) {
-        const item = ending.get(itemKey("source", source.sourceId));
-        if (item === undefined || !sameRevision(inventoryRevision(item), source.revision)) {
-          return yield* failure("canonical_snapshot_changed", source.sourceId);
+      yield* verifySourceHeads(input, loaded.sourceAllowlist);
+      if (planRecord !== undefined) {
+        const endingPlan = yield* config.canonicalStore.read({
+          requestAuthority: input.requestAuthority,
+          selection: input.selection,
+          object: planRecord.object,
+        });
+        if (!sameRevision(recordRevision(endingPlan), recordRevision(planRecord))) {
+          return yield* failure("canonical_snapshot_changed", planRecord.object.id);
         }
       }
-      for (const record of recordsRead) {
-        const item = ending.get(itemKey(record.object.kind, record.object.id));
-        if (item === undefined || !sameRevision(inventoryRevision(item), recordRevision(record))) {
-          return yield* failure("canonical_snapshot_changed", record.object.id);
-        }
-      }
-      for (const stableKey of missingFactKeys) {
+      for (const [stableKey, initial] of selectedFactHeads) {
+        const ending = yield* config.canonicalStore.findByCanonicalKey({
+          requestAuthority: input.requestAuthority,
+          selection: input.selection,
+          canonicalKey: MarketingEvidenceFactCanonicalKey(stableKey),
+        });
         if (
-          [...ending.values()].some(
-            (item) =>
-              item.object.kind === "decision" &&
-              item.canonicalKey === MarketingEvidenceFactCanonicalKey(stableKey),
-          )
+          (initial === undefined && ending !== undefined) ||
+          (initial !== undefined &&
+            (ending === undefined ||
+              initial.object.kind !== ending.object.kind ||
+              initial.object.id !== ending.object.id ||
+              !sameRevision(recordRevision(initial), recordRevision(ending))))
         ) {
           return yield* failure("canonical_snapshot_changed", stableKey);
-        }
-      }
-      for (const [sourceId, expected] of supportHeadSnapshot) {
-        const item = ending.get(itemKey("source", sourceId));
-        if (
-          (expected === undefined && item !== undefined) ||
-          (expected !== undefined &&
-            (item === undefined || !sameRevision(inventoryRevision(item), expected)))
-        ) {
-          return yield* failure("canonical_snapshot_changed", sourceId);
         }
       }
 
@@ -775,18 +758,21 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         workspace: input.selection,
         asOf,
         ...(plan === undefined ? {} : { plan }),
+        retrievalQuery: query,
+        adapterProvenance,
         sourceAllowlist: loaded.sourceAllowlist,
         sources: loaded.sources,
         candidates,
         acceptedFacts,
         ...(input.assumptions === undefined ? {} : { assumptions: input.assumptions }),
         ...(input.conflicts === undefined ? {} : { conflicts: input.conflicts }),
-        gaps: [...(input.gaps ?? []), ...automaticGaps],
+        ...(input.gaps === undefined ? {} : { gaps: input.gaps }),
+        systemGaps: automaticGaps,
         ...(input.questions === undefined ? {} : { questions: input.questions }),
         ...(input.disconfirmationSignals === undefined
           ? {}
           : { disconfirmationSignals: input.disconfirmationSignals }),
-        readiness,
+        readiness: { state: "not-evaluated" },
         ...(input.unresolvedDecisions === undefined
           ? {}
           : { unresolvedDecisions: input.unresolvedDecisions }),
@@ -808,13 +794,12 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
       () => decodeDecisionId(input.decisionId),
       "fact-decision-id",
     );
-    const revisions = yield* config.canonicalStore.listRevisions({
+    const record = yield* config.canonicalStore.readRevision({
       requestAuthority: input.requestAuthority,
       selection: input.selection,
       object: { kind: "decision", id: decisionId },
+      revision: exact,
     });
-    const record = revisions.find((candidate) => sameRevision(recordRevision(candidate), exact));
-    if (record === undefined) return yield* failure("fact_transition_invalid", stableKey);
     if (
       record.canonicalKey !== MarketingEvidenceFactCanonicalKey(stableKey) ||
       record.schema.key !== MARKETING_EVIDENCE_FACT_ACCEPTANCE_SCHEMA_KEY ||
@@ -852,6 +837,9 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         () => decodeSourceReferences(input.sourceLineage),
         "fact-source-lineage",
       );
+      if (new Set(sourceLineage.map(({ sourceId }) => sourceId)).size !== sourceLineage.length) {
+        return yield* failure("invalid_service_input", "duplicate-fact-support");
+      }
       const reviewReferences = yield* decodeServiceInput(
         () => decodeReviewReferences(input.reviewReferences ?? []),
         "fact-review-references",
@@ -906,9 +894,14 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
       ) {
         return yield* failure("canonical_readback_mismatch", stableKey);
       }
-      const sourceHeads = new Map<string, MarketingCanonicalInventoryItem>();
-      for (const item of yield* listSnapshot(input)) {
-        if (item.object.kind === "source") sourceHeads.set(item.object.id, item);
+      const sourceHeads = new Map<string, MarketingCanonicalRevisionReference>();
+      for (const support of sourceLineage) {
+        const head = yield* config.canonicalStore.read({
+          requestAuthority: input.requestAuthority,
+          selection: input.selection,
+          object: { kind: "source", id: support.sourceId },
+        });
+        sourceHeads.set(support.sourceId, recordRevision(head));
       }
       const parsed = yield* parseFactRecord(record, stableKey, sourceHeads);
       if (parsed.fact === undefined) {

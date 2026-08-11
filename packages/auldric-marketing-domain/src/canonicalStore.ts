@@ -188,6 +188,17 @@ export interface MarketingCanonicalStore<RequestAuthority> {
     readonly selection: MarketingWorkspaceSelection;
     readonly object: MarketingCanonicalObjectIdentity;
   }) => Effect.Effect<MarketingCanonicalRecord, MarketingCanonicalStoreErrorType>;
+  readonly findByCanonicalKey: (input: {
+    readonly requestAuthority: RequestAuthority;
+    readonly selection: MarketingWorkspaceSelection;
+    readonly canonicalKey: MarketingCanonicalKey;
+  }) => Effect.Effect<MarketingCanonicalRecord | undefined, MarketingCanonicalStoreErrorType>;
+  readonly readRevision: (input: {
+    readonly requestAuthority: RequestAuthority;
+    readonly selection: MarketingWorkspaceSelection;
+    readonly object: MarketingCanonicalObjectIdentity;
+    readonly revision: MarketingCanonicalRevisionReference;
+  }) => Effect.Effect<MarketingCanonicalRecord, MarketingCanonicalStoreErrorType>;
   readonly listRevisions: (input: {
     readonly requestAuthority: RequestAuthority;
     readonly selection: MarketingWorkspaceSelection;
@@ -1504,6 +1515,69 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
       );
     });
 
+  const findByCanonicalKey: MarketingCanonicalStore<RequestAuthority>["findByCanonicalKey"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      const canonicalKey = yield* decodeInput("canonical-key", () =>
+        decodeCanonicalKey(input.canonicalKey),
+      );
+      return yield* resolveWorkspace(input, ({ database, marketingActorId }) =>
+        Effect.gen(function* () {
+          yield* authorize(input.requestAuthority, {
+            operation: "read-canonical-object",
+            selection: input.selection,
+            resolvedMarketingActorId: marketingActorId,
+            canonicalKey,
+          });
+          return yield* Effect.try({
+            try: () => {
+              const head = readHeadByClaim(database, input.selection.workspaceId, canonicalKey);
+              if (head === undefined) return undefined;
+              assertSelection(head, input.selection);
+              return readHeadRecord(
+                database,
+                input.selection,
+                decodeCanonicalObjectIdentity({ kind: head.objectKind, id: head.objectId }),
+              );
+            },
+            catch: (cause) => mapCanonicalCause("find_by_canonical_key", cause),
+          });
+        }),
+      );
+    });
+
+  const readRevision: MarketingCanonicalStore<RequestAuthority>["readRevision"] = (input) =>
+    Effect.gen(function* () {
+      const object = yield* decodeInput("object", () =>
+        decodeCanonicalObjectIdentity(input.object),
+      );
+      const revision = yield* decodeInput("revision", () =>
+        decodeRevisionReference(input.revision),
+      );
+      return yield* resolveWorkspace(input, ({ database, marketingActorId }) =>
+        Effect.gen(function* () {
+          yield* authorize(input.requestAuthority, {
+            operation: "read-canonical-object",
+            selection: input.selection,
+            resolvedMarketingActorId: marketingActorId,
+            object,
+          });
+          return yield* Effect.try({
+            try: () =>
+              readRecordRevision(
+                database,
+                input.selection,
+                object.id,
+                revision.revisionId,
+                revision.version,
+              ),
+            catch: (cause) => mapCanonicalCause("read_revision", cause),
+          });
+        }),
+      );
+    });
+
   const listRevisions: MarketingCanonicalStore<RequestAuthority>["listRevisions"] = (input) =>
     Effect.gen(function* () {
       const object = yield* decodeInput("object", () =>
@@ -1613,5 +1687,14 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
     input,
   ) => writeInput(input, "output");
 
-  return { listInventory, read, listRevisions, queryFacts, write, saveRegisteredOutput };
+  return {
+    listInventory,
+    read,
+    findByCanonicalKey,
+    readRevision,
+    listRevisions,
+    queryFacts,
+    write,
+    saveRegisteredOutput,
+  };
 }

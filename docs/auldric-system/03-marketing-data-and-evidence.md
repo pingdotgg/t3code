@@ -102,25 +102,30 @@ fallback into Dev.
 - Compilation requires an explicit allowlist of exact source revisions. The service resolves those
   heads through the authorized organization store, rejects mismatches before calling an adapter,
   enforces adapter item/byte limits, and verifies the selected heads again before returning.
-- Retrieved evidence carries an exact source revision, stable locator, excerpt, content digest,
+- Retrieved evidence carries an exact source revision, stable locator, excerpt, excerpt digest, content digest,
   observation time, quality dimensions, relation, and integer decision/relevance signals. Source
   text remains a string-valued evidence field and cannot become a system role, tool, or approval.
 - The versioned `auldric/evidence-context@1` policy uses locale-independent ordering, NFC and line-
-  ending normalization, tuple deduplication, locator/hash conflict rejection, stable integer
-  ranking, fixed-envelope accounting, and whole-item admission under hard source, item, byte, and
-  token ceilings.
-- Every packet contains an optional exact plan/stage selection, accepted facts, assumptions,
+  ending normalization followed by schema revalidation, tuple deduplication,
+  locator/content/excerpt conflict rejection, stable integer ranking, and whole-item admission
+  under hard source, item, byte, and complete-serialized-packet token ceilings.
+- Every packet contains an optional exact plan reference with stage semantics explicitly marked
+  `not-evaluated`, accepted facts, assumptions,
   conflicts, truthful gaps, decision-changing questions, disconfirmation signals, readiness,
   unresolved decisions, the applied budget, and an auditable receipt. Missing plan state is an
-  explicit gap; readiness is `not-evaluated` unless an injected domain projector supplies it. The
-  receipt pins exact inputs, candidate digests, inclusion/exclusion reasons, token counts,
-  policy/tokenizer references, and the canonical packet digest.
+  explicit gap; readiness is `not-evaluated` until #19 supplies a registered definition
+  projection. Required omissions force a blocking system gap and cannot report ready. The receipt
+  pins exact inputs, normalized query digest, versioned adapter/configuration provenance, candidate
+  digests, required flags, inclusion/exclusion reasons, complete packet token count,
+  policy/tokenizer references, and the canonical packet digest. Receipt subjects expose only a
+  locator digest, never a raw locator, query, credential, or path.
 - Evidence source heads use the registered `evidence/source-state@1` schema. A reusable accepted
   fact is a canonical decision under `evidence/fact/<stable-key>` with schema
   `evidence.fact-acceptance@1`, exact source lineage, optional reviews, and explicit accepted,
   superseded, or withdrawn transitions. Only the current accepted head enters a packet; stale
   support remains visible.
-- `inspectSources` and `compileContext` do not write. Durable changes require an explicit
+- `inspectSources` and `compileContext` use bounded exact reads of caller-selected heads and never
+  scan the workspace corpus. They do not write. Durable changes require an explicit
   `acceptFact`, `supersedeFact`, or `withdrawFact` call with expected version, idempotency key, and
   canonical read-back. Missing or failed sources add gaps; they never trigger fallback retrieval or
   silent persistence.

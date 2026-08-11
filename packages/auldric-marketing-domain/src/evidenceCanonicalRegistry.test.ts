@@ -225,4 +225,36 @@ describe("Marketing canonical schema-handler composition", () => {
       }
     }),
   );
+
+  it.effect("revalidates fact bounds after Unicode normalization expands text", () =>
+    Effect.gen(function* () {
+      const registry = makeMarketingCanonicalRegistryWithSchemaHandlers({
+        handlers: [marketingEvidenceCanonicalSchemaHandler],
+      });
+      const factContext = {
+        ...context(MARKETING_EVIDENCE_FACT_ACCEPTANCE_SCHEMA, "decision"),
+        sourceLineage: [
+          {
+            sourceId: MarketingSourceId.make(`msrc_${uuid(3)}`),
+            revision: {
+              revisionId: MarketingCanonicalRevisionId.make(`mcrv_${uuid(3)}`),
+              version: MarketingCanonicalVersion.make(1),
+            },
+          },
+        ],
+      };
+      const result = yield* Effect.result(
+        registry.validatePayload(factContext, {
+          claim: "Normalized fact values remain bounded.",
+          value: "\u0344".repeat(12_000),
+          status: "accepted",
+        }),
+      );
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure.reason, "payload_schema_invalid");
+      }
+    }),
+  );
 });

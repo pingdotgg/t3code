@@ -96,18 +96,22 @@ another organization, or documentation.
 
 `compileMarketingEvidenceContext` builds a transient, Marketing-only packet from one exact
 organization snapshot. Callers must supply an explicit allowlist of source revisions. The compiler
-keeps an optional exact plan/stage selection and source capability, access, import, index, and
+keeps an optional exact plan reference with explicitly `not-evaluated` stage semantics and source capability, access, import, index, and
 freshness separate from retrieved evidence, accepted facts, assumptions, conflicts, gaps,
 questions, disconfirmation signals, and readiness.
-It normalizes text deterministically, rejects locator/hash conflicts and non-allowlisted evidence,
-ranks with a versioned integer policy, admits whole items only, and returns a SHA-256 receipt for
-every inclusion and exclusion under explicit item, source, byte, and token ceilings.
+It normalizes and then revalidates bounded text deterministically, binds excerpts to their own
+digest, rejects locator/content/excerpt conflicts and non-allowlisted evidence, ranks with a
+versioned integer policy, and admits whole items only. The complete serialized packet—including
+its budget and receipt—must fit the token ceiling. Receipts use locator digests rather than raw
+locators and pin the normalized query digest plus adapter version/configuration provenance.
 
 `makeMarketingEvidenceContextService` composes only over the existing authorized canonical store
-and injected source adapters. It checks exact heads before adapters run and again before returning a
-packet. Inaccessible, unindexed, stale, or failed sources produce truthful gaps without fabricated
-evidence. A missing plan is explicit, and readiness remains `not-evaluated` unless an injected
-domain projector supplies it. Compilation and source inspection are read-only. The only durable evidence operations are
+and injected source adapters. It performs bounded exact reads for only the selected source, fact,
+plan, and transition revisions—never a whole-workspace inventory or revision-history scan—and
+checks exact heads again before returning a packet. Inaccessible, unindexed, stale, or failed
+sources produce truthful gaps without fabricated evidence. A missing plan is explicit; until #19
+supplies a registered definition projection, stage semantics and readiness remain `not-evaluated`.
+Compilation and source inspection are read-only. The only durable evidence operations are
 explicit `acceptFact`, `supersedeFact`, and `withdrawFact` calls; each writes a canonical decision,
 exact source lineage, optional exact reviews, an expected version, an idempotency receipt, and a
 committed read-back.

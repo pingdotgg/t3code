@@ -8,21 +8,25 @@ import * as Schema from "effect/Schema";
 import {
   MarketingCanonicalRegistryKey,
   MarketingCanonicalRevisionReference,
+  MarketingCanonicalVersion,
   MarketingReviewRevisionReference,
   MarketingSourceLineageReference,
 } from "./canonical.ts";
 import { compareCanonicalText } from "./canonicalSeal.ts";
-import { MarketingEvidenceContextError } from "./evidenceContextErrors.ts";
+import {
+  MarketingEvidenceContextError,
+  MarketingEvidenceSafeReference,
+} from "./evidenceContextErrors.ts";
 import { MarketingDecisionId, MarketingPlanId, MarketingWorkspaceSelection } from "./identity.ts";
 
 export const MARKETING_EVIDENCE_CONTEXT_FORMAT = "auldric-marketing-evidence-context-v1" as const;
 export const MARKETING_EVIDENCE_TOKENIZER_REF = "auldric/utf8-ceil-4@1" as const;
 export const MARKETING_EVIDENCE_POLICY_REF = "auldric/evidence-context@1" as const;
-export const MARKETING_EVIDENCE_ENVELOPE_TOKENS = 256;
 export const MARKETING_EVIDENCE_MAX_CANDIDATES = 256;
 export const MARKETING_EVIDENCE_MAX_SOURCE_ALLOWLIST = 24;
 export const MARKETING_EVIDENCE_MAX_FACT_ALLOWLIST = 32;
 export const MARKETING_EVIDENCE_MAX_FACT_VALUE_BYTES = 32_768;
+export const MARKETING_EVIDENCE_MAX_SYSTEM_GAPS = 64;
 
 const EvidenceKeyPattern = /^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/u;
 const Sha256Pattern = /^[0-9a-f]{64}$/u;
@@ -114,6 +118,15 @@ export const MarketingSourceObservation = Schema.Struct({
 });
 export type MarketingSourceObservation = typeof MarketingSourceObservation.Type;
 
+const RetrievalText = (maximum: number) =>
+  Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty(), Schema.isMaxLength(maximum));
+
+export const MarketingEvidenceRetrievalQuery = Schema.Struct({
+  purpose: RetrievalText(2_000),
+  terms: Schema.Array(RetrievalText(200)).check(Schema.isMaxLength(24)),
+});
+export type MarketingEvidenceRetrievalQuery = typeof MarketingEvidenceRetrievalQuery.Type;
+
 const QualityScore = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }));
 
 export const MarketingEvidenceQuality = Schema.Struct({
@@ -128,6 +141,7 @@ export const MarketingRetrievedEvidence = Schema.Struct({
   source: MarketingSourceLineageReference,
   locator: MarketingEvidenceLocator,
   excerpt: BoundedText(12_000),
+  excerptSha256: MarketingEvidenceSha256,
   contentSha256: MarketingEvidenceSha256,
   observedAt: Schema.DateTimeUtc,
   quality: MarketingEvidenceQuality,
@@ -168,11 +182,28 @@ export const MarketingEvidenceConflict = Schema.Struct({
 });
 export type MarketingEvidenceConflict = typeof MarketingEvidenceConflict.Type;
 
-export const MarketingEvidenceGap = Schema.Struct({
+const MarketingEvidenceGapFields = {
   key: MarketingEvidenceStableKey,
   summary: BoundedText(2_000),
   blocks: Schema.Boolean,
+};
+
+export const MarketingUserEvidenceGap = Schema.Struct({
+  namespace: Schema.Literal("user"),
+  ...MarketingEvidenceGapFields,
 });
+export type MarketingUserEvidenceGap = typeof MarketingUserEvidenceGap.Type;
+
+export const MarketingSystemEvidenceGap = Schema.Struct({
+  namespace: Schema.Literal("system"),
+  ...MarketingEvidenceGapFields,
+});
+export type MarketingSystemEvidenceGap = typeof MarketingSystemEvidenceGap.Type;
+
+export const MarketingEvidenceGap = Schema.Union([
+  MarketingUserEvidenceGap,
+  MarketingSystemEvidenceGap,
+]);
 export type MarketingEvidenceGap = typeof MarketingEvidenceGap.Type;
 
 export const MarketingDecisionChangingQuestion = Schema.Struct({
@@ -203,11 +234,17 @@ export const MarketingPlanReadiness = Schema.Union([
 ]);
 export type MarketingPlanReadiness = typeof MarketingPlanReadiness.Type;
 
-export const MarketingEvidencePlanSelection = Schema.Struct({
+const MarketingEvidencePlanReferenceFields = {
   planId: MarketingPlanId,
   revision: MarketingCanonicalRevisionReference,
-  stageKey: Schema.optionalKey(MarketingCanonicalRegistryKey),
-  stepKey: Schema.optionalKey(MarketingCanonicalRegistryKey),
+};
+
+export const MarketingEvidencePlanReference = Schema.Struct(MarketingEvidencePlanReferenceFields);
+export type MarketingEvidencePlanReference = typeof MarketingEvidencePlanReference.Type;
+
+export const MarketingEvidencePlanSelection = Schema.Struct({
+  ...MarketingEvidencePlanReferenceFields,
+  stageSemantics: Schema.Literal("not-evaluated"),
 });
 export type MarketingEvidencePlanSelection = typeof MarketingEvidencePlanSelection.Type;
 
@@ -227,6 +264,14 @@ export const MarketingContextBudget = Schema.Struct({
   policyRef: Schema.Literal(MARKETING_EVIDENCE_POLICY_REF),
 });
 export type MarketingContextBudget = typeof MarketingContextBudget.Type;
+
+export const MarketingEvidenceAdapterProvenance = Schema.Struct({
+  source: MarketingSourceLineageReference,
+  adapterKey: MarketingCanonicalRegistryKey,
+  adapterVersion: MarketingCanonicalVersion,
+  configurationSha256: MarketingEvidenceSha256,
+});
+export type MarketingEvidenceAdapterProvenance = typeof MarketingEvidenceAdapterProvenance.Type;
 
 export const DEFAULT_MARKETING_CONTEXT_BUDGET: MarketingContextBudget = {
   maxTokens: 4_096,
@@ -255,7 +300,7 @@ export const MarketingEvidenceReceiptSubject = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("retrieved-evidence"),
     source: MarketingSourceLineageReference,
-    locator: MarketingEvidenceLocator,
+    locatorSha256: MarketingEvidenceSha256,
   }),
   Schema.Struct({
     kind: Schema.Literal("accepted-fact"),
@@ -269,6 +314,7 @@ export type MarketingEvidenceReceiptSubject = typeof MarketingEvidenceReceiptSub
 export const MarketingEvidenceReceiptIncludedItem = Schema.Struct({
   subject: MarketingEvidenceReceiptSubject,
   digest: MarketingEvidenceSha256,
+  required: Schema.Boolean,
   tokenCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type MarketingEvidenceReceiptIncludedItem = typeof MarketingEvidenceReceiptIncludedItem.Type;
@@ -277,6 +323,7 @@ export const MarketingEvidenceReceiptExcludedItem = Schema.Struct({
   subject: MarketingEvidenceReceiptSubject,
   digest: MarketingEvidenceSha256,
   reason: MarketingEvidenceExclusionReason,
+  required: Schema.Boolean,
   tokenCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type MarketingEvidenceReceiptExcludedItem = typeof MarketingEvidenceReceiptExcludedItem.Type;
@@ -284,6 +331,10 @@ export type MarketingEvidenceReceiptExcludedItem = typeof MarketingEvidenceRecei
 export const MarketingEvidenceReceipt = Schema.Struct({
   asOf: Schema.DateTimeUtc,
   planInput: Schema.optionalKey(MarketingEvidencePlanSelection),
+  retrievalQuerySha256: MarketingEvidenceSha256,
+  adapterInputs: Schema.Array(MarketingEvidenceAdapterProvenance).check(
+    Schema.isMaxLength(MARKETING_EVIDENCE_MAX_SOURCE_ALLOWLIST),
+  ),
   sourceInputs: Schema.Array(MarketingSourceLineageReference).check(
     Schema.isMaxLength(MARKETING_EVIDENCE_MAX_SOURCE_ALLOWLIST),
   ),
@@ -303,8 +354,8 @@ export const MarketingEvidenceReceipt = Schema.Struct({
       MARKETING_EVIDENCE_MAX_CANDIDATES + MARKETING_EVIDENCE_MAX_FACT_ALLOWLIST + 64,
     ),
   ),
-  envelopeTokenCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   includedTokenCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  packetTokenCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   budget: MarketingContextBudget,
   packetSha256: MarketingEvidenceSha256,
   tokenizerRef: Schema.Literal(MARKETING_EVIDENCE_TOKENIZER_REF),
@@ -324,7 +375,9 @@ export const MarketingEvidenceContextPacket = Schema.Struct({
   evidence: Schema.Array(MarketingRetrievedEvidence).check(Schema.isMaxLength(64)),
   assumptions: Schema.Array(MarketingEvidenceAssumption).check(Schema.isMaxLength(32)),
   conflicts: Schema.Array(MarketingEvidenceConflict).check(Schema.isMaxLength(32)),
-  gaps: Schema.Array(MarketingEvidenceGap).check(Schema.isMaxLength(32)),
+  gaps: Schema.Array(MarketingEvidenceGap).check(
+    Schema.isMaxLength(32 + MARKETING_EVIDENCE_MAX_SYSTEM_GAPS),
+  ),
   questions: Schema.Array(MarketingDecisionChangingQuestion).check(Schema.isMaxLength(32)),
   disconfirmationSignals: Schema.Array(MarketingDisconfirmationSignal).check(
     Schema.isMaxLength(32),
@@ -340,13 +393,16 @@ export interface CompileMarketingEvidenceContextInput {
   readonly workspace: MarketingWorkspaceSelection;
   readonly asOf: DateTime.Utc;
   readonly plan?: MarketingEvidencePlanSelection;
+  readonly retrievalQuery: MarketingEvidenceRetrievalQuery;
+  readonly adapterProvenance: ReadonlyArray<MarketingEvidenceAdapterProvenance>;
   readonly sourceAllowlist: ReadonlyArray<MarketingSourceLineageReference>;
   readonly sources: ReadonlyArray<MarketingSourceObservation>;
   readonly candidates: ReadonlyArray<MarketingRetrievedEvidence>;
   readonly acceptedFacts: ReadonlyArray<MarketingAcceptedFact>;
   readonly assumptions?: ReadonlyArray<MarketingEvidenceAssumption>;
   readonly conflicts?: ReadonlyArray<MarketingEvidenceConflict>;
-  readonly gaps?: ReadonlyArray<MarketingEvidenceGap>;
+  readonly gaps?: ReadonlyArray<MarketingUserEvidenceGap>;
+  readonly systemGaps?: ReadonlyArray<MarketingSystemEvidenceGap>;
   readonly questions?: ReadonlyArray<MarketingDecisionChangingQuestion>;
   readonly disconfirmationSignals?: ReadonlyArray<MarketingDisconfirmationSignal>;
   readonly readiness?: MarketingPlanReadiness;
@@ -377,37 +433,57 @@ const decodeSources = Schema.decodeUnknownSync(
     Schema.isMaxLength(MARKETING_EVIDENCE_MAX_SOURCE_ALLOWLIST),
   ),
 );
+const decodeCandidate = Schema.decodeUnknownSync(MarketingRetrievedEvidence);
 const decodeCandidates = Schema.decodeUnknownSync(
   Schema.Array(MarketingRetrievedEvidence).check(
     Schema.isMaxLength(MARKETING_EVIDENCE_MAX_CANDIDATES),
   ),
 );
+const decodeFact = Schema.decodeUnknownSync(MarketingAcceptedFact);
 const decodeAcceptedFacts = Schema.decodeUnknownSync(
   Schema.Array(MarketingAcceptedFact).check(
     Schema.isMaxLength(MARKETING_EVIDENCE_MAX_FACT_ALLOWLIST),
   ),
 );
+const decodeAssumption = Schema.decodeUnknownSync(MarketingEvidenceAssumption);
 const decodeAssumptions = Schema.decodeUnknownSync(
   Schema.Array(MarketingEvidenceAssumption).check(Schema.isMaxLength(32)),
 );
+const decodeConflict = Schema.decodeUnknownSync(MarketingEvidenceConflict);
 const decodeConflicts = Schema.decodeUnknownSync(
   Schema.Array(MarketingEvidenceConflict).check(Schema.isMaxLength(32)),
 );
-const decodeGaps = Schema.decodeUnknownSync(
-  Schema.Array(MarketingEvidenceGap).check(Schema.isMaxLength(32)),
+const decodeUserGap = Schema.decodeUnknownSync(MarketingUserEvidenceGap);
+const decodeUserGaps = Schema.decodeUnknownSync(
+  Schema.Array(MarketingUserEvidenceGap).check(Schema.isMaxLength(32)),
 );
+const decodeSystemGap = Schema.decodeUnknownSync(MarketingSystemEvidenceGap);
+const decodeSystemGaps = Schema.decodeUnknownSync(
+  Schema.Array(MarketingSystemEvidenceGap).check(
+    Schema.isMaxLength(MARKETING_EVIDENCE_MAX_SYSTEM_GAPS - 1),
+  ),
+);
+const decodeQuestion = Schema.decodeUnknownSync(MarketingDecisionChangingQuestion);
 const decodeQuestions = Schema.decodeUnknownSync(
   Schema.Array(MarketingDecisionChangingQuestion).check(Schema.isMaxLength(32)),
 );
+const decodeSignal = Schema.decodeUnknownSync(MarketingDisconfirmationSignal);
 const decodeSignals = Schema.decodeUnknownSync(
   Schema.Array(MarketingDisconfirmationSignal).check(Schema.isMaxLength(32)),
 );
 const decodeReadiness = Schema.decodeUnknownSync(MarketingPlanReadiness);
 const decodePlan = Schema.decodeUnknownSync(MarketingEvidencePlanSelection);
+const decodeUnresolvedItem = Schema.decodeUnknownSync(MarketingUnresolvedDecision);
 const decodeUnresolved = Schema.decodeUnknownSync(
   Schema.Array(MarketingUnresolvedDecision).check(Schema.isMaxLength(32)),
 );
 const decodeBudget = Schema.decodeUnknownSync(MarketingContextBudget);
+const decodeQuery = Schema.decodeUnknownSync(MarketingEvidenceRetrievalQuery);
+const decodeAdapterProvenance = Schema.decodeUnknownSync(
+  Schema.Array(MarketingEvidenceAdapterProvenance).check(
+    Schema.isMaxLength(MARKETING_EVIDENCE_MAX_SOURCE_ALLOWLIST),
+  ),
+);
 const decodeSourceExclusions = Schema.decodeUnknownSync(
   Schema.Array(
     Schema.Struct({
@@ -426,6 +502,10 @@ const decodeSupersededFacts = Schema.decodeUnknownSync(
   ).check(Schema.isMaxLength(MARKETING_EVIDENCE_MAX_FACT_ALLOWLIST)),
 );
 const decodeAsOf = Schema.decodeUnknownSync(Schema.DateTimeUtc);
+const decodePacket = Schema.decodeUnknownSync(MarketingEvidenceContextPacket);
+const encodePacketJson = Schema.encodeSync(Schema.toCodecJson(MarketingEvidenceContextPacket));
+const decodeJson = Schema.decodeUnknownSync(Schema.Json);
+const decodeSafeReference = Schema.decodeUnknownSync(MarketingEvidenceSafeReference);
 const isEvidenceContextError = Schema.is(MarketingEvidenceContextError);
 
 function normalizeText(value: string, trim = false): string {
@@ -444,7 +524,7 @@ function normalizeJson(value: Schema.Json): Schema.Json {
     if (entries[index - 1]?.[0] === entries[index]?.[0]) {
       throw new MarketingEvidenceContextError({
         reason: "invalid_context_input",
-        reference: "normalized-json-key-collision",
+        reference: decodeSafeReference("normalized-json-key-collision"),
       });
     }
   }
@@ -459,6 +539,13 @@ function sha256(value: string): MarketingEvidenceSha256 {
   return MarketingEvidenceSha256.make(NodeCrypto.createHash("sha256").update(value).digest("hex"));
 }
 
+function safeDigestReference(
+  namespace: "adapter" | "locator" | "source",
+  value: string,
+): MarketingEvidenceSafeReference {
+  return decodeSafeReference(`${namespace}:${sha256(value)}`);
+}
+
 function sourceReferenceText(source: MarketingSourceLineageReference): string {
   return `${source.sourceId}@${source.revision.version}:${source.revision.revisionId}`;
 }
@@ -466,8 +553,10 @@ function sourceReferenceText(source: MarketingSourceLineageReference): string {
 function sourceReferenceJson(source: MarketingSourceLineageReference): Schema.Json {
   return {
     sourceId: source.sourceId,
-    revisionId: source.revision.revisionId,
-    version: source.revision.version,
+    revision: {
+      revisionId: source.revision.revisionId,
+      version: source.revision.version,
+    },
   };
 }
 
@@ -479,15 +568,17 @@ function subjectJson(subject: MarketingEvidenceReceiptSubject): Schema.Json {
       return {
         kind: subject.kind,
         source: sourceReferenceJson(subject.source),
-        locator: subject.locator,
+        locatorSha256: subject.locatorSha256,
       };
     case "accepted-fact":
       return {
         kind: subject.kind,
         stableKey: subject.stableKey,
         decisionId: subject.decisionId,
-        revisionId: subject.revision.revisionId,
-        version: subject.revision.version,
+        revision: {
+          revisionId: subject.revision.revisionId,
+          version: subject.revision.version,
+        },
       };
   }
 }
@@ -497,6 +588,7 @@ function evidenceJson(evidence: MarketingRetrievedEvidence): Schema.Json {
     source: sourceReferenceJson(evidence.source),
     locator: evidence.locator,
     excerpt: evidence.excerpt,
+    excerptSha256: evidence.excerptSha256,
     contentSha256: evidence.contentSha256,
     observedAt: DateTime.formatIso(evidence.observedAt),
     quality: evidence.quality,
@@ -520,53 +612,33 @@ function factJson(fact: MarketingAcceptedFact): Schema.Json {
     support: fact.support.map(sourceReferenceJson),
     reviews: fact.reviews.map((review) => ({
       reviewId: review.reviewId,
-      revisionId: review.revision.revisionId,
-      version: review.revision.version,
+      revision: {
+        revisionId: review.revision.revisionId,
+        version: review.revision.version,
+      },
     })),
     supportState: fact.supportState,
   };
 }
 
-function observationJson(observation: MarketingSourceObservation): Schema.Json {
-  const stateJson = (state: object): Schema.Json => {
-    const entries = Object.entries(state).map(([key, value]) => [
-      key,
-      DateTime.isDateTime(value) ? DateTime.formatIso(value) : value,
-    ]);
-    return Object.fromEntries(entries) as Schema.Json;
-  };
-  return {
-    source: sourceReferenceJson(observation.source),
-    adapterKey: observation.adapterKey,
-    capability: stateJson(observation.capability),
-    access: stateJson(observation.access),
-    import: stateJson(observation.import),
-    index: stateJson(observation.index),
-    freshness: stateJson(observation.freshness),
-    observedAt: DateTime.formatIso(observation.observedAt),
-  };
-}
-
 function normalizeEvidence(evidence: MarketingRetrievedEvidence): MarketingRetrievedEvidence {
-  return {
-    source: evidence.source,
-    locator: MarketingEvidenceLocator.make(normalizeText(evidence.locator, true)),
+  const normalized = decodeCandidate({
+    ...evidence,
+    locator: normalizeText(evidence.locator, true),
     excerpt: normalizeText(evidence.excerpt, true),
-    contentSha256: evidence.contentSha256,
-    observedAt: evidence.observedAt,
-    quality: evidence.quality,
-    relation: evidence.relation,
-    required: evidence.required,
-    decisionImpact: evidence.decisionImpact,
-    relevance: evidence.relevance,
-  };
+  });
+  if (sha256(normalized.excerpt) !== normalized.excerptSha256) {
+    throw new MarketingEvidenceContextError({
+      reason: "invalid_context_input",
+      reference: safeDigestReference("locator", normalized.locator),
+    });
+  }
+  return normalized;
 }
 
 function normalizeFact(fact: MarketingAcceptedFact): MarketingAcceptedFact {
-  return {
-    stableKey: fact.stableKey,
-    decisionId: fact.decisionId,
-    revision: fact.revision,
+  const normalized = decodeFact({
+    ...fact,
     claim: normalizeText(fact.claim, true),
     value: normalizeJson(fact.value),
     support: [...fact.support].sort(compareSourceReference),
@@ -576,38 +648,48 @@ function normalizeFact(fact: MarketingAcceptedFact): MarketingAcceptedFact {
         left.revision.version - right.revision.version ||
         compareCanonicalText(left.revision.revisionId, right.revision.revisionId),
     ),
-    supportState: fact.supportState,
-  };
+  });
+  if (new Set(normalized.support.map(sourceReferenceText)).size !== normalized.support.length) {
+    throw new MarketingEvidenceContextError({
+      reason: "invalid_context_input",
+      reference: decodeSafeReference("duplicate-fact-support"),
+    });
+  }
+  return normalized;
 }
 
 function normalizeAssumption(value: MarketingEvidenceAssumption): MarketingEvidenceAssumption {
-  return { ...value, statement: normalizeText(value.statement, true) };
+  return decodeAssumption({ ...value, statement: normalizeText(value.statement, true) });
 }
 
 function normalizeConflict(value: MarketingEvidenceConflict): MarketingEvidenceConflict {
-  return { ...value, summary: normalizeText(value.summary, true) };
+  return decodeConflict({ ...value, summary: normalizeText(value.summary, true) });
 }
 
-function normalizeGap(value: MarketingEvidenceGap): MarketingEvidenceGap {
-  return { ...value, summary: normalizeText(value.summary, true) };
+function normalizeUserGap(value: MarketingUserEvidenceGap): MarketingUserEvidenceGap {
+  return decodeUserGap({ ...value, summary: normalizeText(value.summary, true) });
+}
+
+function normalizeSystemGap(value: MarketingSystemEvidenceGap): MarketingSystemEvidenceGap {
+  return decodeSystemGap({ ...value, summary: normalizeText(value.summary, true) });
 }
 
 function normalizeQuestion(
   value: MarketingDecisionChangingQuestion,
 ): MarketingDecisionChangingQuestion {
-  return { ...value, question: normalizeText(value.question, true) };
+  return decodeQuestion({ ...value, question: normalizeText(value.question, true) });
 }
 
 function normalizeSignal(value: MarketingDisconfirmationSignal): MarketingDisconfirmationSignal {
-  return {
+  return decodeSignal({
     ...value,
     signal: normalizeText(value.signal, true),
     consequence: normalizeText(value.consequence, true),
-  };
+  });
 }
 
 function normalizeUnresolved(value: MarketingUnresolvedDecision): MarketingUnresolvedDecision {
-  return { ...value, summary: normalizeText(value.summary, true) };
+  return decodeUnresolvedItem({ ...value, summary: normalizeText(value.summary, true) });
 }
 
 function sortUniqueByStableKey<A extends { readonly key: MarketingEvidenceStableKey }>(
@@ -619,7 +701,29 @@ function sortUniqueByStableKey<A extends { readonly key: MarketingEvidenceStable
     if (sorted[index - 1]?.key === sorted[index]?.key) {
       throw new MarketingEvidenceContextError({
         reason: "invalid_context_input",
-        reference: `duplicate-${collection}-key:${sorted[index]?.key}`,
+        reference: decodeSafeReference(`duplicate-${collection}-key`),
+      });
+    }
+  }
+  return sorted;
+}
+
+function sortUniqueGaps(
+  userGaps: ReadonlyArray<MarketingUserEvidenceGap>,
+  systemGaps: ReadonlyArray<MarketingSystemEvidenceGap>,
+): ReadonlyArray<MarketingEvidenceGap> {
+  const sorted = [...userGaps, ...systemGaps].sort(
+    (left, right) =>
+      compareCanonicalText(left.namespace, right.namespace) ||
+      compareCanonicalText(left.key, right.key),
+  );
+  for (let index = 1; index < sorted.length; index += 1) {
+    const left = sorted[index - 1];
+    const right = sorted[index];
+    if (left?.namespace === right?.namespace && left?.key === right?.key) {
+      throw new MarketingEvidenceContextError({
+        reason: "invalid_context_input",
+        reference: decodeSafeReference("duplicate-gap-key"),
       });
     }
   }
@@ -628,10 +732,10 @@ function sortUniqueByStableKey<A extends { readonly key: MarketingEvidenceStable
 
 function normalizeReadiness(readiness: MarketingPlanReadiness): MarketingPlanReadiness {
   if (readiness.state === "ready" || readiness.state === "not-evaluated") return readiness;
-  return {
+  return decodeReadiness({
     state: readiness.state,
     codes: [...new Set(readiness.codes)].sort(compareCanonicalText),
-  };
+  });
 }
 
 function sourceTimestampAfterSnapshot(
@@ -689,7 +793,7 @@ function compareEvidence(
     compareCanonicalText(left.source.revision.revisionId, right.source.revision.revisionId) ||
     compareCanonicalText(left.locator, right.locator) ||
     compareCanonicalText(left.contentSha256, right.contentSha256) ||
-    compareCanonicalText(canonicalJson(evidenceJson(left)), canonicalJson(evidenceJson(right)))
+    compareCanonicalText(left.excerptSha256, right.excerptSha256)
   );
 }
 
@@ -701,6 +805,18 @@ function compareSourceReference(
     compareCanonicalText(left.sourceId, right.sourceId) ||
     left.revision.version - right.revision.version ||
     compareCanonicalText(left.revision.revisionId, right.revision.revisionId)
+  );
+}
+
+function compareAdapterProvenance(
+  left: MarketingEvidenceAdapterProvenance,
+  right: MarketingEvidenceAdapterProvenance,
+): number {
+  return (
+    compareSourceReference(left.source, right.source) ||
+    compareCanonicalText(left.adapterKey, right.adapterKey) ||
+    left.adapterVersion - right.adapterVersion ||
+    compareCanonicalText(left.configurationSha256, right.configurationSha256)
   );
 }
 
@@ -726,48 +842,68 @@ function stateExclusion(
   return source.freshness.state === "current" ? undefined : "stale-policy";
 }
 
-function encodeEnvelope(input: {
-  readonly workspace: MarketingWorkspaceSelection;
-  readonly asOf: DateTime.Utc;
-  readonly plan?: MarketingEvidencePlanSelection;
-  readonly sources: ReadonlyArray<MarketingSourceObservation>;
-  readonly assumptions: ReadonlyArray<MarketingEvidenceAssumption>;
-  readonly conflicts: ReadonlyArray<MarketingEvidenceConflict>;
-  readonly gaps: ReadonlyArray<MarketingEvidenceGap>;
-  readonly questions: ReadonlyArray<MarketingDecisionChangingQuestion>;
-  readonly signals: ReadonlyArray<MarketingDisconfirmationSignal>;
-  readonly readiness: MarketingPlanReadiness;
-  readonly unresolved: ReadonlyArray<MarketingUnresolvedDecision>;
-}): Readonly<Record<string, Schema.Json>> {
-  return {
-    format: MARKETING_EVIDENCE_CONTEXT_FORMAT,
-    workspace: input.workspace,
-    asOf: DateTime.formatIso(input.asOf),
-    ...(input.plan === undefined
-      ? {}
-      : {
-          plan: {
-            planId: input.plan.planId,
-            revisionId: input.plan.revision.revisionId,
-            version: input.plan.revision.version,
-            ...(input.plan.stageKey === undefined ? {} : { stageKey: input.plan.stageKey }),
-            ...(input.plan.stepKey === undefined ? {} : { stepKey: input.plan.stepKey }),
-          },
-        }),
-    sources: input.sources.map(observationJson),
-    assumptions: input.assumptions,
-    conflicts: input.conflicts,
-    gaps: input.gaps,
-    questions: input.questions,
-    disconfirmationSignals: input.signals,
-    readiness: input.readiness,
-    unresolvedDecisions: input.unresolved,
-  };
+interface AdmissionItem {
+  readonly kind: "fact" | "evidence" | "pre-excluded";
+  readonly subject: MarketingEvidenceReceiptSubject;
+  readonly digest: MarketingEvidenceSha256;
+  readonly required: boolean;
+  readonly tokenCount: number;
+  readonly fact?: MarketingAcceptedFact;
+  readonly evidence?: MarketingRetrievedEvidence;
+  readonly candidateBytes: number;
+  readonly sourceKey?: string;
+  included: boolean;
+  reason?: MarketingEvidenceExclusionReason;
+}
+
+const zeroPacketDigest = MarketingEvidenceSha256.make("0".repeat(64));
+const requiredOmissionCode = MarketingEvidenceStateCode.make("required-evidence-omitted");
+const blockingGapCode = MarketingEvidenceStateCode.make("blocking-evidence-gap");
+const requiredOmissionGap: MarketingSystemEvidenceGap = {
+  namespace: "system",
+  key: MarketingEvidenceStableKey.make("required-evidence-omitted"),
+  summary: "Required evidence could not fit or was unavailable in this bounded context packet.",
+  blocks: true,
+};
+
+function forceBlocked(
+  readiness: MarketingPlanReadiness,
+  codes: ReadonlyArray<MarketingEvidenceStateCode>,
+): MarketingPlanReadiness {
+  const existing =
+    readiness.state === "blocked" || readiness.state === "partial" ? readiness.codes : [];
+  const combined = [...new Set([...existing, ...codes])].sort(compareCanonicalText).slice(0, 16);
+  return decodeReadiness({ state: "blocked", codes: combined });
+}
+
+function packetJson(packet: MarketingEvidenceContextPacket): Schema.Json {
+  return decodeJson(encodePacketJson(packet));
+}
+
+function packetDigestJson(packet: MarketingEvidenceContextPacket): Schema.Json {
+  const encoded = packetJson(packet);
+  if (encoded === null || Array.isArray(encoded) || typeof encoded !== "object") {
+    throw new MarketingEvidenceContextError({
+      reason: "invalid_context_input",
+      reference: decodeSafeReference("packet-digest-shape"),
+    });
+  }
+  const packetObject = encoded as { readonly [key: string]: Schema.Json };
+  const receipt = packetObject.receipt;
+  if (receipt === null || Array.isArray(receipt) || typeof receipt !== "object") {
+    throw new MarketingEvidenceContextError({
+      reason: "invalid_context_input",
+      reference: decodeSafeReference("packet-receipt-shape"),
+    });
+  }
+  const receiptObject = receipt as { readonly [key: string]: Schema.Json };
+  const { packetSha256: _packetSha256, ...receiptWithoutDigest } = receiptObject;
+  return { ...packetObject, receipt: receiptWithoutDigest };
 }
 
 /**
- * Compiles a transient Marketing-only packet. The function has no persistence or provider seam,
- * admits whole items only, and produces the same packet for the same normalized snapshot.
+ * Compiles a transient Marketing-only packet. It never persists or crosses the T3 provider seam.
+ * The pinned tokenizer counts the complete schema-encoded packet, including its receipt and budget.
  */
 export function compileMarketingEvidenceContext(
   rawInput: CompileMarketingEvidenceContextInput,
@@ -786,7 +922,8 @@ export function compileMarketingEvidenceContext(
       let candidates: ReadonlyArray<MarketingRetrievedEvidence>;
       try {
         candidates = decodeCandidates(rawInput.candidates).map(normalizeEvidence);
-      } catch {
+      } catch (cause) {
+        if (isEvidenceContextError(cause)) throw cause;
         if (rawInput.candidates.length > MARKETING_EVIDENCE_MAX_CANDIDATES) {
           throw new MarketingEvidenceContextError({ reason: "candidate_limit_exceeded" });
         }
@@ -801,7 +938,14 @@ export function compileMarketingEvidenceContext(
         decodeConflicts(rawInput.conflicts ?? []).map(normalizeConflict),
         "conflict",
       );
-      const gaps = sortUniqueByStableKey(decodeGaps(rawInput.gaps ?? []).map(normalizeGap), "gap");
+      const userGaps = decodeUserGaps(rawInput.gaps ?? []).map(normalizeUserGap);
+      const systemGaps = decodeSystemGaps(rawInput.systemGaps ?? []).map(normalizeSystemGap);
+      if (systemGaps.some(({ key }) => key === requiredOmissionGap.key)) {
+        throw new MarketingEvidenceContextError({
+          reason: "invalid_context_input",
+          reference: decodeSafeReference("reserved-system-gap-key"),
+        });
+      }
       const questions = sortUniqueByStableKey(
         decodeQuestions(rawInput.questions ?? []).map(normalizeQuestion),
         "question",
@@ -810,7 +954,7 @@ export function compileMarketingEvidenceContext(
         decodeSignals(rawInput.disconfirmationSignals ?? []).map(normalizeSignal),
         "disconfirmation-signal",
       );
-      const readiness = normalizeReadiness(
+      const initialReadiness = normalizeReadiness(
         decodeReadiness(rawInput.readiness ?? { state: "not-evaluated" }),
       );
       const unresolved = sortUniqueByStableKey(
@@ -818,21 +962,27 @@ export function compileMarketingEvidenceContext(
         "unresolved-decision",
       );
       const budget = decodeBudget(rawInput.budget ?? DEFAULT_MARKETING_CONTEXT_BUDGET);
-      const preExcluded = [
-        ...decodeSourceExclusions(rawInput.sourceExclusions ?? []).map(({ source, reason }) =>
-          sourceReceiptExclusion(source, reason),
+      const decodedQuery = decodeQuery(rawInput.retrievalQuery);
+      const query = decodeQuery({
+        purpose: normalizeText(decodedQuery.purpose, true),
+        terms: [...new Set(decodedQuery.terms.map((term) => normalizeText(term, true)))].sort(
+          compareCanonicalText,
         ),
-        ...decodeSupersededFacts(rawInput.supersededFacts ?? []).map(
-          ({ stableKey, decisionId, revision }) =>
-            factReceiptExclusion(stableKey, decisionId, revision),
-        ),
-      ];
+      });
+      const retrievalQuerySha256 = sha256(
+        canonicalJson({ purpose: query.purpose, terms: [...query.terms] }),
+      );
+      const adapterInputs = [...decodeAdapterProvenance(rawInput.adapterProvenance)].sort(
+        compareAdapterProvenance,
+      );
+      const sourceExclusions = decodeSourceExclusions(rawInput.sourceExclusions ?? []);
+      const supersededFacts = decodeSupersededFacts(rawInput.supersededFacts ?? []);
 
       const allowlistKeys = new Set(sourceAllowlist.map(sourceReferenceText));
       if (allowlistKeys.size !== sourceAllowlist.length) {
         throw new MarketingEvidenceContextError({
           reason: "source_snapshot_mismatch",
-          reference: "duplicate-source-allowlist-entry",
+          reference: decodeSafeReference("duplicate-source-allowlist-entry"),
         });
       }
       const sourceKeys = new Set(sources.map(({ source }) => sourceReferenceText(source)));
@@ -846,25 +996,53 @@ export function compileMarketingEvidenceContext(
       if (sources.some((source) => sourceTimestampAfterSnapshot(source, asOf))) {
         throw new MarketingEvidenceContextError({
           reason: "source_snapshot_mismatch",
-          reference: "source-state-after-snapshot",
+          reference: decodeSafeReference("source-state-after-snapshot"),
         });
       }
 
       const sourceByKey = new Map(
         sources.map((source) => [sourceReferenceText(source.source), source] as const),
       );
+      const activeSources = sources.filter((source) => stateExclusion(source) === undefined);
+      const provenanceKeys = new Set<string>();
+      for (const provenance of adapterInputs) {
+        const key = sourceReferenceText(provenance.source);
+        const source = sourceByKey.get(key);
+        if (
+          source === undefined ||
+          stateExclusion(source) !== undefined ||
+          source.adapterKey !== provenance.adapterKey ||
+          provenanceKeys.has(key)
+        ) {
+          throw new MarketingEvidenceContextError({
+            reason: "source_snapshot_mismatch",
+            reference: safeDigestReference("adapter", provenance.adapterKey),
+          });
+        }
+        provenanceKeys.add(key);
+      }
+      if (
+        provenanceKeys.size !== activeSources.length ||
+        activeSources.some((source) => !provenanceKeys.has(sourceReferenceText(source.source)))
+      ) {
+        throw new MarketingEvidenceContextError({
+          reason: "source_snapshot_mismatch",
+          reference: decodeSafeReference("adapter-provenance-mismatch"),
+        });
+      }
+
       for (const candidate of candidates) {
         if (candidate.observedAt.epochMilliseconds > asOf.epochMilliseconds) {
           throw new MarketingEvidenceContextError({
             reason: "invalid_context_input",
-            reference: "evidence-observed-after-snapshot",
+            reference: decodeSafeReference("evidence-after-snapshot"),
           });
         }
         const sourceKey = sourceReferenceText(candidate.source);
         if (!allowlistKeys.has(sourceKey)) {
           throw new MarketingEvidenceContextError({
             reason: "source_not_allowlisted",
-            reference: sourceKey,
+            reference: safeDigestReference("source", sourceKey),
           });
         }
       }
@@ -876,309 +1054,335 @@ export function compileMarketingEvidenceContext(
         if (factKeys.has(fact.stableKey) || factRevisionKeys.has(revisionKey)) {
           throw new MarketingEvidenceContextError({
             reason: "duplicate_fact_key",
-            reference: fact.stableKey,
+            reference: decodeSafeReference("duplicate-accepted-fact"),
           });
         }
         factKeys.add(fact.stableKey);
         factRevisionKeys.add(revisionKey);
       }
-      for (const item of preExcluded) {
-        if (item.subject.kind !== "accepted-fact") continue;
-        const revisionKey = `${item.subject.decisionId}:${item.subject.revision.revisionId}:${item.subject.revision.version}`;
-        if (factKeys.has(item.subject.stableKey) || factRevisionKeys.has(revisionKey)) {
+      for (const fact of supersededFacts) {
+        const revisionKey = `${fact.decisionId}:${fact.revision.revisionId}:${fact.revision.version}`;
+        if (factKeys.has(fact.stableKey) || factRevisionKeys.has(revisionKey)) {
           throw new MarketingEvidenceContextError({
             reason: "duplicate_fact_key",
-            reference: item.subject.stableKey,
+            reference: decodeSafeReference("duplicate-accepted-fact"),
           });
         }
-        factKeys.add(item.subject.stableKey);
+        factKeys.add(fact.stableKey);
         factRevisionKeys.add(revisionKey);
       }
+      if (factKeys.size > MARKETING_EVIDENCE_MAX_FACT_ALLOWLIST) {
+        throw new MarketingEvidenceContextError({
+          reason: "candidate_limit_exceeded",
+          reference: decodeSafeReference("accepted-fact-inputs"),
+        });
+      }
 
-      const locatorHashes = new Map<string, string>();
-      for (const candidate of candidates) {
+      const sortedCandidates = [...candidates].sort(compareEvidence);
+      const locatorBindings = new Map<
+        string,
+        { readonly content: MarketingEvidenceSha256; readonly excerpt: MarketingEvidenceSha256 }
+      >();
+      for (const candidate of sortedCandidates) {
         const locatorKey = `${sourceReferenceText(candidate.source)}\u0000${candidate.locator}`;
-        const existing = locatorHashes.get(locatorKey);
-        if (existing !== undefined && existing !== candidate.contentSha256) {
+        const existing = locatorBindings.get(locatorKey);
+        if (
+          existing !== undefined &&
+          (existing.content !== candidate.contentSha256 ||
+            existing.excerpt !== candidate.excerptSha256)
+        ) {
           throw new MarketingEvidenceContextError({
             reason: "locator_content_conflict",
-            reference: locatorKey,
+            reference: safeDigestReference("locator", locatorKey),
           });
         }
-        locatorHashes.set(locatorKey, candidate.contentSha256);
+        locatorBindings.set(locatorKey, {
+          content: candidate.contentSha256,
+          excerpt: candidate.excerptSha256,
+        });
       }
 
-      const envelopeTokenCount = Math.max(
-        MARKETING_EVIDENCE_ENVELOPE_TOKENS,
-        estimateTokens(
-          canonicalJson(
-            encodeEnvelope({
-              workspace,
-              asOf,
-              ...(plan === undefined ? {} : { plan }),
-              sources,
-              assumptions,
-              conflicts,
-              gaps,
-              questions,
-              signals,
-              readiness,
-              unresolved,
-            }),
-          ),
-        ),
-      );
-      if (envelopeTokenCount > budget.maxTokens) {
-        throw new MarketingEvidenceContextError({ reason: "budget_too_small" });
+      const items: AdmissionItem[] = [];
+      for (const { source, reason } of sourceExclusions) {
+        const sourceKey = sourceReferenceText(source);
+        if (!allowlistKeys.has(sourceKey)) {
+          throw new MarketingEvidenceContextError({
+            reason: "source_snapshot_mismatch",
+            reference: safeDigestReference("source", sourceKey),
+          });
+        }
+        items.push({
+          kind: "pre-excluded",
+          subject: { kind: "source", source },
+          digest: sourceDigest(source),
+          required: false,
+          tokenCount: 0,
+          candidateBytes: 0,
+          included: false,
+          reason,
+        });
       }
-
-      const includedFacts: MarketingAcceptedFact[] = [];
-      const includedEvidence: MarketingRetrievedEvidence[] = [];
-      const included: MarketingEvidenceReceiptIncludedItem[] = [];
-      const excluded: MarketingEvidenceReceiptExcludedItem[] = [...preExcluded];
-      const candidateDigests: MarketingEvidenceSha256[] = preExcluded
-        .filter(({ subject }) => subject.kind !== "source")
-        .map(({ digest }) => digest);
-      let includedTokenCount = 0;
-      let includedItems = 0;
-
-      const sortedFacts = [...acceptedFacts].sort((left, right) =>
-        compareCanonicalText(left.stableKey, right.stableKey),
-      );
-      for (const fact of sortedFacts) {
-        const digest = factDigest(fact);
-        const tokenCount = estimateTokens(canonicalJson(factJson(fact)));
+      for (const fact of supersededFacts) {
         const subject: MarketingEvidenceReceiptSubject = {
           kind: "accepted-fact",
           stableKey: fact.stableKey,
           decisionId: fact.decisionId,
           revision: fact.revision,
         };
-        candidateDigests.push(digest);
-        if (
-          includedItems >= budget.maxItems ||
-          envelopeTokenCount + includedTokenCount + tokenCount > budget.maxTokens
-        ) {
-          excluded.push({ subject, digest, reason: "budget", tokenCount });
-          continue;
-        }
-        includedFacts.push(fact);
-        included.push({ subject, digest, tokenCount });
-        includedTokenCount += tokenCount;
-        includedItems += 1;
+        items.push({
+          kind: "pre-excluded",
+          subject,
+          digest: sha256(canonicalJson(subjectJson(subject))),
+          required: true,
+          tokenCount: 0,
+          candidateBytes: 0,
+          included: false,
+          reason: "superseded",
+        });
+      }
+
+      const sortedFacts = [...acceptedFacts].sort((left, right) =>
+        compareCanonicalText(left.stableKey, right.stableKey),
+      );
+      for (const fact of sortedFacts) {
+        const subject: MarketingEvidenceReceiptSubject = {
+          kind: "accepted-fact",
+          stableKey: fact.stableKey,
+          decisionId: fact.decisionId,
+          revision: fact.revision,
+        };
+        items.push({
+          kind: "fact",
+          subject,
+          digest: factDigest(fact),
+          required: true,
+          tokenCount: estimateTokens(canonicalJson(factJson(fact))),
+          fact,
+          candidateBytes: 0,
+          included: false,
+          reason: "budget",
+        });
       }
 
       const seenCandidates = new Set<string>();
-      const perSourceCount = new Map<string, number>();
-      let admittedCandidateBytes = 0;
-      for (const candidate of [...candidates].sort(compareEvidence)) {
-        const digest = evidenceDigest(candidate);
-        const sourceKey = sourceReferenceText(candidate.source);
-        const tuple = `${sourceKey}\u0000${candidate.locator}\u0000${candidate.contentSha256}`;
-        const candidateText = canonicalJson(evidenceJson(candidate));
-        const tokenCount = estimateTokens(candidateText);
-        const candidateBytes = Buffer.byteLength(candidateText, "utf8");
-        const subject: MarketingEvidenceReceiptSubject = {
-          kind: "retrieved-evidence",
-          source: candidate.source,
-          locator: candidate.locator,
-        };
-        candidateDigests.push(digest);
-        if (seenCandidates.has(tuple)) {
-          excluded.push({ subject, digest, reason: "duplicate", tokenCount });
-          continue;
-        }
-        seenCandidates.add(tuple);
+      for (const evidence of sortedCandidates) {
+        const sourceKey = sourceReferenceText(evidence.source);
+        const digest = evidenceDigest(evidence);
+        const tuple = `${sourceKey}\u0000${evidence.locator}\u0000${evidence.contentSha256}`;
         const source = sourceByKey.get(sourceKey);
         if (source === undefined) {
           throw new MarketingEvidenceContextError({
             reason: "source_snapshot_mismatch",
-            reference: sourceKey,
+            reference: safeDigestReference("source", sourceKey),
           });
         }
-        const sourceStateExclusion = stateExclusion(source);
-        if (sourceStateExclusion !== undefined) {
-          excluded.push({ subject, digest, reason: sourceStateExclusion, tokenCount });
-          continue;
-        }
-        const sourceCount = perSourceCount.get(sourceKey) ?? 0;
-        if (
-          sourceCount >= budget.maxPerSource ||
-          admittedCandidateBytes + candidateBytes > budget.maxCandidateBytes ||
-          includedItems >= budget.maxItems ||
-          envelopeTokenCount + includedTokenCount + tokenCount > budget.maxTokens
-        ) {
-          excluded.push({ subject, digest, reason: "budget", tokenCount });
-          continue;
-        }
-        includedEvidence.push(candidate);
-        included.push({ subject, digest, tokenCount });
-        includedTokenCount += tokenCount;
-        includedItems += 1;
-        admittedCandidateBytes += candidateBytes;
-        perSourceCount.set(sourceKey, sourceCount + 1);
+        const duplicate = seenCandidates.has(tuple);
+        seenCandidates.add(tuple);
+        const text = canonicalJson(evidenceJson(evidence));
+        items.push({
+          kind: "evidence",
+          subject: {
+            kind: "retrieved-evidence",
+            source: evidence.source,
+            locatorSha256: sha256(evidence.locator),
+          },
+          digest,
+          required: evidence.required,
+          tokenCount: estimateTokens(text),
+          evidence,
+          candidateBytes: Buffer.byteLength(text, "utf8"),
+          sourceKey,
+          included: false,
+          reason: duplicate ? "duplicate" : (stateExclusion(source) ?? "budget"),
+        });
       }
 
-      const sortedIncluded = [...included].sort((left, right) =>
-        compareCanonicalText(left.digest, right.digest),
-      );
-      const sortedExcluded = [...excluded].sort(
-        (left, right) =>
-          compareReceiptSubject(left.subject, right.subject) ||
-          compareCanonicalText(left.reason, right.reason) ||
-          compareCanonicalText(left.digest, right.digest),
-      );
-      const sortedDigests = [...candidateDigests].sort(compareCanonicalText);
       const factInputs = [
         ...sortedFacts.map((fact) => ({
           stableKey: fact.stableKey,
           decisionId: fact.decisionId,
           revision: fact.revision,
         })),
-        ...preExcluded.flatMap((item) =>
-          item.subject.kind === "accepted-fact"
-            ? [
-                {
-                  stableKey: item.subject.stableKey,
-                  decisionId: item.subject.decisionId,
-                  revision: item.subject.revision,
-                },
-              ]
-            : [],
-        ),
+        ...supersededFacts,
       ].sort((left, right) => compareCanonicalText(left.stableKey, right.stableKey));
-      if (factInputs.length > MARKETING_EVIDENCE_MAX_FACT_ALLOWLIST) {
-        throw new MarketingEvidenceContextError({
-          reason: "candidate_limit_exceeded",
-          reference: "accepted-fact-inputs",
-        });
-      }
-      const receiptWithoutHash: Schema.Json = {
-        asOf: DateTime.formatIso(asOf),
-        ...(plan === undefined
-          ? {}
-          : {
-              planInput: {
-                planId: plan.planId,
-                revisionId: plan.revision.revisionId,
-                version: plan.revision.version,
-                ...(plan.stageKey === undefined ? {} : { stageKey: plan.stageKey }),
-                ...(plan.stepKey === undefined ? {} : { stepKey: plan.stepKey }),
-              },
-            }),
-        sourceInputs: sourceAllowlist.map(sourceReferenceJson),
-        factInputs: factInputs.map((fact) => ({
-          stableKey: fact.stableKey,
-          decisionId: fact.decisionId,
-          revisionId: fact.revision.revisionId,
-          version: fact.revision.version,
-        })),
-        candidateDigests: sortedDigests,
-        included: sortedIncluded.map((item) => ({
-          subject: subjectJson(item.subject),
-          digest: item.digest,
-          tokenCount: item.tokenCount,
-        })),
-        excluded: sortedExcluded.map((item) => ({
-          subject: subjectJson(item.subject),
-          digest: item.digest,
-          reason: item.reason,
-          tokenCount: item.tokenCount,
-        })),
-        envelopeTokenCount,
-        includedTokenCount,
-        budget,
-        tokenizerRef: budget.tokenizerRef,
-        policyRef: budget.policyRef,
-      };
-      const packetContent: Schema.Json = {
-        ...encodeEnvelope({
+      const candidateDigests = items
+        .filter(({ subject }) => subject.kind !== "source")
+        .map(({ digest }) => digest)
+        .sort(compareCanonicalText);
+
+      const buildPacket = (
+        packetTokenCount: number,
+        packetSha256: MarketingEvidenceSha256,
+      ): MarketingEvidenceContextPacket => {
+        const includedItems = items.filter(({ included }) => included);
+        const includedDigests = new Set(includedItems.map(({ digest }) => digest));
+        const requiredOmitted = items.some(
+          (item) =>
+            !item.included &&
+            item.required &&
+            (item.reason !== "duplicate" || !includedDigests.has(item.digest)),
+        );
+        const derivedSystemGaps = requiredOmitted
+          ? [...systemGaps, requiredOmissionGap]
+          : systemGaps;
+        const gaps = sortUniqueGaps(userGaps, derivedSystemGaps);
+        const blockingCodes: MarketingEvidenceStateCode[] = [];
+        if (gaps.some(({ blocks }) => blocks)) blockingCodes.push(blockingGapCode);
+        if (requiredOmitted) blockingCodes.push(requiredOmissionCode);
+        const readiness =
+          blockingCodes.length === 0
+            ? initialReadiness
+            : forceBlocked(initialReadiness, blockingCodes);
+        const included = includedItems
+          .map(({ subject, digest, required, tokenCount }) => ({
+            subject,
+            digest,
+            required,
+            tokenCount,
+          }))
+          .sort(
+            (left, right) =>
+              compareCanonicalText(left.digest, right.digest) ||
+              compareReceiptSubject(left.subject, right.subject),
+          );
+        const excluded = items
+          .filter(({ included }) => !included)
+          .map(({ subject, digest, reason, required, tokenCount }) => ({
+            subject,
+            digest,
+            reason: reason ?? "budget",
+            required,
+            tokenCount,
+          }))
+          .sort(
+            (left, right) =>
+              compareReceiptSubject(left.subject, right.subject) ||
+              compareCanonicalText(left.reason, right.reason) ||
+              compareCanonicalText(left.digest, right.digest),
+          );
+        const includedFacts = items.flatMap((item) =>
+          item.included && item.fact !== undefined ? [item.fact] : [],
+        );
+        const includedEvidence = items.flatMap((item) =>
+          item.included && item.evidence !== undefined ? [item.evidence] : [],
+        );
+        const includedTokenCount = included.reduce((total, item) => total + item.tokenCount, 0);
+
+        return {
+          format: MARKETING_EVIDENCE_CONTEXT_FORMAT,
           workspace,
           asOf,
           ...(plan === undefined ? {} : { plan }),
           sources,
+          acceptedFacts: includedFacts,
+          evidence: includedEvidence,
           assumptions,
           conflicts,
           gaps,
           questions,
-          signals,
+          disconfirmationSignals: signals,
           readiness,
-          unresolved,
-        }),
-        acceptedFacts: includedFacts.map(factJson),
-        evidence: includedEvidence.map(evidenceJson),
-        budget,
-        receipt: receiptWithoutHash,
-      };
-      const packetSha256 = sha256(canonicalJson(packetContent));
-
-      return {
-        format: MARKETING_EVIDENCE_CONTEXT_FORMAT,
-        workspace,
-        asOf,
-        ...(plan === undefined ? {} : { plan }),
-        sources,
-        acceptedFacts: includedFacts,
-        evidence: includedEvidence,
-        assumptions,
-        conflicts,
-        gaps,
-        questions,
-        disconfirmationSignals: signals,
-        readiness,
-        unresolvedDecisions: unresolved,
-        budget,
-        receipt: {
-          asOf,
-          ...(plan === undefined ? {} : { planInput: plan }),
-          sourceInputs: sourceAllowlist,
-          factInputs,
-          candidateDigests: sortedDigests,
-          included: sortedIncluded,
-          excluded: sortedExcluded,
-          envelopeTokenCount,
-          includedTokenCount,
+          unresolvedDecisions: unresolved,
           budget,
-          packetSha256,
-          tokenizerRef: budget.tokenizerRef,
-          policyRef: budget.policyRef,
-        },
+          receipt: {
+            asOf,
+            ...(plan === undefined ? {} : { planInput: plan }),
+            retrievalQuerySha256,
+            adapterInputs,
+            sourceInputs: sourceAllowlist,
+            factInputs,
+            candidateDigests,
+            included,
+            excluded,
+            includedTokenCount,
+            packetTokenCount,
+            budget,
+            packetSha256,
+            tokenizerRef: budget.tokenizerRef,
+            policyRef: budget.policyRef,
+          },
+        };
       };
+
+      const measurePacket = (): {
+        readonly packet: MarketingEvidenceContextPacket;
+        readonly tokenCount: number;
+      } => {
+        let tokenCount = 0;
+        for (let attempt = 0; attempt < 16; attempt += 1) {
+          const packet = decodePacket(buildPacket(tokenCount, zeroPacketDigest));
+          const next = estimateTokens(canonicalJson(packetJson(packet)));
+          if (next === tokenCount) return { packet, tokenCount };
+          tokenCount = next;
+        }
+        throw new MarketingEvidenceContextError({
+          reason: "invalid_context_input",
+          reference: decodeSafeReference("packet-token-fixed-point"),
+        });
+      };
+
+      let includedCount = 0;
+      let admittedCandidateBytes = 0;
+      const perSourceCount = new Map<string, number>();
+      for (const item of items) {
+        if (item.kind === "pre-excluded" || item.reason !== "budget") continue;
+        if (item.kind === "evidence") {
+          const sourceKey = item.sourceKey;
+          if (sourceKey === undefined) {
+            throw new MarketingEvidenceContextError({
+              reason: "invalid_context_input",
+              reference: decodeSafeReference("missing-candidate-source"),
+            });
+          }
+          if (
+            (perSourceCount.get(sourceKey) ?? 0) >= budget.maxPerSource ||
+            admittedCandidateBytes + item.candidateBytes > budget.maxCandidateBytes
+          ) {
+            continue;
+          }
+        }
+        if (includedCount >= budget.maxItems) continue;
+
+        item.included = true;
+        delete item.reason;
+        const trial = measurePacket();
+        if (trial.tokenCount > budget.maxTokens) {
+          item.included = false;
+          item.reason = "budget";
+          continue;
+        }
+        includedCount += 1;
+        if (item.kind === "evidence" && item.sourceKey !== undefined) {
+          admittedCandidateBytes += item.candidateBytes;
+          perSourceCount.set(item.sourceKey, (perSourceCount.get(item.sourceKey) ?? 0) + 1);
+        }
+      }
+
+      const measured = measurePacket();
+      if (measured.tokenCount > budget.maxTokens) {
+        throw new MarketingEvidenceContextError({
+          reason: "budget_too_small",
+          reference: decodeSafeReference("complete-packet-envelope"),
+        });
+      }
+      const packetSha256 = sha256(canonicalJson(packetDigestJson(measured.packet)));
+      const finalPacket = decodePacket(buildPacket(measured.tokenCount, packetSha256));
+      const finalTokenCount = estimateTokens(canonicalJson(packetJson(finalPacket)));
+      if (
+        finalTokenCount !== measured.tokenCount ||
+        finalTokenCount > finalPacket.budget.maxTokens ||
+        finalPacket.receipt.packetTokenCount !== finalTokenCount
+      ) {
+        throw new MarketingEvidenceContextError({
+          reason: "invalid_context_input",
+          reference: decodeSafeReference("final-packet-validation"),
+        });
+      }
+      return finalPacket;
     },
     catch: (cause) =>
       isEvidenceContextError(cause)
         ? cause
         : new MarketingEvidenceContextError({ reason: "invalid_context_input" }),
   });
-}
-
-function sourceReceiptExclusion(
-  source: MarketingSourceLineageReference,
-  reason: Extract<MarketingEvidenceExclusionReason, "inaccessible" | "unindexed" | "stale-policy">,
-): MarketingEvidenceReceiptExcludedItem {
-  return {
-    subject: { kind: "source", source },
-    digest: sourceDigest(source),
-    reason,
-    tokenCount: 0,
-  };
-}
-
-function factReceiptExclusion(
-  stableKey: MarketingEvidenceStableKey,
-  decisionId: MarketingDecisionId,
-  revision: MarketingCanonicalRevisionReference,
-): MarketingEvidenceReceiptExcludedItem {
-  const subject: MarketingEvidenceReceiptSubject = {
-    kind: "accepted-fact",
-    stableKey,
-    decisionId,
-    revision,
-  };
-  return {
-    subject,
-    digest: sha256(canonicalJson(subjectJson(subject))),
-    reason: "superseded",
-    tokenCount: 0,
-  };
 }

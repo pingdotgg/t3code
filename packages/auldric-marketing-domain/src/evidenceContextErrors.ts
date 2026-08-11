@@ -1,5 +1,13 @@
 import * as Schema from "effect/Schema";
 
+export const MarketingEvidenceSafeReference = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^[a-z0-9](?:[a-z0-9._:@-]{0,198}[a-z0-9])?$/u),
+).pipe(Schema.brand("MarketingEvidenceSafeReference"));
+export type MarketingEvidenceSafeReference = typeof MarketingEvidenceSafeReference.Type;
+
 export const MarketingEvidenceContextFailureReason = Schema.Literals([
   "invalid_context_input",
   "source_not_allowlisted",
@@ -16,7 +24,7 @@ export class MarketingEvidenceContextError extends Schema.TaggedErrorClass<Marke
   "MarketingEvidenceContextError",
   {
     reason: MarketingEvidenceContextFailureReason,
-    reference: Schema.optionalKey(Schema.String),
+    reference: Schema.optionalKey(MarketingEvidenceSafeReference),
   },
 ) {
   override get message(): string {
@@ -44,7 +52,7 @@ export class MarketingEvidenceServiceError extends Schema.TaggedErrorClass<Marke
   "MarketingEvidenceServiceError",
   {
     reason: MarketingEvidenceServiceFailureReason,
-    reference: Schema.optionalKey(Schema.String),
+    reference: Schema.optionalKey(MarketingEvidenceSafeReference),
   },
 ) {
   override get message(): string {

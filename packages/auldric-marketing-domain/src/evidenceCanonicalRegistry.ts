@@ -279,7 +279,7 @@ export const marketingEvidenceCanonicalSchemaHandler: MarketingCanonicalSchemaHa
           return Effect.try({
             try: () => factPayloadJson(fact),
             catch: () => validationFailure("payload_schema_invalid", schemaText(context.schema)),
-          });
+          }).pipe(Effect.flatMap(decodeFactPayload), Effect.map(factPayloadJson));
         }),
         Effect.mapError(() =>
           validationFailure("payload_schema_invalid", schemaText(context.schema)),
