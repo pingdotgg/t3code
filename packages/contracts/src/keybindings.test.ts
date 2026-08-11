@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
 import {
+  BUILT_IN_KEYBINDING_COMMANDS,
   KeybindingsConfig,
   KeybindingRule,
   ResolvedKeybindingRule,
@@ -78,6 +79,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThemeEditor.command, "themeEditor.toggle");
 
+    const parsedVoiceToggle = yield* decode(KeybindingRule, {
+      key: "mod+alt+v",
+      command: "voice.toggle",
+    });
+    assert.strictEqual(parsedVoiceToggle.command, "voice.toggle");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
@@ -101,6 +108,16 @@ it.effect("parses keybinding rules", () =>
       command: "thread.previous",
     });
     assert.strictEqual(parsedThreadPrevious.command, "thread.previous");
+  }),
+);
+
+it.effect("exports every built-in keybinding command accepted by the schema", () =>
+  Effect.gen(function* () {
+    assert.include(BUILT_IN_KEYBINDING_COMMANDS, "voice.toggle");
+    for (const command of BUILT_IN_KEYBINDING_COMMANDS) {
+      const parsed = yield* decode(KeybindingRule, { key: "mod+alt+v", command });
+      assert.strictEqual(parsed.command, command);
+    }
   }),
 );
 

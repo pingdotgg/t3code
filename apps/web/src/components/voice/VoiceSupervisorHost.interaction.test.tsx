@@ -9,6 +9,7 @@ import type {
   VoiceSupervisorConfirmation,
   VoiceSupervisorHostStartInput,
 } from "../../voice/voiceSupervisorHost";
+import { useVoicePanelStore } from "../../voice/voicePanelStore";
 
 const effectHarness = vi.hoisted(() => {
   interface EffectSlot {
@@ -55,43 +56,54 @@ const effectHarness = vi.hoisted(() => {
   };
 });
 
-const testState = vi.hoisted(() => ({
-  environments: [] as ReadonlyArray<unknown>,
-  primaryEnvironmentId: null as string | null,
-  preparedById: new Map<string, unknown>(),
-  snapshot: { confirmations: [] as ReadonlyArray<unknown> },
-  voice: {
-    generation: 0,
-    phase: "idle",
-    muted: false,
-    sessionId: null,
-    errorMessage: null as string | null,
-    transcript: [] as ReadonlyArray<unknown>,
-    activity: [] as ReadonlyArray<unknown>,
-    beginSession: vi.fn(),
-    markConnected: vi.fn(),
-    setMuted: vi.fn(),
-    ingestEvent: vi.fn(),
-    failSession: vi.fn(),
-    endSession: vi.fn(),
-    reset: vi.fn(),
-  },
-  controller: {
-    getSnapshot: vi.fn(),
-    subscribe: vi.fn(() => () => undefined),
-    start: vi.fn((_input: VoiceSupervisorHostStartInput) => 1),
-    stop: vi.fn(),
-    setMuted: vi.fn(),
-    confirm: vi.fn(),
-    deny: vi.fn(),
-    hostUnavailable: vi.fn(),
-    dispose: vi.fn(),
-  },
-  prepareMicrophone: vi.fn(),
-  readPreparedConnection: vi.fn(),
-  readAuthoritativeVoiceHostConnection: vi.fn(),
-  mintVoiceClientSecret: vi.fn(),
-}));
+const testState = vi.hoisted(() => {
+  interface PanelState {
+    readonly open: boolean;
+    readonly openVoicePanel: () => void;
+    readonly closeVoicePanel: () => void;
+    readonly toggleVoicePanel: () => void;
+  }
+
+  return {
+    panelOpen: false,
+    panelListeners: new Set<(state: PanelState, previousState: PanelState) => void>(),
+    environments: [] as ReadonlyArray<unknown>,
+    primaryEnvironmentId: null as string | null,
+    preparedById: new Map<string, unknown>(),
+    snapshot: { confirmations: [] as ReadonlyArray<unknown> },
+    voice: {
+      generation: 0,
+      phase: "idle",
+      muted: false,
+      sessionId: null,
+      errorMessage: null as string | null,
+      transcript: [] as ReadonlyArray<unknown>,
+      activity: [] as ReadonlyArray<unknown>,
+      beginSession: vi.fn(),
+      markConnected: vi.fn(),
+      setMuted: vi.fn(),
+      ingestEvent: vi.fn(),
+      failSession: vi.fn(),
+      endSession: vi.fn(),
+      reset: vi.fn(),
+    },
+    controller: {
+      getSnapshot: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+      start: vi.fn((_input: VoiceSupervisorHostStartInput) => 1),
+      stop: vi.fn(),
+      setMuted: vi.fn(),
+      confirm: vi.fn(),
+      deny: vi.fn(),
+      hostUnavailable: vi.fn(),
+      dispose: vi.fn(),
+    },
+    prepareMicrophone: vi.fn(),
+    readPreparedConnection: vi.fn(),
+    readAuthoritativeVoiceHostConnection: vi.fn(),
+    mintVoiceClientSecret: vi.fn(),
+  };
+});
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -169,6 +181,38 @@ vi.mock("../../voice/voiceSupervisorStore", () => {
     { getState: () => testState.voice },
   );
   return { useVoiceSupervisorStore };
+});
+
+vi.mock("../../voice/voicePanelStore", () => {
+  const actions = {
+    openVoicePanel: () => setOpen(true),
+    closeVoicePanel: () => setOpen(false),
+    toggleVoicePanel: () => setOpen(!testState.panelOpen),
+  };
+  const getState = () => ({ open: testState.panelOpen, ...actions });
+  const setOpen = (open: boolean) => {
+    if (open === testState.panelOpen) return;
+    const previousState = getState();
+    testState.panelOpen = open;
+    const state = getState();
+    for (const listener of testState.panelListeners) listener(state, previousState);
+  };
+  const useVoicePanelStore = Object.assign(
+    (selector: (state: ReturnType<typeof getState>) => unknown) => selector(getState()),
+    {
+      getState,
+      subscribe: (
+        listener: (
+          state: ReturnType<typeof getState>,
+          previousState: ReturnType<typeof getState>,
+        ) => void,
+      ) => {
+        testState.panelListeners.add(listener);
+        return () => testState.panelListeners.delete(listener);
+      },
+    },
+  );
+  return { useVoicePanelStore };
 });
 
 vi.mock("./VoiceSupervisorHost.logic", async (importOriginal) => {
@@ -307,6 +351,7 @@ const REMOTE_ID = EnvironmentId.make("remote");
 beforeEach(() => {
   effectHarness.reset();
   hooks.reset();
+  useVoicePanelStore.getState().closeVoicePanel();
   vi.clearAllMocks();
   const primary = environment(PRIMARY_ID, "Laptop");
   testState.environments = [primary];
@@ -340,6 +385,45 @@ afterEach(() => {
 });
 
 describe("voice supervisor host interactions", () => {
+  it("renders the singleton panel opened by another entry point without starting anything", () => {
+    let host = renderHost();
+    expect(findLauncher(host).props["aria-pressed"]).toBe(false);
+    useVoicePanelStore.getState().openVoicePanel();
+
+    host = renderHost();
+    expect(findLauncher(host).props["aria-pressed"]).toBe(true);
+    expect(collectElements(host, (element) => element.type === VoiceSupervisorPanel)).toHaveLength(
+      1,
+    );
+    expect(testState.prepareMicrophone).not.toHaveBeenCalled();
+    expect(testState.controller.start).not.toHaveBeenCalled();
+
+    useVoicePanelStore.getState().toggleVoicePanel();
+    host = renderHost();
+    expect(findLauncher(host).props["aria-pressed"]).toBe(false);
+    expect(collectElements(host, (element) => element.type === VoiceSupervisorPanel)).toHaveLength(
+      0,
+    );
+  });
+
+  it("resets an open singleton panel on unmount so a remount stays closed", () => {
+    renderHost();
+    useVoicePanelStore.getState().openVoicePanel();
+    let host = renderHost();
+    expect(findLauncher(host).props["aria-pressed"]).toBe(true);
+    expect(findPanel(host)).toBeDefined();
+
+    effectHarness.reset();
+    expect(useVoicePanelStore.getState().open).toBe(false);
+
+    hooks.reset();
+    host = renderHost();
+    expect(findLauncher(host).props["aria-pressed"]).toBe(false);
+    expect(collectElements(host, (element) => element.type === VoiceSupervisorPanel)).toHaveLength(
+      0,
+    );
+  });
+
   it("opens without touching the microphone and starts only after the explicit Start action", async () => {
     const permission = deferred<{ readonly status: "ready" }>();
     testState.prepareMicrophone.mockReturnValueOnce(permission.promise);
@@ -441,6 +525,7 @@ describe("voice supervisor host interactions", () => {
     for (const invalidate of scenarios) {
       effectHarness.reset();
       hooks.reset();
+      useVoicePanelStore.getState().closeVoicePanel();
       vi.clearAllMocks();
       testState.environments = [
         environment(PRIMARY_ID, "Laptop"),

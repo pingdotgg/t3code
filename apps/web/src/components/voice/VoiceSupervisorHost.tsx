@@ -43,6 +43,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { RealtimeSessionError } from "../../voice/realtimeSession";
+import { useVoicePanelStore } from "../../voice/voicePanelStore";
 import {
   createDefaultVoiceToolsController,
   createVoiceSupervisorHostController,
@@ -395,7 +396,9 @@ export function VoiceSupervisorHost() {
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
-  const [open, setOpen] = useState(false);
+  const open = useVoicePanelStore((state) => state.open);
+  const closeVoicePanel = useVoicePanelStore((state) => state.closeVoicePanel);
+  const toggleVoicePanel = useVoicePanelStore((state) => state.toggleVoicePanel);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const [selectedVoice, setSelectedVoice] = useState<RealtimeVoice>(DEFAULT_REALTIME_VOICE);
   const [activeEnvironmentId, setActiveEnvironmentId] = useState<EnvironmentId | null>(null);
@@ -440,20 +443,27 @@ export function VoiceSupervisorHost() {
   }, []);
 
   const hidePanel = useCallback(() => {
-    openRef.current = false;
-    cancelPendingStart();
-    setOpen(false);
-    launcherRef.current?.focus({ preventScroll: true });
-  }, [cancelPendingStart]);
+    closeVoicePanel();
+  }, [closeVoicePanel]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const unsubscribe = useVoicePanelStore.subscribe((state, previousState) => {
+      if (state.open === previousState.open) return;
+      openRef.current = state.open;
+      if (state.open) return;
+      permissionAttemptRef.current += 1;
+      setStartPending(false);
+      launcherRef.current?.focus({ preventScroll: true });
+    });
+
+    return () => {
+      unsubscribe();
       permissionAttemptRef.current += 1;
       openRef.current = false;
+      useVoicePanelStore.getState().closeVoicePanel();
       controller.dispose();
-    },
-    [controller],
-  );
+    };
+  }, [controller]);
 
   useEffect(() => {
     const current = selectedEnvironmentIdRef.current;
@@ -696,15 +706,9 @@ export function VoiceSupervisorHost() {
         aria-label={launcherLabel}
         title={launcherLabel}
         aria-expanded={open}
+        aria-pressed={open}
         aria-controls="voice-supervisor-panel"
-        onClick={() => {
-          if (openRef.current) {
-            hidePanel();
-            return;
-          }
-          openRef.current = true;
-          setOpen(true);
-        }}
+        onClick={toggleVoicePanel}
       >
         {phase === "connecting" || muted ? <MicOffIcon /> : <Mic2Icon />}
         {launcherIndicatorClass === null ? null : (

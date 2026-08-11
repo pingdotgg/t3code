@@ -106,6 +106,53 @@ export interface CommandPaletteGroup {
   readonly items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
 }
 
+export function buildVoiceCommandPaletteAction(input: {
+  readonly icon: ReactNode;
+  readonly toggleVoicePanel: () => void;
+}): CommandPaletteActionItem {
+  return {
+    kind: "action",
+    value: "action:voice-supervisor",
+    searchTerms: ["voice", "supervisor", "microphone", "talk"],
+    title: "Toggle voice supervisor",
+    icon: input.icon,
+    shortcutCommand: "voice.toggle",
+    run: async () => {
+      input.toggleVoicePanel();
+    },
+  };
+}
+
+interface VoiceToggleKeybindingEvent {
+  readonly defaultPrevented: boolean;
+  readonly isComposing: boolean;
+  readonly repeat: boolean;
+  readonly preventDefault: () => void;
+  readonly stopPropagation: () => void;
+}
+
+export function dispatchVoiceToggleKeybinding(input: {
+  readonly command: KeybindingCommand | null;
+  readonly event: VoiceToggleKeybindingEvent;
+  readonly closeCommandPalette: () => void;
+  readonly toggleVoicePanel: () => void;
+}): boolean {
+  if (
+    input.command !== "voice.toggle" ||
+    input.event.defaultPrevented ||
+    input.event.isComposing ||
+    input.event.repeat
+  ) {
+    return false;
+  }
+
+  input.event.preventDefault();
+  input.event.stopPropagation();
+  input.closeCommandPalette();
+  input.toggleVoicePanel();
+  return true;
+}
+
 export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;

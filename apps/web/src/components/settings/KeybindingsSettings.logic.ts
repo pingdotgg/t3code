@@ -1,4 +1,5 @@
 import {
+  BUILT_IN_KEYBINDING_COMMANDS,
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -256,8 +257,8 @@ export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
 ): ReadonlyArray<KeybindingCommandOption> {
   const commands = new Set<KeybindingCommand>();
-  for (const binding of DEFAULT_RESOLVED_KEYBINDINGS) {
-    commands.add(binding.command);
+  for (const command of BUILT_IN_KEYBINDING_COMMANDS) {
+    commands.add(command);
   }
   for (const binding of keybindings) {
     commands.add(binding.command);

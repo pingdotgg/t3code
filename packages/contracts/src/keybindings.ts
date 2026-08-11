@@ -47,7 +47,7 @@ export const MODEL_PICKER_KEYBINDING_COMMANDS = [
 ] as const;
 export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
-const STATIC_KEYBINDING_COMMANDS = [
+export const BUILT_IN_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
   "terminal.toggle",
   "terminal.split",
@@ -66,6 +66,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "filePicker.toggle",
   "projectSearch.toggle",
   "themeEditor.toggle",
+  "voice.toggle",
   "composer.stash",
   "chat.new",
   "chat.newLocal",
@@ -84,7 +85,7 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
 ]);
 
 export const KeybindingCommand = Schema.Union([
-  Schema.Literals(STATIC_KEYBINDING_COMMANDS),
+  Schema.Literals(BUILT_IN_KEYBINDING_COMMANDS),
   SCRIPT_RUN_COMMAND_PATTERN,
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
