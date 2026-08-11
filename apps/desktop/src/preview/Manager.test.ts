@@ -160,6 +160,8 @@ interface TestCapturedPreviewImage {
 const makeTestPreviewWebContents = (
   capturePage: () => Promise<TestCapturedPreviewImage>,
   id = 42,
+  loadURL = vi.fn(async () => undefined),
+  setWindowOpenHandler = vi.fn(),
 ) =>
   ({
     id,
@@ -170,12 +172,13 @@ const makeTestPreviewWebContents = (
     isLoading: () => false,
     getZoomFactor: () => 1,
     setZoomFactor: vi.fn(),
+    loadURL,
     on: vi.fn(),
     off: vi.fn(),
     ipc: { on: vi.fn(), off: vi.fn() },
     send: webviewSend,
     navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-    setWindowOpenHandler: vi.fn(),
+    setWindowOpenHandler,
     debugger: {
       isAttached: () => false,
       attach: vi.fn(),
@@ -229,6 +232,53 @@ describe("PreviewManager", () => {
     createFromPath.mockClear();
     webviewSend.mockClear();
   });
+
+  effectIt.effect("validates preview popup URLs before loading them", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const loadURL = vi.fn(async () => undefined);
+        const setWindowOpenHandler = vi.fn();
+        const webContents = makeTestPreviewWebContents(
+          async () => ({
+            toJPEG: () => Buffer.from("popup-url-validation"),
+            getSize: () => ({ width: 1, height: 1 }),
+          }),
+          42,
+          loadURL,
+          setWindowOpenHandler,
+        );
+        fromId.mockReturnValue(webContents);
+
+        yield* manager.createTab("tab_popup_url_validation");
+        yield* manager.registerWebview("tab_popup_url_validation", 42);
+
+        expect(setWindowOpenHandler).toHaveBeenCalledOnce();
+        const handler = setWindowOpenHandler.mock.calls[0]?.[0] as
+          | ((details: { readonly url: string }) => { readonly action: string })
+          | undefined;
+        expect(handler).toBeDefined();
+        if (!handler) return;
+
+        for (const url of [
+          "",
+          "data:text/html,<script>document.body.innerText='blocked'</script>",
+          "file:///tmp/preview.html",
+          "javascript:document.body.innerText='blocked'",
+          "http://[::1",
+        ]) {
+          expect(handler({ url })).toEqual({ action: "deny" });
+        }
+        expect(loadURL).not.toHaveBeenCalled();
+
+        expect(handler({ url: "http://localhost:3200" })).toEqual({ action: "deny" });
+        expect(handler({ url: "https://example.com/path" })).toEqual({ action: "deny" });
+        yield* Effect.yieldNow;
+
+        expect(loadURL).toHaveBeenNthCalledWith(1, "http://localhost:3200/");
+        expect(loadURL).toHaveBeenNthCalledWith(2, "https://example.com/path");
+      }),
+    ),
+  );
 
   effectIt.effect("reports an unregistered webview as temporarily unavailable", () =>
     withManager((manager) =>

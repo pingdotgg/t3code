@@ -1407,9 +1407,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-fail-load", failed as never);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.setWindowOpenHandler(({ url }) => {
+          let normalizedUrl: string;
+          try {
+            normalizedUrl = normalizePreviewUrl(url);
+          } catch {
+            return { action: "deny" };
+          }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
-              wc.loadURL(url),
+              wc.loadURL(normalizedUrl),
             ).pipe(Effect.ignore),
           );
           return { action: "deny" };
