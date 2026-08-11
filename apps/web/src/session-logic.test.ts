@@ -722,6 +722,79 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("exposes completed image generation metadata without retaining its saved path", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "generated-image",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          data: {
+            item: {
+              type: "imageGeneration",
+              status: "completed",
+              savedPath: "C:\\provider\\session\\images\\generated.png",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.generatedImage).toEqual({
+      activityId: "generated-image",
+      name: "generated.png",
+    });
+    expect(JSON.stringify(entry)).not.toContain("provider\\session");
+  });
+
+  it("reads generated image metadata from projected activity payloads", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "projected-generated-image",
+        kind: "tool.completed",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          data: {
+            item: {
+              type: "imageGeneration",
+              status: "completed",
+              fileName: "projected.png",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.generatedImage).toEqual({
+      activityId: "projected-generated-image",
+      name: "projected.png",
+    });
+  });
+
+  it("does not expose incomplete image generation metadata", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "generated-image",
+        kind: "tool.updated",
+        summary: "Image view",
+        payload: {
+          itemType: "image_view",
+          data: {
+            item: {
+              type: "imageGeneration",
+              status: "inProgress",
+              fileName: "generated.png",
+            },
+          },
+        },
+      }),
+    ]);
+
+    expect(entry?.generatedImage).toBeUndefined();
+  });
+
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

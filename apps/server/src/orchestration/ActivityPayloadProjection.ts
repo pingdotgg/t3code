@@ -104,6 +104,28 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
   return Object.keys(projectedItem).length > 0 ? projectedItem : undefined;
 }
 
+function projectGeneratedImageData(data: Record<string, unknown>): Record<string, unknown> {
+  const item = asRecord(data.item);
+  const savedPath = asTrimmedString(item?.savedPath);
+  const fileName = savedPath?.replaceAll("\\", "/").split("/").at(-1)?.trim();
+  const projectedData: Record<string, unknown> = {};
+
+  if (item?.type === "imageGeneration" && item.status === "completed" && fileName) {
+    projectedData.item = {
+      type: "imageGeneration",
+      status: "completed",
+      fileName,
+    };
+  }
+  if ("toolCallId" in data) {
+    projectedData.toolCallId = data.toolCallId;
+  }
+  if ("kind" in data) {
+    projectedData.kind = data.kind;
+  }
+  return projectedData;
+}
+
 function summarizeToolTextOutput(value: string): string | null {
   const lines: string[] = [];
   for (const rawLine of value.split(/\r?\n/u)) {
@@ -278,6 +300,16 @@ export function projectActivityPayload(
       payload: {
         ...payload,
         data: projectMcpToolCallData(data),
+      },
+    };
+  }
+
+  if (payload.itemType === "image_view" && asRecord(data.item)?.type === "imageGeneration") {
+    return {
+      ...activity,
+      payload: {
+        ...payload,
+        data: projectGeneratedImageData(data),
       },
     };
   }

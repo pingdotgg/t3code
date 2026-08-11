@@ -149,6 +149,7 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
+import { GeneratedImagePanel } from "./chat/GeneratedImagePanel";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -6062,6 +6063,14 @@ function ChatViewContent(props: ChatViewProps) {
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
+      />
+    ) : activeRightPanelSurface?.kind === "generated-image" && activeThreadRef ? (
+      <GeneratedImagePanel
+        key={`${activeRightPanelSurface.id}:${activeRightPanelSurface.loadRequestId}`}
+        threadRef={activeThreadRef}
+        activityId={activeRightPanelSurface.activityId}
+        name={activeRightPanelSurface.name}
+        loadRequestId={activeRightPanelSurface.loadRequestId}
       />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&

@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -27,6 +28,7 @@ const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
@@ -468,6 +470,191 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
       }
+    }),
+  );
+
+  it.effect("reads one generated image path without hydrating thread detail", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-generated-image',
+          'Generated Image Project',
+          '/tmp/generated-image-project',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-08-10T00:00:00.000Z',
+          '2026-08-10T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-generated-image',
+          'project-generated-image',
+          'Generated Image Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-08-10T00:00:00.000Z',
+          '2026-08-10T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      const savedPath = "/provider/session/ generated.png ";
+      const generatedPayload = encodeJson({
+        data: {
+          item: {
+            type: "imageGeneration",
+            status: "completed",
+            savedPath,
+            result: "base64-payload-that-must-not-be-selected",
+          },
+        },
+      });
+      const whitespacePathPayload = encodeJson({
+        data: {
+          item: {
+            type: "imageGeneration",
+            status: "completed",
+            savedPath: "   ",
+          },
+        },
+      });
+      const incompletePayload = encodeJson({
+        data: {
+          item: {
+            type: "imageGeneration",
+            status: "inProgress",
+            savedPath: "/provider/session/incomplete.png",
+          },
+        },
+      });
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          created_at
+        )
+        VALUES
+          (
+            'activity-generated-image',
+            'thread-generated-image',
+            NULL,
+            'tool',
+            'tool.completed',
+            'Image generated',
+            ${generatedPayload},
+            '2026-08-10T00:00:01.000Z'
+          ),
+          (
+            'activity-whitespace-path',
+            'thread-generated-image',
+            NULL,
+            'tool',
+            'tool.completed',
+            'Image generated',
+            ${whitespacePathPayload},
+            '2026-08-10T00:00:02.000Z'
+          ),
+          (
+            'activity-incomplete-image',
+            'thread-generated-image',
+            NULL,
+            'tool',
+            'tool.completed',
+            'Image generation in progress',
+            ${incompletePayload},
+            '2026-08-10T00:00:03.000Z'
+          )
+      `;
+
+      const generatedImagePath = yield* snapshotQuery.getGeneratedImagePath(
+        ThreadId.make("thread-generated-image"),
+        EventId.make("activity-generated-image"),
+      );
+      assert.equal(generatedImagePath._tag, "Some");
+      if (generatedImagePath._tag === "Some") {
+        assert.equal(generatedImagePath.value, savedPath);
+      }
+
+      const whitespacePath = yield* snapshotQuery.getGeneratedImagePath(
+        ThreadId.make("thread-generated-image"),
+        EventId.make("activity-whitespace-path"),
+      );
+      assert.equal(whitespacePath._tag, "None");
+
+      const missingActivity = yield* snapshotQuery.getGeneratedImagePath(
+        ThreadId.make("thread-generated-image"),
+        EventId.make("activity-missing"),
+      );
+      assert.equal(missingActivity._tag, "None");
+
+      const incompleteImage = yield* snapshotQuery.getGeneratedImagePath(
+        ThreadId.make("thread-generated-image"),
+        EventId.make("activity-incomplete-image"),
+      );
+      assert.equal(incompleteImage._tag, "None");
+
+      yield* sql`
+        UPDATE projection_threads
+        SET archived_at = '2026-08-10T00:00:04.000Z'
+        WHERE thread_id = 'thread-generated-image'
+      `;
+      const archivedImage = yield* snapshotQuery.getGeneratedImagePath(
+        ThreadId.make("thread-generated-image"),
+        EventId.make("activity-generated-image"),
+      );
+      assert.equal(archivedImage._tag, "None");
     }),
   );
 

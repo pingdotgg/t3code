@@ -46,6 +46,7 @@ import {
   type ServerSelfUpdateProgressEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  AssetGeneratedImageNotFoundError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
@@ -1829,6 +1830,27 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               if (input.resource._tag === "attachment") {
                 return yield* issueAssetUrl({ resource: input.resource });
+              }
+              if (input.resource._tag === "generated-image") {
+                const resource = input.resource;
+                const generatedImagePath = yield* projectionSnapshotQuery
+                  .getGeneratedImagePath(resource.threadId, resource.activityId)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new AssetWorkspaceContextResolutionError({
+                          resource,
+                          cause,
+                        }),
+                    ),
+                  );
+                if (Option.isNone(generatedImagePath)) {
+                  return yield* new AssetGeneratedImageNotFoundError({ resource });
+                }
+                return yield* issueAssetUrl({
+                  resource,
+                  generatedImagePath: generatedImagePath.value,
+                });
               }
               if (input.resource._tag === "project-favicon") {
                 const project = yield* projectionSnapshotQuery

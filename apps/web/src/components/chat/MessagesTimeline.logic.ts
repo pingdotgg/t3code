@@ -394,6 +394,11 @@ function deriveTurnFolds(input: {
       if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
         continue;
       }
+      // Generated images are durable turn evidence. Keep their link visible
+      // after the rest of the settled tool activity folds away.
+      if (entry.kind === "work" && entry.entry.generatedImage !== undefined) {
+        continue;
+      }
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
@@ -505,8 +510,10 @@ export function deriveMessagesTimelineRows(input: {
       while (cursor < input.timelineEntries.length) {
         const nextEntry = input.timelineEntries[cursor];
         if (
+          timelineEntry.entry.generatedImage !== undefined ||
           !nextEntry ||
           nextEntry.kind !== "work" ||
+          nextEntry.entry.generatedImage !== undefined ||
           collapsedEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id)
         ) {

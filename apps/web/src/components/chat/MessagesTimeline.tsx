@@ -54,6 +54,7 @@ import {
   EyeIcon,
   GlobeIcon,
   HammerIcon,
+  ImageIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
@@ -106,6 +107,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 import {
   buildInlineTerminalContextText,
@@ -2117,6 +2119,32 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
+const GeneratedImageWorkEntryLink = memo(function GeneratedImageWorkEntryLink(props: {
+  image: NonNullable<TimelineWorkEntry["generatedImage"]>;
+}) {
+  const { threadRef } = use(TimelineRowCtx);
+  if (!threadRef) {
+    return null;
+  }
+
+  return (
+    <button
+      type="button"
+      className="mt-0.5 ms-7 flex max-w-[calc(100%_-_1.75rem)] items-center gap-1.5 rounded-sm text-left text-xs text-info-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+      aria-label={`Open generated image ${props.image.name}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        useRightPanelStore
+          .getState()
+          .openGeneratedImage(threadRef, props.image.activityId, props.image.name);
+      }}
+    >
+      <ImageIcon className="size-3.5 shrink-0" aria-hidden />
+      <span className="truncate">{props.image.name}</span>
+    </button>
+  );
+});
+
 /**
  * A1 spawn CTA: one anchored row per workflow run (or per-turn direct-spawn
  * batch). Live status is derived from the shared agent panel model at render
@@ -2220,7 +2248,14 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   if (workEntry.agentSpawn) {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
   }
-  return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
+  return (
+    <>
+      <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />
+      {workEntry.generatedImage ? (
+        <GeneratedImageWorkEntryLink image={workEntry.generatedImage} />
+      ) : null}
+    </>
+  );
 });
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {

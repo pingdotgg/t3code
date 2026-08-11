@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, EventId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -311,6 +311,96 @@ describe("rightPanelStore", () => {
           revealRequestId: 3,
         },
       ],
+    });
+  });
+
+  it("reuses generated-image surfaces while refreshing them when reopened", () => {
+    const activityId = EventId.make("activity-generated-image");
+
+    useRightPanelStore.getState().openGeneratedImage(refA, activityId, "first-name.png");
+    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openGeneratedImage(refA, activityId, "generated.png");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "generated-image:activity-generated-image",
+      surfaces: [
+        {
+          id: "generated-image:activity-generated-image",
+          kind: "generated-image",
+          activityId,
+          name: "generated.png",
+          loadRequestId: 2,
+        },
+        { id: "agents", kind: "agents" },
+      ],
+    });
+  });
+
+  it("migrates generated-image surfaces with a neutral load request", () => {
+    expect(useRightPanelStore.persist.getOptions().version).toBe(12);
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "generated-image:activity-generated-image",
+            surfaces: [
+              {
+                id: "generated-image:activity-generated-image",
+                kind: "generated-image",
+                activityId: "activity-generated-image",
+                name: "generated.png",
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "generated-image:activity-generated-image",
+          surfaces: [
+            {
+              id: "generated-image:activity-generated-image",
+              kind: "generated-image",
+              activityId: "activity-generated-image",
+              name: "generated.png",
+              loadRequestId: 0,
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("drops malformed generated-image surfaces during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "generated-image:wrong-id",
+            surfaces: [
+              {
+                id: "generated-image:wrong-id",
+                kind: "generated-image",
+                activityId: "activity-generated-image",
+                name: "generated.png",
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: null,
+          surfaces: [],
+        },
+      },
     });
   });
 

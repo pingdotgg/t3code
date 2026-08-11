@@ -1,6 +1,7 @@
 import {
   ChatAttachment,
   CheckpointRef,
+  EventId,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -134,6 +135,13 @@ const ProjectIdLookupInput = Schema.Struct({
 });
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
+});
+const GeneratedImagePathLookupInput = Schema.Struct({
+  threadId: ThreadId,
+  activityId: EventId,
+});
+const GeneratedImagePathRowSchema = Schema.Struct({
+  savedPath: Schema.NullOr(Schema.String),
 });
 // Windowed reads order turns by the stable keyset (anchor, turn key), where
 // anchor is requested_at and turn key is
@@ -1021,6 +1029,31 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sequence ASC,
           created_at ASC,
           activity_id ASC
+      `,
+  });
+
+  const getGeneratedImagePathRow = SqlSchema.findOneOption({
+    Request: GeneratedImagePathLookupInput,
+    Result: GeneratedImagePathRowSchema,
+    execute: ({ threadId, activityId }) =>
+      sql`
+        SELECT
+          CASE
+            WHEN json_type(activities.payload_json, '$.data.item.savedPath') = 'text'
+              THEN json_extract(activities.payload_json, '$.data.item.savedPath')
+            ELSE NULL
+          END AS "savedPath"
+        FROM projection_thread_activities AS activities
+        INNER JOIN projection_threads AS threads
+          ON threads.thread_id = activities.thread_id
+        WHERE activities.thread_id = ${threadId}
+          AND activities.activity_id = ${activityId}
+          AND activities.kind = 'tool.completed'
+          AND json_extract(activities.payload_json, '$.data.item.type') = 'imageGeneration'
+          AND json_extract(activities.payload_json, '$.data.item.status') = 'completed'
+          AND threads.archived_at IS NULL
+          AND threads.deleted_at IS NULL
+        LIMIT 1
       `,
   });
 
@@ -2522,6 +2555,26 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     getThreadDetailByIdBounded(threadId, undefined);
 
+  const getGeneratedImagePath: ProjectionSnapshotQueryShape["getGeneratedImagePath"] = (
+    threadId,
+    activityId,
+  ) =>
+    getGeneratedImagePathRow({ threadId, activityId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getGeneratedImagePath:query",
+          "ProjectionSnapshotQuery.getGeneratedImagePath:decodeRow",
+        ),
+      ),
+      Effect.map((row) => {
+        if (Option.isNone(row) || row.value.savedPath === null) {
+          return Option.none<string>();
+        }
+        const savedPath = row.value.savedPath;
+        return savedPath.trim().length > 0 ? Option.some(savedPath) : Option.none<string>();
+      }),
+    );
+
   // Bounds pathological fan-out: one user turn that spawned hundreds of
   // subagent turns still pages in bounded chunks, at the cost of splitting the
   // fan-out group across pages (the cursor continues the same group). Also
@@ -2678,6 +2731,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,
+    getGeneratedImagePath,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
