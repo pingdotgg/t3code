@@ -103,8 +103,15 @@ export function applyAppearanceFontVariables(
   root: HTMLElement,
   preferences: AppearanceFontPreferences,
 ): void {
+  const windowsSans = root.classList.contains("windows");
   const families: ReadonlyArray<readonly [variable: string, custom: string, fallback: string]> = [
-    ["--font-sans", preferences.sans, DEFAULT_SANS_FONT_STACK],
+    // On Windows the stylesheet default already prefers Inter, so custom
+    // families must prepend to the same stack or glyph fallbacks skip it.
+    [
+      "--font-sans",
+      preferences.sans,
+      windowsSans ? WINDOWS_SANS_FONT_STACK : DEFAULT_SANS_FONT_STACK,
+    ],
     ["--font-mono", preferences.code, DEFAULT_CODE_FONT_STACK],
     // The composer falls back to whatever the sans preference resolves to.
     ["--font-composer", preferences.composer, "var(--font-sans)"],

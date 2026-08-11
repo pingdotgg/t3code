@@ -1084,7 +1084,11 @@ function useFontDefaultFamilies() {
     : DEFAULT_SANS_FONT_STACK;
   const defaults = useMemo(
     () => ({
-      sans: resolveDefaultFamilyLabel(sansStack) ?? "System default",
+      // The canvas probe cannot measure the bundled Inter webfont before it
+      // renders, so on Windows fall back to naming it directly.
+      sans:
+        resolveDefaultFamilyLabel(sansStack) ??
+        (isWindowsPlatform(navigator.platform) ? "Inter Variable" : "System default"),
       code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
     }),
     [sansStack],

@@ -7,6 +7,7 @@ import {
   clampPromptFontSize,
   DEFAULT_CODE_FONT_STACK,
   DEFAULT_SANS_FONT_STACK,
+  WINDOWS_SANS_FONT_STACK,
   appearanceFontStack,
   cssFontFamilies,
   resolveDefaultFamilyLabel,
@@ -67,6 +68,12 @@ describe("appearanceFontStack", () => {
 
   it("falls back to the default stack when unset", () => {
     expect(appearanceFontStack("", DEFAULT_SANS_FONT_STACK)).toBe(DEFAULT_SANS_FONT_STACK);
+  });
+
+  it("prepends to the Windows stack on Windows so Inter stays in the fallback chain", () => {
+    expect(appearanceFontStack("Cascadia Code", WINDOWS_SANS_FONT_STACK)).toBe(
+      `"Cascadia Code", ${WINDOWS_SANS_FONT_STACK}`,
+    );
   });
 });
 
