@@ -1,5 +1,4 @@
 import { type ProviderBankedReset, type ProviderQuotaConsumeResetInput } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { BotIcon } from "lucide-react";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
@@ -7,9 +6,9 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { randomUUID } from "../../lib/utils";
+import { usePrimaryEnvironment } from "../../state/environments";
 import { type PrimaryProviderQuotaState, usePrimaryProviderQuota } from "../../state/providerQuota";
-import { primaryServerProvidersAtom } from "../../state/server";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 import { DRIVER_OPTIONS } from "../settings/providerDriverMeta";
 import {
@@ -80,6 +79,25 @@ function consumeErrorMessage(result: Parameters<typeof squashAtomCommandFailure>
     : "The reset request could not be completed. Try again.";
 }
 
+export function prepareProviderResetConsumption(input: {
+  readonly attempt: ProviderResetAttemptState;
+  readonly instanceId: ProviderQuotaConsumeResetInput["instanceId"];
+  readonly creditId: NonNullable<ProviderQuotaConsumeResetInput["creditId"]>;
+}): {
+  readonly attempt: ProviderResetAttemptState;
+  readonly input: ProviderQuotaConsumeResetInput;
+} {
+  const attempt = confirmProviderResetAttempt(input.attempt, randomUUID);
+  return {
+    attempt,
+    input: {
+      instanceId: input.instanceId,
+      creditId: input.creditId,
+      idempotencyKey: attempt.idempotencyKey!,
+    },
+  };
+}
+
 const ProviderUsageItemSurface = memo(function ProviderUsageItemSurface({
   canOperate,
   isSmallScreen,
@@ -122,17 +140,14 @@ const ProviderUsageItemSurface = memo(function ProviderUsageItemSurface({
 
   const confirmReset = useCallback(async () => {
     if (selectedReset === null || attemptRef.current.pending) return;
-    const confirmed = confirmProviderResetAttempt(attemptRef.current, () => {
-      // @effect-diagnostics-next-line cryptoRandomUUID:off -- The wire contract explicitly requires a browser-generated idempotency key.
-      return crypto.randomUUID();
-    });
-    updateAttempt(confirmed);
-    const input: ProviderQuotaConsumeResetInput = {
+    const prepared = prepareProviderResetConsumption({
+      attempt: attemptRef.current,
       instanceId: item.instanceId,
       creditId: selectedReset.id,
-      idempotencyKey: confirmed.idempotencyKey!,
-    };
-    const result = await onConsumeReset(input);
+    });
+    const confirmed = prepared.attempt;
+    updateAttempt(confirmed);
+    const result = await onConsumeReset(prepared.input);
 
     if (result?._tag === "Success") {
       const settled = settleProviderResetAttempt(confirmed, {
@@ -256,19 +271,21 @@ export const ProviderUsageStripView = memo(function ProviderUsageStripView({
 });
 
 export function ProviderUsageStrip() {
-  const settings = usePrimarySettings();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const config = primaryEnvironment?.serverConfig ?? null;
   const quota = usePrimaryProviderQuota();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const isSmallScreen = useMediaQuery("max-sm");
   const sessionState = usePrimarySessionState();
   const rows = useMemo(
     () =>
-      deriveVisibleOrderedProviderSettingsRows({
-        settings,
-        driverOrder: DRIVER_OPTIONS.map((option) => option.value),
-        serverProviders,
-      }),
-    [serverProviders, settings],
+      config === null
+        ? []
+        : deriveVisibleOrderedProviderSettingsRows({
+            settings: config.settings,
+            driverOrder: DRIVER_OPTIONS.map((option) => option.value),
+            serverProviders: config.providers,
+          }),
+    [config],
   );
   const items = useMemo(
     () => buildProviderUsageStripItems({ rows, summary: quota.summary }),

@@ -12,6 +12,9 @@ import {
   type ProviderQuotaConsumeResetOutcome,
   type ProviderQuotaMetric,
   type ProviderQuotaSnapshot,
+  PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH,
+  PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH,
+  PROVIDER_QUOTA_LONG_TEXT_MAX_LENGTH,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
@@ -29,6 +32,15 @@ export type ProviderQuotaPublicMessage =
   (typeof ProviderQuotaPublicMessage)[keyof typeof ProviderQuotaPublicMessage];
 
 type ProviderQuotaInstance = Pick<ProviderInstance, "instanceId" | "driverKind">;
+
+export const truncateProviderQuotaIdentifier = (value: string): string =>
+  value.trim().slice(0, PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH);
+
+export const truncateProviderQuotaDisplayText = (value: string): string =>
+  value.trim().slice(0, PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH);
+
+export const truncateProviderQuotaLongText = (value: string): string =>
+  value.trim().slice(0, PROVIDER_QUOTA_LONG_TEXT_MAX_LENGTH);
 
 export class ProviderQuotaAdapterError extends Schema.TaggedErrorClass<ProviderQuotaAdapterError>()(
   "ProviderQuotaAdapterError",

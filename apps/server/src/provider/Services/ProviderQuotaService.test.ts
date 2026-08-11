@@ -488,7 +488,24 @@ describe("ProviderQuotaService", () => {
           quota: {
             read: Effect.sync(() => {
               reads += 1;
-              return snapshot("codex-reset");
+              return {
+                ...snapshot("codex-reset"),
+                bankedResets: {
+                  availableCount: 1,
+                  detailsComplete: true,
+                  resets: [
+                    {
+                      id: "credit-7",
+                      title: null,
+                      description: null,
+                      grantedAt: "2026-08-11T00:00:00.000Z",
+                      expiresAt: null,
+                      resetType: "codexRateLimits",
+                      status: "available" as const,
+                    },
+                  ],
+                },
+              };
             }),
             revision: Effect.succeed(0),
             consumeBankedReset: (input) =>
@@ -534,8 +551,88 @@ describe("ProviderQuotaService", () => {
           }),
         );
         expect(consumes).toBe(2);
-        expect(reads).toBe(3);
+        expect(reads).toBe(5);
       }).pipe(provideService(() => instances));
     },
   );
+
+  it.effect("rejects reset consumption unless the latest capability snapshot is current", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      let consumes = 0;
+      const stale = {
+        ...snapshot("codex-reset"),
+        status: "stale" as const,
+        bankedResets: {
+          availableCount: 1,
+          detailsComplete: true,
+          resets: [
+            {
+              id: "credit-7",
+              title: null,
+              description: null,
+              grantedAt: "2026-08-11T00:00:00.000Z",
+              expiresAt: null,
+              resetType: "codexRateLimits",
+              status: "available" as const,
+            },
+          ],
+        },
+      };
+      instances = [
+        makeInstance({
+          id: "codex-reset",
+          quota: {
+            read: Effect.succeed(stale),
+            revision: Effect.succeed(0),
+            consumeBankedReset: () => Effect.sync(() => consumes++).pipe(Effect.as("reset")),
+          },
+        }),
+      ];
+      const service = yield* ProviderQuotaService;
+
+      const error = yield* service
+        .consumeBankedReset({
+          instanceId: ProviderInstanceId.make("codex-reset"),
+          creditId: "credit-7",
+          idempotencyKey: "request-7",
+        })
+        .pipe(Effect.flip);
+
+      expect(error.reason).toBe("providerFailed");
+      expect(consumes).toBe(0);
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("rejects a reset credit that is no longer available in current inventory", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      let consumes = 0;
+      instances = [
+        makeInstance({
+          id: "codex-reset",
+          quota: {
+            read: Effect.succeed({
+              ...snapshot("codex-reset"),
+              bankedResets: { availableCount: 0, resets: [], detailsComplete: true },
+            }),
+            revision: Effect.succeed(0),
+            consumeBankedReset: () => Effect.sync(() => consumes++).pipe(Effect.as("reset")),
+          },
+        }),
+      ];
+      const service = yield* ProviderQuotaService;
+
+      const error = yield* service
+        .consumeBankedReset({
+          instanceId: ProviderInstanceId.make("codex-reset"),
+          creditId: "credit-7",
+          idempotencyKey: "request-7",
+        })
+        .pipe(Effect.flip);
+
+      expect(error.reason).toBe("providerFailed");
+      expect(consumes).toBe(0);
+    }).pipe(provideService(() => instances));
+  });
 });

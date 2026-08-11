@@ -5,6 +5,8 @@ import {
   type ProviderQuotaMetric,
   type ProviderQuotaSnapshot,
   type ProviderInstanceId,
+  PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH,
+  PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,6 +22,9 @@ import {
   ProviderQuotaAdapterError,
   remainingPercentFromUsed,
   resolveHeadlineMetricKey,
+  truncateProviderQuotaDisplayText,
+  truncateProviderQuotaIdentifier,
+  truncateProviderQuotaLongText,
   type ProviderQuotaCapability,
 } from "../ProviderQuota.ts";
 import {
@@ -61,16 +66,18 @@ const nonNegativeWindowMinutes = (value: number | null | undefined): number | nu
   value !== null && value !== undefined && value >= 0 ? value : null;
 
 const windowLabel = (name: string, windowDurationMins: number | null | undefined): string =>
-  windowDurationMins !== null && windowDurationMins !== undefined && windowDurationMins >= 0
-    ? `${name} (${windowDurationMins} min)`
-    : name;
+  truncateProviderQuotaDisplayText(
+    windowDurationMins !== null && windowDurationMins !== undefined && windowDurationMins >= 0
+      ? `${name} (${windowDurationMins} min)`
+      : name,
+  );
 
 const rateLimitWindowMetric = (
   key: string,
   label: string,
   window: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow,
 ): ProviderQuotaMetric => ({
-  key,
+  key: truncateProviderQuotaIdentifier(key),
   label: windowLabel(label, window.windowDurationMins),
   remainingPercent: remainingPercentFromUsed(window.usedPercent),
   usedPercent: window.usedPercent,
@@ -84,8 +91,8 @@ const individualLimitMetric = (
   label: string,
   limit: CodexSchema.V2GetAccountRateLimitsResponse__SpendControlLimitSnapshot,
 ): ProviderQuotaMetric => ({
-  key,
-  label,
+  key: truncateProviderQuotaIdentifier(key),
+  label: truncateProviderQuotaDisplayText(label),
   remainingPercent: limit.remainingPercent,
   usedPercent: null,
   resetsAt: unixSecondsToIso(limit.resetsAt),
@@ -137,6 +144,16 @@ const trimmedNullable = (value: string | null | undefined): string | null => {
   return trimmed ? trimmed : null;
 };
 
+const boundedNullableDisplayText = (value: string | null | undefined): string | null => {
+  const trimmed = trimmedNullable(value);
+  return trimmed === null ? null : truncateProviderQuotaDisplayText(trimmed);
+};
+
+const boundedNullableLongText = (value: string | null | undefined): string | null => {
+  const trimmed = trimmedNullable(value);
+  return trimmed === null ? null : truncateProviderQuotaLongText(trimmed);
+};
+
 const normalizeBankedReset = (
   reset: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitResetCredit,
 ): ProviderBankedReset | null => {
@@ -144,12 +161,12 @@ const normalizeBankedReset = (
   const grantedAt = unixSecondsToIso(reset.grantedAt);
   if (id.length === 0 || grantedAt === null) return null;
   return {
-    id,
-    title: trimmedNullable(reset.title),
-    description: trimmedNullable(reset.description),
+    id: truncateProviderQuotaIdentifier(id),
+    title: boundedNullableDisplayText(reset.title),
+    description: boundedNullableLongText(reset.description),
     grantedAt,
     expiresAt: unixSecondsToIso(reset.expiresAt),
-    resetType: reset.resetType,
+    resetType: truncateProviderQuotaIdentifier(reset.resetType),
     status: reset.status,
   };
 };
@@ -185,9 +202,13 @@ export const normalizeCodexProviderQuota = (
   });
 
   for (const [limitId, rateLimits] of Object.entries(response.rateLimitsByLimitId ?? {})) {
-    const name = trimmedNullable(rateLimits.limitName) ?? "Limit";
+    const name = boundedNullableDisplayText(rateLimits.limitName) ?? "Limit";
+    const boundedLimitId = truncateProviderQuotaIdentifier(limitId).slice(
+      0,
+      PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH - "limit::individual".length,
+    );
     appendRateLimitMetrics(metrics, rateLimits, {
-      keyPrefix: `limit:${limitId}:`,
+      keyPrefix: `limit:${boundedLimitId}:`,
       primaryLabel: `${name} primary`,
       secondaryLabel: `${name} secondary`,
       individualLabel: `${name} individual limit`,
@@ -213,7 +234,14 @@ export const normalizeCodexProviderQuota = (
       ? {
           hasCredits: response.rateLimits.credits.hasCredits,
           unlimited: response.rateLimits.credits.unlimited,
-          balance: response.rateLimits.credits.balance ?? null,
+          balance:
+            response.rateLimits.credits.balance === null ||
+            response.rateLimits.credits.balance === undefined
+              ? null
+              : response.rateLimits.credits.balance.slice(
+                  0,
+                  PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH,
+                ),
         }
       : null,
     bankedResets: resetSummary
@@ -231,12 +259,35 @@ export const normalizeCodexProviderQuota = (
   };
 };
 
-const quotaRequestError = (cause: unknown): ProviderQuotaAdapterError =>
-  new ProviderQuotaAdapterError({
+const quotaRequestError = (
+  cause: CodexErrors.CodexAppServerError | ProviderQuotaAdapterError,
+): ProviderQuotaAdapterError => {
+  if (cause._tag === "ProviderQuotaAdapterError") return cause;
+  if (cause._tag === "CodexAppServerRequestError" && cause.code === -32601) {
+    return new ProviderQuotaAdapterError({
+      reason: "unsupported",
+      detail: "This Codex version does not expose provider quota.",
+      cause,
+    });
+  }
+  return new ProviderQuotaAdapterError({
     reason: "providerFailed",
     detail: "Codex quota request failed.",
     cause,
   });
+};
+
+const requireAuthenticatedAccount = (
+  account: CodexSchema.V2GetAccountResponse,
+): Effect.Effect<void, ProviderQuotaAdapterError> =>
+  account.requiresOpenaiAuth && (account.account === null || account.account === undefined)
+    ? Effect.fail(
+        new ProviderQuotaAdapterError({
+          reason: "authRequired",
+          detail: "Sign in to Codex to view quota information.",
+        }),
+      )
+    : Effect.void;
 
 export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(function* (
   config: CodexSettings,
@@ -261,7 +312,14 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
 
   const readUncached = Effect.scoped(
     openClient.pipe(
-      Effect.flatMap((client) => client.request("account/rateLimits/read", undefined)),
+      Effect.flatMap((client) =>
+        client
+          .request("account/read", {})
+          .pipe(
+            Effect.flatMap(requireAuthenticatedAccount),
+            Effect.andThen(client.request("account/rateLimits/read", undefined)),
+          ),
+      ),
       Effect.flatMap((response) =>
         Effect.map(DateTime.now, (now) =>
           normalizeCodexProviderQuota(response, instanceId, DateTime.formatIso(now)),
@@ -278,10 +336,15 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
     const response = yield* Effect.scoped(
       openClient.pipe(
         Effect.flatMap((client) =>
-          client.request("account/rateLimitResetCredit/consume", {
-            creditId: input.creditId,
-            idempotencyKey: input.idempotencyKey,
-          }),
+          client.request("account/read", {}).pipe(
+            Effect.flatMap(requireAuthenticatedAccount),
+            Effect.andThen(
+              client.request("account/rateLimitResetCredit/consume", {
+                creditId: input.creditId,
+                idempotencyKey: input.idempotencyKey,
+              }),
+            ),
+          ),
         ),
       ),
     ).pipe(Effect.mapError(quotaRequestError));

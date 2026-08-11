@@ -170,7 +170,7 @@ export const ProviderQuotaDetails = memo(function ProviderQuotaDetails({
 }) {
   const snapshot = item.snapshot;
   const Icon = PROVIDER_ICON_BY_PROVIDER[item.driver] ?? BotIcon;
-  const canUseCodexReset = canOperate && item.driver === "codex";
+  const canUseCodexReset = snapshot?.status === "current" && canOperate && item.driver === "codex";
 
   return (
     <div className="w-full min-w-0 space-y-4 text-foreground">

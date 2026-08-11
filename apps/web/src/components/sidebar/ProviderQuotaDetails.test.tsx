@@ -108,6 +108,23 @@ describe("ProviderQuotaDetails", () => {
     expect(markup).not.toContain(">Use reset<");
   });
 
+  it.each(["stale", "authRequired"] as const)(
+    "keeps Codex reset controls hidden for a %s snapshot",
+    (status) => {
+      const markup = renderToStaticMarkup(
+        <ProviderQuotaDetails
+          canOperate
+          feedback={null}
+          item={{ ...item, snapshot: { ...snapshot, status } }}
+          pendingReset={false}
+          onRequestReset={() => {}}
+        />,
+      );
+
+      expect(markup).not.toContain(">Use reset<");
+    },
+  );
+
   it("renders honest unsupported copy when no normalized snapshot exists", () => {
     const markup = renderToStaticMarkup(
       <ProviderQuotaDetails

@@ -1,8 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ProviderQuotaSnapshot } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeClaudeProviderQuota, type ClaudeRateLimitEvent } from "./ClaudeProviderQuota.ts";
@@ -10,6 +11,7 @@ import { makeClaudeProviderQuota, type ClaudeRateLimitEvent } from "./ClaudeProv
 const instanceId = ProviderInstanceId.make("claude-work");
 const initialTimeMs = 1_700_000_000_000;
 const initialTimeIso = "2023-11-14T22:13:20.000Z";
+const decodeProviderQuotaSnapshot = Schema.decodeUnknownSync(ProviderQuotaSnapshot);
 
 const rateLimitEvent = (
   rateLimitInfo: ClaudeRateLimitEvent["rate_limit_info"],
@@ -89,6 +91,24 @@ it.effect("normalizes Claude utilization ratios, reset time, and safe SDK metada
       message: null,
     });
     NodeAssert.equal(yield* tracker.quota.revision, 1);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("truncates provider-derived Claude detail before contract encoding", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(initialTimeMs);
+    const tracker = yield* makeClaudeProviderQuota(instanceId);
+    yield* tracker.recordRateLimitEvent(
+      rateLimitEvent({
+        status: "allowed",
+        utilization: 0.5,
+        overageDisabledReason: "x".repeat(700),
+      } as ClaudeRateLimitEvent["rate_limit_info"]),
+    );
+
+    const snapshot = yield* tracker.quota.read;
+    NodeAssert.doesNotThrow(() => decodeProviderQuotaSnapshot(snapshot));
+    NodeAssert.equal(snapshot.detail.overageDisabledReason?.length, 512);
   }).pipe(Effect.provide(TestClock.layer())),
 );
 

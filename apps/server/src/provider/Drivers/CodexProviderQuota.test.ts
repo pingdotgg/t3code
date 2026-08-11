@@ -2,7 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderQuotaSnapshot,
+  ProviderQuotaSnapshot,
   CodexSettings,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as CodexClient from "effect-codex-app-server/client";
+import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
 import { makeCodexProviderQuota, normalizeCodexProviderQuota } from "./CodexProviderQuota.ts";
@@ -19,6 +20,7 @@ import { makeCodexProviderQuota, normalizeCodexProviderQuota } from "./CodexProv
 const instanceId = ProviderInstanceId.make("codex-work");
 const readAt = "2026-08-11T10:00:00.000Z";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const decodeProviderQuotaSnapshot = Schema.decodeUnknownSync(ProviderQuotaSnapshot);
 
 const richResponse = {
   rateLimits: {
@@ -209,6 +211,93 @@ it("clamps derived remaining capacity for out-of-range provider usage", () => {
   NodeAssert.equal(snapshot.headlineMetricKey, "secondary");
 });
 
+it("truncates provider-derived display strings before contract encoding", () => {
+  const longIdentifier = "i".repeat(200);
+  const longLabel = "l".repeat(400);
+  const longDescription = "d".repeat(700);
+  const snapshot = normalizeCodexProviderQuota(
+    {
+      rateLimits: {
+        credits: { balance: "b".repeat(400), hasCredits: true, unlimited: false },
+        limitId: longIdentifier,
+        limitName: longLabel,
+      },
+      rateLimitsByLimitId: {
+        [longIdentifier]: {
+          limitName: longLabel,
+          primary: { usedPercent: 25, windowDurationMins: 300 },
+        },
+      },
+      rateLimitResetCredits: {
+        availableCount: 1,
+        credits: [
+          {
+            id: longIdentifier,
+            title: longLabel,
+            description: longDescription,
+            grantedAt: 1_700_000_000,
+            resetType: "codexRateLimits",
+            status: "available",
+          },
+        ],
+      },
+    },
+    instanceId,
+    readAt,
+  );
+
+  NodeAssert.doesNotThrow(() => decodeProviderQuotaSnapshot(snapshot));
+  NodeAssert.equal(snapshot.metrics[0]?.key, `limit:${"i".repeat(111)}:primary`);
+  NodeAssert.equal(snapshot.metrics[0]?.label.length, 256);
+  NodeAssert.equal(snapshot.credits?.balance?.length, 256);
+  NodeAssert.equal(snapshot.bankedResets?.resets[0]?.id.length, 128);
+  NodeAssert.equal(snapshot.bankedResets?.resets[0]?.title?.length, 256);
+  NodeAssert.equal(snapshot.bankedResets?.resets[0]?.description?.length, 512);
+  NodeAssert.equal(snapshot.detail.limitId?.length, 160);
+  NodeAssert.equal(snapshot.detail.limitName?.length, 160);
+});
+
+it.effect("classifies a signed-out Codex account as authentication required", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const request = ((method: string) =>
+      method === "account/read"
+        ? Effect.succeed({ account: null, requiresOpenaiAuth: true })
+        : Effect.succeed({
+            rateLimits: {},
+          })) as CodexClient.CodexAppServerClient["Service"]["request"];
+    const quota = yield* makeCodexProviderQuota(decodeCodexSettings({}), {}, instanceId, spawner, {
+      openClient: Effect.succeed({ request }),
+    });
+
+    const error = yield* quota.read.pipe(Effect.flip);
+    NodeAssert.equal(error.reason, "authRequired");
+    NodeAssert.equal(error.detail, "Sign in to Codex to view quota information.");
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
+);
+
+it.effect("classifies an older app-server without quota methods as unsupported", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const request = ((method: string) =>
+      method === "account/read"
+        ? Effect.succeed({
+            account: { type: "chatgpt", email: null, planType: "plus" },
+            requiresOpenaiAuth: false,
+          })
+        : Effect.fail(
+            CodexAppServerRequestError.methodNotFound(method),
+          )) as CodexClient.CodexAppServerClient["Service"]["request"];
+    const quota = yield* makeCodexProviderQuota(decodeCodexSettings({}), {}, instanceId, spawner, {
+      openClient: Effect.succeed({ request }),
+    });
+
+    const error = yield* quota.read.pipe(Effect.flip);
+    NodeAssert.equal(error.reason, "unsupported");
+    NodeAssert.equal(error.detail, "This Codex version does not expose provider quota.");
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
+);
+
 it.effect(
   "forwards one typed consume request per caller key and returns all generated outcomes",
   () =>
@@ -219,6 +308,12 @@ it.effect(
         [];
       let outcomeIndex = 0;
       const request = ((method: string, payload: unknown) => {
+        if (method === "account/read") {
+          return Effect.succeed({
+            account: { type: "chatgpt", email: null, planType: "plus" },
+            requiresOpenaiAuth: false,
+          });
+        }
         NodeAssert.equal(method, "account/rateLimitResetCredit/consume");
         calls.push(
           payload as { readonly creditId: string | null; readonly idempotencyKey: string },
@@ -259,6 +354,12 @@ it.effect("caches full reads until a sparse update invalidates and bumps the rev
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     let reads = 0;
     const request = ((method: string) => {
+      if (method === "account/read") {
+        return Effect.succeed({
+          account: { type: "chatgpt", email: null, planType: "plus" },
+          requiresOpenaiAuth: false,
+        });
+      }
       NodeAssert.equal(method, "account/rateLimits/read");
       reads += 1;
       return Effect.succeed({ rateLimits: { primary: { usedPercent: reads * 10 } } });

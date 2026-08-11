@@ -10,7 +10,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
-import { ProviderQuotaPublicMessage, type ProviderQuotaCapability } from "../ProviderQuota.ts";
+import {
+  ProviderQuotaPublicMessage,
+  truncateProviderQuotaLongText,
+  type ProviderQuotaCapability,
+} from "../ProviderQuota.ts";
 
 const DRIVER = ProviderDriverKind.make("claudeAgent");
 const SOURCE = "claude-agent-sdk";
@@ -32,10 +36,16 @@ const unixSecondsToDateTime = (value: number | undefined): Option.Option<DateTim
 const normalizeDetail = (
   info: ClaudeRateLimitEvent["rate_limit_info"],
 ): Readonly<Record<string, string>> => ({
-  status: info.status,
-  ...(info.rateLimitType ? { rateLimitType: info.rateLimitType } : {}),
-  ...(info.overageStatus ? { overageStatus: info.overageStatus } : {}),
-  ...(info.overageDisabledReason ? { overageDisabledReason: info.overageDisabledReason } : {}),
+  status: truncateProviderQuotaLongText(info.status),
+  ...(info.rateLimitType
+    ? { rateLimitType: truncateProviderQuotaLongText(info.rateLimitType) }
+    : {}),
+  ...(info.overageStatus
+    ? { overageStatus: truncateProviderQuotaLongText(info.overageStatus) }
+    : {}),
+  ...(info.overageDisabledReason
+    ? { overageDisabledReason: truncateProviderQuotaLongText(info.overageDisabledReason) }
+    : {}),
 });
 
 const normalizeEvent = (

@@ -13,10 +13,30 @@ import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
-const PROVIDER_QUOTA_ERROR_DETAIL_MAX_LENGTH = 512;
-const ProviderQuotaErrorDetail = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(PROVIDER_QUOTA_ERROR_DETAIL_MAX_LENGTH),
+export const PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH = 128;
+export const PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH = 256;
+export const PROVIDER_QUOTA_LONG_TEXT_MAX_LENGTH = 512;
+export const PROVIDER_QUOTA_TIMESTAMP_MAX_LENGTH = 64;
+
+const ProviderQuotaIdentifier = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH),
 );
+const ProviderQuotaDisplayText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH),
+);
+const ProviderQuotaDisplayValue = Schema.String.check(
+  Schema.isMaxLength(PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH),
+);
+const ProviderQuotaLongText = Schema.String.check(
+  Schema.isMaxLength(PROVIDER_QUOTA_LONG_TEXT_MAX_LENGTH),
+);
+const ProviderQuotaLongNonEmptyText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROVIDER_QUOTA_LONG_TEXT_MAX_LENGTH),
+);
+const ProviderQuotaTimestamp = Schema.String.check(
+  Schema.isMaxLength(PROVIDER_QUOTA_TIMESTAMP_MAX_LENGTH),
+);
+const ProviderQuotaErrorDetail = ProviderQuotaLongNonEmptyText;
 
 export const ProviderQuotaSnapshotStatus = Schema.Literals([
   "current",
@@ -28,11 +48,11 @@ export const ProviderQuotaSnapshotStatus = Schema.Literals([
 export type ProviderQuotaSnapshotStatus = typeof ProviderQuotaSnapshotStatus.Type;
 
 export const ProviderQuotaMetric = Schema.Struct({
-  key: TrimmedNonEmptyString,
-  label: TrimmedNonEmptyString,
+  key: ProviderQuotaIdentifier,
+  label: ProviderQuotaDisplayText,
   remainingPercent: Schema.NullOr(Schema.Finite),
   usedPercent: Schema.NullOr(Schema.Finite),
-  resetsAt: Schema.NullOr(Schema.String),
+  resetsAt: Schema.NullOr(ProviderQuotaTimestamp),
   windowMinutes: Schema.NullOr(NonNegativeInt),
   blocking: Schema.Boolean,
 });
@@ -41,17 +61,17 @@ export type ProviderQuotaMetric = typeof ProviderQuotaMetric.Type;
 export const ProviderQuotaCredits = Schema.Struct({
   hasCredits: Schema.Boolean,
   unlimited: Schema.Boolean,
-  balance: Schema.NullOr(Schema.String),
+  balance: Schema.NullOr(ProviderQuotaDisplayValue),
 });
 export type ProviderQuotaCredits = typeof ProviderQuotaCredits.Type;
 
 export const ProviderBankedReset = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  title: Schema.NullOr(TrimmedNonEmptyString),
-  description: Schema.NullOr(TrimmedNonEmptyString),
-  grantedAt: Schema.String,
-  expiresAt: Schema.NullOr(Schema.String),
-  resetType: TrimmedNonEmptyString,
+  id: ProviderQuotaIdentifier,
+  title: Schema.NullOr(ProviderQuotaDisplayText),
+  description: Schema.NullOr(ProviderQuotaLongNonEmptyText),
+  grantedAt: ProviderQuotaTimestamp,
+  expiresAt: Schema.NullOr(ProviderQuotaTimestamp),
+  resetType: ProviderQuotaIdentifier,
   status: Schema.Literals(["available", "redeeming", "redeemed", "unknown"]),
 });
 export type ProviderBankedReset = typeof ProviderBankedReset.Type;
@@ -67,28 +87,28 @@ export const ProviderQuotaSnapshot = Schema.Struct({
   instanceId: ProviderInstanceId,
   driver: ProviderDriverKind,
   status: ProviderQuotaSnapshotStatus,
-  source: TrimmedNonEmptyString,
-  readAt: Schema.String,
-  lastSuccessfulReadAt: Schema.NullOr(Schema.String),
-  headlineMetricKey: Schema.NullOr(TrimmedNonEmptyString),
+  source: ProviderQuotaIdentifier,
+  readAt: ProviderQuotaTimestamp,
+  lastSuccessfulReadAt: Schema.NullOr(ProviderQuotaTimestamp),
+  headlineMetricKey: Schema.NullOr(ProviderQuotaIdentifier),
   metrics: Schema.Array(ProviderQuotaMetric),
   credits: Schema.NullOr(ProviderQuotaCredits),
   bankedResets: Schema.NullOr(ProviderBankedResetSummary),
-  detail: Schema.Record(TrimmedNonEmptyString, Schema.String),
-  message: Schema.NullOr(Schema.String),
+  detail: Schema.Record(ProviderQuotaIdentifier, ProviderQuotaLongText),
+  message: Schema.NullOr(ProviderQuotaLongText),
 });
 export type ProviderQuotaSnapshot = typeof ProviderQuotaSnapshot.Type;
 
 export const ProviderQuotaSummary = Schema.Struct({
-  readAt: Schema.String,
+  readAt: ProviderQuotaTimestamp,
   instances: Schema.Array(ProviderQuotaSnapshot),
 });
 export type ProviderQuotaSummary = typeof ProviderQuotaSummary.Type;
 
 export const ProviderQuotaConsumeResetInput = Schema.Struct({
   instanceId: ProviderInstanceId,
-  creditId: Schema.NullOr(TrimmedNonEmptyString),
-  idempotencyKey: TrimmedNonEmptyString,
+  creditId: Schema.NullOr(ProviderQuotaIdentifier),
+  idempotencyKey: ProviderQuotaIdentifier,
 });
 export type ProviderQuotaConsumeResetInput = typeof ProviderQuotaConsumeResetInput.Type;
 

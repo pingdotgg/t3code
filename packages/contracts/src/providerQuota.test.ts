@@ -116,6 +116,127 @@ describe("ProviderQuotaSnapshot", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts provider display strings exactly at their wire boundaries", () => {
+    expect(() =>
+      decodeSnapshot({
+        ...currentCodexSnapshot,
+        source: "s".repeat(128),
+        readAt: "r".repeat(64),
+        lastSuccessfulReadAt: "l".repeat(64),
+        headlineMetricKey: "h".repeat(128),
+        metrics: [
+          {
+            ...currentCodexSnapshot.metrics[0],
+            key: "k".repeat(128),
+            label: "l".repeat(256),
+            resetsAt: "t".repeat(64),
+          },
+        ],
+        credits: { ...currentCodexSnapshot.credits, balance: "b".repeat(256) },
+        bankedResets: {
+          ...currentCodexSnapshot.bankedResets,
+          resets: [
+            {
+              ...currentCodexSnapshot.bankedResets.resets[0],
+              id: "i".repeat(128),
+              title: "t".repeat(256),
+              description: "d".repeat(512),
+              grantedAt: "g".repeat(64),
+              expiresAt: "e".repeat(64),
+              resetType: "r".repeat(128),
+            },
+          ],
+        },
+        detail: { ["k".repeat(128)]: "v".repeat(512) },
+        message: "m".repeat(512),
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ["source", () => ({ source: "s".repeat(129) })],
+    ["read timestamp", () => ({ readAt: "r".repeat(65) })],
+    ["last-success timestamp", () => ({ lastSuccessfulReadAt: "l".repeat(65) })],
+    ["headline key", () => ({ headlineMetricKey: "h".repeat(129) })],
+    [
+      "metric key",
+      () => ({ metrics: [{ ...currentCodexSnapshot.metrics[0], key: "k".repeat(129) }] }),
+    ],
+    [
+      "metric label",
+      () => ({ metrics: [{ ...currentCodexSnapshot.metrics[0], label: "l".repeat(257) }] }),
+    ],
+    [
+      "metric reset timestamp",
+      () => ({ metrics: [{ ...currentCodexSnapshot.metrics[0], resetsAt: "t".repeat(65) }] }),
+    ],
+    [
+      "credit balance",
+      () => ({ credits: { ...currentCodexSnapshot.credits, balance: "b".repeat(257) } }),
+    ],
+    [
+      "reset id",
+      () => ({
+        bankedResets: {
+          ...currentCodexSnapshot.bankedResets,
+          resets: [{ ...currentCodexSnapshot.bankedResets.resets[0], id: "i".repeat(129) }],
+        },
+      }),
+    ],
+    [
+      "reset title",
+      () => ({
+        bankedResets: {
+          ...currentCodexSnapshot.bankedResets,
+          resets: [{ ...currentCodexSnapshot.bankedResets.resets[0], title: "t".repeat(257) }],
+        },
+      }),
+    ],
+    [
+      "reset description",
+      () => ({
+        bankedResets: {
+          ...currentCodexSnapshot.bankedResets,
+          resets: [
+            { ...currentCodexSnapshot.bankedResets.resets[0], description: "d".repeat(513) },
+          ],
+        },
+      }),
+    ],
+    [
+      "reset granted timestamp",
+      () => ({
+        bankedResets: {
+          ...currentCodexSnapshot.bankedResets,
+          resets: [{ ...currentCodexSnapshot.bankedResets.resets[0], grantedAt: "g".repeat(65) }],
+        },
+      }),
+    ],
+    [
+      "reset expiry timestamp",
+      () => ({
+        bankedResets: {
+          ...currentCodexSnapshot.bankedResets,
+          resets: [{ ...currentCodexSnapshot.bankedResets.resets[0], expiresAt: "e".repeat(65) }],
+        },
+      }),
+    ],
+    [
+      "reset type",
+      () => ({
+        bankedResets: {
+          ...currentCodexSnapshot.bankedResets,
+          resets: [{ ...currentCodexSnapshot.bankedResets.resets[0], resetType: "r".repeat(129) }],
+        },
+      }),
+    ],
+    ["detail key", () => ({ detail: { ["k".repeat(129)]: "value" } })],
+    ["detail value", () => ({ detail: { key: "v".repeat(513) } })],
+    ["message", () => ({ message: "m".repeat(513) })],
+  ] as const)("rejects an overlong %s", (_name, patch) => {
+    expect(() => decodeSnapshot({ ...currentCodexSnapshot, ...patch() })).toThrow();
+  });
 });
 
 describe("ProviderQuotaSummary", () => {
@@ -129,6 +250,15 @@ describe("ProviderQuotaSummary", () => {
       readAt: "2026-08-11T10:00:00.000Z",
       instances: [currentCodexSnapshot],
     });
+  });
+
+  it("rejects an overlong summary read timestamp", () => {
+    expect(() =>
+      decodeSummary({
+        readAt: "r".repeat(65),
+        instances: [currentCodexSnapshot],
+      }),
+    ).toThrow();
   });
 });
 
@@ -147,6 +277,30 @@ describe("ProviderQuotaConsumeResetInput", () => {
     ]) {
       expect(() => decodeConsumeResetInput(input)).toThrow();
     }
+  });
+
+  it("bounds reset credit and idempotency identifiers", () => {
+    expect(() =>
+      decodeConsumeResetInput({
+        instanceId: "codex_personal",
+        creditId: "c".repeat(128),
+        idempotencyKey: "i".repeat(128),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      decodeConsumeResetInput({
+        instanceId: "codex_personal",
+        creditId: "c".repeat(129),
+        idempotencyKey: "valid",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeConsumeResetInput({
+        instanceId: "codex_personal",
+        creditId: null,
+        idempotencyKey: "i".repeat(129),
+      }),
+    ).toThrow();
   });
 });
 

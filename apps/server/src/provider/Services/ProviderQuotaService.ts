@@ -21,7 +21,6 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import {
   errorProviderQuotaSnapshot,
   ProviderQuotaAdapterError,
-  type ProviderQuotaCapability,
   unknownProviderQuotaSnapshot,
 } from "../ProviderQuota.ts";
 import { ProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
@@ -347,11 +346,51 @@ export const make = Effect.gen(function* () {
     if (!instance.enabled) {
       return yield* safeConsumeError("instanceDisabled", "The provider instance is disabled.");
     }
-    const consume = instance.quota?.consumeBankedReset;
-    if (consume === undefined) {
+    const quota = instance.quota;
+    const consume = quota?.consumeBankedReset;
+    if (quota === undefined || consume === undefined) {
       return yield* safeConsumeError(
         "unsupported",
         "This provider does not support banked quota resets.",
+      );
+    }
+
+    const eligibility = yield* quota.read.pipe(
+      Effect.catchCause((cause) => {
+        const error = Cause.findErrorOption(cause);
+        return Effect.fail(
+          Option.isSome(error)
+            ? mapConsumeError(error.value)
+            : safeConsumeError(
+                "providerFailed",
+                "The provider quota inventory could not be refreshed.",
+              ),
+        );
+      }),
+    );
+    if (eligibility.status === "authRequired") {
+      return yield* safeConsumeError(
+        "authRequired",
+        "Sign in to the provider before consuming a reset.",
+      );
+    }
+    if (eligibility.status !== "current") {
+      return yield* safeConsumeError(
+        "providerFailed",
+        "The provider quota inventory is not current.",
+      );
+    }
+    const inventory = eligibility.bankedResets;
+    const resetAvailable =
+      input.creditId === null
+        ? (inventory?.availableCount ?? 0) > 0
+        : inventory?.resets.some(
+            (reset) => reset.id === input.creditId && reset.status === "available",
+          ) === true;
+    if (!resetAvailable) {
+      return yield* safeConsumeError(
+        "providerFailed",
+        "The selected banked reset is no longer available.",
       );
     }
 
