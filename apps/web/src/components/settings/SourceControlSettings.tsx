@@ -19,7 +19,7 @@ import {
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
@@ -508,7 +508,10 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
-  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const { environments } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
+  // Relay-only app.t3.codes sessions have no primary environment.
+  const environmentId = primaryEnvironment?.environmentId ?? environments[0]?.environmentId ?? null;
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -561,7 +564,9 @@ export function SourceControlSettingsPanel() {
             >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
+                  {item.kind === "git" && primaryEnvironment !== null ? (
+                    <GitFetchIntervalSettings />
+                  ) : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
@@ -587,7 +592,7 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      {environmentId !== null ? <SourceControlWritingSettingsSection /> : null}
+      {primaryEnvironment !== null ? <SourceControlWritingSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }
