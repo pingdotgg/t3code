@@ -63,6 +63,23 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
     }
 }
 
+struct HomeThreadDeleteRequest: Equatable, Sendable {
+    let id: String
+    let title: String
+}
+
+struct HomeThreadDeleteConfirmation: Equatable, Sendable {
+    private(set) var request: HomeThreadDeleteRequest?
+
+    mutating func present(threadID: String, title: String) {
+        request = HomeThreadDeleteRequest(id: threadID, title: title)
+    }
+
+    mutating func cancel() {
+        request = nil
+    }
+}
+
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -87,6 +104,7 @@ public struct WorkspaceView: View {
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
     @State private var renameTitle = ""
+    @State private var deleteConfirmation = HomeThreadDeleteConfirmation()
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
     @State private var homePresentationCache = HomePresentationCache()
@@ -206,6 +224,24 @@ public struct WorkspaceView: View {
                 Task { await model.renameThread(thread.id, title: title) }
             }
             .disabled(renameTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .alert(
+            "Delete thread?",
+            isPresented: Binding(
+                get: { deleteConfirmation.request != nil },
+                set: { if !$0 { deleteConfirmation.cancel() } }
+            ),
+            presenting: deleteConfirmation.request
+        ) { request in
+            Button("Cancel", role: .cancel) {
+                deleteConfirmation.cancel()
+            }
+            Button("Delete", role: .destructive) {
+                deleteConfirmation.cancel()
+                Task { await model.deleteThread(request.id) }
+            }
+        } message: { request in
+            Text("“\(request.title)” will be permanently deleted.")
         }
         .onChange(of: selectedThreadIsAvailable) { _, isAvailable in
             if !isAvailable { closeSelectedThread() }
@@ -337,7 +373,7 @@ public struct WorkspaceView: View {
                     Task { await model.setPinned(thread.id, pinned: pinned) }
                 },
                 onDelete: { thread in
-                    Task { await model.deleteThread(thread.id) }
+                    deleteConfirmation.present(threadID: thread.id, title: thread.title)
                 }
             )
         }

@@ -4,6 +4,28 @@ import Testing
 
 @Suite("Sidebar v2")
 struct DailyUXSidebarTests {
+    @Test
+    func threadDeletionConfirmationCanBeCancelledAndReplaced() {
+        var confirmation = HomeThreadDeleteConfirmation()
+
+        confirmation.present(threadID: "thread-1", title: "Investigate swipe behavior")
+        #expect(
+            confirmation.request
+                == HomeThreadDeleteRequest(
+                    id: "thread-1",
+                    title: "Investigate swipe behavior"
+                )
+        )
+
+        confirmation.present(threadID: "thread-2", title: "Keep me")
+        confirmation.cancel()
+        #expect(confirmation.request == nil)
+
+        confirmation.present(threadID: "thread-3", title: "Replace me")
+        confirmation.present(threadID: "thread-4", title: "Delete me")
+        #expect(confirmation.request?.id == "thread-4")
+    }
+
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
     @Test
