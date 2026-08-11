@@ -350,6 +350,16 @@ interface AetherSessionContext {
    * discard changed attachments or model selection.
    */
   firstTurnFingerprint: string | undefined;
+  /**
+   * The later-turn twin of `firstTurnFingerprint`: the identity of the
+   * respond dispatched at `ordinal` while its outcome is still unknown. The
+   * client_message_id is deterministic per ordinal and the ordinal advances
+   * only on a confirmed 202, so a retry after a LOST 202 reuses the id on
+   * purpose — that is what lets the server's ON CONFLICT dedupe fire. This
+   * pins WHICH send is in flight so a retry carrying different content is
+   * refused instead of silently resolving to the committed row.
+   */
+  pendingSend: { readonly ordinal: number; readonly fingerprint: string } | undefined;
   latestSequence: number;
   /** The driver's own turn→messageId pairs, oldest first (see AetherResumeCursor). */
   turnLedger: Array<AetherTurnLedgerEntry>;
@@ -433,6 +443,30 @@ function buildAetherResumeCursor(context: AetherSessionContext): AetherResumeCur
 // ---------------------------------------------------------------------------
 
 const AETHER_TURN_ID_PREFIX = "aether-turn-";
+
+/**
+ * Deterministic identity of ONE dispatch: prompt, model, effort, interaction
+ * mode and every attachment. Length-prefixed and control-char delimited so it
+ * is unambiguous without JSON (repo lint prefers Schema codecs for real
+ * serialization; this string is only ever compared, never parsed).
+ */
+const dispatchFingerprintOf = (input: {
+  readonly message: string;
+  readonly model: string | undefined;
+  readonly effort: string | undefined;
+  readonly interactionMode: string | undefined;
+  readonly attachments: ReadonlyArray<AetherPromptAttachment> | undefined;
+}): string =>
+  [
+    `${input.message.length}:${input.message}`,
+    input.model ?? "",
+    input.effort ?? "",
+    input.interactionMode ?? "default",
+    ...(input.attachments ?? []).map(
+      (attachment) =>
+        `${attachment.filename}\u0000${attachment.mediaType}\u0000${attachment.data.length}:${attachment.data}`,
+    ),
+  ].join("\u0001");
 
 const turnIdForWire = (wireTurnId: string): TurnId =>
   TurnId.make(`${AETHER_TURN_ID_PREFIX}${wireTurnId}`);
@@ -1731,6 +1765,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       sentCount: 0,
       firstTurnPending: false,
       firstTurnFingerprint: undefined,
+      pendingSend: undefined,
     };
     const resumeCursor = buildAetherResumeCursor(context);
     if (resumeCursor !== undefined) {
@@ -2045,19 +2080,13 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         }
         const resolved = resolveAetherModelSlug(slug);
         const effort = yield* resolveEffortSelection(input.modelSelection, resolved);
-        // Length-prefixed, control-char-delimited — deterministic without
-        // JSON (repo lint prefers Schema codecs for real serialization; this
-        // string is only ever compared, never parsed).
-        const dispatchFingerprint = [
-          `${message.length}:${message}`,
-          slug,
-          effort ?? "",
-          input.interactionMode ?? "default",
-          ...(attachments ?? []).map(
-            (attachment) =>
-              `${attachment.filename}\u0000${attachment.mediaType}\u0000${attachment.data.length}:${attachment.data}`,
-          ),
-        ].join("\u0001");
+        const dispatchFingerprint = dispatchFingerprintOf({
+          message,
+          model: slug,
+          effort,
+          interactionMode: input.interactionMode,
+          attachments,
+        });
         if (context.taskId === undefined) {
           const created = yield* restClient
             .createTask({
@@ -2197,6 +2226,34 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         sessionEpoch: context.session.createdAt,
         sendOrdinal: context.sentCount,
       });
+      // A respond whose 202 was lost leaves the ordinal — and therefore the
+      // client_message_id — unchanged, which is deliberate: the retry must
+      // reuse it for the server's ON CONFLICT dedupe to fire. The cost is that
+      // a retry carrying DIFFERENT text, attachments, effort or mode resolves
+      // to the row already committed and the user's change is silently
+      // dropped. Pin the in-flight dispatch and refuse a retry that is not the
+      // same send, exactly as the first-turn create path does.
+      const dispatchFingerprint = dispatchFingerprintOf({
+        message,
+        model: input.modelSelection?.model ?? context.session.model,
+        effort: selectionEffort,
+        interactionMode: input.interactionMode,
+        attachments,
+      });
+      const pendingSend = context.pendingSend;
+      if (
+        pendingSend !== undefined &&
+        pendingSend.ordinal === context.sentCount &&
+        pendingSend.fingerprint !== dispatchFingerprint
+      ) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue:
+            "The previous message was already dispatched to Aether but its result never came back. Retry with exactly the same input, or wait for it to appear and send the change as a follow-up.",
+        });
+      }
+      context.pendingSend = { ordinal: context.sentCount, fingerprint: dispatchFingerprint };
 
       // A task parked on a proposed plan makes this send the accept/reject
       // verb (spec §2.4): t3 routes plan acceptance as a fresh turn with
@@ -2225,6 +2282,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
           })
           .pipe(Effect.mapError(toRestRequestError("sendTurn")));
         context.sentCount++;
+        context.pendingSend = undefined;
         context.adoptActiveTurn = false;
         if (context.mapper !== undefined) {
           // Close the pending slot (no resolution event for plan cards).
@@ -2270,6 +2328,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       // server's ON CONFLICT dedupe can actually fire — incrementing before
       // the call would burn the id and deliver the prompt twice.
       context.sentCount++;
+      context.pendingSend = undefined;
       // The user is driving this thread now — a pending resume-adoption of a
       // remotely running turn no longer applies.
       context.adoptActiveTurn = false;
@@ -2313,7 +2372,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
 
   const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = Effect.fn(
     "interruptTurn",
-  )(function* (threadId, _turnId) {
+  )(function* (threadId, turnId) {
     const context = yield* ensureContext(threadId);
     const restClient = yield* requireRestClient("interruptTurn");
     const taskId = context.taskId;
@@ -2332,6 +2391,25 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         method: "interruptTurn",
         detail: "No Aether turn is active on this thread.",
       });
+    }
+    // `stopTask` stops the TASK, so it hits whatever is running now. When the
+    // caller named a turn, that name is the only thing tying the request to
+    // what the user actually pressed Stop on: an interrupt that raced its
+    // target's settle would otherwise kill the SUCCESSOR turn, discarding work
+    // nobody asked to stop. An unnamed interrupt still means "whatever is
+    // active" (the turnId is optional in the adapter contract).
+    if (turnId !== undefined) {
+      const requested = String(turnId);
+      const namesLiveTurn =
+        (active !== undefined && String(active.turnId) === requested) ||
+        deferred.some((candidate) => String(candidate.turnId) === requested);
+      if (!namesLiveTurn) {
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "interruptTurn",
+          detail: `Aether turn '${requested}' is no longer running on this thread; it settled before the interrupt arrived.`,
+        });
+      }
     }
     // Discarding queued messages is the explicit design choice: keeping them
     // would let Aether's done-callback restart the agent and Stop would not

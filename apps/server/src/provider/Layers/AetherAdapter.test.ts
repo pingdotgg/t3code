@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -2830,6 +2831,120 @@ describe("AetherAdapter turn lifecycle", () => {
             });
             // …and the session is not wedged on a turn that no longer exists.
             expect((yield* adapter.listSessions())[0]!.activeTurnId).toBeUndefined();
+          }),
+      );
+    }),
+  );
+
+  it.effect("rejects an interrupt naming a turn that already settled", () =>
+    Effect.gen(function* () {
+      // `stopTask` stops the TASK, so an interrupt that raced its target's
+      // settle would kill the SUCCESSOR turn — work nobody asked to stop.
+      const stops: Array<string> = [];
+      const deltas = scriptedDeltas([
+        delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+      ]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: () => Effect.succeed({ message_id: "m2" }),
+            stopTask: (taskId) =>
+              Effect.sync(() => {
+                stops.push(taskId);
+              }),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            const sent = yield* adapter.sendTurn({
+              threadId: session.threadId,
+              input: "turn two",
+            });
+
+            // A stale id (an earlier turn) is refused and never reaches Aether.
+            const stale = yield* Effect.flip(
+              adapter.interruptTurn(session.threadId, TurnId.make("aether-turn-m1")),
+            );
+            expect(stale._tag).toBe("ProviderAdapterRequestError");
+            expect(stale.message).toContain("no longer running");
+            expect(stops).toHaveLength(0);
+
+            // The turn actually running still stops.
+            yield* adapter.interruptTurn(session.threadId, sent.turnId);
+            expect(stops).toEqual(["task-1"]);
+          }),
+      );
+    }),
+  );
+
+  it.effect("refuses a retry of an unconfirmed send whose content changed", () =>
+    Effect.gen(function* () {
+      // The 202 is lost, so the ordinal — and the client_message_id — do not
+      // advance and the retry reuses them on purpose. A retry with DIFFERENT
+      // text would resolve to the row already committed and be discarded.
+      let respondCalls = 0;
+      const deltas = scriptedDeltas([
+        delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+      ]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            getTask: () => Effect.succeed(messageIdleTask),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: () =>
+              Effect.sync(() => {
+                respondCalls++;
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new AetherApiNotFoundError({
+                      endpoint: "/tasks/task-1/respond",
+                      detail: "lost",
+                    }),
+                  ),
+                ),
+              ),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            const lost = yield* Effect.flip(
+              adapter.sendTurn({ threadId: session.threadId, input: "original prompt" }),
+            );
+            expect(lost._tag).toBe("ProviderAdapterRequestError");
+            expect(respondCalls).toBe(1);
+
+            const changed = yield* Effect.flip(
+              adapter.sendTurn({ threadId: session.threadId, input: "a different prompt" }),
+            );
+            expect(changed._tag).toBe("ProviderAdapterValidationError");
+            // Refused BEFORE the wire: the changed prompt never went out under
+            // an id the server would dedupe away.
+            expect(respondCalls).toBe(1);
+
+            // The identical retry is still allowed through.
+            yield* Effect.flip(
+              adapter.sendTurn({ threadId: session.threadId, input: "original prompt" }),
+            );
+            expect(respondCalls).toBe(2);
           }),
       );
     }),
