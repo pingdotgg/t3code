@@ -806,12 +806,12 @@ label:has(> select#reasoning-effort) select {
    Without the explicit flex context the row's controls stack vertically. */
 .surface-subheader {
   display: flex;
-  height: calc(var(--spacing) * 10);
-  min-height: calc(var(--spacing) * 10);
+  height: calc(var(--spacing) * 8);
+  min-height: calc(var(--spacing) * 8);
   flex-shrink: 0;
   align-items: center;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  background: var(--background);
+  background: color-mix(in srgb, var(--muted) 20%, var(--background));
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */

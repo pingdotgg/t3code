@@ -140,11 +140,11 @@ export function RightPanelTabs({
   return (
     <PreviewPanelShell mode={mode} maximized={maximized}>
       <div
-        className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-card px-2"
+        className="flex h-8 shrink-0 items-center gap-1 border-b border-border/70 bg-muted/20 px-1.5"
         data-right-panel-tabbar
       >
         <div
-          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+          className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
           data-right-panel-tab-list
         >
           {surfaces.map((surface) => {
@@ -154,8 +154,10 @@ export function RightPanelTabs({
               <div
                 key={surface.id}
                 className={cn(
-                  "group flex h-7 min-w-24 max-w-44 shrink-0 items-center rounded text-xs",
-                  active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60",
+                  "group flex h-6 min-w-20 max-w-40 shrink-0 items-center rounded-md border text-[11px]",
+                  active
+                    ? "border-border/70 bg-background text-foreground shadow-xs/5"
+                    : "border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                 )}
               >
                 <button
@@ -163,7 +165,7 @@ export function RightPanelTabs({
                   title={title}
                   onClick={() => onActivate(surface)}
                   onAuxClick={(event) => closeOnMiddleClick(event, surface)}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-2"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 pl-1.5"
                 >
                   <Icon surface={surface} sessions={previewSessions} />
                   <span className="min-w-0 flex-1 truncate text-left">{title}</span>
@@ -174,7 +176,7 @@ export function RightPanelTabs({
                       <button
                         type="button"
                         aria-label={`Actions for ${title}`}
-                        className="rounded p-1 opacity-0 hover:bg-background/60 group-hover:opacity-100 focus:opacity-100"
+                        className="rounded p-0.5 opacity-0 hover:bg-accent group-hover:opacity-100 focus:opacity-100"
                       >
                         <MoreHorizontal className="size-3" />
                       </button>
@@ -211,7 +213,7 @@ export function RightPanelTabs({
                   type="button"
                   aria-label={`Close ${title}`}
                   onClick={() => onClose(surface)}
-                  className="rounded p-1 opacity-0 hover:bg-background/60 group-hover:opacity-100 focus:opacity-100"
+                  className="rounded p-0.5 opacity-0 hover:bg-accent group-hover:opacity-100 focus:opacity-100"
                 >
                   <X className="size-3" />
                 </button>
@@ -224,9 +226,9 @@ export function RightPanelTabs({
                 <button
                   type="button"
                   aria-label="Add surface"
-                  className="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                 >
-                  <Plus className="size-4" />
+                  <Plus className="size-3.5" />
                 </button>
               }
             />
@@ -243,9 +245,9 @@ export function RightPanelTabs({
             type="button"
             aria-label={maximized ? "Restore panel size" : "Maximize panel"}
             onClick={onToggleMaximize}
-            className="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            {maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+            {maximized ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
           </button>
         ) : null}
       </div>
