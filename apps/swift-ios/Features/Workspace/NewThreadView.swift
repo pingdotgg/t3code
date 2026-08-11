@@ -10,6 +10,7 @@ public struct NewThreadView: View {
     private let initialProjectID: String?
 
     @State private var projectID = ""
+    @State private var projectSelectionIsExplicit = false
     @State private var prompt = ""
     @State private var selection: FeatureSelection?
     @State private var selectionIsExplicit = false
@@ -116,6 +117,9 @@ public struct NewThreadView: View {
                 .preferredProject(environmentID: previousProject?.environmentID)
                 ?? creationProjectGroups.first?.projects.first
             selectInitialProject(replacement?.id ?? "")
+        }
+        .onChange(of: model.homePresentationRevision) { _, _ in
+            refreshAutomaticProjectIfNeeded()
         }
         .onChange(of: prompt) { scheduleDraftSave() }
         .onChange(of: selection) { scheduleDraftSave() }
@@ -561,8 +565,9 @@ public struct NewThreadView: View {
 
     @discardableResult
     private func selectProject(_ id: String) -> Bool {
-        guard id != projectID else { return true }
         guard creationProjects.contains(where: { $0.id == id }) else { return false }
+        projectSelectionIsExplicit = true
+        guard id != projectID else { return true }
         persistCurrentDraftImmediately()
         projectID = id
         prepareProjectIfNeeded(id)
@@ -576,6 +581,7 @@ public struct NewThreadView: View {
             preferredEnvironmentID: selectedProject?.environmentID,
             in: creationProjectGroups
         ) else { return false }
+        projectSelectionIsExplicit = true
         guard group.id != selectedProjectGroup?.id else { return true }
         return selectProject(target.id)
     }
@@ -590,6 +596,21 @@ public struct NewThreadView: View {
     private func selectInitialProject(_ id: String) {
         projectID = id
         prepareProjectIfNeeded(id)
+    }
+
+    private func refreshAutomaticProjectIfNeeded() {
+        guard initialProjectID == nil,
+              !projectSelectionIsExplicit,
+              prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              attachments.isEmpty,
+              let nextProjectID = DailyUXCreationContext.initialProject(
+                  in: model.snapshot,
+                  requestedProjectID: nil
+              )?.id,
+              nextProjectID != projectID else {
+            return
+        }
+        selectInitialProject(nextProjectID)
     }
 
     private func prepareProjectIfNeeded(_ id: String) {

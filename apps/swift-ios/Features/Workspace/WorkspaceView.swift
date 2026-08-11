@@ -564,7 +564,7 @@ public struct WorkspaceView: View {
     }
 
     private func openNewTaskOrProjectCreation() {
-        openNewTaskOrProjectCreation(initialProjectID: nil)
+        openNewTaskOrProjectCreation(initialProjectID: selectedProjectID)
     }
 
     private func openNewTaskOrProjectCreation(initialProjectID: String?) {

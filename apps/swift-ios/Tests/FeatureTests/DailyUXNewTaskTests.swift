@@ -123,6 +123,86 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
+    func recentProjectRankingExcludesDisabledEnvironments() {
+        let enabled = rankedProject("enabled", name: "Enabled", environmentID: "enabled-env")
+        let disabled = rankedProject("disabled", name: "Disabled", environmentID: "disabled-env")
+        let value = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "enabled-env",
+                    name: "Enabled",
+                    endpoint: "http://enabled",
+                    isEnabled: true
+                ),
+                FeatureEnvironment(
+                    id: "disabled-env",
+                    name: "Disabled",
+                    endpoint: "http://disabled",
+                    isEnabled: false
+                ),
+            ],
+            projects: [enabled, disabled],
+            threads: [
+                rankedThread("enabled-thread", projectID: enabled.id, activity: 10),
+                rankedThread("disabled-thread", projectID: disabled.id, activity: 20),
+            ]
+        )
+
+        #expect(
+            DailyUXCreationContext.recentProjects(in: value).map(\.project.id) == [enabled.id]
+        )
+    }
+
+    @Test
+    func recentProjectRankingDeduplicatesARepositoryAcrossEnvironments() {
+        let local = rankedProject(
+            "local",
+            name: "Project",
+            environmentID: "local-env",
+            repositoryKey: "github.com/example/project"
+        )
+        let remote = rankedProject(
+            "remote",
+            name: "Project",
+            environmentID: "remote-env",
+            repositoryKey: "github.com/example/project"
+        )
+        let value = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "local-env",
+                    name: "Local",
+                    endpoint: "http://local"
+                ),
+                FeatureEnvironment(
+                    id: "remote-env",
+                    name: "Remote",
+                    endpoint: "http://remote"
+                ),
+            ],
+            projects: [local, remote],
+            threads: [
+                rankedThread(
+                    "local-thread",
+                    projectID: local.id,
+                    environmentID: "local-env",
+                    activity: 10
+                ),
+                rankedThread(
+                    "remote-thread",
+                    projectID: remote.id,
+                    environmentID: "remote-env",
+                    activity: 20
+                ),
+            ]
+        )
+
+        let ranking = DailyUXCreationContext.recentProjects(in: value)
+        #expect(ranking.count == 1)
+        #expect(ranking.first?.project.id == remote.id)
+    }
+
+    @Test
     func requestNormalizesLegacyModesAndKeepsImageBytes() {
         let image = FeatureDraftAttachment(
             data: Data([1, 2, 3]),
@@ -639,13 +719,27 @@ struct DailyUXNewTaskTests {
         #expect(attachment.mimeType == "image/jpeg")
     }
 
-    private func rankedProject(_ id: String, name: String) -> FeatureProject {
-        FeatureProject(id: id, environmentID: "environment", name: name, path: "/\(id)")
+    private func rankedProject(
+        _ id: String,
+        name: String,
+        environmentID: String = "environment",
+        repositoryKey: String? = nil
+    ) -> FeatureProject {
+        FeatureProject(
+            id: id,
+            environmentID: environmentID,
+            name: name,
+            path: "/\(id)",
+            repositoryIdentity: repositoryKey.map {
+                FeatureRepositoryIdentity(canonicalKey: $0)
+            }
+        )
     }
 
     private func rankedThread(
         _ id: String,
         projectID: String,
+        environmentID: String? = nil,
         activity: TimeInterval? = nil,
         updatedAt: TimeInterval? = nil,
         lastActivityAt: TimeInterval? = nil,
@@ -656,6 +750,7 @@ struct DailyUXNewTaskTests {
         return FeatureThread(
             id: id,
             projectID: projectID,
+            environmentID: environmentID,
             title: id,
             updatedAt: Date(timeIntervalSince1970: updatedAt),
             isArchived: isArchived,
@@ -665,9 +760,10 @@ struct DailyUXNewTaskTests {
     }
 
     private func rankedSnapshot(
+        environments: [FeatureEnvironment] = [],
         projects: [FeatureProject],
         threads: [FeatureThread]
     ) -> FeatureSnapshot {
-        FeatureSnapshot(projects: projects, threads: threads)
+        FeatureSnapshot(environments: environments, projects: projects, threads: threads)
     }
 }
