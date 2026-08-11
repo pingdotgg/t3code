@@ -434,9 +434,8 @@ describe("parseGrokLine", () => {
 
   it("pro-rates aggregate cost when a zero-token sibling carries costUsdTicks: 0", () => {
     // Empty-usage modelUsage rows often ship costUsdTicks: 0. That must not
-    // count as "per-model ticks present" and suppress pro-rating for billable
-    // models that omit their own ticks — otherwise top-level provider cost is
-    // dropped entirely.
+    // count as used per-model ticks and must not suppress remainder allocation
+    // for billable models that omit their own ticks.
     const records = parseGrokLine(
       turnCompleted({
         modelUsage: {
@@ -469,6 +468,42 @@ describe("parseGrokLine", () => {
     const byModel = Object.fromEntries(records.map((record) => [record.model, record]));
     expect(byModel["grok-4.5"]?.reportedCostUsd).toBeCloseTo(0.75, 12);
     expect(byModel["grok-composer-2.5-fast"]?.reportedCostUsd).toBeCloseTo(0.25, 12);
+    const sum =
+      (byModel["grok-4.5"]?.reportedCostUsd ?? 0) +
+      (byModel["grok-composer-2.5-fast"]?.reportedCostUsd ?? 0);
+    expect(sum).toBeCloseTo(1, 12);
+  });
+
+  it("allocates leftover aggregate ticks to models that omit per-model ticks", () => {
+    // Mixed turn: model A reports its own ticks; model B omits them. The
+    // aggregate is larger than A's ticks — B must receive the remainder so
+    // summed reported cost still matches the provider total.
+    // A: $0.40 own ticks, B: 100 tokens unticked, aggregate: $1 → B gets $0.60.
+    const records = parseGrokLine(
+      turnCompleted({
+        modelUsage: {
+          "grok-4.5": {
+            inputTokens: 300,
+            outputTokens: 0,
+            cachedReadTokens: 0,
+            reasoningTokens: 0,
+            costUsdTicks: 0.4 * GROK_COST_USD_TICKS_PER_DOLLAR,
+          },
+          "grok-composer-2.5-fast": {
+            inputTokens: 100,
+            outputTokens: 0,
+            cachedReadTokens: 0,
+            reasoningTokens: 0,
+          },
+        },
+        usage: { costUsdTicks: GROK_COST_USD_TICKS_PER_DOLLAR },
+      }),
+    );
+
+    expect(records).toHaveLength(2);
+    const byModel = Object.fromEntries(records.map((record) => [record.model, record]));
+    expect(byModel["grok-4.5"]?.reportedCostUsd).toBeCloseTo(0.4, 12);
+    expect(byModel["grok-composer-2.5-fast"]?.reportedCostUsd).toBeCloseTo(0.6, 12);
     const sum =
       (byModel["grok-4.5"]?.reportedCostUsd ?? 0) +
       (byModel["grok-composer-2.5-fast"]?.reportedCostUsd ?? 0);

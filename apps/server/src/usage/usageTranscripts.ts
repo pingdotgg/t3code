@@ -441,40 +441,38 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
     ];
   }
 
-  // When every per-model entry lacks ticks but the aggregate reports them,
-  // pro-rate the top-level ticks by each model's token share so provider cost
-  // is not discarded on multi-model turns (rate-table fallback can still miss
-  // slugs). Single-model turns simply inherit the aggregate below.
-  // Only count ticks on entries the emit loop would keep: zero-token siblings
-  // (often costUsdTicks: 0) must not suppress aggregate pro-rating for
-  // billable models that omit per-model ticks.
-  const anyPerModelTicks = modelEntries.some(
-    (entry) =>
-      entry.totals.costUsdTicks !== null && totalTokens(grokTotalsToUsage(entry.totals)) > 0,
-  );
+  // Cost allocation:
+  // 1. Emitted models with their own costUsdTicks keep those values.
+  // 2. Remaining aggregate cost (top-level minus sum of those per-model
+  //    ticks, clamped at 0) is pro-rated across emitted models that lack
+  //    ticks, by token share among the unticked models only.
+  // 3. When no model has per-model ticks, remaining equals the full
+  //    aggregate and every emitted model gets a token-share slice.
+  // Zero-token rows are never emitted and never count toward used ticks
+  // (empty siblings often ship costUsdTicks: 0 and must not steal remainder).
   const topLevelCostUsd = grokCostTicksToUsd(topLevel.costUsdTicks);
-  let sharedTokenDenominator = 0;
-  if (!anyPerModelTicks && topLevelCostUsd !== null && modelEntries.length > 1) {
-    for (const entry of modelEntries) {
-      sharedTokenDenominator += totalTokens(grokTotalsToUsage(entry.totals));
+  let usedTickedCostUsd = 0;
+  let untickedTokenDenominator = 0;
+  for (const entry of modelEntries) {
+    const tokens = totalTokens(grokTotalsToUsage(entry.totals));
+    if (tokens === 0) continue;
+    if (entry.totals.costUsdTicks !== null) {
+      usedTickedCostUsd += grokCostTicksToUsd(entry.totals.costUsdTicks) ?? 0;
+    } else {
+      untickedTokenDenominator += tokens;
     }
   }
+  const remainingCostUsd =
+    topLevelCostUsd === null ? null : Math.max(0, topLevelCostUsd - usedTickedCostUsd);
 
   const results: UsageRecord[] = [];
   for (const entry of modelEntries) {
     const totals = grokTotalsToUsage(entry.totals);
     if (totalTokens(totals) === 0) continue;
 
-    // Per-model ticks when present; otherwise a single-model turn inherits the
-    // aggregate, and multi-model turns without per-model ticks take a token-
-    // share slice of the aggregate so reported cost is not dropped.
     let reportedCostUsd = grokCostTicksToUsd(entry.totals.costUsdTicks);
-    if (reportedCostUsd === null && topLevelCostUsd !== null) {
-      if (modelEntries.length === 1) {
-        reportedCostUsd = topLevelCostUsd;
-      } else if (sharedTokenDenominator > 0) {
-        reportedCostUsd = topLevelCostUsd * (totalTokens(totals) / sharedTokenDenominator);
-      }
+    if (reportedCostUsd === null && remainingCostUsd !== null && untickedTokenDenominator > 0) {
+      reportedCostUsd = remainingCostUsd * (totalTokens(totals) / untickedTokenDenominator);
     }
 
     results.push({
