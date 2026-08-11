@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSnoozePresets, snoozeWakeDescription } from "./Sidebar.snooze";
+import {
+  formatSnoozeForInput,
+  parseSnoozeForInput,
+  resolveSnoozePresets,
+  snoozeWakeDescription,
+} from "./Sidebar.snooze";
 
 // Local-time constructor so preset math is timezone-stable in tests.
 function localDate(year: number, month: number, day: number, hour: number, minute = 0): Date {
@@ -92,5 +97,57 @@ describe("snoozeWakeDescription", () => {
     expect(snoozeWakeDescription(localDate(2026, 4, 8, 18).toISOString(), now, "24-hour")).toBe(
       "18:00",
     );
+  });
+});
+
+describe("custom snooze browser input", () => {
+  it("round-trips local date and time without applying a UTC offset", () => {
+    const value = localDate(2026, 4, 8, 13, 45);
+    const input = formatSnoozeForInput(value);
+    const parsed = parseSnoozeForInput(input, { now: localDate(2026, 4, 8, 10) });
+
+    expect(input).toBe("2026-04-08T13:45");
+    expect(parsed).toEqual({ ok: true, value });
+  });
+
+  it("rejects malformed, normalized, and expired local values", () => {
+    const now = localDate(2026, 4, 8, 10);
+
+    expect(parseSnoozeForInput("", { now })).toEqual({
+      ok: false,
+      error: "Choose a valid date and time.",
+    });
+    expect(parseSnoozeForInput("2026-02-30T11:00", { now })).toEqual({
+      ok: false,
+      error: "Choose a valid date and time.",
+    });
+    expect(parseSnoozeForInput("2026-04-08T09:00", { now })).toEqual({
+      ok: false,
+      error: "Choose a time in the future.",
+    });
+  });
+
+  it("rejects a local wall time normalized through a daylight-saving gap", () => {
+    const normalized = localDate(2026, 3, 8, 2, 30);
+    // UTC and zones without a March DST transition have no gap to exercise.
+    if (normalized.getHours() === 2 && normalized.getMinutes() === 30) return;
+
+    expect(parseSnoozeForInput("2026-03-08T02:30", { now: localDate(2026, 3, 7, 12) })).toEqual({
+      ok: false,
+      error: "Choose a valid date and time.",
+    });
+  });
+
+  it("chooses the future occurrence of a repeated local hour", () => {
+    const firstOccurrence = localDate(2026, 11, 1, 1, 30);
+    const secondOccurrence = new Date(firstOccurrence.getTime() + 60 * 60 * 1_000);
+    // UTC and zones without a one-hour November fallback have no repeat.
+    if (formatSnoozeForInput(secondOccurrence) !== "2026-11-01T01:30") return;
+
+    expect(
+      parseSnoozeForInput("2026-11-01T01:30", {
+        now: new Date(firstOccurrence.getTime() + 30 * 60 * 1_000),
+      }),
+    ).toEqual({ ok: true, value: secondOccurrence });
   });
 });

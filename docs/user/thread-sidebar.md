@@ -22,3 +22,9 @@ pill** fallback because their colors are not controlled by T3 Code.
 To generate a fresh title from the conversation, open a thread's context menu and choose
 **Regenerate title**. While T3 Code is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
+
+## Snoozing threads
+
+Snooze a thread with a preset, or choose **Snooze for…** to set a date and time. The thread stays
+out of your inbox until then, unless it finishes or needs you sooner. Use **Undo** after snoozing,
+or expand the Snoozed section and choose **Wake** to bring it back immediately.
