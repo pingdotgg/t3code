@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { getThemeColorsForMode, THEME_FILE_VERSION } from "./themePalette";
+import { getThemeColorsForMode, themeColorToHex, THEME_FILE_VERSION } from "./themePalette";
 import {
   isVsCodeThemeFile,
   pairVsCodeThemes,
@@ -8,9 +8,15 @@ import {
   resolveThemeLabelCollisions,
 } from "./vscodeThemeImport";
 
+function asHex(value: string): string {
+  const hex = themeColorToHex(value);
+  if (!hex) throw new Error(`Expected a theme color, received ${value}`);
+  return hex;
+}
+
 function contrastRatio(first: string, second: string): number {
   const toChannels = (value: string) => {
-    const hex = value.slice(1);
+    const hex = asHex(value).slice(1);
     return [0, 1, 2].map(
       (channel) => Number.parseInt(hex.slice(channel * 2, channel * 2 + 2), 16) / 255,
     );
@@ -69,18 +75,18 @@ describe("VS Code theme import", () => {
     // The slug name is read as words; a displayName would win verbatim.
     expect(theme.label).toBe("Pierre Dark Soft");
     expect(theme.appearance).toBe("dark");
-    expect(theme.colors.canvas).toBe("#171717");
-    expect(theme.colors.text).toBe("#d4d4d4");
-    expect(theme.colors.accent).toBe("#69b1ff");
-    expect(theme.colors.sidebar).toBe("#101010");
-    expect(theme.colors.terminalBackground).toBe("#101010");
+    expect(asHex(theme.colors.canvas)).toBe("#171717");
+    expect(asHex(theme.colors.text)).toBe("#d4d4d4");
+    expect(asHex(theme.colors.accent)).toBe("#69b1ff");
+    expect(asHex(theme.colors.sidebar)).toBe("#101010");
+    expect(asHex(theme.colors.terminalBackground)).toBe("#101010");
   });
 
   it("flattens alpha overlays onto the surface they sit on", () => {
     const theme = parseVsCodeThemeFile(VSCODE_DARK);
     // #1f3e5e59 over the #101010 sidebar, not left semi-transparent.
-    expect(theme.colors.sidebarRowHover).toMatch(/^#[0-9a-f]{6}$/);
-    expect(theme.colors.sidebarRowHover).not.toBe("#1f3e5e59");
+    expect(theme.colors.sidebarRowHover).toMatch(/^oklch\(/);
+    expect(asHex(theme.colors.sidebarRowHover)).not.toBe("#1f3e5e59");
     expect(theme.colors.sidebarRowSelected).not.toBe(theme.colors.sidebar);
   });
 
@@ -88,7 +94,7 @@ describe("VS Code theme import", () => {
     const theme = parseVsCodeThemeFile(VSCODE_DARK);
     const colors = getThemeColorsForMode(theme, "dark")!;
     for (const value of Object.values(colors)) {
-      expect(value).toMatch(/^#[0-9a-f]{3,8}$/i);
+      expect(value).toMatch(/^oklch\(/);
     }
     expect(contrastRatio(colors.text, colors.canvas)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(colors.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
@@ -117,7 +123,7 @@ describe("VS Code theme import", () => {
       type: "dark",
       colors: { "editor.background": "#101010", "editor.foreground": "#111111" },
     });
-    expect(theme.colors.text).not.toBe("#111111");
+    expect(asHex(theme.colors.text)).not.toBe("#111111");
     expect(contrastRatio(theme.colors.text, theme.colors.canvas)).toBeGreaterThanOrEqual(4.5);
   });
 
@@ -134,7 +140,7 @@ describe("VS Code theme import", () => {
         "terminal.background": "#fbfbfb",
       },
     });
-    expect(theme.colors.sidebar).toBe("#fafafa");
+    expect(asHex(theme.colors.sidebar)).toBe("#fafafa");
     expect(
       contrastRatio(theme.colors.sidebarForeground, theme.colors.sidebar),
     ).toBeGreaterThanOrEqual(4.5);
@@ -156,10 +162,10 @@ describe("VS Code theme import", () => {
         "editor.selectionBackground": "color(display-p3 0.308664 0.645271 1.000000 / 0.300000)",
       },
     });
-    expect(theme.colors.canvas).toMatch(/^#0[89ab]/);
-    expect(theme.colors.text).toMatch(/^#f[a-f0-9]/);
+    expect(asHex(theme.colors.canvas)).toMatch(/^#0[89ab]/);
+    expect(asHex(theme.colors.text)).toMatch(/^#f[a-f0-9]/);
     // The P3 blue lands in sRGB blue, not black or a clipped grey.
-    const accent = theme.colors.accent;
+    const accent = asHex(theme.colors.accent);
     const [red, green, blue] = [1, 3, 5].map((index) =>
       Number.parseInt(accent.slice(index, index + 2), 16),
     ) as [number, number, number];
@@ -192,8 +198,8 @@ describe("VS Code theme import", () => {
     const github = themes[0]!;
     expect(github.appearance).toBe("light");
     expect(getThemeColorsForMode(github, "dark")).not.toBeNull();
-    expect(getThemeColorsForMode(github, "dark")!.canvas).toBe("#101014");
-    expect(github.colors.canvas).toBe("#fdfdfd");
+    expect(asHex(getThemeColorsForMode(github, "dark")!.canvas)).toBe("#101014");
+    expect(asHex(github.colors.canvas)).toBe("#fdfdfd");
     // The unpaired dimmed variant stays a single dark theme.
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
   });
@@ -220,14 +226,15 @@ describe("VS Code theme import", () => {
     // surface, plain surfaces) must stay near the canvas, not turn blue.
     const theme = parseVsCodeThemeFile(VSCODE_DARK);
     const spread = (value: string) => {
-      const channels = [1, 3, 5].map((index) => Number.parseInt(value.slice(index, index + 2), 16));
+      const hex = asHex(value);
+      const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
       return Math.max(...channels) - Math.min(...channels);
     };
     expect(spread(theme.colors.codeBackground)).toBeLessThanOrEqual(8);
     expect(spread(theme.colors.surface)).toBeLessThanOrEqual(8);
     expect(spread(theme.colors.text)).toBeLessThanOrEqual(12);
     // The accent itself keeps the file's color.
-    expect(theme.colors.accent).toBe("#69b1ff");
+    expect(asHex(theme.colors.accent)).toBe("#69b1ff");
   });
 
   it("tells same-named variants apart by their file names", () => {
