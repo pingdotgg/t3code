@@ -25,7 +25,11 @@ import { makeAetherTextGeneration } from "../../textGeneration/AetherTextGenerat
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import { AetherMirrorRegistry } from "../AetherMirrorRegistry.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeAetherAdapter } from "../Layers/AetherAdapter.ts";
+import {
+  AetherMirrorRegistrationService,
+  AetherSessionGitService,
+  makeAetherAdapter,
+} from "../Layers/AetherAdapter.ts";
 import { makeAetherRestClient } from "../Layers/aether/restClient.ts";
 import {
   checkAetherProviderStatus,
@@ -126,13 +130,14 @@ export const AetherDriver: ProviderDriver<AetherSettings, AetherDriverEnv> = {
       const adapter = yield* makeAetherAdapter({
         instanceId,
         defaultCwd: serverConfig.cwd,
-        git: gitVcsDriver,
         attachmentsDir: serverConfig.attachmentsDir,
-        mirrorRegistry,
         restClient,
         socket:
           apiKey === undefined ? undefined : { apiBaseUrl: effectiveConfig.apiBaseUrl, apiKey },
-      });
+      }).pipe(
+        Effect.provideService(AetherSessionGitService, gitVcsDriver),
+        Effect.provideService(AetherMirrorRegistrationService, mirrorRegistry),
+      );
       const textGeneration = makeAetherTextGeneration();
 
       const checkProvider = checkAetherProviderStatus(effectiveConfig, processEnv).pipe(

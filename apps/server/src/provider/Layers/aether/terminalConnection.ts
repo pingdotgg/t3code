@@ -360,7 +360,7 @@ export const openAetherTerminalConnection = (
         return Effect.try({
           try: () => socket.send(payload),
           catch: (cause) =>
-            new CloudTerminalWriteError({ detail: `${operation}: ${String(cause)}` }),
+            new CloudTerminalWriteError({ detail: `${operation}: ${String(cause)}`, cause }),
         });
       });
 

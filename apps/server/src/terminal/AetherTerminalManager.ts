@@ -84,31 +84,29 @@ interface AetherTerminalSession {
   errorMessage: string | null;
 }
 
-interface AetherTerminalManagerShape {
-  /** Whether this thread's shell should run in the Aether cloud VM. */
-  readonly handles: (threadId: string) => Effect.Effect<boolean, TerminalError>;
-  readonly open: (
-    input: TerminalOpenInput,
-  ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
-  readonly attachStream: (
-    input: TerminalAttachInput,
-    listener: Listener,
-  ) => Effect.Effect<() => void, TerminalError>;
-  readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
-  readonly resize: (input: TerminalResizeInput) => Effect.Effect<void, TerminalError>;
-  readonly clear: (input: TerminalClearInput) => Effect.Effect<void, TerminalError>;
-  readonly restart: (
-    input: TerminalRestartInput,
-  ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
-  readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
-  readonly subscribeMetadata: (
-    listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
-  ) => Effect.Effect<() => void>;
-}
-
 export class AetherTerminalManager extends Context.Service<
   AetherTerminalManager,
-  AetherTerminalManagerShape
+  {
+    /** Whether this thread's shell should run in the Aether cloud VM. */
+    readonly handles: (threadId: string) => Effect.Effect<boolean, TerminalError>;
+    readonly open: (
+      input: TerminalOpenInput,
+    ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
+    readonly attachStream: (
+      input: TerminalAttachInput,
+      listener: Listener,
+    ) => Effect.Effect<() => void, TerminalError>;
+    readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
+    readonly resize: (input: TerminalResizeInput) => Effect.Effect<void, TerminalError>;
+    readonly clear: (input: TerminalClearInput) => Effect.Effect<void, TerminalError>;
+    readonly restart: (
+      input: TerminalRestartInput,
+    ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
+    readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
+    readonly subscribeMetadata: (
+      listener: (event: TerminalMetadataStreamEvent) => Effect.Effect<void>,
+    ) => Effect.Effect<() => void>;
+  }
 >()("t3/terminal/AetherTerminalManager") {}
 
 const SESSION_KEY_SEPARATOR = " ";
@@ -386,7 +384,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       return session;
     });
 
-  const open: AetherTerminalManagerShape["open"] = (input) =>
+  const open: AetherTerminalManager["Service"]["open"] = (input) =>
     Effect.gen(function* () {
       const key = sessionKey(input.threadId, input.terminalId);
       const cols = input.cols ?? DEFAULT_COLS;
@@ -431,7 +429,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       return snapshotOf(session);
     });
 
-  const attachStream: AetherTerminalManagerShape["attachStream"] = (input, listener) =>
+  const attachStream: AetherTerminalManager["Service"]["attachStream"] = (input, listener) =>
     Effect.gen(function* () {
       const key = sessionKey(input.threadId, input.terminalId);
       let session = sessions.get(key);
@@ -497,7 +495,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       };
     });
 
-  const write: AetherTerminalManagerShape["write"] = (input) =>
+  const write: AetherTerminalManager["Service"]["write"] = (input) =>
     Effect.gen(function* () {
       const session = sessions.get(sessionKey(input.threadId, input.terminalId));
       if (!session || !session.connection) {
@@ -519,7 +517,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       );
     });
 
-  const resize: AetherTerminalManagerShape["resize"] = (input) =>
+  const resize: AetherTerminalManager["Service"]["resize"] = (input) =>
     Effect.gen(function* () {
       const session = sessions.get(sessionKey(input.threadId, input.terminalId));
       if (!session || !session.connection) {
@@ -562,7 +560,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       yield* teardownConnection(session);
     });
 
-  const close: AetherTerminalManagerShape["close"] = (input) =>
+  const close: AetherTerminalManager["Service"]["close"] = (input) =>
     Effect.gen(function* () {
       const keys =
         input.terminalId !== undefined
@@ -578,7 +576,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       }
     });
 
-  const clear: AetherTerminalManagerShape["clear"] = (input) =>
+  const clear: AetherTerminalManager["Service"]["clear"] = (input) =>
     Effect.gen(function* () {
       const session = sessions.get(sessionKey(input.threadId, input.terminalId));
       if (!session) return;
@@ -602,7 +600,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       );
     });
 
-  const restart: AetherTerminalManagerShape["restart"] = (input) =>
+  const restart: AetherTerminalManager["Service"]["restart"] = (input) =>
     Effect.gen(function* () {
       const key = sessionKey(input.threadId, input.terminalId);
       const session = sessions.get(key);
@@ -633,7 +631,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       });
     });
 
-  const handles: AetherTerminalManagerShape["handles"] = (threadId) =>
+  const handles: AetherTerminalManager["Service"]["handles"] = (threadId) =>
     Effect.gen(function* () {
       const cached = routingCache.get(threadId);
       if (cached !== undefined) return cached;
@@ -646,7 +644,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       return isAether;
     });
 
-  const subscribeMetadata: AetherTerminalManagerShape["subscribeMetadata"] = (listener) =>
+  const subscribeMetadata: AetherTerminalManager["Service"]["subscribeMetadata"] = (listener) =>
     Effect.gen(function* () {
       metadataListeners.add(listener);
       const terminals = Array.from(sessions.values()).map(summaryOf);
@@ -670,7 +668,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
     restart,
     close,
     subscribeMetadata,
-  } satisfies AetherTerminalManagerShape;
+  } satisfies AetherTerminalManager["Service"];
 });
 
 export const layer = Layer.effect(AetherTerminalManager, make());

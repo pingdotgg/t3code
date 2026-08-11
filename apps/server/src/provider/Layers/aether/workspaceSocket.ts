@@ -588,11 +588,12 @@ export const openSocket = (
     });
     yield* awaitOpen.pipe(
       Effect.timeout(Duration.millis(openTimeoutMs)),
-      Effect.catchTag("TimeoutError", () =>
-        Effect.fail(
-          new AetherSocketOpenError({ url, detail: `open timed out after ${openTimeoutMs}ms` }),
-        ),
-      ),
+      Effect.catchTags({
+        TimeoutError: () =>
+          Effect.fail(
+            new AetherSocketOpenError({ url, detail: `open timed out after ${openTimeoutMs}ms` }),
+          ),
+      }),
       // EVERY pre-open exit must close the raw socket itself: the
       // acquireRelease finalizer only registers after open succeeds, and the
       // reconnect ladder retries open failures indefinitely — an upgrade
@@ -667,9 +668,10 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
     // surfaces immediately at startSession.
     const attached = yield* everConnected
       ? attach.pipe(
-          Effect.catchTag("AetherApiTransportError", (error) =>
-            Effect.succeed({ _tag: "retry", detail: error.message } as const),
-          ),
+          Effect.catchTags({
+            AetherApiTransportError: (error) =>
+              Effect.succeed({ _tag: "retry", detail: error.message } as const),
+          }),
         )
       : attach;
 
@@ -751,16 +753,15 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                   });
                   const frame = yield* Deferred.await(deferred).pipe(
                     Effect.timeout(Duration.millis(timing.requestTimeoutMs)),
-                    Effect.catchTag(
-                      "TimeoutError",
-                      () =>
+                    Effect.catchTags({
+                      TimeoutError: () =>
                         new AetherWorkspaceRequestTimeoutError({
                           channel: input.channel,
                           requestType: input.requestType,
                           requestId,
                           timeoutMs: timing.requestTimeoutMs,
                         }),
-                    ),
+                    }),
                     Effect.ensuring(Effect.sync(() => pending.delete(requestId))),
                   );
                   const outcome = input.parse(frame);
@@ -925,9 +926,10 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
           ).pipe(
             // An open failure is a reconnect case, not a stream failure: the
             // workspace may have suspended between connect and upgrade.
-            Effect.catchTag("AetherSocketOpenError", (error) =>
-              Effect.succeed({ _tag: "retry", detail: error.detail } as const),
-            ),
+            Effect.catchTags({
+              AetherSocketOpenError: (error) =>
+                Effect.succeed({ _tag: "retry", detail: error.detail } as const),
+            }),
           );
 
     if (pumped._tag === "retry") {

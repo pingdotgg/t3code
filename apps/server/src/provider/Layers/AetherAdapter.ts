@@ -65,6 +65,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -242,6 +243,15 @@ export interface AetherSessionGit {
   readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
 }
 
+/**
+ * The adapter's git dependency as an Effect requirement: the driver provides
+ * `GitVcsDriver` here, unit tests provide a narrowed fake.
+ */
+export class AetherSessionGitService extends Context.Service<
+  AetherSessionGitService,
+  AetherSessionGit
+>()("t3/provider/Layers/AetherAdapter/AetherSessionGitService") {}
+
 /** Transport coordinates for the workspace WS attach (build item 5). */
 export interface AetherAdapterSocketOptions {
   /** Same origin the REST client talks to; the wss URL derives from it. */
@@ -259,6 +269,15 @@ export interface AetherMirrorRegistration {
   readonly register: (cwd: string, key: string) => Effect.Effect<void>;
   readonly deregister: (cwd: string, key: string) => Effect.Effect<void>;
 }
+
+/**
+ * The adapter's mirror-ownership dependency as an Effect requirement: the
+ * driver provides `AetherMirrorRegistry` here, unit tests provide a fake.
+ */
+export class AetherMirrorRegistrationService extends Context.Service<
+  AetherMirrorRegistrationService,
+  AetherMirrorRegistration
+>()("t3/provider/Layers/AetherAdapter/AetherMirrorRegistrationService") {}
 
 /** Turn-engine pacing knobs (injectable so tests never sleep real time). */
 export interface AetherTurnTiming {
@@ -284,15 +303,8 @@ export interface AetherAdapterOptions {
   readonly instanceId: ProviderInstanceId;
   /** Fallback session cwd when the start input carries none (ServerConfig.cwd). */
   readonly defaultCwd: string;
-  readonly git: AetherSessionGit;
   /** Attachment blob store root (ServerConfig.attachmentsDir). */
   readonly attachmentsDir: string;
-  /**
-   * The fork-side guard registry: every session's cwd is registered while an
-   * Aether thread owns it, and deregistered on disconnect AND adapter
-   * teardown (build item 8a).
-   */
-  readonly mirrorRegistry: AetherMirrorRegistration;
   /**
    * Undefined when the instance has no `AETHER_API_KEY` — startSession then
    * fails loudly with the remediation instead of the driver failing create().
@@ -706,10 +718,16 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
 ): Effect.fn.Return<
   ProviderAdapterShape<ProviderAdapterError>,
   never,
-  Crypto.Crypto | FileSystem.FileSystem | Scope.Scope
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | Scope.Scope
+  | AetherSessionGitService
+  | AetherMirrorRegistrationService
 > {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
+  const git = yield* AetherSessionGitService;
+  const mirrorRegistry = yield* AetherMirrorRegistrationService;
   const turnTiming = { ...DEFAULT_TURN_TIMING, ...options.turnTiming };
   // Scope-owned so registry teardown shuts the stream down with the instance.
   const runtimeEvents = yield* Effect.acquireRelease(
@@ -784,7 +802,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     Effect.gen(function* () {
       for (const [threadId, context] of sessions.entries()) {
         yield* closeSessionScope(context);
-        yield* options.mirrorRegistry.deregister(context.cwd, registryKey(threadId));
+        yield* mirrorRegistry.deregister(context.cwd, registryKey(threadId));
       }
     }),
   );
@@ -1520,7 +1538,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     // are unnecessary there and are skipped.
     const resume = parseAetherResume(input.resumeCursor);
     const isResume = resume !== undefined;
-    const status = yield* options.git
+    const status = yield* git
       .statusDetails(cwd)
       .pipe(Effect.mapError(toGitRequestError("startSession")));
     const issue =
@@ -1549,7 +1567,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     // fails cloud startup with remote_ref_missing (404).
     let baseBranch = status.branch ?? undefined;
     if (!isResume && input.managedWorktree === true && status.branch !== null) {
-      const recordedBase = (yield* options.git
+      const recordedBase = (yield* git
         .readConfigValue(cwd, `branch.${status.branch}.gh-merge-base`)
         .pipe(Effect.mapError(toGitRequestError("startSession"))))?.trim();
       if (!recordedBase) {
@@ -1563,7 +1581,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     }
     // The mirror baseline: for a never-synced thread the expected pre-sync
     // state is "clean tree at this HEAD".
-    const baselineHeadSha = yield* options.git
+    const baselineHeadSha = yield* git
       .execute({
         operation: "aether.startSession.baseline",
         cwd,
@@ -1575,7 +1593,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       );
 
     // (2) Repo → project resolution via the canonical owner/repo key.
-    const originUrl = yield* options.git
+    const originUrl = yield* git
       .readConfigValue(cwd, "remote.origin.url")
       .pipe(Effect.mapError(toGitRequestError("startSession")));
     if (originUrl === null || originUrl.trim().length === 0) {
@@ -1688,7 +1706,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       mapper: undefined,
       mirror: makeAetherMirrorSync({
         cwd,
-        git: options.git,
+        git,
         baselineHeadSha,
         persistedFingerprint: resume?.mirrorFingerprint,
         // Lazily reads the surrounding context: the first sendTurn fills the
@@ -1719,11 +1737,11 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     const previous = sessions.get(input.threadId);
     if (previous !== undefined) {
       yield* closeSessionScope(previous);
-      yield* options.mirrorRegistry.deregister(previous.cwd, registryKey(input.threadId));
+      yield* mirrorRegistry.deregister(previous.cwd, registryKey(input.threadId));
     }
     sessions.set(input.threadId, context);
     // The fork-side write guard owns this cwd for the thread's lifetime.
-    yield* options.mirrorRegistry.register(cwd, registryKey(input.threadId));
+    yield* mirrorRegistry.register(cwd, registryKey(input.threadId));
 
     // (5) Stream attach: a resumed live task starts streaming immediately
     // (PASSIVE — never boots a VM). No task yet (fresh thread) → nothing to
@@ -1747,7 +1765,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
     sessions.delete(threadId);
     // Release the fork-side write guard: the cwd is an ordinary local
     // checkout again the moment the Aether thread lets go of it.
-    yield* options.mirrorRegistry.deregister(context.cwd, registryKey(threadId));
+    yield* mirrorRegistry.deregister(context.cwd, registryKey(threadId));
     yield* emit({
       eventId: yield* randomEventId,
       provider: PROVIDER,
@@ -2489,7 +2507,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
   ): CloudTerminalConnectError =>
     error._tag === "AetherTerminalWorkspaceUnavailableError"
       ? new CloudTerminalUnavailableError({ reason: error.reason })
-      : new CloudTerminalTransportError({ detail: error.message });
+      : new CloudTerminalTransportError({ detail: error.message, cause: error });
   const cloudTerminal: CloudTerminalConnector | undefined =
     terminalRestClient !== undefined && terminalSocket !== undefined
       ? {

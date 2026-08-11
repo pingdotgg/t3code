@@ -117,6 +117,7 @@ export class AetherApiRequestError extends Schema.TaggedErrorClass<AetherApiRequ
     endpoint: Schema.String,
     status: Schema.Number,
     detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -394,6 +395,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
             endpoint,
             status: 0,
             detail: `Request body could not be encoded as JSON: ${String(cause)}`,
+            cause,
           }),
       ),
       Effect.flatMap((prepared) => execute(endpoint, prepared)),

@@ -34,6 +34,7 @@ export class CloudTerminalTransportError extends Schema.TaggedErrorClass<CloudTe
   "CloudTerminalTransportError",
   {
     detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -46,6 +47,7 @@ export class CloudTerminalWriteError extends Schema.TaggedErrorClass<CloudTermin
   "CloudTerminalWriteError",
   {
     detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

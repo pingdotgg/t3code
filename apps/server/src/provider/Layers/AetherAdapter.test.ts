@@ -19,6 +19,8 @@ import type { ExecuteGitResult, GitStatusDetails } from "../../vcs/GitVcsDriver.
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
 import {
+  AetherMirrorRegistrationService,
+  AetherSessionGitService,
   deterministicClientMessageId,
   makeAetherAdapter,
   parseAetherResume,
@@ -211,14 +213,18 @@ const withAdapter = <A, E>(
     const adapter = yield* makeAetherAdapter({
       instanceId,
       defaultCwd: "/default-cwd",
-      git: options.git ?? gitWith(cleanStatus),
       attachmentsDir: "/nonexistent-attachments-dir",
-      mirrorRegistry: options.mirrorRegistry ?? noopMirrorRegistry,
       restClient:
         options.hasRestClient === false ? undefined : (options.restClient ?? unusedRestClient),
       socket: options.socket,
       turnTiming: options.turnTiming ?? zeroTurnTiming,
-    });
+    }).pipe(
+      Effect.provideService(AetherSessionGitService, options.git ?? gitWith(cleanStatus)),
+      Effect.provideService(
+        AetherMirrorRegistrationService,
+        options.mirrorRegistry ?? noopMirrorRegistry,
+      ),
+    );
     return yield* use(adapter);
   }).pipe(
     Effect.scoped,
