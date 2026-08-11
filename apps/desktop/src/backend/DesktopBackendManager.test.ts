@@ -1397,4 +1397,131 @@ describe("DesktopBackendManager", () => {
       }).pipe(Effect.provide(TestClock.layer())),
     ),
   );
+
+  it.effect("never-ready cap invokes onPreflightFailed exactly once and stops when false", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let spawnCount = 0;
+        let preflightFailedCount = 0;
+        let lastPreflightFailure: DesktopBackendManager.PreflightFailure | undefined;
+        const preflightFailed = yield* Deferred.make<void>();
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              spawnCount++;
+              return makeProcess({
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+              });
+            })
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer(() => Effect.never),
+          config: {
+            ...baseConfig,
+            bootstrapDelivery: "stdin",
+          },
+          onPreflightFailed: (failure) =>
+            Effect.sync(() => {
+              preflightFailedCount++;
+              lastPreflightFailure = failure;
+            }).pipe(
+              Effect.andThen(Deferred.succeed(preflightFailed, void 0)),
+              Effect.as(false)
+            ),
+        });
+
+        yield* instance.start;
+        yield* Deferred.await(preflightFailed);
+        yield* TestClock.adjust(Duration.millis(1000));
+
+        assert.equal(preflightFailedCount, 1);
+        assert.equal(spawnCount, 5);
+        assert.isDefined(lastPreflightFailure);
+        assert.include(lastPreflightFailure!.reason, "exited before becoming ready");
+        assert.equal(lastPreflightFailure!.fatal, false);
+
+        const state = yield* instance.snapshot;
+        assert.isFalse(state.ready);
+        assert.isFalse(state.desiredRunning);
+      }).pipe(Effect.provide(TestClock.layer()))
+    )
+  );
+
+  it.effect("readiness resets the never-ready cap for stdin-delivery backends", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let spawnCount = 0;
+        let preflightFailedCount = 0;
+        const preflightFailed = yield* Deferred.make<void>();
+        const readyDeferred = yield* Deferred.make<void>();
+        const closeReadyProcess = yield* Deferred.make<void>();
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              spawnCount++;
+              if (spawnCount === 5) {
+                // On the 5th spawn, reach readiness, but exit when closeReadyProcess is completed.
+                return makeProcess({
+                  exitCode: Deferred.await(closeReadyProcess).pipe(Effect.as(ChildProcessSpawner.ExitCode(1))),
+                });
+              } else {
+                // All other spawns fail before readiness
+                return makeProcess({
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                });
+              }
+            })
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          // 5th spawn will get 200 OK and trigger onReady.
+          httpClientLayer: httpClientLayer((request) =>
+            spawnCount === 5 ? Effect.succeed(responseForRequest(request, 200)) : Effect.never
+          ),
+          config: {
+            ...baseConfig,
+            bootstrapDelivery: "stdin",
+          },
+          onReady: Deferred.succeed(readyDeferred, void 0).pipe(Effect.asVoid),
+          onPreflightFailed: () =>
+            Effect.sync(() => {
+              preflightFailedCount++;
+            }).pipe(
+              Effect.andThen(Deferred.succeed(preflightFailed, void 0)),
+              Effect.as(false) // stop retries
+            ),
+        });
+
+        yield* instance.start;
+        // Wait for the 5th spawn to become ready
+        yield* Deferred.await(readyDeferred);
+        
+        // At this point, it was spawned 5 times, and counter should be reset.
+        assert.equal(spawnCount, 5);
+        
+        // Trigger exit of the ready process
+        yield* Deferred.succeed(closeReadyProcess, void 0);
+
+        // Now wait for the preflight failure which should happen after 5 more failed spawns
+        yield* Deferred.await(preflightFailed);
+        yield* TestClock.adjust(Duration.millis(1000));
+
+        // Total spawns: 5 (initial) + 5 (new failures before readiness) = 10
+        assert.equal(spawnCount, 10);
+        assert.equal(preflightFailedCount, 1);
+        
+        const state = yield* instance.snapshot;
+        assert.isFalse(state.ready);
+        assert.isFalse(state.desiredRunning);
+      }).pipe(Effect.provide(TestClock.layer()))
+    )
+  );
 });

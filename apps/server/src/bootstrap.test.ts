@@ -15,6 +15,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   BootstrapEnvelopeDecodeError,
+  BootstrapEnvelopeReadError,
   BootstrapFdStatError,
   BootstrapInputStreamOpenError,
   readBootstrapEnvelope,
@@ -26,6 +27,7 @@ const openSyncInterceptor = vi.hoisted(() => ({
   errorCode: "ENXIO",
 }));
 const fstatSyncInterceptor = vi.hoisted(() => ({ failFd: null as number | null }));
+const createReadStreamInterceptor = vi.hoisted(() => ({ emitError: null as Error | null }));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -51,6 +53,13 @@ vi.mock("node:fs", async (importOriginal) => {
         throw error;
       }
       return (actual.fstatSync as (...a: typeof args) => NodeFS.Stats)(...args);
+    },
+    createReadStream: (...args: Parameters<typeof actual.createReadStream>) => {
+      const stream = actual.createReadStream(...args);
+      if (createReadStreamInterceptor.emitError) {
+        process.nextTick(() => stream.emit("error", createReadStreamInterceptor.emitError!));
+      }
+      return stream;
     },
   };
 });
@@ -236,5 +245,48 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
       const payload = yield* Fiber.join(fiber);
       assertNone(payload);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("returns none when the stream emits EBADF/ENOENT", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
+      const fd = NodeFS.openSync(filePath, "r");
+
+      const error = new Error("bad fd");
+      Object.assign(error, { code: "EBADF" });
+      createReadStreamInterceptor.emitError = error;
+
+      try {
+        const payload = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 });
+        assertNone(payload);
+      } finally {
+        createReadStreamInterceptor.emitError = null;
+      }
+    }),
+  );
+
+  it.effect("preserves fd and cause when the stream emits a generic error", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
+      const fd = NodeFS.openSync(filePath, "r");
+
+      const cause = new Error("generic stream error");
+      createReadStreamInterceptor.emitError = cause;
+
+      try {
+        const error = yield* readBootstrapEnvelope(TestEnvelopeSchema, fd, { timeoutMs: 100 }).pipe(
+          Effect.flip,
+        );
+
+        assert.instanceOf(error, BootstrapEnvelopeReadError);
+        assert.equal(error.fd, fd);
+        assert.strictEqual(error.cause, cause);
+        assert.equal(error.message, `Failed to read bootstrap envelope from file descriptor ${fd}.`);
+      } finally {
+        createReadStreamInterceptor.emitError = null;
+      }
+    }),
   );
 });
