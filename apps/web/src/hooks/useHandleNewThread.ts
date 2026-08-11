@@ -16,6 +16,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
+import { applyNewThreadPanelDefaults } from "../newThreadPanelDefaults";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -29,7 +30,7 @@ import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefau
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { useClientSettings } from "./useSettings";
+import { getClientSettings, useClientSettings } from "./useSettings";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -267,6 +268,14 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
+          // This draft is presented as a new chat, so it gets the configured
+          // default panel layout too — otherwise turning the preference on
+          // appears to do nothing until the project's next real thread. A
+          // draft that already has a layout keeps it.
+          applyNewThreadPanelDefaults(
+            scopeThreadRef(projectRef.environmentId, emptyStoredDraftThread.threadId),
+            getClientSettings(),
+          );
           const opened = {
             draftId: emptyStoredDraftThread.draftId,
             threadId: emptyStoredDraftThread.threadId,
@@ -377,6 +386,10 @@ export function useNewThreadHandler() {
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
+        applyNewThreadPanelDefaults(
+          scopeThreadRef(projectRef.environmentId, threadId),
+          getClientSettings(),
+        );
         if (carryModelSelection) {
           // After sticky state so the viewed thread's exact selection
           // (model + options like effort and context window) wins over the

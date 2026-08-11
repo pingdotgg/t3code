@@ -168,6 +168,11 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Default panel layout for new project chats: open these panels when a new
+  // chat is created, instead of a bare chat column. Client-local, because the
+  // panel state they seed is itself per-browser.
+  newThreadOpenFilesPanel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  newThreadOpenTerminal: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Legacy plan mode. The composer's Build/Plan toggle was removed from the
   // default UI; this beta flag restores it (plus the /plan and /default slash
   // commands) for users who still rely on the old workflow.
@@ -790,6 +795,8 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  newThreadOpenFilesPanel: Schema.optionalKey(Schema.Boolean),
+  newThreadOpenTerminal: Schema.optionalKey(Schema.Boolean),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),

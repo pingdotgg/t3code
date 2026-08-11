@@ -522,6 +522,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.newThreadOpenFilesPanel !== DEFAULT_UNIFIED_SETTINGS.newThreadOpenFilesPanel
+        ? ["Open files panel in new chats"]
+        : []),
+      ...(settings.newThreadOpenTerminal !== DEFAULT_UNIFIED_SETTINGS.newThreadOpenTerminal
+        ? ["Open terminal in new chats"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -540,6 +546,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
+      settings.newThreadOpenFilesPanel,
+      settings.newThreadOpenTerminal,
       settings.newWorktreesStartFromOrigin,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
@@ -644,6 +652,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      newThreadOpenFilesPanel: DEFAULT_UNIFIED_SETTINGS.newThreadOpenFilesPanel,
+      newThreadOpenTerminal: DEFAULT_UNIFIED_SETTINGS.newThreadOpenTerminal,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -2075,6 +2085,59 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          {...searchableSetting("new-thread-open-files")}
+          description="Start every new chat in a project with the files panel already open."
+          resetAction={
+            settings.newThreadOpenFilesPanel !==
+            DEFAULT_UNIFIED_SETTINGS.newThreadOpenFilesPanel ? (
+              <SettingResetButton
+                label="open files panel in new chats"
+                onClick={() =>
+                  updateSettings({
+                    newThreadOpenFilesPanel: DEFAULT_UNIFIED_SETTINGS.newThreadOpenFilesPanel,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.newThreadOpenFilesPanel}
+              onCheckedChange={(checked) =>
+                updateSettings({ newThreadOpenFilesPanel: Boolean(checked) })
+              }
+              aria-label="Open files panel in new chats"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("new-thread-open-terminal")}
+          description="Start every new chat in a project with a terminal already open."
+          resetAction={
+            settings.newThreadOpenTerminal !== DEFAULT_UNIFIED_SETTINGS.newThreadOpenTerminal ? (
+              <SettingResetButton
+                label="open terminal in new chats"
+                onClick={() =>
+                  updateSettings({
+                    newThreadOpenTerminal: DEFAULT_UNIFIED_SETTINGS.newThreadOpenTerminal,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.newThreadOpenTerminal}
+              onCheckedChange={(checked) =>
+                updateSettings({ newThreadOpenTerminal: Boolean(checked) })
+              }
+              aria-label="Open terminal in new chats"
+            />
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("add-project-starts-in")}
