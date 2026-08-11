@@ -46,6 +46,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
+import { projectDeleteCommandInput } from "../../lib/projectRemoval";
 import { readLocalApi } from "../../localApi";
 import {
   buildProjectScript,
@@ -681,9 +682,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       const confirmed = await settlePromise(() =>
         api.dialogs.confirm(
           [
-            projectThreads.length > 0
-              ? `Remove project "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`
-              : `Remove project "${targetLabel}"?`,
+            `Remove "${targetLabel}" and permanently delete every thread attached to ${members.length === 1 ? "this project entry" : "these project entries"}, including archived threads?`,
             ...(singleMember
               ? [
                   `Path: ${singleMember.workspaceRoot}`,
@@ -693,8 +692,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 ]
               : [`This removes ${members.length} grouped project entries.`]),
             ...(projectThreads.length > 0
-              ? ["This permanently clears conversation history for those threads."]
+              ? [
+                  `This includes ${projectThreads.length} unarchived thread${projectThreads.length === 1 ? "" : "s"}.`,
+                ]
               : []),
+            "This permanently clears all associated conversation history.",
             isWholeGroup
               ? "This removes only the project entries, not the files on disk."
               : "Other entries in this grouped project are unaffected.",
@@ -707,17 +709,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
 
       const draftStore = useComposerDraftStore.getState();
       for (const member of members) {
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === member.environmentId && thread.projectId === member.id,
-        );
         const result = mapAtomCommandResult(
           await deleteProject({
             environmentId: member.environmentId,
-            input: {
-              projectId: member.id,
-              ...(memberThreads.length > 0 ? { force: true } : {}),
-            },
+            input: projectDeleteCommandInput(member.id),
           }),
           () => undefined,
         );
@@ -955,8 +950,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </button>
               <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
                 {selectedCheckoutThreadCount === 1
-                  ? "1 thread"
-                  : `${selectedCheckoutThreadCount} threads`}
+                  ? "1 unarchived thread"
+                  : `${selectedCheckoutThreadCount} unarchived threads`}
               </div>
             </div>
           </div>
@@ -1148,8 +1143,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             }
             description={
               group.memberProjects.length > 1
-                ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                : "Deletes the project entry and its threads. Files on disk are not touched."
+                ? `Deletes all ${group.memberProjects.length} checkout entries and all their threads, including archived threads, on every machine. Files on disk are not touched.`
+                : "Deletes the project entry and all its threads, including archived threads. Files on disk are not touched."
             }
             control={
               <Button
