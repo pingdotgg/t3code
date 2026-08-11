@@ -110,6 +110,17 @@ describe("custom snooze browser input", () => {
     expect(parsed).toEqual({ ok: true, value });
   });
 
+  it("round-trips dates with more than four year digits", () => {
+    const value = localDate(10_000, 1, 1, 13, 45);
+    const input = formatSnoozeForInput(value);
+
+    expect(input).toBe("10000-01-01T13:45");
+    expect(parseSnoozeForInput(input, { now: localDate(9_999, 12, 31, 0) })).toEqual({
+      ok: true,
+      value,
+    });
+  });
+
   it("rejects malformed, normalized, and expired local values", () => {
     const now = localDate(2026, 4, 8, 10);
 
