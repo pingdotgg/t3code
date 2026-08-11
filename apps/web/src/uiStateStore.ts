@@ -21,6 +21,7 @@ export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
+  threadLastReadAssistantMessageIdById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
@@ -36,6 +37,7 @@ export interface UiProjectState {
 
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
+  threadLastReadAssistantMessageIdById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
@@ -49,6 +51,7 @@ const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
   threadLastVisitedAtById: {},
+  threadLastReadAssistantMessageIdById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
 };
@@ -98,6 +101,16 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
+function sanitizeStringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] =>
+        entry[0].length > 0 && typeof entry[1] === "string" && entry[1].length > 0,
+    ),
+  );
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -126,6 +139,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     projectExpandedById,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
+    threadLastReadAssistantMessageIdById: sanitizeStringRecord(
+      parsed.threadLastReadAssistantMessageIdById,
+    ),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
@@ -204,6 +220,7 @@ export function persistState(state: UiState): void {
         projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
+        threadLastReadAssistantMessageIdById: state.threadLastReadAssistantMessageIdById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
@@ -222,25 +239,56 @@ export function persistState(state: UiState): void {
 
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
 
-export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
+export function markThreadVisited(
+  state: UiState,
+  threadId: string,
+  visitedAt: string,
+  assistantMessageId?: string | null,
+): UiState {
   const visitedAtMs = Date.parse(visitedAt);
   if (!Number.isFinite(visitedAtMs)) {
     return state;
   }
   const previousVisitedAt = state.threadLastVisitedAtById[threadId];
   const previousVisitedAtMs = previousVisitedAt ? Date.parse(previousVisitedAt) : NaN;
-  if (
+  const advancesVisit = !(
     Number.isFinite(previousVisitedAtMs) &&
     Number.isFinite(visitedAtMs) &&
     previousVisitedAtMs >= visitedAtMs
+  );
+  const acknowledgesAssistantMessage =
+    assistantMessageId != null &&
+    state.threadLastReadAssistantMessageIdById[threadId] !== assistantMessageId;
+  if (!advancesVisit && !acknowledgesAssistantMessage) {
+    return state;
+  }
+  return {
+    ...state,
+    threadLastVisitedAtById: advancesVisit
+      ? { ...state.threadLastVisitedAtById, [threadId]: visitedAt }
+      : state.threadLastVisitedAtById,
+    threadLastReadAssistantMessageIdById: acknowledgesAssistantMessage
+      ? { ...state.threadLastReadAssistantMessageIdById, [threadId]: assistantMessageId }
+      : state.threadLastReadAssistantMessageIdById,
+  };
+}
+
+export function observeThreadAssistantMessage(
+  state: UiState,
+  threadId: string,
+  assistantMessageId: string | null | undefined,
+): UiState {
+  if (
+    assistantMessageId == null ||
+    state.threadLastReadAssistantMessageIdById[threadId] !== undefined
   ) {
     return state;
   }
   return {
     ...state,
-    threadLastVisitedAtById: {
-      ...state.threadLastVisitedAtById,
-      [threadId]: visitedAt,
+    threadLastReadAssistantMessageIdById: {
+      ...state.threadLastReadAssistantMessageIdById,
+      [threadId]: assistantMessageId,
     },
   };
 }
@@ -382,7 +430,15 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
-  markThreadVisited: (threadId: string, visitedAt: string) => void;
+  markThreadVisited: (
+    threadId: string,
+    visitedAt: string,
+    assistantMessageId?: string | null,
+  ) => void;
+  observeThreadAssistantMessage: (
+    threadId: string,
+    assistantMessageId: string | null | undefined,
+  ) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
@@ -396,8 +452,10 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
-  markThreadVisited: (threadId, visitedAt) =>
-    set((state) => markThreadVisited(state, threadId, visitedAt)),
+  markThreadVisited: (threadId, visitedAt, assistantMessageId) =>
+    set((state) => markThreadVisited(state, threadId, visitedAt, assistantMessageId)),
+  observeThreadAssistantMessage: (threadId, assistantMessageId) =>
+    set((state) => observeThreadAssistantMessage(state, threadId, assistantMessageId)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
     set((state) => markThreadUnread(state, threadId, latestTurnCompletedAt)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>

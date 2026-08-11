@@ -5,6 +5,7 @@ import {
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
+  observeThreadAssistantMessage,
   parsePersistedState,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
@@ -22,6 +23,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     threadLastVisitedAtById: {},
+    threadLastReadAssistantMessageIdById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
@@ -29,6 +31,25 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
+  it("acknowledges the visible assistant message on visit", () => {
+    const threadId = ThreadId.make("thread-1");
+    const read = markThreadVisited(
+      makeUiState(),
+      threadId,
+      "2026-02-25T12:30:00.000Z",
+      "assistant-2",
+    );
+    expect(read.threadLastReadAssistantMessageIdById[threadId]).toBe("assistant-2");
+  });
+
+  it("baselines only the first observed assistant message", () => {
+    const threadId = ThreadId.make("thread-1");
+    const observed = observeThreadAssistantMessage(makeUiState(), threadId, "assistant-1");
+
+    expect(observed.threadLastReadAssistantMessageIdById[threadId]).toBe("assistant-1");
+    expect(observeThreadAssistantMessage(observed, threadId, "assistant-2")).toBe(observed);
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -158,6 +179,10 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
       },
+      threadLastReadAssistantMessageIdById: {
+        "environment:thread-1": "assistant-1",
+        invalid: "",
+      },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,
       threadChangedFilesExpandedById: {
@@ -175,6 +200,9 @@ describe("parsePersistedState", () => {
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
+      },
+      threadLastReadAssistantMessageIdById: {
+        "environment:thread-1": "assistant-1",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpandedById: {
@@ -273,6 +301,9 @@ describe("uiStateStore persistence", () => {
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
+      threadLastReadAssistantMessageIdById: {
+        "environment:thread-1": "assistant-1",
+      },
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -294,6 +325,9 @@ describe("uiStateStore persistence", () => {
       projectOrder: ["physical-b", "physical-a"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
+      },
+      threadLastReadAssistantMessageIdById: {
+        "environment:thread-1": "assistant-1",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       threadChangedFilesExpansionVersion: 1,

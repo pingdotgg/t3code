@@ -11,3 +11,7 @@ other connected devices.
 If reordering is unavailable for one environment, update the T3 Code server running in that
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
+
+Thread titles are bright when a new assistant message has arrived since you last opened the thread,
+including messages sent while the agent is still working. Opening the thread marks that message as
+read. Tool activity does not make a title bright.

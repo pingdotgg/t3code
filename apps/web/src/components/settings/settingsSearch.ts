@@ -99,6 +99,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "compact-sidebar-inbox",
+    title: "Compact sidebar inbox",
+    to: "/settings/general",
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

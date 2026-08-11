@@ -23,6 +23,28 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 
+export type SidebarThreadRowVariant = "card" | "slim";
+export type SidebarThreadSection = "pinned" | "active" | "snoozed" | "settled";
+
+export function sidebarThreadRowRenderKey(
+  threadKey: string,
+  section: SidebarThreadSection,
+  rowVariant: SidebarThreadRowVariant,
+): string {
+  return `${threadKey}:${section}:${rowVariant}`;
+}
+
+export function resolveSidebarSortableRowBag<T>(
+  rowVariant: SidebarThreadRowVariant,
+  sortable: T | undefined,
+): T | undefined {
+  switch (rowVariant) {
+    case "card":
+    case "slim":
+      return sortable;
+  }
+}
+
 type SidebarProject = {
   id: string;
   title: string;
@@ -258,6 +280,28 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
+}
+
+export function hasUnreadAssistantMessage(input: {
+  latestAssistantMessageId: string | null | undefined;
+  lastReadAssistantMessageId: string | undefined;
+}): boolean {
+  return (
+    input.latestAssistantMessageId != null &&
+    input.lastReadAssistantMessageId !== undefined &&
+    input.latestAssistantMessageId !== input.lastReadAssistantMessageId
+  );
+}
+
+export function resolveSidebarV2UnreadState(input: {
+  thread: ThreadStatusInput;
+  latestAssistantMessageId: string | null | undefined;
+  lastReadAssistantMessageId: string | undefined;
+}): { hasUnreadCompletion: boolean; hasUnreadAssistantMessage: boolean } {
+  return {
+    hasUnreadCompletion: hasUnseenCompletion(input.thread),
+    hasUnreadAssistantMessage: hasUnreadAssistantMessage(input),
+  };
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {

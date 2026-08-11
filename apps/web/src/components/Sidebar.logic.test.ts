@@ -11,13 +11,16 @@ import {
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
+  hasUnreadAssistantMessage,
   isContextMenuPointerDown,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarSortableRowBag,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
+  resolveSidebarV2UnreadState,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
@@ -32,6 +35,7 @@ import {
   sortThreadsForSidebar,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
+  sidebarThreadRowRenderKey,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
 import {
@@ -50,6 +54,23 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("compact sidebar row identity and sorting", () => {
+  it("keeps lifecycle sections distinct when every section uses slim rows", () => {
+    expect(sidebarThreadRowRenderKey("environment:thread", "active", "slim")).toBe(
+      "environment:thread:active:slim",
+    );
+    expect(sidebarThreadRowRenderKey("environment:thread", "settled", "slim")).toBe(
+      "environment:thread:settled:slim",
+    );
+  });
+
+  it("keeps pinned drag-and-drop wiring on slim rows", () => {
+    const sortable = { id: "sortable-row" };
+
+    expect(resolveSidebarSortableRowBag("slim", sortable)).toBe(sortable);
+  });
+});
 
 describe("shouldNavigateAfterProjectRemoval", () => {
   const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
@@ -285,6 +306,61 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("hasUnreadAssistantMessage", () => {
+  it("lights only a newly observed assistant message", () => {
+    expect(
+      hasUnreadAssistantMessage({
+        latestAssistantMessageId: "assistant-2",
+        lastReadAssistantMessageId: "assistant-1",
+      }),
+    ).toBe(true);
+    expect(
+      hasUnreadAssistantMessage({
+        latestAssistantMessageId: "assistant-1",
+        lastReadAssistantMessageId: "assistant-1",
+      }),
+    ).toBe(false);
+    expect(
+      hasUnreadAssistantMessage({
+        latestAssistantMessageId: "assistant-1",
+        lastReadAssistantMessageId: undefined,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveSidebarV2UnreadState", () => {
+  const completedThread = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestTurn: makeLatestTurn({ completedAt: "2026-03-09T10:30:00.000Z" }),
+    lastVisitedAt: "2026-03-09T10:20:00.000Z",
+    session: null,
+  };
+
+  it("keeps an acknowledged message title read when its turn later completes", () => {
+    expect(
+      resolveSidebarV2UnreadState({
+        thread: completedThread,
+        latestAssistantMessageId: "assistant-1",
+        lastReadAssistantMessageId: "assistant-1",
+      }),
+    ).toEqual({ hasUnreadCompletion: true, hasUnreadAssistantMessage: false });
+  });
+
+  it("does not treat a tool-only completion as unread assistant text", () => {
+    expect(
+      resolveSidebarV2UnreadState({
+        thread: completedThread,
+        latestAssistantMessageId: null,
+        lastReadAssistantMessageId: undefined,
+      }),
+    ).toEqual({ hasUnreadCompletion: true, hasUnreadAssistantMessage: false });
   });
 });
 

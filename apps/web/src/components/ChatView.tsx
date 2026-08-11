@@ -1632,23 +1632,26 @@ function ChatViewContent(props: ChatViewProps) {
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  // Keep the open thread read as assistant messages arrive. Finished turns use
+  // their completion timestamp; an in-flight message uses the shell update that
+  // delivered it. The message ID, rather than generic shell activity, controls
+  // title brightness, so later tool-only updates do not create unread text.
   useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
+    const latestTurn = serverThread?.latestTurn;
+    const visitedAt = latestTurn?.completedAt ?? serverThread?.updatedAt;
+    if (!serverThread?.id || !visitedAt) return;
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
+      visitedAt,
+      latestTurn?.assistantMessageId,
     );
   }, [
     markThreadVisited,
     serverThread?.environmentId,
     serverThread?.id,
+    serverThread?.latestTurn?.assistantMessageId,
     serverThread?.latestTurn?.completedAt,
+    serverThread?.updatedAt,
   ]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
