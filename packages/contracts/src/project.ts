@@ -267,7 +267,8 @@ export class ProjectReadFileError extends Schema.TaggedErrorClass<ProjectReadFil
       message:
         props.failure === "aether_mirror_read_only"
           ? AETHER_MIRROR_REFUSAL
-          : `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`,
+          : (decodedProjectErrorMessage(props) ??
+            `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }
@@ -305,7 +306,8 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
       message:
         props.failure === "aether_mirror_read_only"
           ? AETHER_MIRROR_REFUSAL
-          : `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
+          : (decodedProjectErrorMessage(props) ??
+            `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }

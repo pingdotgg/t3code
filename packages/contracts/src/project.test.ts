@@ -97,11 +97,16 @@ describe("project RPC errors", () => {
 
   it("decodes legacy message-only errors during rolling upgrades", () => {
     const decodeSearchError = Schema.decodeUnknownSync(ProjectSearchEntriesError);
+    const decodeWriteError = Schema.decodeUnknownSync(ProjectWriteFileError);
 
     const searchError = decodeSearchError({
       _tag: "ProjectSearchEntriesError",
       message: "Legacy project search failure.",
       query: "legacy sensitive query",
+    });
+    const writeError = decodeWriteError({
+      _tag: "ProjectWriteFileError",
+      message: "Legacy project write failure.",
     });
 
     expect(searchError.message).toBe("Legacy project search failure.");
@@ -109,5 +114,8 @@ describe("project RPC errors", () => {
     expect(searchError.queryLength).toBeUndefined();
     expect(searchError).not.toHaveProperty("query");
     expect(searchError.failure).toBeUndefined();
+    expect(writeError.message).toBe("Legacy project write failure.");
+    expect(writeError.relativePath).toBeUndefined();
+    expect(writeError.failure).toBeUndefined();
   });
 });

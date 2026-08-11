@@ -2507,7 +2507,7 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
   ): CloudTerminalConnectError =>
     error._tag === "AetherTerminalWorkspaceUnavailableError"
       ? new CloudTerminalUnavailableError({ reason: error.reason })
-      : new CloudTerminalTransportError({ detail: error.message, cause: error });
+      : new CloudTerminalTransportError({ detail: "workspace terminal connect failed", cause: error });
   const cloudTerminal: CloudTerminalConnector | undefined =
     terminalRestClient !== undefined && terminalSocket !== undefined
       ? {
