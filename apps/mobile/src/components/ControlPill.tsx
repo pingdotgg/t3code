@@ -6,6 +6,7 @@ import {
   type ComponentProps,
   type ReactElement,
   type ReactNode,
+  useRef,
 } from "react";
 import { Platform, Pressable, useColorScheme, View } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
@@ -21,10 +22,31 @@ export function ControlPill(props: {
   readonly label?: string;
   readonly accessibilityLabel?: string;
   readonly onPress?: () => void;
+  readonly activateOnPressIn?: boolean;
   readonly variant?: "circle" | "pill" | "primary" | "danger";
   readonly disabled?: boolean;
+  readonly className?: string;
 }) {
   const variant = props.variant ?? "circle";
+  const activatedOnPressInRef = useRef(false);
+
+  const handlePressIn = () => {
+    activatedOnPressInRef.current = true;
+    props.onPress?.();
+  };
+  const handlePressOut = () => {
+    // Pressability invokes onPressOut immediately before onPress on release.
+    // Defer the reset so onPress can identify the same physical gesture.
+    setTimeout(() => {
+      activatedOnPressInRef.current = false;
+    }, 0);
+  };
+  const handlePress = () => {
+    if (activatedOnPressInRef.current) {
+      return;
+    }
+    props.onPress?.();
+  };
 
   const iconColor = useThemeColor("--color-icon");
   const iconSubtle = useThemeColor("--color-icon-subtle");
@@ -54,6 +76,7 @@ export function ControlPill(props: {
       : variant === "danger"
         ? "bg-danger"
         : "bg-subtle",
+    props.className,
   );
   const labelClassName = cn(
     "text-center text-xs font-t3-bold",
@@ -68,7 +91,9 @@ export function ControlPill(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
-      onPress={props.onPress}
+      onPress={props.activateOnPressIn ? handlePress : props.onPress}
+      onPressIn={props.activateOnPressIn ? handlePressIn : undefined}
+      onPressOut={props.activateOnPressIn ? handlePressOut : undefined}
       disabled={props.disabled}
       className={containerClassName}
     >
