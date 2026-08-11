@@ -1,10 +1,20 @@
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import {
+  initialVoiceSupervisorData as sharedInitialVoiceSupervisorData,
+  MAX_VOICE_ACTIVITY_ENTRIES as SHARED_MAX_VOICE_ACTIVITY_ENTRIES,
+  MAX_VOICE_TRANSCRIPT_CHARS as SHARED_MAX_VOICE_TRANSCRIPT_CHARS,
+  MAX_VOICE_TRANSCRIPT_ENTRIES as SHARED_MAX_VOICE_TRANSCRIPT_ENTRIES,
+  reduceVoiceSupervisorState as sharedReduceVoiceSupervisorState,
+} from "@t3tools/client-runtime/voice/voice-supervisor-state";
 
 import { decodeRealtimeServerEvent, type RealtimeServerEvent } from "./realtimeEvents";
 import {
+  initialVoiceSupervisorData,
   MAX_VOICE_ACTIVITY_ENTRIES,
   MAX_VOICE_TRANSCRIPT_CHARS,
   MAX_VOICE_TRANSCRIPT_ENTRIES,
+  reduceVoiceSupervisorState,
   useVoiceSupervisorStore,
 } from "./voiceSupervisorStore";
 
@@ -18,233 +28,126 @@ beforeEach(() => {
   useVoiceSupervisorStore.getState().reset();
 });
 
-describe("voiceSupervisorStore", () => {
-  it("coalesces transcript deltas and replaces them with the final transcript", () => {
-    const store = useVoiceSupervisorStore.getState();
-    store.beginSession(3, 1);
-    store.ingestEvent(
-      3,
-      event({
-        event_id: "event-1",
-        type: "conversation.item.input_audio_transcription.delta",
-        item_id: "item-user",
-        delta: "Hello ",
-      }),
-      2,
-    );
-    store.ingestEvent(
-      3,
-      event({
-        event_id: "event-2",
-        type: "conversation.item.input_audio_transcription.delta",
-        item_id: "item-user",
-        delta: "T3",
-      }),
-      3,
-    );
-
-    expect(useVoiceSupervisorStore.getState().transcript).toEqual([
-      {
-        id: "item-user",
-        speaker: "user",
-        text: "Hello T3",
-        status: "streaming",
-        updatedAt: 3,
-      },
-    ]);
-
-    useVoiceSupervisorStore.getState().ingestEvent(
-      3,
-      event({
-        event_id: "event-3",
-        type: "conversation.item.input_audio_transcription.completed",
-        item_id: "item-user",
-        transcript: "Hello T3 Code",
-      }),
-      4,
-    );
-    expect(useVoiceSupervisorStore.getState().transcript[0]).toMatchObject({
-      text: "Hello T3 Code",
-      status: "complete",
-      updatedAt: 4,
-    });
+describe("voiceSupervisorStore adapter", () => {
+  it("re-exports the shared reducer, initial data, and public bounds", () => {
+    expect(reduceVoiceSupervisorState).toBe(sharedReduceVoiceSupervisorState);
+    expect(initialVoiceSupervisorData).toBe(sharedInitialVoiceSupervisorData);
+    expect(MAX_VOICE_ACTIVITY_ENTRIES).toBe(SHARED_MAX_VOICE_ACTIVITY_ENTRIES);
+    expect(MAX_VOICE_TRANSCRIPT_ENTRIES).toBe(SHARED_MAX_VOICE_TRANSCRIPT_ENTRIES);
+    expect(MAX_VOICE_TRANSCRIPT_CHARS).toBe(SHARED_MAX_VOICE_TRANSCRIPT_CHARS);
   });
 
-  it("ignores stale generation events and state transitions", () => {
-    const store = useVoiceSupervisorStore.getState();
-    store.beginSession(9, 1);
-    store.markConnected(8, 2);
-    store.setMuted(8, true);
-    store.ingestEvent(
+  it("delegates every public action and preserves action identity through reset", () => {
+    const initial = useVoiceSupervisorStore.getState();
+    const actions = {
+      beginSession: initial.beginSession,
+      markConnected: initial.markConnected,
+      setMuted: initial.setMuted,
+      ingestEvent: initial.ingestEvent,
+      failSession: initial.failSession,
+      endSession: initial.endSession,
+      reset: initial.reset,
+    };
+
+    actions.beginSession(4, 1);
+    actions.markConnected(4, 2);
+    actions.setMuted(4, true);
+    actions.ingestEvent(
+      4,
+      event({
+        event_id: "completed",
+        type: "conversation.item.input_audio_transcription.completed",
+        item_id: "item-user",
+        transcript: "Keep this until reset",
+      }),
+      3,
+    );
+    actions.failSession(4, "Temporary failure", 4);
+    actions.endSession(4, 5);
+
+    expect(useVoiceSupervisorStore.getState()).toMatchObject({
+      generation: 4,
+      phase: "idle",
+      muted: false,
+      sessionId: null,
+      errorMessage: null,
+      transcript: [
+        {
+          id: "item-user",
+          speaker: "user",
+          text: "Keep this until reset",
+          status: "complete",
+          updatedAt: 3,
+        },
+      ],
+    });
+
+    actions.reset();
+    const reset = useVoiceSupervisorStore.getState();
+    expect(reset).toMatchObject(initialVoiceSupervisorData);
+    expect(reset.transcript).toBe(initialVoiceSupervisorData.transcript);
+    expect(reset.activity).toBe(initialVoiceSupervisorData.activity);
+    expect(Object.isFrozen(reset.transcript)).toBe(true);
+    expect(Object.isFrozen(reset.activity)).toBe(true);
+    expect(() => Reflect.apply(Array.prototype.push, reset.transcript, ["poison"])).toThrow(
+      TypeError,
+    );
+    expect(() => Reflect.apply(Array.prototype.push, reset.activity, ["poison"])).toThrow(
+      TypeError,
+    );
+    expect(reset.transcript).toEqual([]);
+    expect(reset.activity).toEqual([]);
+    expect(reset.beginSession).toBe(actions.beginSession);
+    expect(reset.markConnected).toBe(actions.markConnected);
+    expect(reset.setMuted).toBe(actions.setMuted);
+    expect(reset.ingestEvent).toBe(actions.ingestEvent);
+    expect(reset.failSession).toBe(actions.failSession);
+    expect(reset.endSession).toBe(actions.endSession);
+    expect(reset.reset).toBe(actions.reset);
+  });
+
+  it("uses explicit zero timestamps and Date.now only when a timestamp is omitted", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValueOnce(101).mockReturnValueOnce(102);
+
+    useVoiceSupervisorStore.getState().beginSession(1, 0);
+    expect(useVoiceSupervisorStore.getState().activity[0]?.at).toBe(0);
+    expect(now).not.toHaveBeenCalled();
+
+    useVoiceSupervisorStore.getState().beginSession(2);
+    useVoiceSupervisorStore.getState().markConnected(2);
+    expect(useVoiceSupervisorStore.getState().activity.map((entry) => entry.at)).toEqual([
+      101, 102,
+    ]);
+    expect(now).toHaveBeenCalledTimes(2);
+    now.mockRestore();
+  });
+
+  it("rejects stale and duplicate actions without reading the clock or notifying subscribers", () => {
+    useVoiceSupervisorStore.getState().beginSession(9, 1);
+    useVoiceSupervisorStore.getState().markConnected(9, 2);
+    const state = useVoiceSupervisorStore.getState();
+    const subscriber = vi.fn();
+    const unsubscribe = useVoiceSupervisorStore.subscribe(subscriber);
+    const now = vi.spyOn(Date, "now");
+
+    state.markConnected(9);
+    state.markConnected(8);
+    state.setMuted(8, true);
+    state.ingestEvent(
       8,
       event({
         event_id: "stale",
         type: "session.created",
         session: { id: "stale-session" },
       }),
-      3,
     );
-    store.failSession(8, "stale failure", 4);
-    store.endSession(8, 5);
+    state.failSession(8, "stale failure");
+    state.endSession(8);
 
-    expect(useVoiceSupervisorStore.getState()).toMatchObject({
-      generation: 9,
-      phase: "connecting",
-      muted: false,
-      sessionId: null,
-      errorMessage: null,
-    });
-    expect(useVoiceSupervisorStore.getState().activity).toHaveLength(1);
-  });
-
-  it("marks a transcript failed when the protocol supplies a sparse nested error", () => {
-    const store = useVoiceSupervisorStore.getState();
-    store.beginSession(5, 1);
-    store.ingestEvent(
-      5,
-      event({
-        event_id: "delta",
-        type: "conversation.item.input_audio_transcription.delta",
-        item_id: "item-user",
-        delta: "Partial",
-      }),
-      2,
-    );
-    store.ingestEvent(
-      5,
-      event({
-        event_id: "failed",
-        type: "conversation.item.input_audio_transcription.failed",
-        item_id: "item-user",
-        error: {},
-      }),
-      3,
-    );
-
-    expect(useVoiceSupervisorStore.getState().transcript[0]).toMatchObject({
-      id: "item-user",
-      status: "failed",
-      updatedAt: 3,
-    });
-    expect(useVoiceSupervisorStore.getState().activity.at(-1)).toMatchObject({
-      kind: "error",
-      label: "Speech transcription failed",
-    });
-  });
-
-  it("keeps transcript text, entries, and activity strictly bounded", () => {
-    useVoiceSupervisorStore.getState().beginSession(1, 0);
-    useVoiceSupervisorStore.getState().ingestEvent(
-      1,
-      event({
-        event_id: "long-delta",
-        type: "response.output_audio_transcript.delta",
-        response_id: "response-long",
-        item_id: "assistant-long",
-        delta: "x".repeat(MAX_VOICE_TRANSCRIPT_CHARS + 100),
-      }),
-      1,
-    );
-    expect(useVoiceSupervisorStore.getState().transcript[0]?.text).toHaveLength(
-      MAX_VOICE_TRANSCRIPT_CHARS,
-    );
-
-    for (let index = 0; index < MAX_VOICE_TRANSCRIPT_ENTRIES + 10; index += 1) {
-      useVoiceSupervisorStore.getState().ingestEvent(
-        1,
-        event({
-          event_id: `transcript-${index}`,
-          type: "conversation.item.input_audio_transcription.completed",
-          item_id: `item-${index}`,
-          transcript: `Transcript ${index}`,
-        }),
-        index + 2,
-      );
-    }
-    expect(useVoiceSupervisorStore.getState().transcript).toHaveLength(
-      MAX_VOICE_TRANSCRIPT_ENTRIES,
-    );
-    expect(useVoiceSupervisorStore.getState().transcript[0]?.id).toBe("item-10");
-
-    for (let index = 0; index < MAX_VOICE_ACTIVITY_ENTRIES + 10; index += 1) {
-      useVoiceSupervisorStore.getState().ingestEvent(
-        1,
-        event({
-          event_id: `response-${index}`,
-          type: "response.created",
-          response: { id: `response-${index}`, status: "in_progress" },
-        }),
-        index + 200,
-      );
-    }
-    expect(useVoiceSupervisorStore.getState().activity).toHaveLength(MAX_VOICE_ACTIVITY_ENTRIES);
-    expect(useVoiceSupervisorStore.getState().activity.at(-1)?.id).toBe(
-      `response-${MAX_VOICE_ACTIVITY_ENTRIES + 9}`,
-    );
-  });
-
-  it("projects only serializable UI data and retains it after the session ends", () => {
-    const store = useVoiceSupervisorStore.getState();
-    store.beginSession(4, 1);
-    store.markConnected(4, 2);
-    store.setMuted(4, true);
-    store.ingestEvent(
-      4,
-      event({
-        event_id: "tool-response",
-        type: "response.done",
-        response: {
-          id: "response-1",
-          status: "completed",
-          output: [
-            {
-              id: "tool-item",
-              type: "function_call",
-              call_id: "tool-call",
-              name: "open_thread",
-              arguments: '{"secret":"not projected"}',
-              status: "completed",
-            },
-          ],
-        },
-      }),
-      3,
-    );
-    store.endSession(4, 4);
-
-    const state = useVoiceSupervisorStore.getState();
-    expect(state).toMatchObject({ phase: "idle", muted: false, sessionId: null });
-    expect(state.activity.some((entry) => entry.label === "Tool requested: open_thread")).toBe(
-      true,
-    );
-    const projection = JSON.stringify({ transcript: state.transcript, activity: state.activity });
-    expect(projection).not.toContain("not projected");
-    expect(projection).not.toContain("peerConnection");
-    expect(projection).not.toContain("dataChannel");
-  });
-
-  it("clears retained transcript and activity when the persistent host is torn down", () => {
-    const store = useVoiceSupervisorStore.getState();
-    store.beginSession(5, 1);
-    store.ingestEvent(
-      5,
-      event({
-        event_id: "completed-before-unmount",
-        type: "conversation.item.input_audio_transcription.completed",
-        item_id: "item-before-unmount",
-        transcript: "Retained only while the host exists",
-      }),
-      2,
-    );
-    expect(useVoiceSupervisorStore.getState().transcript).toHaveLength(1);
-    expect(useVoiceSupervisorStore.getState().activity.length).toBeGreaterThan(0);
-
-    store.reset();
-    expect(useVoiceSupervisorStore.getState()).toMatchObject({
-      generation: 0,
-      phase: "idle",
-      transcript: [],
-      activity: [],
-    });
+    expect(useVoiceSupervisorStore.getState()).toBe(state);
+    expect(now).not.toHaveBeenCalled();
+    expect(subscriber).not.toHaveBeenCalled();
+    now.mockRestore();
+    unsubscribe();
   });
 });

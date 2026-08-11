@@ -182,6 +182,10 @@
     "./voice/voice-supervisor-host": {
       "types": "./src/voice/voiceSupervisorHost.ts",
       "default": "./src/voice/voiceSupervisorHost.ts"
+    },
+    "./voice/voice-supervisor-state": {
+      "types": "./src/voice/voiceSupervisorState.ts",
+      "default": "./src/voice/voiceSupervisorState.ts"
     }
   },
   "scripts": {
