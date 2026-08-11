@@ -5,6 +5,9 @@ enabled provider has its logo and either the percentage of its current allowance
 dash (—). Select an item to see the available details, such as its usage windows, reset times, and
 when T3 Code last received a successful update.
 
+This is the provider's current reported allowance. It is separate from the **Usage** page's
+historical tokens and estimated costs, and does not replace or derive from that history.
+
 The strip follows the enabled provider rows in **Settings → Providers**. If you have more than one
 instance of the same provider, each enabled instance appears separately and in that same order.
 Disabled provider rows do not appear in the strip.
