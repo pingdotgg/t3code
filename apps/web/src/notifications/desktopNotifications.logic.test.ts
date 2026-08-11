@@ -152,8 +152,8 @@ describe("reconcileThreadNotifications", () => {
 
     expect(result.notifications).toHaveLength(1);
     expect(result.notifications[0]?.kind).toBe("task-completed");
-    expect(result.notifications[0]?.title).toBe("Completed");
-    // The project name is deliberately absent from the banner.
+    // The project belongs in the title, so the body stays the agent's words.
+    expect(result.notifications[0]?.title).toBe("Completed - t3code");
     expect(result.notifications[0]?.body).not.toContain("t3code");
     expect(result.notifications[0]?.threadRef).toEqual({
       environmentId: ENVIRONMENT_ID,
@@ -183,10 +183,53 @@ describe("reconcileThreadNotifications", () => {
   it("titles each kind by what happened", () => {
     const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [makeThread("running")]).next;
 
-    expect(reconcile(seeded, [makeThread("failed")]).notifications[0]?.title).toBe("Failed");
-    expect(reconcile(seeded, [makeThread("approval")]).notifications[0]?.title).toBe(
-      "Approval Required",
+    expect(reconcile(seeded, [makeThread("failed")]).notifications[0]?.title).toBe(
+      "Failed - t3code",
     );
+    expect(reconcile(seeded, [makeThread("approval")]).notifications[0]?.title).toBe(
+      "Approval Required - t3code",
+    );
+  });
+
+  describe("alert sound", () => {
+    it("asks for one chime per batch, not one per notification", () => {
+      const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [
+        makeThread("running"),
+        makeThread("running", { threadId: "thread-2" as ThreadId }),
+      ]).next;
+      const result = reconcile(seeded, [
+        makeThread("completed"),
+        makeThread("completed", { threadId: "thread-2" as ThreadId }),
+      ]);
+
+      expect(result.notifications).toHaveLength(2);
+      expect(result.playAlertSound).toBe(true);
+    });
+
+    it("stays silent when the window is focused", () => {
+      const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [makeThread("running")]).next;
+      const result = reconcile(seeded, [makeThread("completed")], { windowFocused: true });
+
+      // Still notified (a different thread is on screen), but the chime is for
+      // reaching someone who is looking elsewhere.
+      expect(result.notifications).toHaveLength(1);
+      expect(result.playAlertSound).toBe(false);
+    });
+
+    it("stays silent when nothing happened", () => {
+      const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [makeThread("running")]).next;
+
+      expect(reconcile(seeded, [makeThread("running")]).playAlertSound).toBe(false);
+    });
+
+    it("stays silent when notifications are switched off", () => {
+      const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [makeThread("running")]).next;
+      const result = reconcile(seeded, [makeThread("completed")], {
+        settings: { ...ALL_ENABLED, enabled: false },
+      });
+
+      expect(result.playAlertSound).toBe(false);
+    });
   });
 
   it("does not announce completion while background work is still live", () => {
@@ -234,7 +277,7 @@ describe("reconcileThreadNotifications", () => {
     const result = reconcile(seeded, [makeThread("failed")]);
 
     expect(result.notifications[0]?.kind).toBe("task-failed");
-    expect(result.notifications[0]?.title).toBe("Failed");
+    expect(result.notifications[0]?.title).toBe("Failed - t3code");
     expect(result.notifications[0]?.body).toBe("Provider crashed");
   });
 

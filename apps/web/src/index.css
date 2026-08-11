@@ -147,6 +147,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --animate-status-pulse: status-pulse 2s infinite;
   --animate-ghost-pulse: ghost-pulse 2.4s infinite;
   --animate-status-ping: status-ping 2s infinite;
+  /* Thread alert splash: a sidebar row lighting up for a task that finished
+     while the user was away. Runs three times and stops — this marks a thread
+     worth a look, and a permanent animation in a list reads as an error. The
+     lasting signal is the tint the row keeps underneath. */
+  --animate-thread-alert-splash: thread-alert-splash 1.6s ease-out 3;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
@@ -245,6 +250,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
     100% {
       opacity: 1;
+    }
+  }
+  @keyframes thread-alert-splash {
+    /* Opacity-only so the sweep stays on the compositor, and stepped like the
+       status indicators so a 120Hz display draws a handful of frames per
+       cycle rather than one per vsync. The row's base tint shows through at
+       the trough, so the highlight never fully disappears mid-animation. */
+    0% {
+      opacity: 0.25;
+      animation-timing-function: steps(6);
+    }
+    35% {
+      opacity: 1;
+      animation-timing-function: steps(6);
+    }
+    100% {
+      opacity: 0.25;
     }
   }
   @keyframes status-ping {

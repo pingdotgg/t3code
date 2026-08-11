@@ -7,7 +7,6 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 
-import { isElectron } from "~/env";
 import { getClientSettings } from "~/hooks/useSettings";
 import { useActiveThreadRefFromRoute } from "~/hooks/useActiveThreadRef";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -20,6 +19,8 @@ import {
   type ThreadNotificationSettings,
   type ThreadPhaseSnapshot,
 } from "./desktopNotifications.logic";
+import { playAlertChime } from "./alertSound";
+import { clearThreadAlert, markThreadAlert } from "./threadAlertStore";
 
 /**
  * Latest assistant text for a thread, but only when that thread's detail atom
@@ -73,16 +74,14 @@ function DesktopThreadNotifications() {
   activeThreadRefMirror.current = activeThreadRef;
 
   useEffect(() => {
-    const showNotification = window.desktopBridge?.showNotification;
-    if (typeof showNotification !== "function") {
-      return;
-    }
-
+    // Resolved per batch, not once: the sound and the sidebar highlights work
+    // without a desktop bridge, so a missing `showNotification` must not
+    // disable them.
     let phases: ThreadPhaseSnapshot = EMPTY_THREAD_PHASE_SNAPSHOT;
 
     const reconcile = (threads: ReadonlyArray<EnvironmentThreadShell>) => {
       const settings = getClientSettings();
-      const { notifications, next } = reconcileThreadNotifications({
+      const { notifications, playAlertSound, next } = reconcileThreadNotifications({
         previous: phases,
         threads,
         projectTitles: buildProjectTitleMap(readProjects()),
@@ -93,14 +92,32 @@ function DesktopThreadNotifications() {
       });
       phases = next;
 
+      const showNotification = window.desktopBridge?.showNotification;
       for (const notification of notifications) {
-        void showNotification({
-          kind: notification.kind,
-          title: notification.title,
-          body: notification.body,
-          silent: !settings.desktopNotificationSound,
-          threadRef: notification.threadRef,
-        }).catch(() => undefined);
+        // Mark the row before the banner: the highlight is what survives Do
+        // Not Disturb, so it must not depend on the banner succeeding.
+        if (notification.kind === "task-completed" || notification.kind === "task-failed") {
+          markThreadAlert(
+            notification.threadRef,
+            notification.kind === "task-failed" ? "failed" : "completed",
+          );
+        }
+
+        if (typeof showNotification === "function") {
+          void showNotification({
+            kind: notification.kind,
+            title: notification.title,
+            body: notification.body,
+            silent: !settings.desktopNotificationSound,
+            threadRef: notification.threadRef,
+          }).catch(() => undefined);
+        }
+      }
+
+      // Played by the app itself rather than by the OS notification, which a
+      // Focus mode would mute along with the banner.
+      if (playAlertSound && settings.desktopNotificationSound) {
+        playAlertChime();
       }
     };
 
@@ -110,6 +127,14 @@ function DesktopThreadNotifications() {
 
     return appAtomRegistry.subscribe(environmentThreadShells.threadShellsAtom, reconcile);
   }, []);
+
+  // Opening a thread is the user seeing it, so the highlight has done its job.
+  useEffect(() => {
+    if (activeThreadRef === null) {
+      return;
+    }
+    clearThreadAlert(activeThreadRef);
+  }, [activeThreadRef]);
 
   useEffect(() => {
     const onNotificationActivated = window.desktopBridge?.onNotificationActivated;
@@ -136,10 +161,14 @@ function DesktopThreadNotifications() {
 }
 
 /**
- * Native OS notifications for agent task transitions. Desktop-only: without a
- * desktop bridge there is nothing to raise a notification with, so the whole
- * subtree stays unmounted on web.
+ * Alerts for agent task transitions: the native OS banner on desktop, plus the
+ * chime and sidebar highlights that survive Do Not Disturb.
+ *
+ * Mounted everywhere, not just on desktop. The banner needs a desktop bridge
+ * and is skipped without one, but the chime and highlights are plain web and
+ * work in the browser too — gating the whole component on Electron would
+ * discard them for no reason.
  */
 export function DesktopThreadNotificationsHost() {
-  return isElectron ? <DesktopThreadNotifications /> : null;
+  return <DesktopThreadNotifications />;
 }

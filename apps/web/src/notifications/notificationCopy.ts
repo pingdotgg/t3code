@@ -7,8 +7,37 @@ const NOTIFICATION_TITLES: Readonly<Record<DesktopNotificationKind, string>> = {
   "approval-needed": "Approval Required",
 };
 
-export function notificationTitle(kind: DesktopNotificationKind): string {
-  return NOTIFICATION_TITLES[kind];
+/**
+ * A title long enough to be elided by the OS defeats the point, and the
+ * project name is the part that gets cut. Long project names are shortened
+ * from the middle so both ends stay recognisable.
+ */
+const MAX_TITLE_PROJECT_LENGTH = 28;
+
+function shortenProjectName(projectTitle: string): string {
+  const trimmed = projectTitle.trim();
+  if (trimmed.length <= MAX_TITLE_PROJECT_LENGTH) {
+    return trimmed;
+  }
+  const head = trimmed.slice(0, MAX_TITLE_PROJECT_LENGTH - 12).trimEnd();
+  const tail = trimmed.slice(-9).trimStart();
+  return `${head}…${tail}`;
+}
+
+/**
+ * Notification title: what happened, then which project it happened in.
+ *
+ * The project name answers "which of my running agents is this?" without
+ * opening the app, which matters most when several are working at once. It is
+ * omitted rather than left dangling when the project title is unavailable.
+ */
+export function notificationTitle(
+  kind: DesktopNotificationKind,
+  projectTitle?: string | null,
+): string {
+  const kindLabel = NOTIFICATION_TITLES[kind];
+  const project = projectTitle === null || projectTitle === undefined ? "" : projectTitle.trim();
+  return project.length > 0 ? `${kindLabel} - ${shortenProjectName(project)}` : kindLabel;
 }
 
 /** macOS elides past roughly two lines; this also keeps the IPC payload small. */

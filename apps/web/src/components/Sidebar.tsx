@@ -162,6 +162,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { useThreadAlert } from "~/notifications/threadAlertStore";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
@@ -758,6 +759,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  // Set when a task finished or failed while this thread was not on screen,
+  // and cleared when the user opens it.
+  const threadAlert = useThreadAlert({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
   const status = resolveSidebarThreadStatus(thread);
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
@@ -1036,6 +1043,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       !props.isActive &&
       !isSelected &&
       "opacity-70 transition-opacity hover:opacity-100",
+    // A thread that finished or failed while the user was away keeps a tint
+    // until they open it. This is the signal that survives Do Not Disturb,
+    // when the banner and the chime may both have been swallowed.
+    threadAlert === "completed" && "bg-success/10",
+    threadAlert === "failed" && "bg-error/10",
   );
 
   const title = isRenaming ? (
@@ -1282,6 +1294,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             />
           }
         >
+          {threadAlert === null ? null : (
+            <span
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute inset-y-0 left-0 z-0 w-1 rounded-r-sm motion-safe:animate-thread-alert-splash",
+                threadAlert === "failed" ? "bg-error" : "bg-success",
+              )}
+            />
+          )}
           <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               <ProjectFavicon

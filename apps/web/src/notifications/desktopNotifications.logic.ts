@@ -68,6 +68,15 @@ export interface ReconcileThreadNotificationsInput {
 
 export interface ReconcileThreadNotificationsResult {
   readonly notifications: ReadonlyArray<PendingThreadNotification>;
+  /**
+   * Whether to play the in-app alert chime for this batch.
+   *
+   * Once per batch, not once per notification: three threads finishing
+   * together is one event to the user, and three overlapping chimes is a
+   * malfunction. Only set while the window is unfocused — the sound exists to
+   * reach someone who is looking elsewhere.
+   */
+  readonly playAlertSound: boolean;
   readonly next: ThreadPhaseSnapshot;
 }
 
@@ -236,7 +245,7 @@ export function reconcileThreadNotifications(
     notifications.push({
       kind,
       threadRef,
-      title: notificationTitle(kind),
+      title: notificationTitle(kind, projectTitle),
       body: notificationBody({
         responseText,
         threadTitle: awareness.threadTitle,
@@ -245,5 +254,7 @@ export function reconcileThreadNotifications(
     });
   }
 
-  return { notifications, next };
+  // The chime is the one signal Do Not Disturb cannot swallow, so it is tied
+  // to the window being unfocused rather than to the banner being shown.
+  return { notifications, playAlertSound: notifications.length > 0 && !input.windowFocused, next };
 }
