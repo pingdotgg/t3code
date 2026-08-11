@@ -12,6 +12,7 @@ export interface ProviderSkillRoot {
   readonly scope: string;
 }
 
+const FRONTMATTER_OPENING_PATTERN = /^---(?:\r?\n|$)/;
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SkillFrontmatter = Schema.Struct({
   name: Schema.optional(Schema.Unknown),
@@ -27,7 +28,7 @@ type ParsedSkillFrontmatter =
 function parseSkillFrontmatter(contents: string): ParsedSkillFrontmatter {
   const match = FRONTMATTER_PATTERN.exec(contents);
   if (!match) {
-    return { kind: "missing" };
+    return { kind: FRONTMATTER_OPENING_PATTERN.test(contents) ? "malformed" : "missing" };
   }
 
   let document: unknown;
