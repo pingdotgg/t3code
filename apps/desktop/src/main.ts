@@ -92,6 +92,8 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { createMainWindowWebPreferences } from "./mainWindowPreferences.ts";
+import { trafficLightPositionForZoom } from "./titleBarGeometry.ts";
+import { DEFAULT_ZOOM_FACTOR, nextZoomLevel, type ZoomDirection } from "./zoomLevels.ts";
 import { startPreviewRuntime, type PreviewRuntimeHandle } from "./preview/Runtime.ts";
 import { resolveDesktopCliPassthrough } from "./desktopCliPassthrough.ts";
 import {
@@ -1031,10 +1033,22 @@ function configureApplicationMenu(): void {
         { role: "forceReload" },
         { role: "toggleDevTools" },
         { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
-        { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
-        { role: "zoomOut" },
+        // Explicit handlers rather than the built-in zoom roles: macOS window
+        // controls do not scale with page zoom, so each change has to
+        // reposition them onto the resized title-bar row.
+        {
+          label: "Actual Size",
+          accelerator: "CmdOrCtrl+0",
+          click: () => zoomFocusedWindow("reset"),
+        },
+        { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: () => zoomFocusedWindow("in") },
+        {
+          label: "Zoom In",
+          accelerator: "CmdOrCtrl+Plus",
+          visible: false,
+          click: () => zoomFocusedWindow("in"),
+        },
+        { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: () => zoomFocusedWindow("out") },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
@@ -2046,10 +2060,11 @@ function getWindowTitleBarOptions(): WindowTitleBarOptions {
   if (process.platform === "darwin") {
     return {
       titleBarStyle: "hiddenInset",
-      // Centers the 12px traffic lights on the renderer's shared title-bar row
-      // (--spacing-titlebar: 44px), so window controls, sidebar navigation, and
-      // pane headers share one baseline. y = (44 - 12) / 2.
-      trafficLightPosition: { x: 16, y: 16 },
+      // Centred on the renderer's shared title-bar row so window controls,
+      // sidebar navigation, and pane headers share one baseline. Zoom moves
+      // the row, so `syncTrafficLightPosition` re-derives this whenever the
+      // window's zoom factor changes.
+      trafficLightPosition: trafficLightPositionForZoom(DEFAULT_ZOOM_FACTOR),
     };
   }
 
@@ -2063,6 +2078,38 @@ function getWindowTitleBarOptions(): WindowTitleBarOptions {
         : TITLEBAR_LIGHT_SYMBOL_COLOR,
     },
   };
+}
+
+/**
+ * Re-centres the macOS window controls on the renderer's title-bar row for the
+ * window's current zoom factor. Without this the controls stay pinned to their
+ * unzoomed position while the row itself grows or shrinks around them.
+ */
+function syncTrafficLightPosition(window: BrowserWindow): void {
+  if (process.platform !== "darwin" || window.isDestroyed()) {
+    return;
+  }
+  window.setWindowButtonPosition(trafficLightPositionForZoom(window.webContents.getZoomFactor()));
+}
+
+function applyWindowZoom(window: BrowserWindow, zoomFactor: number): void {
+  if (window.isDestroyed()) {
+    return;
+  }
+  window.webContents.setZoomFactor(zoomFactor);
+  syncTrafficLightPosition(window);
+}
+
+function zoomFocusedWindow(direction: ZoomDirection | "reset"): void {
+  const window = BrowserWindow.getFocusedWindow();
+  if (!window) {
+    return;
+  }
+  const current = window.webContents.getZoomFactor();
+  applyWindowZoom(
+    window,
+    direction === "reset" ? DEFAULT_ZOOM_FACTOR : nextZoomLevel(current, direction),
+  );
 }
 
 function syncWindowAppearance(window: BrowserWindow): void {
@@ -2182,7 +2229,17 @@ function createWindow(initialUrl?: string): BrowserWindow {
   });
   window.webContents.on("did-finish-load", () => {
     window.setTitle(APP_DISPLAY_NAME);
+    // Chromium restores the per-origin zoom factor as the page loads, so the
+    // controls can only be placed correctly once the renderer has committed.
+    syncTrafficLightPosition(window);
     emitUpdateState();
+  });
+  window.webContents.on("zoom-changed", () => {
+    // The event fires as the request is handled, so read the applied factor on
+    // the next tick rather than the stale one.
+    setImmediate(() => {
+      syncTrafficLightPosition(window);
+    });
   });
 
   // On Linux/Wayland with `show: false`, Electron's `ready-to-show` only

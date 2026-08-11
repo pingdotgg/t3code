@@ -68,6 +68,7 @@ import {
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjectedRuntime.ts";
 import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
+import { DEFAULT_ZOOM_FACTOR, nextZoomLevel, ZOOM_EPSILON } from "../zoomLevels.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -94,13 +95,6 @@ export interface PreviewTabState {
   updatedAt: string;
 }
 
-/** Discrete zoom levels mirroring Chrome's preset list. */
-const ZOOM_LEVELS: ReadonlyArray<number> = [
-  0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
-];
-
-const DEFAULT_ZOOM_FACTOR = 1.0;
-const ZOOM_EPSILON = 0.001;
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
 const MAX_INTERACTIVE_ELEMENTS = 200;
@@ -285,22 +279,6 @@ const captureAnnotationScreenshot = (
       };
     }),
   );
-
-const findZoomStep = (current: number): number => {
-  const index = ZOOM_LEVELS.findIndex(
-    (level) => Math.abs(level - current) < ZOOM_EPSILON || level > current,
-  );
-  if (index < 0) return ZOOM_LEVELS.length - 1;
-  return Math.abs(ZOOM_LEVELS[index]! - current) < ZOOM_EPSILON ? index : index - 1;
-};
-
-const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
-  const step = findZoomStep(current);
-  if (direction === "in") {
-    return ZOOM_LEVELS[Math.min(step + 1, ZOOM_LEVELS.length - 1)] ?? current;
-  }
-  return ZOOM_LEVELS[Math.max(step - 1, 0)] ?? current;
-};
 
 type Listener = (tabId: string, state: PreviewTabState) => Effect.Effect<void>;
 type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => Effect.Effect<void>;

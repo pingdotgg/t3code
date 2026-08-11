@@ -32,6 +32,7 @@ export interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
   pinnedThreadKeysByProjectId?: Record<string, string[]>;
+  threadLastVisitedAtById?: Record<string, string>;
   threadExpandedById?: Record<string, boolean>;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   changedFilesDiffScope?: TurnDiffScope;
@@ -164,6 +165,7 @@ function readPersistedState(): UiState {
       pinnedThreadKeysByProjectId: sanitizePersistedPinnedThreadKeysByProjectId(
         parsed.pinnedThreadKeysByProjectId,
       ),
+      threadLastVisitedAtById: sanitizePersistedThreadLastVisitedAt(parsed.threadLastVisitedAtById),
       threadExpandedById: sanitizePersistedThreadExpanded(parsed.threadExpandedById),
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
@@ -191,6 +193,42 @@ function readPersistedState(): UiState {
     }
     return nextState;
   }
+}
+
+/**
+ * Visit stamps decide whether a finished thread still shows its "completed"
+ * dot, so they have to survive a reload — otherwise every completed thread
+ * reads as unseen on launch. Only the most recent stamps are kept: an evicted
+ * thread is one the user has not opened in hundreds of visits, and the cost of
+ * dropping it is a single stale dot rather than unbounded localStorage growth.
+ */
+const MAX_PERSISTED_THREAD_VISITS = 500;
+
+export function sanitizePersistedThreadLastVisitedAt(
+  value: PersistedUiState["threadLastVisitedAtById"],
+): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const entries: [string, string, number][] = [];
+  for (const [threadKey, visitedAt] of Object.entries(value)) {
+    if (!threadKey || typeof visitedAt !== "string") {
+      continue;
+    }
+    const visitedAtMs = Date.parse(visitedAt);
+    if (Number.isNaN(visitedAtMs)) {
+      continue;
+    }
+    entries.push([threadKey, visitedAt, visitedAtMs]);
+  }
+
+  if (entries.length > MAX_PERSISTED_THREAD_VISITS) {
+    entries.sort((left, right) => right[2] - left[2]);
+    entries.length = MAX_PERSISTED_THREAD_VISITS;
+  }
+
+  return Object.fromEntries(entries.map(([threadKey, visitedAt]) => [threadKey, visitedAt]));
 }
 
 function sanitizePersistedPinnedThreadKeysByProjectId(
@@ -335,6 +373,9 @@ export function persistState(state: UiState): void {
         collapsedProjectCwds,
         expandedProjectCwds,
         projectOrderCwds,
+        threadLastVisitedAtById: sanitizePersistedThreadLastVisitedAt(
+          state.threadLastVisitedAtById,
+        ),
         threadExpandedById,
         threadChangedFilesExpandedById,
         changedFilesDiffScope: state.changedFilesDiffScope,

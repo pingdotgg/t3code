@@ -78,7 +78,7 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn, isMacPlatform, newCommandId, newDraftId, newThreadId } from "../lib/utils";
-import { TITLEBAR_ROW_CLASS } from "../lib/titlebar";
+import { TITLEBAR_ROW_CLASS, TITLEBAR_TRAFFIC_LIGHT_INSET_CLASS } from "../lib/titlebar";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
@@ -2934,9 +2934,8 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return isElectron ? (
     <SidebarHeader
       className={cn(
-        // The traffic lights end at 68px (x:16 plus three 12px controls), so
-        // the inset only has to clear them, not sit a whole control away.
-        "drag-region flex-row items-center gap-2 py-0 pr-2 pl-[80px] wco:pl-[calc(env(titlebar-area-x)+1em)]",
+        "drag-region flex-row items-center gap-2 py-0 pr-2",
+        TITLEBAR_TRAFFIC_LIGHT_INSET_CLASS,
         TITLEBAR_ROW_CLASS,
       )}
     >

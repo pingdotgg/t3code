@@ -18,3 +18,60 @@ export const TITLEBAR_ROW_CLASS = "h-titlebar wco:h-[env(titlebar-area-height)]"
  */
 export const TITLEBAR_CONTROL_INSET_CLASS =
   "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]";
+
+/**
+ * Left inset that clears the macOS traffic lights (or the Windows overlay
+ * controls) so the leading header content starts just after them.
+ *
+ * macOS draws the traffic lights in screen points at a fixed 12pt diameter and
+ * 20pt pitch, and Chromium's page zoom does not scale them. The main process
+ * places the first control at `16 * zoom` points, so the last one ends at
+ * `16 * zoom + 52` points. Expressed in the renderer's zoomed CSS pixels that
+ * is `16 + 52 / zoom`; adding a constant 12pt gap (`12 / zoom` CSS pixels)
+ * gives `16px + 64px / zoom`, which keeps the gap after the last control the
+ * same on screen at every zoom level instead of widening with it.
+ */
+export const TITLEBAR_TRAFFIC_LIGHT_INSET_CLASS =
+  "pl-[calc(16px+64px/var(--app-zoom,1))] wco:pl-[calc(env(titlebar-area-x)+1em)]";
+
+/** CSS custom property holding the window's current page-zoom factor. */
+export const APP_ZOOM_CSS_VARIABLE = "--app-zoom";
+
+/**
+ * `outerWidth` is measured in screen points and `innerWidth` in the renderer's
+ * zoomed CSS pixels, so their ratio is the page zoom factor. Reading it here
+ * avoids a main-process round trip for a value the renderer already has.
+ */
+export function readWindowZoomFactor(view: Pick<Window, "outerWidth" | "innerWidth">): number {
+  const { outerWidth, innerWidth } = view;
+  if (!Number.isFinite(outerWidth) || !Number.isFinite(innerWidth) || innerWidth <= 0) {
+    return 1;
+  }
+  const zoomFactor = outerWidth / innerWidth;
+  // Anything outside Chromium's zoom range means the window is mid-transition
+  // (minimised, restoring) rather than genuinely zoomed.
+  return zoomFactor >= 0.25 && zoomFactor <= 5 ? zoomFactor : 1;
+}
+
+/**
+ * Publishes the zoom factor as a CSS variable and keeps it current. `resize`
+ * fires on every zoom change because zooming changes `innerWidth`.
+ */
+export function syncDocumentAppZoomVariable(): () => void {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return () => {};
+  }
+
+  const update = () => {
+    document.documentElement.style.setProperty(
+      APP_ZOOM_CSS_VARIABLE,
+      readWindowZoomFactor(window).toFixed(4),
+    );
+  };
+
+  update();
+  window.addEventListener("resize", update);
+  return () => {
+    window.removeEventListener("resize", update);
+  };
+}

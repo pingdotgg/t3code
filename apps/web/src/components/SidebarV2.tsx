@@ -85,7 +85,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { SidebarTopActions } from "./SidebarTopActions";
-import { TITLEBAR_ROW_CLASS } from "../lib/titlebar";
+import { TITLEBAR_ROW_CLASS, TITLEBAR_TRAFFIC_LIGHT_INSET_CLASS } from "../lib/titlebar";
 import { cn } from "../lib/utils";
 
 const SETTLED_PAGE_SIZE = 25;
@@ -733,7 +733,7 @@ export default function SidebarV2() {
           className={cn(
             "drag-region shrink-0 flex-row items-center gap-2 py-0 pr-2",
             hasMacSidebarChrome
-              ? "pl-[80px] wco:pl-[calc(env(titlebar-area-x)+1em)]"
+              ? TITLEBAR_TRAFFIC_LIGHT_INSET_CLASS
               : "pl-2 wco:pl-[calc(env(titlebar-area-x)+1em)]",
             TITLEBAR_ROW_CLASS,
           )}
