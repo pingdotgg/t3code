@@ -1,4 +1,4 @@
-import type { ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type { GitHubWorkflow, ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -13,7 +13,10 @@ const PRIMARY_SCRIPT: ProjectScript = {
   runOnWorktreeCreate: false,
 };
 
-function renderControl(scripts: ReadonlyArray<ProjectScript>) {
+function renderControl(
+  scripts: ReadonlyArray<ProjectScript>,
+  githubWorkflows?: ReadonlyArray<GitHubWorkflow>,
+) {
   return renderToStaticMarkup(
     <ProjectScriptsControl
       scripts={scripts}
@@ -22,6 +25,8 @@ function renderControl(scripts: ReadonlyArray<ProjectScript>) {
       onAddScript={async () => undefined as never}
       onUpdateScript={async () => undefined as never}
       onDeleteScript={async () => undefined as never}
+      {...(githubWorkflows ? { githubWorkflows } : {})}
+      onRunGithubWorkflow={async () => true}
     />,
   );
 }
@@ -61,5 +66,16 @@ describe("ProjectScriptsControl compact controls", () => {
     expect(html).toContain(
       'class="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"',
     );
+  });
+
+  it("uses an Actions control when GitHub workflows are the only available actions", () => {
+    const html = renderControl(
+      [],
+      [{ filename: "deploy.yml", name: "Deploy preview", inputs: [] }],
+    );
+
+    expect(buttonTag(html, "Project actions")).toBeDefined();
+    expect(html).toContain("Actions");
+    expect(html).not.toContain('aria-label="Add action"');
   });
 });

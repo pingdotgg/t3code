@@ -44,6 +44,7 @@ export function createProjectEnvironmentAtoms<R, E>(
 ) {
   const projectScheduler = createAtomCommandScheduler();
   const fileScheduler = createAtomCommandScheduler();
+  const githubWorkflowScheduler = createAtomCommandScheduler();
   const optimisticFileFamily = Atom.family((key: string) =>
     Atom.make<OptimisticProjectFile | null>(null).pipe(
       Atom.withLabel(`environment-data:projects:optimistic-file:${key}`),
@@ -70,6 +71,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
       staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    githubWorkflows: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:github-workflows",
+      tag: WS_METHODS.githubWorkflowsList,
+      staleTimeMs: 15_000,
       idleTtlMs: 5 * 60_000,
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
@@ -100,6 +107,16 @@ export function createProjectEnvironmentAtoms<R, E>(
         mode: "serial",
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
+      },
+    }),
+    runGithubWorkflow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:run-github-workflow",
+      tag: WS_METHODS.githubWorkflowsRun,
+      scheduler: githubWorkflowScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.cwd, input.filename]),
       },
     }),
   };
