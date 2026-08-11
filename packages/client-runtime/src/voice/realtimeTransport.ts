@@ -1,3 +1,5 @@
+import type { VoiceRealtimeClientSecret } from "@t3tools/contracts";
+
 import type { RealtimeFunctionCall, RealtimeServerEvent } from "./realtimeEvents.ts";
 
 export const MAX_REALTIME_CLIENT_EVENT_ID_CHARS = 160;
@@ -91,6 +93,22 @@ export interface RealtimeTransportStateEnvelope {
 export interface RealtimeSessionAttempt {
   readonly generation: number;
   readonly ready: Promise<void>;
+}
+
+export interface RealtimeTransportConnectInput {
+  readonly getClientSecret: (signal: AbortSignal) => Promise<VoiceRealtimeClientSecret>;
+  readonly onServerEvent?: (envelope: RealtimeServerEventEnvelope) => void;
+  readonly onFunctionCalls?: (envelope: RealtimeFunctionCallEnvelope) => void;
+  readonly onTransportState?: (envelope: RealtimeTransportStateEnvelope) => void;
+}
+
+/** Platform-neutral transport owned by the voice supervisor coordinator. */
+export interface RealtimeTransportController {
+  readonly connect: (input: RealtimeTransportConnectInput) => RealtimeSessionAttempt;
+  readonly setMuted: (muted: boolean) => void;
+  readonly sendSessionUpdate: (session: RealtimeSessionUpdate) => void;
+  readonly sendToolOutputs: (batch: RealtimeToolOutputBatch) => void;
+  readonly dispose: () => void;
 }
 
 export interface RealtimeToolOutput {

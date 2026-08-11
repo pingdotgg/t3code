@@ -1,10 +1,12 @@
 import { create } from "zustand";
 
+import { MAX_VOICE_TRANSCRIPT_CHARS } from "@t3tools/client-runtime/voice/voice-supervisor-host";
+
 import { extractRealtimeFunctionCalls, type RealtimeServerEvent } from "./realtimeEvents";
 
 export const MAX_VOICE_TRANSCRIPT_ENTRIES = 120;
 export const MAX_VOICE_ACTIVITY_ENTRIES = 80;
-export const MAX_VOICE_TRANSCRIPT_CHARS = 12_000;
+export { MAX_VOICE_TRANSCRIPT_CHARS };
 
 const MAX_VOICE_ACTIVITY_LABEL_CHARS = 240;
 

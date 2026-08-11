@@ -178,6 +178,10 @@
     "./voice/realtime-transport": {
       "types": "./src/voice/realtimeTransport.ts",
       "default": "./src/voice/realtimeTransport.ts"
+    },
+    "./voice/voice-supervisor-host": {
+      "types": "./src/voice/voiceSupervisorHost.ts",
+      "default": "./src/voice/voiceSupervisorHost.ts"
     }
   },
   "scripts": {

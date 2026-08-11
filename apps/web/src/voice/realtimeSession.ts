@@ -3,14 +3,12 @@ import {
   RealtimeSessionError,
   serializeRealtimeSessionUpdate,
   serializeRealtimeToolOutputBatch,
-  type RealtimeFunctionCallEnvelope,
-  type RealtimeServerEventEnvelope,
   type RealtimeSessionAttempt,
   type RealtimeSessionErrorReason,
-  type RealtimeSessionUpdate,
   type RealtimeToolOutputBatch,
+  type RealtimeTransportConnectInput,
+  type RealtimeTransportController,
   type RealtimeTransportState,
-  type RealtimeTransportStateEnvelope,
 } from "@t3tools/client-runtime/voice/realtime-transport";
 
 import { decodeRealtimeServerEventMessage, extractRealtimeFunctionCalls } from "./realtimeEvents";
@@ -33,20 +31,12 @@ export const REALTIME_NEGOTIATION_TIMEOUT_MS = 20_000;
 
 type RealtimeSessionTimer = ReturnType<typeof setTimeout>;
 
-export interface RealtimeSessionConnectInput {
+export interface RealtimeSessionConnectInput extends RealtimeTransportConnectInput {
   readonly audioElement: HTMLAudioElement;
-  readonly getClientSecret: (signal: AbortSignal) => Promise<VoiceRealtimeClientSecret>;
-  readonly onServerEvent?: (envelope: RealtimeServerEventEnvelope) => void;
-  readonly onFunctionCalls?: (envelope: RealtimeFunctionCallEnvelope) => void;
-  readonly onTransportState?: (envelope: RealtimeTransportStateEnvelope) => void;
 }
 
-export interface RealtimeSessionController {
+export interface RealtimeSessionController extends Omit<RealtimeTransportController, "connect"> {
   readonly connect: (input: RealtimeSessionConnectInput) => RealtimeSessionAttempt;
-  readonly setMuted: (muted: boolean) => void;
-  readonly sendSessionUpdate: (session: RealtimeSessionUpdate) => void;
-  readonly sendToolOutputs: (batch: RealtimeToolOutputBatch) => void;
-  readonly dispose: () => void;
 }
 
 export interface RealtimeSessionDependencies {
