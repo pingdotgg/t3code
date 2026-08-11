@@ -7,6 +7,12 @@ import { BotIcon } from "lucide-react";
 import { memo } from "react";
 
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
+import {
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import type { ProviderUsageStripItem } from "./ProviderUsageStrip.logic";
 
@@ -264,9 +270,9 @@ export function ProviderQuotaResetConfirmationContent({
   const title = reset.title ?? detailLabel(reset.resetType);
   return (
     <>
-      <div className="flex flex-col gap-2 p-6 text-center max-sm:pb-4 sm:text-left">
-        <h2 className="font-heading font-semibold text-xl leading-none">Use {title}?</h2>
-        <p className="text-muted-foreground text-sm">
+      <AlertDialogHeader>
+        <AlertDialogTitle>Use {title}?</AlertDialogTitle>
+        <AlertDialogDescription>
           This will apply {title}.{" "}
           {reset.expiresAt === null ? (
             "No expiry is reported for this reset."
@@ -275,16 +281,16 @@ export function ProviderQuotaResetConfirmationContent({
               It expires <time dateTime={reset.expiresAt}>{formatDate(reset.expiresAt)}</time>.
             </>
           )}
-        </p>
-      </div>
-      <div className="flex flex-col-reverse gap-2 border-t bg-muted/72 px-6 py-4 sm:flex-row sm:justify-end">
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
         <Button disabled={pending} variant="outline" onClick={onCancel}>
           Cancel
         </Button>
         <Button disabled={pending} onClick={onConfirm}>
           Confirm reset
         </Button>
-      </div>
+      </AlertDialogFooter>
     </>
   );
 }

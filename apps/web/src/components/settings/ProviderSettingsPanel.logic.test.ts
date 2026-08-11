@@ -9,10 +9,13 @@ import {
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
+import { buildProviderUsageStripItems } from "../sidebar/ProviderUsageStrip.logic";
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
   deriveOrderedProviderSettingsRows,
+  deriveVisibleProviderDriverOrder,
+  deriveVisibleOrderedProviderSettingsRows,
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
@@ -30,6 +33,7 @@ const environments = [
 
 const codex = ProviderDriverKind.make("codex");
 const claude = ProviderDriverKind.make("claudeAgent");
+const cursor = ProviderDriverKind.make("cursor");
 const unknown = ProviderDriverKind.make("future-driver");
 
 const instance = (driver: ProviderDriverKind, enabled?: boolean): ProviderInstanceConfig => ({
@@ -53,6 +57,58 @@ const rowsFor = (input: {
   });
 
 describe("provider settings row ordering", () => {
+  it("excludes Cursor from the canonical driver order until its default instance is visible", () => {
+    const absentOrder = deriveVisibleProviderDriverOrder({
+      driverOrder: [codex, cursor, claude],
+      serverProviders: [],
+    });
+    const presentOrder = deriveVisibleProviderDriverOrder({
+      driverOrder: [codex, cursor, claude],
+      serverProviders: [{ instanceId: ProviderInstanceId.make("cursor") }],
+    });
+
+    expect(absentOrder).toEqual([codex, claude]);
+    expect(presentOrder).toEqual([codex, cursor, claude]);
+    expect(rowsFor({ driverOrder: absentOrder }).map((row) => row.instanceId)).toEqual([
+      "codex",
+      "claudeAgent",
+    ]);
+    expect(rowsFor({ driverOrder: presentOrder }).map((row) => row.instanceId)).toEqual([
+      "codex",
+      "cursor",
+      "claudeAgent",
+    ]);
+  });
+
+  it("gives Settings and strip input identical legacy, default, and custom row order", () => {
+    const settings = {
+      providerInstances: {
+        codex: instance(codex),
+        codex_work: instance(codex),
+        cursor_work: instance(cursor),
+      } as Readonly<Record<ProviderInstanceId, ProviderInstanceConfig>>,
+      providers: DEFAULT_UNIFIED_SETTINGS.providers,
+    };
+    const serverProviders = [{ instanceId: ProviderInstanceId.make("cursor") }];
+    const settingsRows = deriveVisibleOrderedProviderSettingsRows({
+      settings,
+      driverOrder: [codex, cursor, claude],
+      serverProviders,
+    });
+    const stripItems = buildProviderUsageStripItems({ rows: settingsRows, summary: null });
+
+    expect(settingsRows.map((row) => row.instanceId)).toEqual([
+      "codex",
+      "codex_work",
+      "cursor",
+      "cursor_work",
+      "claudeAgent",
+    ]);
+    expect(stripItems.map((item) => item.instanceId)).toEqual(
+      settingsRows.filter((row) => row.instance.enabled !== false).map((row) => row.instanceId),
+    );
+  });
+
   it("uses the supplied known-driver order", () => {
     const rows = rowsFor({
       driverOrder: [claude, codex],

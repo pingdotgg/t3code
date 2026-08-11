@@ -91,7 +91,7 @@ import {
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
-  deriveOrderedProviderSettingsRows,
+  deriveVisibleOrderedProviderSettingsRows,
   type ProviderEnvironmentAccess,
   type ProviderOperateAccess,
   resolvePrimaryOperateAccess,
@@ -114,10 +114,6 @@ function withoutProviderInstanceFavorites(
 ) {
   return favorites.filter((favorite) => favorite.provider !== instanceId);
 }
-
-const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
-  provider: definition.value,
-}));
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
   useRelativeTimeTick();
@@ -394,14 +390,6 @@ export function EnvironmentProviderSettings({
     () => new Map(providerUpdateCandidates.map((candidate) => [candidate.instanceId, candidate])),
     [providerUpdateCandidates],
   );
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
-  );
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
@@ -484,9 +472,10 @@ export function EnvironmentProviderSettings({
     [environmentId, updateProvider],
   );
 
-  const rows = deriveOrderedProviderSettingsRows({
+  const rows = deriveVisibleOrderedProviderSettingsRows({
     settings,
-    driverOrder: visibleProviderSettings.map((providerSettings) => providerSettings.provider),
+    driverOrder: DRIVER_OPTIONS.map((definition) => definition.value),
+    serverProviders,
   });
 
   const updateProviderInstance = (

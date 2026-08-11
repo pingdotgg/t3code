@@ -10,6 +10,7 @@ import {
   ProviderQuotaDetails,
   ProviderQuotaResetConfirmationContent,
 } from "./ProviderQuotaDetails";
+import { AlertDialog } from "../ui/alert-dialog";
 import type { ProviderUsageStripItem } from "./ProviderUsageStrip.logic";
 
 const reset = {
@@ -124,16 +125,20 @@ describe("ProviderQuotaDetails", () => {
 describe("ProviderQuotaResetConfirmationContent", () => {
   it("explicitly names the reset and expiry", () => {
     const markup = renderToStaticMarkup(
-      <ProviderQuotaResetConfirmationContent
-        pending={false}
-        reset={reset}
-        onCancel={() => {}}
-        onConfirm={() => {}}
-      />,
+      <AlertDialog open>
+        <ProviderQuotaResetConfirmationContent
+          pending={false}
+          reset={reset}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      </AlertDialog>,
     );
     expect(markup).toContain("August recovery reset");
     expect(markup).toContain("expires");
     expect(markup).toContain("2026");
     expect(markup).toContain("Confirm reset");
+    expect(markup).toContain('data-slot="alert-dialog-title"');
+    expect(markup).toContain('data-slot="alert-dialog-description"');
   });
 });

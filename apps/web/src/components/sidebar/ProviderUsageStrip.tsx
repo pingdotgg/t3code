@@ -1,4 +1,5 @@
 import { type ProviderBankedReset, type ProviderQuotaConsumeResetInput } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { BotIcon } from "lucide-react";
 import { memo, useCallback, useMemo, useRef, useState } from "react";
@@ -8,10 +9,11 @@ import { usePrimarySessionState } from "../../environments/primary";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { type PrimaryProviderQuotaState, usePrimaryProviderQuota } from "../../state/providerQuota";
+import { primaryServerProvidersAtom } from "../../state/server";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 import { DRIVER_OPTIONS } from "../settings/providerDriverMeta";
 import {
-  deriveOrderedProviderSettingsRows,
+  deriveVisibleOrderedProviderSettingsRows,
   resolvePrimaryOperateAccess,
 } from "../settings/ProviderSettingsPanel.logic";
 import { AlertDialog, AlertDialogPopup } from "../ui/alert-dialog";
@@ -27,6 +29,7 @@ import {
 } from "../ui/sheet";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SidebarMenuItem } from "../ui/sidebar";
 import {
   ProviderQuotaDetails,
   ProviderQuotaResetConfirmationContent,
@@ -206,9 +209,7 @@ const ProviderUsageItemSurface = memo(function ProviderUsageItemSurface({
             else setConfirmationOpen(true);
           }}
         >
-          <AlertDialogPopup
-            aria-label={`Confirm ${selectedReset.title ?? selectedReset.resetType}`}
-          >
+          <AlertDialogPopup>
             <ProviderQuotaResetConfirmationContent
               onCancel={cancelReset}
               onConfirm={() => void confirmReset()}
@@ -235,35 +236,39 @@ export const ProviderUsageStripView = memo(function ProviderUsageStripView({
 }) {
   if (items.length === 0) return null;
   return (
-    <div
-      className="flex h-7 min-w-0 max-w-full items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      data-slot="provider-usage-strip"
-    >
-      {items.map((item) => (
-        <ProviderUsageItemSurface
-          key={item.instanceId}
-          canOperate={canOperate}
-          isSmallScreen={isSmallScreen}
-          item={item}
-          onConsumeReset={onConsumeReset}
-        />
-      ))}
-    </div>
+    <SidebarMenuItem className="min-w-0">
+      <div
+        className="flex h-7 min-w-0 max-w-full items-center gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        data-slot="provider-usage-strip"
+      >
+        {items.map((item) => (
+          <ProviderUsageItemSurface
+            key={item.instanceId}
+            canOperate={canOperate}
+            isSmallScreen={isSmallScreen}
+            item={item}
+            onConsumeReset={onConsumeReset}
+          />
+        ))}
+      </div>
+    </SidebarMenuItem>
   );
 });
 
 export function ProviderUsageStrip() {
   const settings = usePrimarySettings();
   const quota = usePrimaryProviderQuota();
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const isSmallScreen = useMediaQuery("max-sm");
   const sessionState = usePrimarySessionState();
   const rows = useMemo(
     () =>
-      deriveOrderedProviderSettingsRows({
+      deriveVisibleOrderedProviderSettingsRows({
         settings,
         driverOrder: DRIVER_OPTIONS.map((option) => option.value),
+        serverProviders,
       }),
-    [settings],
+    [serverProviders, settings],
   );
   const items = useMemo(
     () => buildProviderUsageStripItems({ rows, summary: quota.summary }),

@@ -4,9 +4,10 @@ import {
   type AuthSessionState,
   defaultInstanceIdForDriver,
   type EnvironmentId,
-  type ProviderDriverKind,
+  ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
+  type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
@@ -18,6 +19,19 @@ export interface OrderedProviderSettingsRow {
   readonly driver: ProviderDriverKind;
   readonly isDefault: boolean;
   readonly isDirty?: boolean;
+}
+
+const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER);
+
+export function deriveVisibleProviderDriverOrder(input: {
+  readonly driverOrder: ReadonlyArray<ProviderDriverKind>;
+  readonly serverProviders: ReadonlyArray<Pick<ServerProvider, "instanceId">>;
+}): ReadonlyArray<ProviderDriverKind> {
+  const cursorIsVisible = input.serverProviders.some(
+    (provider) => provider.instanceId === CURSOR_DEFAULT_INSTANCE_ID,
+  );
+  return input.driverOrder.filter((driver) => driver !== CURSOR_DRIVER || cursorIsVisible);
 }
 
 export function deriveOrderedProviderSettingsRows(input: {
@@ -91,6 +105,17 @@ export function deriveOrderedProviderSettingsRows(input: {
   }
 
   return rows;
+}
+
+export function deriveVisibleOrderedProviderSettingsRows(input: {
+  readonly settings: Pick<ServerSettings, "providerInstances" | "providers">;
+  readonly driverOrder: ReadonlyArray<ProviderDriverKind>;
+  readonly serverProviders: ReadonlyArray<Pick<ServerProvider, "instanceId">>;
+}): ReadonlyArray<OrderedProviderSettingsRow> {
+  return deriveOrderedProviderSettingsRows({
+    settings: input.settings,
+    driverOrder: deriveVisibleProviderDriverOrder(input),
+  });
 }
 
 export interface ProviderEnvironmentOptionLike {
