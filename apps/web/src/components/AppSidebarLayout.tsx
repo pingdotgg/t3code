@@ -19,7 +19,11 @@ import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
+import {
+  resolveSidebarStageFocusRingOffsetClass,
+  useSidebarStageBackdropVariant,
+} from "./SidebarStageBackdrop";
+import { useProjects } from "../state/entities";
 import {
   resolveInitialThreadSidebarWidth,
   resolveThreadSidebarMaximumWidth,
@@ -104,7 +108,10 @@ function SidebarControl() {
                 "pointer-events-auto",
                 isSidebarVisible &&
                   stageBackdropVariant &&
-                  "[:hover,[data-pressed]]:bg-white/15 focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white!",
+                  "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
+                isSidebarVisible &&
+                  stageBackdropVariant &&
+                  resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
               )}
               aria-label="Toggle main sidebar"
             />
@@ -116,6 +123,14 @@ function SidebarControl() {
       </Tooltip>
     </div>
   );
+}
+
+// Settings swaps the thread sidebar out of the tree. Keep the lightweight
+// project projection subscribed so returning to a draft never renders the
+// zero-project state while the environment snapshot reconnects.
+function ProjectProjectionRetention() {
+  useProjects();
+  return null;
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
@@ -184,6 +199,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
+      <ProjectProjectionRetention />
       <Sidebar
         side="left"
         collapsible="offcanvas"

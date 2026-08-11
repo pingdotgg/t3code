@@ -122,6 +122,7 @@ import {
   backgroundActivitySharedPolicySettings,
   durationToSeconds,
   formatDiagnosticsDescription,
+  getChangedTypographySettingLabels,
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
@@ -220,6 +221,7 @@ function AboutVersionTitle() {
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
+  const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -255,7 +257,7 @@ function AboutVersionSection() {
     [selectedUpdateChannel],
   );
 
-  const handleButtonClick = useCallback(() => {
+  const handleButtonClick = useCallback(async () => {
     const bridge = window.desktopBridge;
     if (!bridge) return;
 
@@ -275,22 +277,43 @@ function AboutVersionSection() {
     }
 
     if (action === "install") {
-      const confirmed = window.confirm(
-        getDesktopUpdateInstallConfirmationMessage(
-          updateState ?? { availableVersion: null, downloadedVersion: null },
-          navigator.platform,
-        ),
-      );
-      if (!confirmed) return;
-      void bridge.installUpdate().catch((error: unknown) => {
+      if (isUpdateActionPending) return;
+      setIsUpdateActionPending(true);
+      let confirmed = false;
+      try {
+        confirmed = await ensureLocalApi().dialogs.confirm(
+          getDesktopUpdateInstallConfirmationMessage(
+            updateState ?? { availableVersion: null, downloadedVersion: null },
+            navigator.platform,
+          ),
+        );
+      } catch (error) {
+        setIsUpdateActionPending(false);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not install update",
-            description: error instanceof Error ? error.message : "Install failed.",
+            title: "Could not confirm update",
+            description: error instanceof Error ? error.message : "Update confirmation failed.",
           }),
         );
-      });
+        return;
+      }
+      if (!confirmed) {
+        setIsUpdateActionPending(false);
+        return;
+      }
+      void bridge
+        .installUpdate()
+        .catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not install update",
+              description: error instanceof Error ? error.message : "Install failed.",
+            }),
+          );
+        })
+        .finally(() => setIsUpdateActionPending(false));
       return;
     }
 
@@ -318,7 +341,7 @@ function AboutVersionSection() {
           }),
         );
       });
-  }, [updateState]);
+  }, [isUpdateActionPending, updateState]);
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
   const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState) : null;
@@ -352,7 +375,7 @@ function AboutVersionSection() {
                 <Button
                   size="xs"
                   variant={action === "install" ? "default" : "outline"}
-                  disabled={buttonDisabled}
+                  disabled={buttonDisabled || isUpdateActionPending}
                   onClick={handleButtonClick}
                 >
                   {buttonLabel}
@@ -471,16 +494,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Auto-settle inactive threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
-      ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans
-        ? ["Interface font"]
-        : []),
-      ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer
-        ? ["Prompt font"]
-        : []),
-      ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode ? ["Code font"] : []),
-      ...(settings.fontFamilyTerminal !== DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal
-        ? ["Terminal font"]
-        : []),
+      ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
@@ -539,6 +553,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.wordWrap,
       followSystem,
       theme,
+      themeHalves,
     ],
   );
 
@@ -549,6 +564,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
         "\n",
       ),
+      { variant: "destructive" },
     );
     if (!confirmed) return;
 
@@ -628,6 +644,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
       fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
+      fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
+      fontSizePrompt: DEFAULT_UNIFIED_SETTINGS.fontSizePrompt,
+      fontSizeCode: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
+      fontSizeTerminal: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
     });
     onRestored?.();
   }, [
@@ -1081,13 +1101,21 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
       {...searchableSetting("interface-font")}
       description="Everything outside code blocks and the terminal."
       defaultFamily={defaults.sans}
+      defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
       value={settings.fontFamilySans}
       onValueChange={(fontFamilySans) => updateSettings({ fontFamilySans })}
+      onReset={() =>
+        updateSettings({
+          fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
+          fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
+        })
+      }
       size={{
         label: "Interface font size",
         min: MIN_INTERFACE_FONT_SIZE,
         max: MAX_INTERFACE_FONT_SIZE,
         value: settings.fontSizeInterface,
+        defaultValue: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
         onChange: (fontSizeInterface) => updateSettings({ fontSizeInterface }),
       }}
       {...(preview !== undefined ? { preview } : {})}
@@ -1104,13 +1132,21 @@ function PromptFontRow() {
       {...searchableSetting("prompt-font")}
       description="Only the box you write prompts in. Mono works well here."
       defaultFamily={defaults.interfaceFamily}
+      defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer}
       value={settings.fontFamilyComposer}
       onValueChange={(fontFamilyComposer) => updateSettings({ fontFamilyComposer })}
+      onReset={() =>
+        updateSettings({
+          fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
+          fontSizePrompt: DEFAULT_UNIFIED_SETTINGS.fontSizePrompt,
+        })
+      }
       size={{
         label: "Prompt font size",
         min: MIN_PROMPT_FONT_SIZE,
         max: MAX_PROMPT_FONT_SIZE,
         value: settings.fontSizePrompt,
+        defaultValue: DEFAULT_UNIFIED_SETTINGS.fontSizePrompt,
         onChange: (fontSizePrompt) => updateSettings({ fontSizePrompt }),
       }}
       preview={<PromptFontPreview />}
@@ -1136,14 +1172,22 @@ function CodeFontRow({
       {...(title !== undefined ? { title } : {})}
       description={description}
       defaultFamily={defaults.code}
+      defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyCode}
       value={settings.fontFamilyCode}
       onValueChange={(fontFamilyCode) => updateSettings({ fontFamilyCode })}
+      onReset={() =>
+        updateSettings({
+          fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
+          fontSizeCode: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
+        })
+      }
       requireMonospace
       size={{
         label: "Code font size",
         min: MIN_CODE_FONT_SIZE,
         max: MAX_CODE_FONT_SIZE,
         value: settings.fontSizeCode,
+        defaultValue: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
         onChange: (fontSizeCode) => updateSettings({ fontSizeCode }),
       }}
       preview={preview ?? <CodeFontPreview />}
@@ -1160,14 +1204,22 @@ function TerminalFontRow() {
       {...searchableSetting("terminal-font")}
       description="Terminal output, independent from code blocks and diffs."
       defaultFamily={defaults.code}
+      defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}
       value={settings.fontFamilyTerminal}
       onValueChange={(fontFamilyTerminal) => updateSettings({ fontFamilyTerminal })}
+      onReset={() =>
+        updateSettings({
+          fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
+          fontSizeTerminal: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
+        })
+      }
       requireMonospace
       size={{
         label: "Terminal font size",
         min: MIN_TERMINAL_FONT_SIZE,
         max: MAX_TERMINAL_FONT_SIZE,
         value: settings.fontSizeTerminal,
+        defaultValue: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
         onChange: (fontSizeTerminal) => updateSettings({ fontSizeTerminal }),
       }}
       preview={
@@ -1345,9 +1397,11 @@ function FontFamilySettingsRow({
   title,
   description,
   defaultFamily,
+  defaultValue,
   preview,
   value,
   onValueChange,
+  onReset,
   requireMonospace = false,
   size,
 }: {
@@ -1356,11 +1410,21 @@ function FontFamilySettingsRow({
   description: string;
   /** What an unset preference renders as, e.g. "Menlo". */
   defaultFamily: string;
+  /** The persisted family value supplied by the unified settings defaults. */
+  defaultValue: string;
   preview?: ReactNode;
   value: string;
   onValueChange: (value: string) => void;
+  onReset: () => void;
   requireMonospace?: boolean;
-  size: { label: string; min: number; max: number; value: number; onChange: (v: number) => void };
+  size: {
+    label: string;
+    min: number;
+    max: number;
+    value: number;
+    defaultValue: number;
+    onChange: (v: number) => void;
+  };
 }) {
   const trimmed = value.trim();
   // The fallback input edits a draft; the preference only commits once typing
@@ -1407,12 +1471,18 @@ function FontFamilySettingsRow({
   // Flag an unknown name only once typing pauses, and never for an empty
   // field - that is the starting state, not a rejected entry.
   const draftPending = draftSettled && draftTrimmed.length > 0 && draftTrimmed !== trimmed;
+  const resetToDefault = () => {
+    if (commitTimerRef.current !== null) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+    setDraft(defaultValue);
+    setDraftSettled(true);
+    onReset();
+  };
   const resetAction =
-    trimmed.length > 0 ? (
-      <SettingResetButton
-        label={`${title.toLowerCase()} family`}
-        onClick={() => onValueChange("")}
-      />
+    value !== defaultValue || size.value !== size.defaultValue ? (
+      <SettingResetButton label={title.toLowerCase()} onClick={resetToDefault} />
     ) : null;
   const fontEnumeration = useFontEnumeration();
   // Everyone starts on the plain input; focusing it is the user gesture that
@@ -2258,6 +2328,7 @@ export function ArchivedThreadsPanel() {
                 environmentId,
                 name: project.title,
                 cwd: project.workspaceRoot,
+                faviconPath: project.faviconPath,
               },
             ] as const,
         ),
@@ -2379,7 +2450,13 @@ export function ArchivedThreadsPanel() {
             key={project.id}
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.name}
-            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+            icon={
+              <ProjectFavicon
+                environmentId={project.environmentId}
+                cwd={project.cwd}
+                faviconPath={project.faviconPath}
+              />
+            }
           >
             {projectThreads.map((thread) => (
               <SettingsRow
