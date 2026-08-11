@@ -58,6 +58,7 @@ import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadSummaryByRef,
   selectThreadByRef,
+  selectThreadExistsByRef,
   selectThreadsAcrossEnvironments,
 } from "~/store";
 import { useTerminalStateStore } from "~/terminalStateStore";
@@ -86,7 +87,7 @@ type ThreadDetailSubscriptionEntry = {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   unsubscribe: () => void;
-  unsubscribeConnectionListener: (() => void) | null;
+  unsubscribeReadinessWatcher: (() => void) | null;
   refCount: number;
   lastAccessedAt: number;
   evictionTimeoutId: ReturnType<typeof setTimeout> | null;
@@ -276,17 +277,35 @@ function shouldEvictThreadDetailSubscription(entry: ThreadDetailSubscriptionEntr
   return entry.refCount === 0 && !isNonIdleThreadDetailSubscription(entry);
 }
 
-function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): boolean {
-  if (entry.unsubscribeConnectionListener !== null) {
-    entry.unsubscribeConnectionListener();
-    entry.unsubscribeConnectionListener = null;
+function stopWatchingThreadDetailSubscriptionReadiness(entry: ThreadDetailSubscriptionEntry): void {
+  if (entry.unsubscribeReadinessWatcher === null) {
+    return;
   }
+  const unsubscribe = entry.unsubscribeReadinessWatcher;
+  entry.unsubscribeReadinessWatcher = null;
+  unsubscribe();
+}
+
+// The server rejects `subscribeThread` for a thread that has no projection row
+// yet (an unsent local draft, or a thread whose creation has not been projected
+// yet), and the transport parks a stream rejected that way until it reconnects.
+// Subscribing early therefore leaves a permanently dead cached subscription, so
+// wait until the shell projection publishes the thread.
+function isThreadDetailSubscriptionAttachable(entry: ThreadDetailSubscriptionEntry): boolean {
+  return selectThreadExistsByRef(
+    useStore.getState(),
+    scopeThreadRef(entry.environmentId, entry.threadId),
+  );
+}
+
+function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): boolean {
   if (entry.unsubscribe !== NOOP) {
+    stopWatchingThreadDetailSubscriptionReadiness(entry);
     return true;
   }
 
   const connection = readEnvironmentConnection(entry.environmentId);
-  if (!connection) {
+  if (!connection || !isThreadDetailSubscriptionAttachable(entry)) {
     return false;
   }
 
@@ -303,19 +322,26 @@ function attachThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry): b
       applyEnvironmentThreadDetailEvent(item.event, entry.environmentId);
     },
   );
+  stopWatchingThreadDetailSubscriptionReadiness(entry);
   return true;
 }
 
-function watchThreadDetailSubscriptionConnection(entry: ThreadDetailSubscriptionEntry): void {
-  if (entry.unsubscribeConnectionListener !== null) {
+function watchThreadDetailSubscriptionReadiness(entry: ThreadDetailSubscriptionEntry): void {
+  if (entry.unsubscribeReadinessWatcher !== null) {
     return;
   }
 
-  entry.unsubscribeConnectionListener = subscribeEnvironmentConnections(() => {
+  const retryAttach = () => {
     if (attachThreadDetailSubscription(entry)) {
       entry.lastAccessedAt = Date.now();
     }
-  });
+  };
+  const unsubscribeConnections = subscribeEnvironmentConnections(retryAttach);
+  const unsubscribeStore = useStore.subscribe(retryAttach);
+  entry.unsubscribeReadinessWatcher = () => {
+    unsubscribeConnections();
+    unsubscribeStore();
+  };
   attachThreadDetailSubscription(entry);
 }
 
@@ -326,8 +352,7 @@ function disposeThreadDetailSubscriptionByKey(key: string): boolean {
   }
 
   clearThreadDetailSubscriptionEviction(entry);
-  entry.unsubscribeConnectionListener?.();
-  entry.unsubscribeConnectionListener = null;
+  stopWatchingThreadDetailSubscriptionReadiness(entry);
   threadDetailSubscriptions.delete(key);
   entry.unsubscribe();
   entry.unsubscribe = NOOP;
@@ -348,6 +373,11 @@ function reconcileThreadDetailSubscriptionsForEnvironment(
 ): void {
   const activeThreadIds = new Set(threadIds);
   for (const [key, entry] of threadDetailSubscriptions) {
+    // Retained subscriptions belong to mounted views that cannot re-retain on
+    // their own, and a snapshot can legitimately lag a freshly created thread.
+    if (entry.refCount > 0) {
+      continue;
+    }
     if (entry.environmentId === environmentId && !activeThreadIds.has(entry.threadId)) {
       disposeThreadDetailSubscriptionByKey(key);
     }
@@ -442,7 +472,7 @@ export function retainThreadDetailSubscription(
     existing.refCount += 1;
     existing.lastAccessedAt = Date.now();
     if (!attachThreadDetailSubscription(existing)) {
-      watchThreadDetailSubscriptionConnection(existing);
+      watchThreadDetailSubscriptionReadiness(existing);
     }
     let released = false;
     return () => {
@@ -463,14 +493,14 @@ export function retainThreadDetailSubscription(
     environmentId,
     threadId,
     unsubscribe: NOOP,
-    unsubscribeConnectionListener: null,
+    unsubscribeReadinessWatcher: null,
     refCount: 1,
     lastAccessedAt: Date.now(),
     evictionTimeoutId: null,
   };
   threadDetailSubscriptions.set(key, entry);
   if (!attachThreadDetailSubscription(entry)) {
-    watchThreadDetailSubscriptionConnection(entry);
+    watchThreadDetailSubscriptionReadiness(entry);
   }
   evictIdleThreadDetailSubscriptionsToCapacity();
 

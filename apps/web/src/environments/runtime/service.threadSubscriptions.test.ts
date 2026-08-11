@@ -142,6 +142,17 @@ function makeThreadShellSnapshot(params: {
   };
 }
 
+function makeShellSnapshotForThreads(
+  threadIds: ReadonlyArray<ThreadId>,
+  snapshotSequence = 1,
+): OrchestrationShellSnapshot {
+  return {
+    ...makeThreadShellSnapshot({ threadId: ThreadId.make("placeholder") }),
+    snapshotSequence,
+    threads: threadIds.flatMap((threadId) => makeThreadShellSnapshot({ threadId }).threads),
+  };
+}
+
 describe("retainThreadDetailSubscription", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -185,6 +196,8 @@ describe("retainThreadDetailSubscription", () => {
     const stop = startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
     const threadId = ThreadId.make("thread-1");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    connectionInput.syncShellSnapshot(makeShellSnapshotForThreads([threadId]), environmentId);
 
     const releaseFirst = retainThreadDetailSubscription(environmentId, threadId);
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
@@ -202,6 +215,57 @@ describe("retainThreadDetailSubscription", () => {
     await vi.advanceTimersByTimeAsync(28 * 60 * 1000);
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
 
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("waits for the shell projection before opening a thread detail subscription", async () => {
+    const {
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-unprojected");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    // Subscribing before the thread is projected makes the server reject the
+    // stream, which parks it permanently and leaves the chat frozen.
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).not.toHaveBeenCalled();
+
+    connectionInput.syncShellSnapshot(makeShellSnapshotForThreads([threadId]), environmentId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("keeps retained thread detail subscriptions when a shell snapshot omits the thread", async () => {
+    const {
+      retainThreadDetailSubscription,
+      startEnvironmentConnectionService,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-live");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.syncShellSnapshot(makeShellSnapshotForThreads([threadId]), environmentId);
+    const release = retainThreadDetailSubscription(environmentId, threadId);
+    expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
+
+    connectionInput.syncShellSnapshot(makeShellSnapshotForThreads([], 2), environmentId);
+    expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
+
+    release();
     stop();
     await resetEnvironmentServiceForTests();
   });
@@ -383,12 +447,14 @@ describe("retainThreadDetailSubscription", () => {
 
     const stop = startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
+    const threadIds = Array.from({ length: 12 }, (_, index) =>
+      ThreadId.make(`thread-${index + 1}`),
+    );
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    connectionInput.syncShellSnapshot(makeShellSnapshotForThreads(threadIds), environmentId);
 
-    for (let index = 0; index < 12; index += 1) {
-      const release = retainThreadDetailSubscription(
-        environmentId,
-        ThreadId.make(`thread-${index + 1}`),
-      );
+    for (const threadId of threadIds) {
+      const release = retainThreadDetailSubscription(environmentId, threadId);
       release();
     }
 
@@ -408,6 +474,8 @@ describe("retainThreadDetailSubscription", () => {
     const stop = startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
     const threadId = ThreadId.make("thread-2");
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    connectionInput.syncShellSnapshot(makeShellSnapshotForThreads([threadId]), environmentId);
 
     const release = retainThreadDetailSubscription(environmentId, threadId);
     release();
