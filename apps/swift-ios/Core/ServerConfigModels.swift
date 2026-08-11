@@ -188,7 +188,7 @@ public struct ServerConfigSnapshot: Codable, Equatable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        environment = try container.decodeIfPresent(
+        environment = try? container.decodeIfPresent(
             EnvironmentDescriptor.self,
             forKey: .environment
         )

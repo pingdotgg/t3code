@@ -202,6 +202,17 @@ struct ConnectionsView: View {
                         }
                         .font(T3Typography.supporting)
                         .foregroundStyle(T3Colors.textSecondary)
+
+                        if let version = SettingsAboutMetadata.connectedEnvironmentVersion(
+                            connectionState: environment.connectionState,
+                            serverVersion: environment.serverVersion
+                        ) {
+                            Text("Server \(version)")
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.textTertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                     }
 
                     Spacer(minLength: 8)

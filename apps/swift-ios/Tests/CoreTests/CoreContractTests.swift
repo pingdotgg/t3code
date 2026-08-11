@@ -91,6 +91,19 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(legacyConfig.serverVersion(fallingBackTo: "0.1.0"), "0.1.0")
     }
 
+    func testServerConfigDropsMalformedEnvironmentWithoutLosingProviders() throws {
+        let config = try JSONDecoder.t3.decode(
+            ServerConfigSnapshot.self,
+            from: Data(
+                #"{"environment":{"serverVersion":"0.2.0"},"providers":[],"threadSnapshotPagination":true}"#.utf8
+            )
+        )
+
+        XCTAssertNil(config.environment)
+        XCTAssertEqual(config.providers, [])
+        XCTAssertEqual(config.threadSnapshotPagination, true)
+    }
+
     func testCommandBuildersMatchOrchestrationContract() throws {
         let model = ModelSelection(instanceId: "codex", model: "gpt-5.6-sol")
         let command = try OrchestrationCommands.createThread(

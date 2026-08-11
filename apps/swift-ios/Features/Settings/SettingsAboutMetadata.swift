@@ -7,12 +7,12 @@ enum SettingsAboutMetadata {
         return "\(version) (\(build))"
     }
 
-    static func environmentVersionLabel(
-        connectionState: FeatureConnection.State,
+    static func connectedEnvironmentVersion(
+        connectionState: FeatureConnection.State?,
         serverVersion: String?
-    ) -> String {
-        guard connectionState == .connected else { return "Not connected" }
-        return normalized(serverVersion) ?? "Unknown"
+    ) -> String? {
+        guard connectionState == .connected else { return nil }
+        return normalized(serverVersion)
     }
 
     private static func resolvedValue(_ key: String, info: [String: Any]?) -> String? {

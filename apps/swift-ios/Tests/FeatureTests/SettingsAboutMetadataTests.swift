@@ -20,7 +20,7 @@ struct SettingsAboutMetadataTests {
 
     @Test
     func formatsConnectedEnvironmentVersion() {
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
+        #expect(SettingsAboutMetadata.connectedEnvironmentVersion(
             connectionState: .connected,
             serverVersion: "2.3.4"
         ) == "2.3.4")
@@ -28,29 +28,29 @@ struct SettingsAboutMetadataTests {
 
     @Test
     func formatsUnknownConnectedEnvironmentVersion() {
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
+        #expect(SettingsAboutMetadata.connectedEnvironmentVersion(
             connectionState: .connected,
             serverVersion: nil
-        ) == "Unknown")
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
+        ) == nil)
+        #expect(SettingsAboutMetadata.connectedEnvironmentVersion(
             connectionState: .connected,
             serverVersion: "  "
-        ) == "Unknown")
+        ) == nil)
     }
 
     @Test
     func hidesStaleEnvironmentVersionWhileDisconnected() {
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
+        #expect(SettingsAboutMetadata.connectedEnvironmentVersion(
             connectionState: .disconnected,
             serverVersion: "2.3.4"
-        ) == "Not connected")
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
+        ) == nil)
+        #expect(SettingsAboutMetadata.connectedEnvironmentVersion(
             connectionState: .reconnecting,
             serverVersion: "2.3.4"
-        ) == "Not connected")
-        #expect(SettingsAboutMetadata.environmentVersionLabel(
+        ) == nil)
+        #expect(SettingsAboutMetadata.connectedEnvironmentVersion(
             connectionState: .connecting,
             serverVersion: "2.3.4"
-        ) == "Not connected")
+        ) == nil)
     }
 }
