@@ -1,7 +1,8 @@
 # Realtime Voice Architecture
 
-> For maintainers. The shipped surface is web and desktop. Mobile voice requires a separate client
-> implementation and is not currently mounted.
+> For maintainers. Voice Supervisor ships on web, desktop, and mobile. Web and desktop share the
+> browser host and transport; mobile binds the shared client-runtime core to React Native state,
+> navigation, WebRTC, microphone permission, and audio-session adapters.
 
 Voice Supervisor is a global, provider-neutral work controller backed by OpenAI Realtime. “Provider
 neutral” applies to the T3 projects and threads it supervises: the voice conversation itself uses a
@@ -14,6 +15,9 @@ over `OPENAI_API_KEY`; removing the stored secret restores the environment fallb
 status exposes only configured/source state, and clients never read the key itself. Reading that
 redacted status and setting or removing the stored key require `access:write`, while client-secret
 minting requires `orchestration:operate`.
+
+The stored-key editor is exposed only by web and desktop Settings. Mobile uses a host already
+configured there or through `OPENAI_API_KEY`; it does not set or remove the long-lived key.
 
 | Method | Path                                | Purpose                                 |
 | ------ | ----------------------------------- | --------------------------------------- |
@@ -37,7 +41,7 @@ The default voice is `marin`; the shared allowlist is `alloy`, `ash`, `ballad`, 
 `Retry-After`; local rate and concurrency failures use the same typed public error shape.
 
 These are issuance controls, not runtime enforcement or a spend cap. An OpenAI client secret is
-usable until expiry, and a client can update session defaults after minting. The web coordinator
+usable until expiry, and a client can update session defaults after minting. Each client coordinator
 therefore locally validates the voice selection and sends the same fixed model, selected
 allowlisted voice, prompt, and tool schemas during its handshake, but the server does not claim
 that mint defaults enforce the rest of the session.
@@ -47,32 +51,39 @@ that mint defaults enforce the rest of the session.
 The server never proxies microphone or speaker media:
 
 ```text
-web or desktop client
+web, desktop, or mobile client
   -> selected authenticated T3 environment: mint short-lived client secret
   -> OpenAI /v1/realtime/calls: exchange SDP using that secret
   -> direct client-to-OpenAI WebRTC audio + data channel
 ```
 
-The browser transport requires a secure context and `getUserMedia`. After microphone access, it
-creates one peer connection and `oai-events` data channel, starts a 20-second negotiation timeout,
-creates an SDP offer, mints the secret, exchanges SDP with OpenAI, and waits for the data channel to
-open. No reconnect policy lives in the transport or host; a failed session must be started again.
+On web and desktop, the browser transport requires a secure context and `getUserMedia`. On mobile,
+`react-native-webrtc` requests the operating system's microphone permission, starts a native audio
+session, and captures an audio-only stream. Both transports create one peer connection and
+`oai-events` data channel, start a 20-second negotiation timeout, create an SDP offer, mint the
+secret, exchange SDP directly with OpenAI, and wait for the data channel to open. No reconnect
+policy lives in either transport or host; a failed or closed session must be started again.
 
 Every connect attempt has a transport generation. Starting again aborts and tears down the prior
 attempt, and late async results or events cannot mutate the new generation. Teardown aborts pending
-work, removes listeners, stops local, remote, sender, and receiver tracks, clears the audio element,
-closes the channel and peer connection, and cancels timers.
+work, removes listeners, stops local, remote, sender, and receiver tracks, clears the browser audio
+element or releases the mobile stream and native audio-session lease, closes the channel and peer
+connection, and cancels timers.
 
 ## Root Coordinator and Handshake
 
-A single Voice Supervisor host is mounted at the web root, so its controller and replay state
-survive route changes. It owns another monotonic session generation above the transport generation;
-all state projection, tool calls, confirmations, and transport callbacks are generation-checked.
+A single Voice Supervisor host is mounted at the web root; desktop wraps that surface. Mobile mounts
+one host under `RootStackLayout`. Each client root therefore owns at most one voice session, and its
+controller and replay state survive route changes. The host owns another monotonic session
+generation above the transport generation; all state projection, tool calls, confirmations, and
+transport callbacks are generation-checked.
 
-Opening the panel does not request microphone permission or start a session. The user must choose
-**Start voice**. The native desktop bridge first checks macOS microphone permission and, when
-needed, requests it through the main process. Browser `getUserMedia` remains the media authority on
-all surfaces. The permission prompt is intentionally outside T3's handshake timer.
+Opening the web panel or mobile screen does not request microphone permission, mint a client secret,
+or start a session. The user must choose **Start voice** on web or desktop, or **Start** on mobile. The native desktop bridge first checks
+macOS microphone permission and, when needed, requests it through the main process; browser
+`getUserMedia` remains the capture authority for web and desktop. Mobile uses the
+`react-native-webrtc` permission and capture APIs. Permission prompts are intentionally outside
+T3's handshake timer.
 
 After transport readiness, the coordinator waits for `session.created`, sends one static
 `session.update`, and treats a `session.updated` with the same OpenAI session ID as the
@@ -94,10 +105,21 @@ Transcript deltas are coalesced at 80 ms and projected into bounded client state
 transcription is an asynchronous display stream, not the conversation model's authoritative
 interpretation; a transcription failure is recorded without failing the session.
 
-The host is reachable from the floating launcher, both sidebars, and the Command Palette. The
-`voice.toggle` command can be assigned in Keybindings but has no default. Hiding the panel preserves
-an active session; Stop or host loss performs teardown. The launcher retains connection, mute,
-failure, and pending-confirmation state while the panel is hidden.
+On web and desktop, the host is reachable from the floating launcher, both sidebars, and the Command
+Palette. The `voice.toggle` command can be assigned in Keybindings but has no default. Hiding the
+panel preserves an active session; Stop or host loss performs teardown. The launcher retains
+connection, mute, failure, and pending-confirmation state while the panel is hidden.
+
+On mobile, the Settings row and the `voice` deep-link route open the screen. Back or navigation away
+hides only that screen. While it is hidden, a root-owned portal control appears only for connecting,
+connected, failed, or pending-confirmation state and reopens the route. Mobile voice is
+foreground-only: AppState loss outside the initial iOS permission transition, or a terminal native
+audio-session event, tears down the attempt. Returning to the foreground never auto-resumes or
+reconnects it.
+
+Mobile freezes the selected host environment, connection generation, and voice at Start. It
+subscribes to that host lease and re-reads the authoritative lease immediately before minting; host
+loss or a changed generation tears down or rejects startup instead of silently retargeting.
 
 ## Static Tool Surface
 
@@ -140,11 +162,17 @@ handle; a changed version receives a new binding. The target, proposal, call, al
 node, byte, key, and array stores all have explicit caps and fail closed at capacity rather than
 evicting replay guards.
 
-New-thread preparation reuses the current T3 policy: routed composer/shell/draft carry, sticky and
-project provider/model selection, provider availability, permission and interaction modes,
-project → `t3.json` → primary environment workspace defaults, and default-ref/current-branch
-then current-ref worktree selection. It generates command, message, and thread IDs once, before
-confirmation, and never invents a model or path when authoritative defaults are unavailable.
+On web and desktop, new-thread preparation reuses the current T3 policy: routed
+composer/shell/draft carry, sticky and project provider/model selection, provider availability,
+permission and interaction modes, project → `t3.json` → primary environment workspace defaults,
+and default-ref/current-branch then current-ref worktree selection.
+
+Mobile deliberately excludes the current route and unfinished composer drafts. It resolves durable
+defaults from the target project and environment: a usable project model or configured fallback,
+the default runtime and interaction modes, project → `t3.json` → environment workspace mode, and a
+default ref or current local ref for worktrees. Local mode uses the project workspace without
+inventing a branch or worktree path. Both adapters generate command, message, and thread IDs once,
+before confirmation, and never invent a model or path when authoritative defaults are unavailable.
 
 ## Tool Serialization and Replay
 
@@ -172,12 +200,12 @@ binds both to the opaque target's environment, identity, kind, and version. At m
 proposal is pending; proposals normally expire after 30 seconds and are one-shot across confirm,
 deny, replacement, expiry, and replay.
 
-The trusted UI reads the frozen preview directly. Confirmation is a local button or keyboard
-action; no model tool can confirm itself. On confirm, the execution adapter re-reads the exact
-project or thread and rejects missing, disconnected, stale, or version-changed targets. Only then
-does it decode the frozen mutation, build the existing start/follow-up/interrupt command, route it
-to the bound environment, and await its receipt-backed accepted result. Denial cancels the proposal
-without dispatch.
+The trusted UI reads the frozen preview directly. Confirmation is a local UI action: every client
+provides explicit buttons, and web/desktop also provide scoped keyboard actions. No model tool can
+confirm itself. On confirm, the execution adapter re-reads the exact project or thread and rejects
+missing, disconnected, stale, or version-changed targets. Only then does it decode the frozen
+mutation, build the existing start/follow-up/interrupt command, route it to the bound environment,
+and await its receipt-backed accepted result. Denial cancels the proposal without dispatch.
 
 ## Remote Modes and Failure Handling
 
@@ -199,15 +227,17 @@ credentials, and causes never enter model-facing or public error results.
 
 ## Bounds and Test Seams
 
-The user-facing panel renders only the latest 40 transcript and 40 activity rows, clips transcript
+The user-facing panel or screen renders only the latest 40 transcript and 40 activity rows, clips
 rows to 2,000 characters, and keeps larger in-memory stores bounded. The tool layer caps each list
 at 20 items, one Realtime response at 16 calls, tool call arguments at 16 KiB, and its primary call
 and target/proposal stores at fixed session-local capacities.
 
-The design keeps provider and browser effects behind injected seams: media devices, peer
-connections, fetch, clocks/timers, state projection, repository reads, navigation, command
-dispatch, receipt results, opaque ID generation, and confirmation execution. Focused tests cover
-generation races, handshake order and timeouts, transport cleanup, microphone holds, event
-correlation and replay, strict argument decoding, bounded output, duplicate cross-environment
-names, stale/disconnected/version-changed targets, one-shot confirmation, exact command routing,
-desktop permission preflight, entry points, and panel interaction.
+The design keeps provider and platform effects behind injected seams: browser and native media,
+peer connections, mobile AppState and audio sessions, fetch, clocks/timers, state projection,
+repository reads, navigation, command dispatch, receipt results, opaque ID generation, and
+confirmation execution. Focused automated tests cover generation races, handshake order and
+timeouts, transport cleanup, microphone holds, event correlation and replay, strict argument
+decoding, bounded output, duplicate cross-environment names, stale/disconnected/version-changed
+targets, one-shot confirmation, exact command routing, desktop permission preflight, web entry
+points and panel interaction, and mobile native adapters, foreground lifecycle, and presentation
+helpers.

@@ -121,7 +121,7 @@ A point-in-time view of state. The word is used in multiple layers, including or
 
 #### Voice Supervisor
 
-The global web and desktop voice controller for inspecting and navigating work across environments known to the current client and proposing limited thread actions. Its conversation uses OpenAI Realtime, while the threads it supervises may use any supported provider. Model-facing reads are bounded and use opaque target handles; starting a thread, following up, and interrupting require local confirmation. See [the user guide][25] and [the Realtime voice architecture][26].
+The global web, desktop, and mobile voice controller for inspecting and navigating work across environments known to the current client and proposing limited thread actions. Its conversation uses OpenAI Realtime, while the threads it supervises may use any supported provider. Model-facing reads are bounded and use opaque target handles; starting a thread, following up, and interrupting require local confirmation. See [the user guide][25] and [the Realtime voice architecture][26].
 
 #### Voice host
 
