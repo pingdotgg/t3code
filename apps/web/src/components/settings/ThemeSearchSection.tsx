@@ -1,5 +1,4 @@
 import {
-  CheckCircle2Icon,
   ExternalLinkIcon,
   PaletteIcon,
   PlusIcon,
@@ -356,11 +355,6 @@ export function ThemeSearchSection({
           </div>
         )
       ) : null}
-
-      <div className="flex items-center gap-1.5 text-muted-foreground text-[11px]">
-        <CheckCircle2Icon className="size-3" /> Publisher-declared permissive licenses, with package
-        integrity checks
-      </div>
 
       <AlertDialog
         open={pendingUpdate !== null}
