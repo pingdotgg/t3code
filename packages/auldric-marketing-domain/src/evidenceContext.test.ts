@@ -262,6 +262,43 @@ describe("bounded Marketing evidence compiler", () => {
       }),
   );
 
+  it.effect("chooses same-tuple survivors deterministically across reverse permutations", () =>
+    Effect.gen(function* () {
+      const source = sourceObservation(1);
+      const earlier = DateTime.makeUnsafe("2033-05-05T07:08:09.000Z");
+      const lowCorroboration = candidate(source, 10, {
+        quality: { authority: 80, directness: 80, freshness: 80, corroboration: 10 },
+      });
+      const highCorroboration = candidate(source, 10, {
+        quality: { authority: 80, directness: 80, freshness: 80, corroboration: 90 },
+      });
+      const older = candidate(source, 11, { observedAt: earlier });
+      const newer = candidate(source, 11, { observedAt: asOf });
+      const conflict = candidate(source, 12, { relation: "conflict" });
+      const disconfirm = candidate(source, 12, { relation: "disconfirm" });
+      const candidates = [lowCorroboration, highCorroboration, older, newer, conflict, disconfirm];
+
+      const first = yield* compileMarketingEvidenceContext(inputFor([source], { candidates }));
+      const reversed = yield* compileMarketingEvidenceContext(
+        inputFor([source], { candidates: candidates.toReversed() }),
+      );
+
+      assert.equal(first.receipt.packetSha256, reversed.receipt.packetSha256);
+      assert.deepEqual(first.evidence, reversed.evidence);
+      assert.equal(first.evidence.length, 3);
+      assert.equal(
+        first.evidence.find(({ locator }) => locator === "document/10")?.quality.corroboration,
+        90,
+      );
+      assert.equal(
+        first.evidence.find(({ locator }) => locator === "document/11")?.observedAt
+          .epochMilliseconds,
+        asOf.epochMilliseconds,
+      );
+      assert.equal(first.receipt.excluded.filter(({ reason }) => reason === "duplicate").length, 3);
+    }),
+  );
+
   it.effect("accounts for the complete schema-encoded packet and fails a 256-token envelope", () =>
     Effect.gen(function* () {
       const tooSmall = yield* Effect.result(
@@ -346,23 +383,74 @@ describe("bounded Marketing evidence compiler", () => {
                 blocks: false,
               },
             ],
+            systemGaps: [
+              {
+                namespace: "system",
+                category: "plan-selection",
+                key: MarketingEvidenceStableKey.make("required-evidence-omitted"),
+                summary: "Plan-selection gap with the same local key.",
+                blocks: false,
+              },
+              {
+                namespace: "system",
+                category: "accepted-fact",
+                key: MarketingEvidenceStableKey.make("required-evidence-omitted"),
+                summary: "Accepted-fact gap with the same local key.",
+                blocks: false,
+              },
+              {
+                namespace: "system",
+                category: "source-state",
+                key: MarketingEvidenceStableKey.make("required-evidence-omitted"),
+                summary: "Source-state gap with the same local key.",
+                blocks: false,
+              },
+              {
+                namespace: "system",
+                category: "source-retrieval",
+                key: MarketingEvidenceStableKey.make("required-evidence-omitted"),
+                summary: "Source-retrieval gap with the same local key.",
+                blocks: false,
+              },
+            ],
+            readiness: {
+              state: "partial",
+              codes: Array.from({ length: 16 }, (_, index) =>
+                MarketingEvidenceStateCode.make(`caller-code-${String(index).padStart(2, "0")}`),
+              ),
+            },
             budget: { ...DEFAULT_MARKETING_CONTEXT_BUDGET, maxTokens: 2_000 },
           }),
         );
 
         assert.equal(result.evidence.length, 0);
+        const collidingGaps = result.gaps.filter(({ key }) => key === "required-evidence-omitted");
+        assert.equal(collidingGaps.length, 6);
         assert.deepEqual(
-          result.gaps
-            .filter(({ key }) => key === "required-evidence-omitted")
-            .map(({ namespace }) => namespace),
-          ["system", "user"],
+          collidingGaps.flatMap((gap) =>
+            gap.namespace === "system" ? [gap.category] : ["user-authored"],
+          ),
+          [
+            "accepted-fact",
+            "context-budget",
+            "plan-selection",
+            "source-retrieval",
+            "source-state",
+            "user-authored",
+          ],
         );
         assert.equal(result.readiness.state, "blocked");
         if (result.readiness.state === "blocked") {
-          assert.isTrue(
-            result.readiness.codes.includes(
-              MarketingEvidenceStateCode.make("required-evidence-omitted"),
-            ),
+          assert.equal(result.readiness.codes.length, 16);
+          assert.deepEqual(result.readiness.codes.slice(0, 2), [
+            MarketingEvidenceStateCode.make("blocking-evidence-gap"),
+            MarketingEvidenceStateCode.make("required-evidence-omitted"),
+          ]);
+          assert.isFalse(
+            result.readiness.codes.includes(MarketingEvidenceStateCode.make("caller-code-14")),
+          );
+          assert.isFalse(
+            result.readiness.codes.includes(MarketingEvidenceStateCode.make("caller-code-15")),
           );
         }
         const omission = result.receipt.excluded.find(

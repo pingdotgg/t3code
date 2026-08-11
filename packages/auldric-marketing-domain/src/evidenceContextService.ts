@@ -359,6 +359,7 @@ function sourceGap(
   } as const;
   return {
     namespace: "system",
+    category: "source-state",
     key: MarketingEvidenceStableKey.make(`source-${suffix}-${reason}`),
     summary: summaries[reason],
     blocks: false,
@@ -369,6 +370,7 @@ function adapterFailureGap(source: MarketingSourceObservation): MarketingSystemE
   const suffix = source.source.sourceId.toLowerCase().replaceAll("_", "-");
   return {
     namespace: "system",
+    category: "source-retrieval",
     key: MarketingEvidenceStableKey.make(`source-${suffix}-retrieval-failed`),
     summary: "An authorized source could not be retrieved for this evidence snapshot.",
     blocks: false,
@@ -610,6 +612,7 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
       if (plan === undefined) {
         automaticGaps.push({
           namespace: "system",
+          category: "plan-selection",
           key: MarketingEvidenceStableKey.make("missing-plan"),
           summary: "No exact canonical Marketing plan was selected for this context snapshot.",
           blocks: false,
@@ -626,6 +629,7 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         if (record === undefined) {
           automaticGaps.push({
             namespace: "system",
+            category: "accepted-fact",
             key: stableKey,
             summary: "A requested accepted fact does not exist in the canonical workspace.",
             blocks: true,

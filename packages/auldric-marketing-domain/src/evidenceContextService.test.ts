@@ -554,6 +554,22 @@ describe("Marketing evidence context service", () => {
         );
         assert.equal(packet.receipt.excluded[0]?.reason, "inaccessible");
 
+        const categoryCollision = yield* service.compileContext({
+          requestAuthority: firstAuthority,
+          selection: firstWorkspace,
+          sourceAllowlist: [sourceReference],
+          acceptedFactKeys: [MarketingEvidenceStableKey.make("missing-plan")],
+          query: { purpose: "Prove automatic gap identities", terms: ["gaps"] },
+        });
+        const sameKeyGaps = categoryCollision.gaps.filter(({ key }) => key === "missing-plan");
+        assert.equal(sameKeyGaps.length, 2);
+        assert.deepEqual(
+          sameKeyGaps.flatMap((gap) => (gap.namespace === "system" ? [gap.category] : [])),
+          ["accepted-fact", "plan-selection"],
+        );
+        assert.equal(categoryCollision.readiness.state, "blocked");
+        assert.equal(adapterCalls, 0);
+
         const futureSourceId = MarketingSourceId.make(`msrc_${uuid(31)}`);
         const futureTimestamp = "2035-01-01T00:00:00.000Z";
         const futureSource = yield* stores.canonicalStore.write({

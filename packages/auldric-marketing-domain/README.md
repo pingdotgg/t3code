@@ -111,6 +111,9 @@ plan, and transition revisions—never a whole-workspace inventory or revision-h
 checks exact heads again before returning a packet. Inaccessible, unindexed, stale, or failed
 sources produce truthful gaps without fabricated evidence. A missing plan is explicit; until #19
 supplies a registered definition projection, stage semantics and readiness remain `not-evaluated`.
+Generated gaps include their plan, fact, source-state, source-retrieval, or budget category in
+their identity, so equal local keys cannot overwrite one another. Derived blocking readiness codes
+retain priority when the bounded code list is full.
 Compilation and source inspection are read-only. The only durable evidence operations are
 explicit `acceptFact`, `supersedeFact`, and `withdrawFact` calls; each writes a canonical decision,
 exact source lineage, optional exact reviews, an expected version, an idempotency receipt, and a

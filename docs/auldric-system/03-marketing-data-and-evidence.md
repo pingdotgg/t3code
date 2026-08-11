@@ -119,6 +119,9 @@ fallback into Dev.
   digests, required flags, inclusion/exclusion reasons, complete packet token count,
   policy/tokenizer references, and the canonical packet digest. Receipt subjects expose only a
   locator digest, never a raw locator, query, credential, or path.
+- System gap identity includes its generating category (`plan-selection`, `accepted-fact`,
+  `source-state`, `source-retrieval`, or `context-budget`), so equal local keys remain distinct.
+  Derived blocking codes reserve their bounded readiness slots before caller-projected codes.
 - Evidence source heads use the registered `evidence/source-state@1` schema. A reusable accepted
   fact is a canonical decision under `evidence/fact/<stable-key>` with schema
   `evidence.fact-acceptance@1`, exact source lineage, optional reviews, and explicit accepted,

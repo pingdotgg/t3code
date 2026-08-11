@@ -194,8 +194,18 @@ export const MarketingUserEvidenceGap = Schema.Struct({
 });
 export type MarketingUserEvidenceGap = typeof MarketingUserEvidenceGap.Type;
 
+export const MarketingSystemEvidenceGapCategory = Schema.Literals([
+  "plan-selection",
+  "accepted-fact",
+  "source-state",
+  "source-retrieval",
+  "context-budget",
+]);
+export type MarketingSystemEvidenceGapCategory = typeof MarketingSystemEvidenceGapCategory.Type;
+
 export const MarketingSystemEvidenceGap = Schema.Struct({
   namespace: Schema.Literal("system"),
+  category: MarketingSystemEvidenceGapCategory,
   ...MarketingEvidenceGapFields,
 });
 export type MarketingSystemEvidenceGap = typeof MarketingSystemEvidenceGap.Type;
@@ -712,15 +722,15 @@ function sortUniqueGaps(
   userGaps: ReadonlyArray<MarketingUserEvidenceGap>,
   systemGaps: ReadonlyArray<MarketingSystemEvidenceGap>,
 ): ReadonlyArray<MarketingEvidenceGap> {
-  const sorted = [...userGaps, ...systemGaps].sort(
-    (left, right) =>
-      compareCanonicalText(left.namespace, right.namespace) ||
-      compareCanonicalText(left.key, right.key),
+  const identity = (gap: MarketingEvidenceGap) =>
+    `${gap.namespace}:${gap.namespace === "system" ? gap.category : "user-authored"}:${gap.key}`;
+  const sorted = [...userGaps, ...systemGaps].sort((left, right) =>
+    compareCanonicalText(identity(left), identity(right)),
   );
   for (let index = 1; index < sorted.length; index += 1) {
     const left = sorted[index - 1];
     const right = sorted[index];
-    if (left?.namespace === right?.namespace && left?.key === right?.key) {
+    if (left !== undefined && right !== undefined && identity(left) === identity(right)) {
       throw new MarketingEvidenceContextError({
         reason: "invalid_context_input",
         reference: decodeSafeReference("duplicate-gap-key"),
@@ -787,13 +797,16 @@ function compareEvidence(
     right.quality.authority - left.quality.authority ||
     right.quality.directness - left.quality.directness ||
     right.quality.freshness - left.quality.freshness ||
+    right.quality.corroboration - left.quality.corroboration ||
     right.relevance - left.relevance ||
+    right.observedAt.epochMilliseconds - left.observedAt.epochMilliseconds ||
     compareCanonicalText(left.source.sourceId, right.source.sourceId) ||
     left.source.revision.version - right.source.revision.version ||
     compareCanonicalText(left.source.revision.revisionId, right.source.revision.revisionId) ||
     compareCanonicalText(left.locator, right.locator) ||
     compareCanonicalText(left.contentSha256, right.contentSha256) ||
-    compareCanonicalText(left.excerptSha256, right.excerptSha256)
+    compareCanonicalText(left.excerptSha256, right.excerptSha256) ||
+    compareCanonicalText(evidenceDigest(left), evidenceDigest(right))
   );
 }
 
@@ -861,6 +874,7 @@ const requiredOmissionCode = MarketingEvidenceStateCode.make("required-evidence-
 const blockingGapCode = MarketingEvidenceStateCode.make("blocking-evidence-gap");
 const requiredOmissionGap: MarketingSystemEvidenceGap = {
   namespace: "system",
+  category: "context-budget",
   key: MarketingEvidenceStableKey.make("required-evidence-omitted"),
   summary: "Required evidence could not fit or was unavailable in this bounded context packet.",
   blocks: true,
@@ -868,11 +882,17 @@ const requiredOmissionGap: MarketingSystemEvidenceGap = {
 
 function forceBlocked(
   readiness: MarketingPlanReadiness,
-  codes: ReadonlyArray<MarketingEvidenceStateCode>,
+  derivedCodes: ReadonlyArray<MarketingEvidenceStateCode>,
 ): MarketingPlanReadiness {
-  const existing =
+  const callerCodes =
     readiness.state === "blocked" || readiness.state === "partial" ? readiness.codes : [];
-  const combined = [...new Set([...existing, ...codes])].sort(compareCanonicalText).slice(0, 16);
+  const prioritizedDerived = [...new Set(derivedCodes)].sort(compareCanonicalText).slice(0, 16);
+  const remaining = 16 - prioritizedDerived.length;
+  const retainedCaller = [...new Set(callerCodes)]
+    .filter((code) => !prioritizedDerived.includes(code))
+    .sort(compareCanonicalText)
+    .slice(0, remaining);
+  const combined = [...prioritizedDerived, ...retainedCaller];
   return decodeReadiness({ state: "blocked", codes: combined });
 }
 
@@ -940,7 +960,12 @@ export function compileMarketingEvidenceContext(
       );
       const userGaps = decodeUserGaps(rawInput.gaps ?? []).map(normalizeUserGap);
       const systemGaps = decodeSystemGaps(rawInput.systemGaps ?? []).map(normalizeSystemGap);
-      if (systemGaps.some(({ key }) => key === requiredOmissionGap.key)) {
+      if (
+        systemGaps.some(
+          ({ category, key }) =>
+            category === requiredOmissionGap.category && key === requiredOmissionGap.key,
+        )
+      ) {
         throw new MarketingEvidenceContextError({
           reason: "invalid_context_input",
           reference: decodeSafeReference("reserved-system-gap-key"),
