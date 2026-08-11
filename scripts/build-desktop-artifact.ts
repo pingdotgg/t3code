@@ -638,6 +638,10 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  // Windows ships these through extraResources so WSL can read them directly.
+  // Exclude the staged inputs from app.asar to avoid packaging both copies.
+  `!${WSL_RUNTIME_ARCHIVE_STAGE_DIRECTORY}/${WSL_RUNTIME_ARCHIVE_FILENAME}`,
+  `!${WSL_RUNTIME_ARCHIVE_STAGE_DIRECTORY}/${WSL_RUNTIME_ARCHIVE_HASH_FILENAME}`,
 ] as const;
 // The WSL backend launches the server with plain `wsl.exe -- node`, which
 // cannot read inside an asar archive — and the server bundle externalizes its
