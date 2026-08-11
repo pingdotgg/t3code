@@ -15,6 +15,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarPlanProgressSegments,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
@@ -710,6 +711,65 @@ describe("resolveSidebarThreadStatus", () => {
 
   it("defaults to ready with no session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
+  });
+});
+
+describe("resolveSidebarPlanProgressSegments", () => {
+  const progress = {
+    step: "Test the sidebar",
+    completedSteps: 2,
+    totalSteps: 5,
+  };
+
+  it("marks completed, current, and pending plan steps while working", () => {
+    expect(
+      resolveSidebarPlanProgressSegments({ status: "working", planProgress: progress }),
+    ).toEqual([
+      { position: 1, status: "completed" },
+      { position: 2, status: "completed" },
+      { position: 3, status: "current" },
+      { position: 4, status: "pending" },
+      { position: 5, status: "pending" },
+    ]);
+  });
+
+  it("hides progress when work settles or every step is complete", () => {
+    expect(resolveSidebarPlanProgressSegments({ status: "ready", planProgress: progress })).toEqual(
+      [],
+    );
+    expect(resolveSidebarPlanProgressSegments({ status: "working", planProgress: null })).toEqual(
+      [],
+    );
+    expect(
+      resolveSidebarPlanProgressSegments({
+        status: "working",
+        planProgress: { ...progress, completedSteps: 0, totalSteps: 0 },
+      }),
+    ).toEqual([]);
+    expect(
+      resolveSidebarPlanProgressSegments({
+        status: "working",
+        planProgress: { ...progress, completedSteps: progress.totalSteps },
+      }),
+    ).toEqual([]);
+  });
+
+  it("caps large plans to a proportional eight-segment visual", () => {
+    const segments = resolveSidebarPlanProgressSegments({
+      status: "working",
+      planProgress: { ...progress, completedSteps: 50, totalSteps: 100 },
+    });
+
+    expect(segments).toEqual([
+      { position: 1, status: "completed" },
+      { position: 2, status: "completed" },
+      { position: 3, status: "completed" },
+      { position: 4, status: "completed" },
+      { position: 5, status: "current" },
+      { position: 6, status: "pending" },
+      { position: 7, status: "pending" },
+      { position: 8, status: "pending" },
+    ]);
   });
 });
 

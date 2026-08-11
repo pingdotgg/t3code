@@ -480,6 +480,46 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+export interface SidebarPlanProgressSegment {
+  position: number;
+  status: "completed" | "current" | "pending";
+}
+
+const SIDEBAR_PLAN_PROGRESS_SEGMENT_LIMIT = 8;
+
+export function resolveSidebarPlanProgressSegments(input: {
+  status: SidebarThreadStatus;
+  planProgress: SidebarThreadSummary["planProgress"];
+}): SidebarPlanProgressSegment[] {
+  const progress = input.planProgress;
+  if (
+    input.status !== "working" ||
+    progress == null ||
+    progress.totalSteps === 0 ||
+    progress.completedSteps >= progress.totalSteps
+  ) {
+    return [];
+  }
+
+  // Sidebar rows are virtualized and can show many live threads at once. Keep
+  // large plans on a fixed visual scale instead of creating one DOM node per
+  // provider-reported step; the progressbar ARIA values retain exact totals.
+  const segmentCount = Math.min(progress.totalSteps, SIDEBAR_PLAN_PROGRESS_SEGMENT_LIMIT);
+  const completedSegmentCount = Math.floor(
+    (progress.completedSteps / progress.totalSteps) * segmentCount,
+  );
+
+  return Array.from({ length: segmentCount }, (_, index) => ({
+    position: index + 1,
+    status:
+      index < completedSegmentCount
+        ? "completed"
+        : index === completedSegmentCount
+          ? "current"
+          : "pending",
+  }));
+}
+
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
     poison the whole ordering, so it sinks to the epoch instead. */
 export function parseTimestampMs(isoDate: string): number {

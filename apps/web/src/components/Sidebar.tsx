@@ -128,6 +128,7 @@ import {
   orderItemsByPreferredIds,
   planPinnedReorder,
   resolveAdjacentThreadId,
+  resolveSidebarPlanProgressSegments,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
@@ -760,6 +761,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const planProgressSegments = resolveSidebarPlanProgressSegments({
+    status,
+    planProgress: thread.planProgress,
+  });
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
@@ -1436,6 +1441,33 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {planProgressSegments.length > 0 && thread.planProgress ? (
+                <span
+                  role="progressbar"
+                  aria-label={`Plan progress: ${thread.planProgress.completedSteps} of ${thread.planProgress.totalSteps} steps completed`}
+                  aria-valuemin={0}
+                  aria-valuemax={thread.planProgress.totalSteps}
+                  aria-valuenow={thread.planProgress.completedSteps}
+                  aria-valuetext={`Step ${thread.planProgress.completedSteps + 1} of ${thread.planProgress.totalSteps}: ${thread.planProgress.step}`}
+                  data-testid="sidebar-plan-progress"
+                  className="inline-flex max-w-16 shrink-0 items-center gap-0.5 overflow-hidden"
+                >
+                  {planProgressSegments.map((segment) => (
+                    <span
+                      key={segment.position}
+                      aria-hidden
+                      className={cn(
+                        "h-[3px] w-2.5 min-w-px rounded-full",
+                        segment.status === "completed"
+                          ? "bg-success"
+                          : segment.status === "current"
+                            ? "bg-primary"
+                            : "bg-muted-foreground/25",
+                      )}
+                    />
+                  ))}
+                </span>
+              ) : null}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (
