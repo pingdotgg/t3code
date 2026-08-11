@@ -261,9 +261,8 @@ type SubmenuPage =
  * changes size. Model changes stage until Save — while staged, the settings
  * rows edit the staged model's options and Save applies everything together.
  *
- * Callers control which harnesses are offered via providerGroups: an
- * existing thread must pass only its own provider's group, since a session
- * can't switch harness mid-thread.
+ * Callers control which harnesses are offered via providerGroups. Servers
+ * that support provider handoff may offer every configured provider here.
  *
  * Rendered through an RN Modal (not the root OverlayPortal) so it also
  * presents above natively-presented form sheets like the new-task draft.

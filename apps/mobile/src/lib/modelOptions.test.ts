@@ -7,6 +7,7 @@ import {
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
+  resolveThreadProviderGroups,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
@@ -170,5 +171,27 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(config, legacy)).toBeNull();
     // Offline: nothing to validate against, selection passes through.
     expect(resolveDefaultableModelSelection(null, legacy)).toBe(legacy);
+  });
+
+  it("offers every provider only when the server supports thread handoff", () => {
+    const providerGroups = [
+      { providerKey: "claude", providerLabel: "Claude", models: [] },
+      { providerKey: "codex", providerLabel: "Codex", models: [] },
+    ];
+
+    expect(
+      resolveThreadProviderGroups({
+        providerGroups,
+        currentProviderInstanceId: "claude",
+        supportsProviderHandoff: false,
+      }),
+    ).toEqual([providerGroups[0]]);
+    expect(
+      resolveThreadProviderGroups({
+        providerGroups,
+        currentProviderInstanceId: "claude",
+        supportsProviderHandoff: true,
+      }),
+    ).toBe(providerGroups);
   });
 });

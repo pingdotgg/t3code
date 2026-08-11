@@ -102,7 +102,12 @@ values are stored as server secrets and are not sent back to the app after savin
 
 ## Can I Switch Accounts In An Existing Thread?
 
-Yes, when both Codex providers share the same `CODEX_HOME path`.
+Yes. Choose another account or provider from the model picker and send your next message. See
+[Continue A Thread With Another Provider](./provider-handoff.md) for how T3 Code carries context
+when the destination cannot resume the same provider session.
+
+When both Codex providers share the same `CODEX_HOME path`, T3 Code can continue the native Codex
+session directly.
 
 For example:
 
@@ -111,11 +116,11 @@ Codex Work      CODEX_HOME path: ~/.codex
 Codex Personal  CODEX_HOME path: ~/.codex, Shadow home path: ~/.codex_p
 ```
 
-Those two providers are considered compatible for continuation, so the locked model picker can show
-both.
+Those two providers are considered compatible for native continuation.
 
 If you add a third Codex provider with a completely different `CODEX_HOME path`, T3 Code treats it
-as a different workspace. It will not be offered for existing threads created under `~/.codex`.
+as a different provider workspace. Switching to it starts a fresh Codex session with a bounded
+handoff of the T3 Code conversation and completed tool work.
 
 ## If Both Accounts Look The Same
 

@@ -86,14 +86,14 @@ blurred by default; click the blurred email to reveal it.
 
 ## Can I Switch Claude Accounts In An Existing Thread?
 
-Usually, no.
-
-T3 Code only offers Claude providers that use the same config directory for an existing thread. A
-different config directory is treated as a different Claude environment.
+Yes. Choose another account or provider from the model picker and send your next message. A Claude
+provider with a different config directory starts a fresh session with a bounded handoff of the T3
+Code conversation and completed tool work. See
+[Continue A Thread With Another Provider](./provider-handoff.md).
 
 This is different from the recommended Codex setup. Claude Code keeps account and local state across
 multiple files under its config directory, so T3 Code keeps separate config directories isolated
-instead of trying to share part of the state.
+instead of trying to share provider-native state between them.
 
 ## I Want To Use OpenRouter
 

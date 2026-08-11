@@ -373,6 +373,42 @@ describe("getStartedThreadModelChangeBlockReason", () => {
         "This provider does not allow switching models after a conversation has started.",
     });
   });
+
+  it("allows switching away from a restricted provider when handoff is supported", () => {
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        providers,
+        hasStartedSession: true,
+        supportsProviderHandoff: true,
+        currentModelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
+        },
+        nextModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("still blocks restricted same-provider model changes when handoff is supported", () => {
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        providers,
+        hasStartedSession: true,
+        supportsProviderHandoff: true,
+        currentModelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
+        },
+        nextModelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-other",
+        },
+      }),
+    ).not.toBeNull();
+  });
 });
 
 describe("resolveSendEnvMode", () => {

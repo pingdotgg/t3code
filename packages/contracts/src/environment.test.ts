@@ -26,4 +26,17 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.pullRequests,
     ).toBe(true);
   });
+
+  it("treats a missing provider-handoff capability as unsupported under version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.providerHandoff).toBeUndefined();
+  });
+
+  it("preserves an advertised provider-handoff capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, providerHandoff: true },
+      }).capabilities.providerHandoff,
+    ).toBe(true);
+  });
 });
