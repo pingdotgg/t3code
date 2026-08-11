@@ -51,6 +51,26 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
       parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/T3Tools/T3Code.git"),
     ).toBe("T3Tools/T3Code");
   });
+
+  it("extracts owner/repo from credentialed and ssh-port GitHub remotes", () => {
+    // Token-embedded HTTPS clones (common in CI).
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+        "https://x-access-token:ghp_ABC@github.com/T3Tools/T3Code.git",
+      ),
+    ).toBe("T3Tools/T3Code");
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://T3Tools@github.com/T3Tools/T3Code"),
+    ).toBe("T3Tools/T3Code");
+    // ssh:// remote with an explicit port.
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://git@github.com:22/T3Tools/T3Code.git"),
+    ).toBe("T3Tools/T3Code");
+    // A non-GitHub host that merely embeds github.com in userinfo is not GitHub.
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com.evil.test/a/b.git"),
+    ).toBeNull();
+  });
 });
 
 describe("isTemporaryWorktreeBranch", () => {

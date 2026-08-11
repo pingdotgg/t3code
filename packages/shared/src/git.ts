@@ -150,8 +150,11 @@ export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | nu
     return null;
   }
 
+  // Allow optional userinfo on the https form (credentialed clones like
+  // https://x-access-token:TOKEN@github.com/owner/repo used by CI) and an
+  // optional port on the ssh form (ssh://git@github.com:22/owner/repo).
   const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
+    /^(?:git@github\.com:|ssh:\/\/git@github\.com(?::\d+)?\/|https:\/\/(?:[^/@\s]+@)?github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
       trimmed,
     );
   const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
