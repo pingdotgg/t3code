@@ -141,6 +141,29 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   );
 }
 
+export function resolveThreadErrorBannerMessage(input: {
+  readonly localError: string | null;
+  readonly runtimeError: string | null;
+  readonly runtimeErrorKey: string | null;
+  readonly dismissedRuntimeErrorKey: string | null;
+}): string | null {
+  if (input.localError !== null) return input.localError;
+  return input.runtimeErrorKey !== null && input.runtimeErrorKey === input.dismissedRuntimeErrorKey
+    ? null
+    : input.runtimeError;
+}
+
+export function threadRuntimeErrorDismissalKey(input: {
+  readonly localError: string | null;
+  readonly runtimeError: string | null;
+  readonly runtimeErrorAt: string | null;
+}): string | null {
+  if (input.localError !== null || input.runtimeError === null || input.runtimeErrorAt === null) {
+    return null;
+  }
+  return JSON.stringify([input.runtimeErrorAt, input.runtimeError]);
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;

@@ -69,6 +69,26 @@ describe("thread execution presentation", () => {
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
   });
 
+  it("presents an error occurrence without a provider thread", () => {
+    const errorAt = DateTime.makeUnsafe("2026-08-11T12:00:00Z");
+    const projection = {
+      ...v2Projection,
+      runs: [run("run-failed", 1, "failed")],
+      providerSessions: [
+        {
+          providerInstanceId: v2Projection.thread.providerInstanceId,
+          status: "error",
+          lastError: "event stream stalled",
+          lastErrorAt: errorAt,
+        },
+      ],
+    } as never;
+
+    expect(deriveThreadRuntime(projection)).toMatchObject({
+      lastError: "event stream stalled",
+      lastErrorAt: DateTime.formatIso(errorAt),
+    });
+  });
   it("keeps checkpoint-wait activity visible without exposing a non-functional interrupt", () => {
     const waitingRun = run("run-waiting", 1, "waiting");
     const projection = { ...v2Projection, runs: [waitingRun], updatedAt: now };
