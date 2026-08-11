@@ -1894,7 +1894,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.ipc.on(ELEMENT_PICKED_CHANNEL, onMessage);
             wc.once("destroyed", onDestroyed);
             wc.once("did-start-navigation", onNavigated);
-            if (!wc.isFocused()) wc.focus();
+            // Unconditional: `isFocused()` reports true for the attached view
+            // even while the app renderer still owns the keystrokes, so the
+            // guard used to skip the one call that hands the guest its
+            // keyboard. Annotation shortcuts then went nowhere until the user
+            // clicked inside the page.
+            wc.focus();
             wc.send(START_PICK_CHANNEL, annotationTheme);
           });
           yield* Ref.update(pickSessionsRef, (sessions) =>
