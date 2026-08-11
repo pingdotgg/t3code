@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverGrokSkills, parseGrokInspectSkills, parseGrokInspectSkillsJson } from "./GrokSkills.ts";
+import {
+  discoverGrokSkills,
+  parseGrokInspectSkills,
+  parseGrokInspectSkillsJson,
+} from "./GrokSkills.ts";
 
 describe("parseGrokInspectSkills", () => {
   it("maps inspect skills into ServerProviderSkill entries", () => {
@@ -92,26 +96,83 @@ describe("parseGrokInspectSkills", () => {
     assert.deepEqual(parseGrokInspectSkills({ skills: "nope" }), []);
   });
 
-  it("dedupes by name, keeping the last occurrence", () => {
+  it("skips non-string name/path fields without throwing", () => {
+    const skills = parseGrokInspectSkills({
+      skills: [
+        { name: 1, source: { type: "user", path: "/tmp/num/SKILL.md" }, userInvocable: true },
+        {
+          name: "ok",
+          source: { type: "user", path: "/tmp/ok/SKILL.md" },
+          userInvocable: true,
+        },
+        {
+          name: "bad-path",
+          source: { type: "user", path: 42 },
+          userInvocable: true,
+        },
+      ],
+    });
+
+    assert.deepEqual(skills, [
+      {
+        name: "ok",
+        path: "/tmp/ok/SKILL.md",
+        scope: "user",
+        enabled: true,
+      },
+    ]);
+  });
+
+  it("dedupes by name with project scope beating user/bundled", () => {
+    const skills = parseGrokInspectSkills({
+      skills: [
+        {
+          name: "review",
+          description: "User last",
+          userInvocable: true,
+          source: { type: "user", path: "/user/review/SKILL.md" },
+        },
+        {
+          name: "review",
+          description: "Project first",
+          userInvocable: true,
+          source: { type: "project", path: "/repo/review/SKILL.md" },
+        },
+        {
+          name: "review",
+          description: "Bundled last",
+          userInvocable: true,
+          source: { type: "bundled", path: "/bundled/review/SKILL.md" },
+        },
+      ],
+    });
+
+    assert.equal(skills.length, 1);
+    assert.equal(skills[0]?.path, "/repo/review/SKILL.md");
+    assert.equal(skills[0]?.scope, "project");
+    assert.equal(skills[0]?.description, "Project first");
+  });
+
+  it("dedupes same-scope names by keeping the later inspect entry", () => {
     const skills = parseGrokInspectSkills({
       skills: [
         {
           name: "review",
           description: "First",
           userInvocable: true,
-          source: { type: "bundled", path: "/bundled/review/SKILL.md" },
+          source: { type: "user", path: "/user/a/SKILL.md" },
         },
         {
           name: "review",
           description: "Second",
           userInvocable: true,
-          source: { type: "user", path: "/user/review/SKILL.md" },
+          source: { type: "user", path: "/user/b/SKILL.md" },
         },
       ],
     });
 
     assert.equal(skills.length, 1);
-    assert.equal(skills[0]?.path, "/user/review/SKILL.md");
+    assert.equal(skills[0]?.path, "/user/b/SKILL.md");
     assert.equal(skills[0]?.description, "Second");
   });
 });

@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -134,31 +135,70 @@ type GrokAcpDiscoveryResult = {
   readonly availableCommands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
 };
 
+function availableCommandListSignature(
+  commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+): string {
+  return commands.map((command) => command.name).join("\0");
+}
+
+/**
+ * Poll for ACP available commands for up to GROK_AVAILABLE_COMMANDS_WAIT_MS.
+ *
+ * - Does not share the ACP start timeout budget.
+ * - Keeps the latest non-empty list so a later fuller emission wins over a
+ *   partial first snapshot.
+ * - Returns early once a non-empty list is stable across two consecutive polls.
+ * - Always performs a final read at the end of the window so a late update in
+ *   the last poll interval is not missed.
+ */
 const waitForGrokAvailableCommands = (
   getAvailableCommands: Effect.Effect<ReadonlyArray<EffectAcpSchema.AvailableCommand>>,
 ): Effect.Effect<ReadonlyArray<EffectAcpSchema.AvailableCommand>> =>
   Effect.gen(function* () {
-    const attempts = Math.max(
-      1,
-      Math.ceil(GROK_AVAILABLE_COMMANDS_WAIT_MS / GROK_AVAILABLE_COMMANDS_POLL_MS),
-    );
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const commands = yield* getAvailableCommands;
-      if (commands.length > 0) {
-        return commands;
+    const poll = Duration.millis(GROK_AVAILABLE_COMMANDS_POLL_MS);
+    const deadlineMillis = (yield* Clock.currentTimeMillis) + GROK_AVAILABLE_COMMANDS_WAIT_MS;
+
+    let latest = yield* getAvailableCommands;
+    let previousSignature = availableCommandListSignature(latest);
+    let stablePolls = latest.length > 0 ? 1 : 0;
+
+    while ((yield* Clock.currentTimeMillis) < deadlineMillis) {
+      if (latest.length > 0 && stablePolls >= 2) {
+        return latest;
       }
-      if (attempt + 1 < attempts) {
-        yield* Effect.sleep(Duration.millis(GROK_AVAILABLE_COMMANDS_POLL_MS));
+      yield* Effect.sleep(poll);
+      const current = yield* getAvailableCommands;
+      if (current.length === 0) {
+        continue;
+      }
+      const signature = availableCommandListSignature(current);
+      if (signature === previousSignature) {
+        stablePolls += 1;
+      } else {
+        latest = current;
+        previousSignature = signature;
+        stablePolls = 1;
       }
     }
-    return yield* getAvailableCommands;
+
+    const finalCommands = yield* getAvailableCommands;
+    return finalCommands.length > 0 ? finalCommands : latest;
   });
 
+/**
+ * Start ACP under the model-discovery timeout, then settle available commands
+ * under a separate short budget so a slow-but-successful start cannot be
+ * flipped into a timeout by the command wait.
+ */
 const discoverGrokModelsViaAcp = (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
-) =>
+): Effect.Effect<
+  Option.Option<GrokAcpDiscoveryResult>,
+  unknown,
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+> =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const acp = yield* makeGrokAcpRuntime({
@@ -168,12 +208,19 @@ const discoverGrokModelsViaAcp = (
       cwd,
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
-    const started = yield* acp.start();
+    const startedOption = yield* acp
+      .start()
+      .pipe(Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS));
+    if (Option.isNone(startedOption)) {
+      return Option.none();
+    }
+    const started = startedOption.value;
+    // Best-effort: never fails discovery if commands never arrive.
     const availableCommands = yield* waitForGrokAvailableCommands(acp.getAvailableCommands);
-    return {
+    return Option.some({
       models: buildGrokDiscoveredModelsFromSessionModelState(started.sessionSetupResult.models),
       availableCommands,
-    } satisfies GrokAcpDiscoveryResult;
+    } satisfies GrokAcpDiscoveryResult);
   }).pipe(Effect.scoped);
 
 const runGrokVersionCommand = (
@@ -291,12 +338,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 
   // Skills and ACP discovery are independent: skills still populate when ACP
   // fails, and slash commands fall back to invocable skills when needed.
+  // ACP start has its own 15s budget; command settle is separate and best-effort.
   const [discoveryExit, skills] = yield* Effect.all(
     [
-      discoverGrokModelsViaAcp(grokSettings, environment, probeCwd).pipe(
-        Effect.timeoutOption(GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS),
-        Effect.exit,
-      ),
+      discoverGrokModelsViaAcp(grokSettings, environment, probeCwd).pipe(Effect.exit),
       discoverGrokSkills(grokSettings, probeCwd, environment),
     ],
     { concurrency: "unbounded" },

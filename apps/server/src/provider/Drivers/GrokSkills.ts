@@ -30,9 +30,42 @@ type GrokInspectSkill = {
   readonly source?: GrokInspectSkillSource;
 };
 
-function nonEmptyTrimmed(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+function nonEmptyTrimmed(value: unknown): string | undefined {
+  // Inspect JSON is untrusted; non-string fields must not throw.
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Higher wins. Matches Grok/Claude “most specific scope first” preference. */
+const SKILL_SCOPE_RANK: Readonly<Record<string, number>> = {
+  project: 4,
+  local: 4,
+  user: 3,
+  plugin: 2,
+  bundled: 1,
+};
+
+function skillScopeRank(scope: string | undefined): number {
+  if (!scope) {
+    return 0;
+  }
+  return SKILL_SCOPE_RANK[scope] ?? 0;
+}
+
+function shouldReplaceSkill(
+  existing: ServerProviderSkill,
+  candidate: ServerProviderSkill,
+): boolean {
+  const existingRank = skillScopeRank(existing.scope);
+  const candidateRank = skillScopeRank(candidate.scope);
+  if (candidateRank !== existingRank) {
+    return candidateRank > existingRank;
+  }
+  // Same rank: later inspect entry wins (document order).
+  return true;
 }
 
 /**
@@ -75,21 +108,24 @@ export function parseGrokInspectSkills(
     // (and out of auto-invoke advertising in Grok itself).
     const enabled = skill.userInvocable !== false;
 
-    skillsByName.set(name, {
+    const parsed: ServerProviderSkill = {
       name,
       path: sourcePath,
       enabled,
       ...(scope ? { scope } : {}),
       ...(description ? { description } : {}),
-    });
+    };
+
+    const existing = skillsByName.get(name);
+    if (!existing || shouldReplaceSkill(existing, parsed)) {
+      skillsByName.set(name, parsed);
+    }
   }
 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function parseGrokInspectSkillsJson(
-  raw: string,
-): ReadonlyArray<ServerProviderSkill> {
+export function parseGrokInspectSkillsJson(raw: string): ReadonlyArray<ServerProviderSkill> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;

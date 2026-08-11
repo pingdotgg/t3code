@@ -81,13 +81,19 @@ describe("slashCommandsFromGrokSkills", () => {
 });
 
 describe("resolveGrokSlashCommands", () => {
-  it("prefers ACP-advertised commands over skill fallback", () => {
+  it("merges ACP commands with invocable skills not already advertised", () => {
     const skills = [
       {
         name: "super-review",
         path: "/user/super-review/SKILL.md",
         enabled: true,
         description: "from skill",
+      },
+      {
+        name: "compact",
+        path: "/user/compact/SKILL.md",
+        enabled: true,
+        description: "skill should not replace acp",
       },
     ] satisfies ReadonlyArray<ServerProviderSkill>;
 
@@ -101,7 +107,10 @@ describe("resolveGrokSlashCommands", () => {
       skills,
     });
 
-    assert.deepEqual(commands, [{ name: "compact", description: "from acp" }]);
+    assert.deepEqual(commands, [
+      { name: "compact", description: "from acp" },
+      { name: "super-review", description: "from skill" },
+    ]);
   });
 
   it("falls back to invocable skills when ACP advertised none", () => {

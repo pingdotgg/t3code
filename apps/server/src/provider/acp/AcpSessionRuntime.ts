@@ -192,9 +192,7 @@ export class AcpSessionRuntime extends Context.Service<
      * Captured even during session startup (before the runtime is marked Started),
      * because agents such as Grok emit the first list during `session/new`.
      */
-    readonly getAvailableCommands: Effect.Effect<
-      ReadonlyArray<EffectAcpSchema.AvailableCommand>
-    >;
+    readonly getAvailableCommands: Effect.Effect<ReadonlyArray<EffectAcpSchema.AvailableCommand>>;
     /**
      * Sends a prompt turn to the active session.
      * @see https://agentclientprotocol.com/protocol/schema#session/prompt
@@ -380,13 +378,22 @@ export const make = (
 
     yield* acp.handleSessionUpdate((notification) =>
       Effect.gen(function* () {
-        // Capture available commands before startup/replay filters. Grok (and
-        // other agents) advertise the first command list during session setup,
-        // while startState is still Starting and session/update would otherwise
-        // be dropped for the event queue.
+        // Capture available commands before the event-queue Started gate. Grok
+        // (and other agents) advertise the first command list during session
+        // setup while startState is still Starting.
+        //
+        // While Starting/NotStarted: accept any sessionId so setup emissions
+        // are not dropped before we know the root id. Once Started: only the
+        // root session may update the ref (child sessions must not overwrite).
         const availableCommands = availableCommandsFromSessionUpdate(notification);
         if (availableCommands) {
-          yield* Ref.set(availableCommandsRef, availableCommands);
+          const startStateForCommands = yield* Ref.get(startStateRef);
+          const acceptCommands =
+            startStateForCommands._tag !== "Started" ||
+            notification.sessionId === startStateForCommands.result.sessionId;
+          if (acceptCommands) {
+            yield* Ref.set(availableCommandsRef, availableCommands);
+          }
         }
 
         const gate = yield* Ref.get(sessionLoadGateRef);
@@ -688,16 +695,23 @@ export const make = (
           case "Starting":
             return [Deferred.await(state.deferred), state] as const;
           case "NotStarted":
+            // Drop any commands left from a previous failed start attempt so a
+            // retry never surfaces a stale available-commands snapshot.
             return [
-              startOnce.pipe(
-                Effect.tap((result) =>
-                  Ref.set(startStateRef, { _tag: "Started", result }).pipe(
-                    Effect.andThen(Deferred.succeed(deferred, result)),
-                  ),
-                ),
-                Effect.onError((cause) =>
-                  Deferred.failCause(deferred, cause).pipe(
-                    Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+              Ref.set(availableCommandsRef, []).pipe(
+                Effect.andThen(
+                  startOnce.pipe(
+                    Effect.tap((result) =>
+                      Ref.set(startStateRef, { _tag: "Started", result }).pipe(
+                        Effect.andThen(Deferred.succeed(deferred, result)),
+                      ),
+                    ),
+                    Effect.onError((cause) =>
+                      Deferred.failCause(deferred, cause).pipe(
+                        Effect.andThen(Ref.set(startStateRef, { _tag: "NotStarted" })),
+                        Effect.andThen(Ref.set(availableCommandsRef, [])),
+                      ),
+                    ),
                   ),
                 ),
               ),

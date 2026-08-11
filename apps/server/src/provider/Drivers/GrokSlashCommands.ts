@@ -10,9 +10,12 @@
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-function nonEmptyTrimmed(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+function nonEmptyTrimmed(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function availableCommandHint(
@@ -80,7 +83,8 @@ export function slashCommandsFromGrokSkills(
   return skills
     .filter((skill) => skill.enabled)
     .map((skill) => {
-      const description = nonEmptyTrimmed(skill.shortDescription) ?? nonEmptyTrimmed(skill.description);
+      const description =
+        nonEmptyTrimmed(skill.shortDescription) ?? nonEmptyTrimmed(skill.description);
       return {
         name: skill.name,
         ...(description ? { description } : {}),
@@ -89,17 +93,32 @@ export function slashCommandsFromGrokSkills(
 }
 
 /**
- * Prefer the ACP-advertised list (includes builtins + workflows + namespaced
- * skills). Fall back to invocable skills from inspect so the `/` menu is not
- * empty when the ACP probe times out after capturing models only.
+ * Prefer the ACP-advertised list (builtins, workflows, namespaced skills) and
+ * merge in any invocable inspect skills that ACP omitted (partial first
+ * emission). If ACP advertised nothing, fall back to skills alone.
  */
 export function resolveGrokSlashCommands(input: {
   readonly availableCommands: ReadonlyArray<EffectAcpSchema.AvailableCommand> | null | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }): ReadonlyArray<ServerProviderSlashCommand> {
   const fromAcp = parseGrokAvailableCommands(input.availableCommands);
-  if (fromAcp.length > 0) {
+  const fromSkills = slashCommandsFromGrokSkills(input.skills);
+  if (fromAcp.length === 0) {
+    return fromSkills;
+  }
+  if (fromSkills.length === 0) {
     return fromAcp;
   }
-  return slashCommandsFromGrokSkills(input.skills);
+
+  const byName = new Map<string, ServerProviderSlashCommand>();
+  for (const command of fromAcp) {
+    byName.set(command.name.toLowerCase(), command);
+  }
+  for (const command of fromSkills) {
+    const key = command.name.toLowerCase();
+    if (!byName.has(key)) {
+      byName.set(key, command);
+    }
+  }
+  return [...byName.values()];
 }
