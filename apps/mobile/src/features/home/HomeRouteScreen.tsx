@@ -1,7 +1,7 @@
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -11,6 +11,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
+import { seedNewTaskDraftFromThread } from "../threads/new-thread-from-thread";
 import { checkForAppUpdateOnLaunch } from "../updates/app-updates";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
@@ -46,6 +47,8 @@ export function HomeRouteScreen() {
     unpinThread,
     movePinnedThread,
     unsettleThread,
+    renameThread,
+    regenerateThreadTitle,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
@@ -97,6 +100,24 @@ export function HomeRouteScreen() {
       setSelectedProjectKey(null);
     }
   }, [projectFilterOptions, selectedProjectKey]);
+  const openNewThreadFromThread = useCallback(
+    (thread: (typeof threads)[number]) => {
+      seedNewTaskDraftFromThread(thread);
+      const project = projects.find(
+        (candidate) =>
+          candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
+      );
+      navigation.navigate("NewTaskSheet", {
+        screen: "NewTaskDraft",
+        params: {
+          environmentId: String(thread.environmentId),
+          projectId: String(thread.projectId),
+          title: project?.title ?? "New task",
+        },
+      });
+    },
+    [navigation, projects],
+  );
 
   // In split layouts the persistent sidebar IS the thread list — Home becomes
   // an empty detail pane so selecting a thread never transitions layouts.
@@ -165,6 +186,9 @@ export function HomeRouteScreen() {
           }
           onArchiveThread={archiveThread}
           onDeleteThread={confirmDeleteThread}
+          onNewThreadFromThread={openNewThreadFromThread}
+          onRenameThread={renameThread}
+          onRegenerateThreadTitle={regenerateThreadTitle}
           onSettleThread={settleThread}
           onSnoozeThread={snoozeThread}
           onUnsnoozeThread={unsnoozeThread}

@@ -7,7 +7,7 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
-import { Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
+import { Alert, Pressable, useColorScheme, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import Svg, { Circle, Path } from "react-native-svg";
 
@@ -15,6 +15,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { cn } from "../../lib/cn";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -23,7 +24,9 @@ import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
+import { buildThreadListMenuActions } from "./thread-list-menu";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { useThreadReadState } from "./use-thread-read-state";
 
 /**
  * Shared presentation for the thread lists: the compact (phone) Home list and
@@ -410,11 +413,6 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 
 /* ─── Thread row ─────────────────────────────────────────────────────── */
 
-const THREAD_ROW_MENU_ACTIONS: MenuAction[] = [
-  { id: "archive", title: "Archive", image: "archivebox" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
 export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly variant: ThreadListVariant;
   readonly thread: EnvironmentThreadShell;
@@ -430,6 +428,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly onNewThreadFromThread: (thread: EnvironmentThreadShell) => void;
+  readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
+  readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
+  readonly titleRegenerationSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly simultaneousSwipeGesture?: ComponentProps<
@@ -452,7 +454,20 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const selectedBackgroundColor = useThemeColor("--color-user-bubble");
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread } = props;
-  const status = resolveThreadStatus(thread);
+  const { isUnread, markThreadUnread } = useThreadReadState(thread);
+  const status =
+    resolveThreadStatus(thread) ??
+    (isUnread
+      ? {
+          kind: "done",
+          label: "Done",
+          pillClassName: "bg-emerald-500/12 dark:bg-emerald-500/16",
+          textClassName: "text-emerald-700 dark:text-emerald-300",
+          iconColor: "#10b981",
+          iconBackground: "rgba(16,185,129,0.18)",
+          pulse: false,
+        }
+      : null);
   const pr = useThreadPr(thread, props.projectCwd);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
@@ -471,6 +486,39 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const handleNewThread = useCallback(
+    () => props.onNewThreadFromThread(thread),
+    [props.onNewThreadFromThread, thread],
+  );
+  const handleRename = useCallback(
+    () => props.onRenameThread(thread),
+    [props.onRenameThread, thread],
+  );
+  const handleRegenerateTitle = useCallback(
+    () => props.onRegenerateThreadTitle(thread),
+    [props.onRegenerateThreadTitle, thread],
+  );
+  const handleCopyPath = useCallback(() => {
+    const path = thread.worktreePath ?? props.projectCwd;
+    if (path === null) {
+      Alert.alert("Could not copy path", "This thread does not have a workspace path.");
+      return;
+    }
+    copyTextWithHaptic(path, { target: "thread path", feedback: "selection" });
+  }, [props.projectCwd, thread.worktreePath]);
+  const handleCopyBranch = useCallback(() => {
+    if (thread.branch === null) return;
+    copyTextWithHaptic(thread.branch, { target: "thread branch", feedback: "selection" });
+  }, [thread.branch]);
+  const menuActions = useMemo(
+    () =>
+      buildThreadListMenuActions({
+        thread,
+        lifecycleActions: [{ id: "archive", title: "Archive", image: "archivebox" }],
+        titleRegenerationSupported: props.titleRegenerationSupported,
+      }),
+    [props.titleRegenerationSupported, thread],
+  );
   const primaryAction = useMemo(
     () => ({
       accessibilityLabel: `Archive ${thread.title}`,
@@ -482,10 +530,25 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "new-thread-on-branch") handleNewThread();
       if (nativeEvent.event === "archive") handleArchive();
+      if (nativeEvent.event === "rename") handleRename();
+      if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
+      if (nativeEvent.event === "mark-unread") markThreadUnread();
+      if (nativeEvent.event === "copy-path") handleCopyPath();
+      if (nativeEvent.event === "copy-branch") handleCopyBranch();
       if (nativeEvent.event === "delete") handleDelete();
     },
-    [handleArchive, handleDelete],
+    [
+      handleArchive,
+      handleCopyBranch,
+      handleCopyPath,
+      handleDelete,
+      handleNewThread,
+      handleRegenerateTitle,
+      handleRename,
+      markThreadUnread,
+    ],
   );
 
   const statusPill = effectiveStatus ? (
@@ -674,7 +737,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         // ControlPillMenu injects onLongPress into the row and anchors the
         // token-styled dropdown to it; taps and swipes are untouched.
         <ControlPillMenu
-          actions={THREAD_ROW_MENU_ACTIONS}
+          actions={menuActions}
           onPressAction={handleMenuAction}
           shouldOpenOnLongPress
         >

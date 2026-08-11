@@ -34,6 +34,8 @@ export interface Preferences {
    * default flat list — see `resolveThreadListV2Enabled`.
    */
   readonly legacyThreadListEnabled?: boolean;
+  /** Device-local read markers, keyed by environment-scoped thread id. */
+  readonly threadLastVisitedAtById?: Readonly<Record<string, string>>;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -86,6 +88,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     legacyThreadListEnabled?: boolean;
+    threadLastVisitedAtById?: Readonly<Record<string, string>>;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -124,6 +127,17 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.legacyThreadListEnabled === "boolean") {
     preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
+  }
+  if (
+    typeof parsed.threadLastVisitedAtById === "object" &&
+    parsed.threadLastVisitedAtById !== null &&
+    !Array.isArray(parsed.threadLastVisitedAtById)
+  ) {
+    preferences.threadLastVisitedAtById = Object.fromEntries(
+      Object.entries(parsed.threadLastVisitedAtById).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
   }
   return preferences;
 }

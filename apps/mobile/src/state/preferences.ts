@@ -122,3 +122,11 @@ export const mobilePreferencesState = createMobilePreferencesState(mobilePrefere
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const updateMobilePreferencesAtom = mobilePreferencesState.updatePreferencesAtom;
+
+export const mobileThreadLastVisitedAtAtom = Atom.family((threadKey: string) =>
+  Atom.make((get) => {
+    const preferences = get(mobilePreferencesAtom);
+    if (!AsyncResult.isSuccess(preferences)) return null;
+    return preferences.value.threadLastVisitedAtById?.[threadKey] ?? false;
+  }).pipe(Atom.withLabel(`mobile:thread-last-visited:${threadKey}`)),
+);

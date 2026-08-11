@@ -1,6 +1,6 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
 import { BlurView } from "expo-blur";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import { BackHandler, Pressable, ScrollView, useColorScheme, View } from "react-native";
@@ -13,6 +13,7 @@ import { cn } from "../lib/cn";
 import { type AppSymbolName, SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 import { OverlayPortal } from "./OverlayPortal";
+import { flattenInlineMenuSections } from "./android-menu-sections";
 
 const MENU_WIDTH = 250;
 const SCREEN_MARGIN = 12;
@@ -133,9 +134,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   }, [anchor, close, submenuDepth]);
 
   const parent = path.length > 0 ? path[path.length - 1] : null;
-  const levelActions = (parent?.subactions ?? props.actions).filter(
-    (action) => !(action.attributes?.hidden ?? false),
-  );
+  const levelEntries = flattenInlineMenuSections(parent?.subactions ?? props.actions);
 
   // Anchor in overlay-local coordinates (both measured in window space).
   const local =
@@ -270,60 +269,63 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                       <View className="h-px bg-border" />
                     </>
                   ) : null}
-                  {levelActions.map((action, index) => {
+                  {levelEntries.map(({ action, dividerBefore }, index) => {
                     const destructive = action.attributes?.destructive ?? false;
                     const disabled = action.attributes?.disabled ?? false;
                     const hasSubmenu = (action.subactions?.length ?? 0) > 0;
+                    const key = action.id ?? `${index}-${action.title}`;
                     return (
-                      <Pressable
-                        key={action.id ?? `${index}-${action.title}`}
-                        android_ripple={{ color: rippleColor }}
-                        disabled={disabled}
-                        className={cn(
-                          "min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5",
-                          disabled && "opacity-45",
-                        )}
-                        onPress={() => onPressItem(action)}
-                      >
-                        <View className="flex-1 gap-0.5">
-                          <Text
-                            className={cn(
-                              // Same face as the pill labels that open these menus.
-                              "text-sm font-t3-bold",
-                              destructive && "text-danger-foreground",
-                            )}
-                          >
-                            {action.title}
-                          </Text>
-                          {action.subtitle ? (
-                            <Text className="text-xs leading-snug text-foreground-muted">
-                              {action.subtitle}
+                      <Fragment key={key}>
+                        {dividerBefore ? <View className="h-px bg-border" /> : null}
+                        <Pressable
+                          android_ripple={{ color: rippleColor }}
+                          disabled={disabled}
+                          className={cn(
+                            "min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5",
+                            disabled && "opacity-45",
+                          )}
+                          onPress={() => onPressItem(action)}
+                        >
+                          <View className="flex-1 gap-0.5">
+                            <Text
+                              className={cn(
+                                // Same face as the pill labels that open these menus.
+                                "text-sm font-t3-bold",
+                                destructive && "text-danger-foreground",
+                              )}
+                            >
+                              {action.title}
                             </Text>
+                            {action.subtitle ? (
+                              <Text className="text-xs leading-snug text-foreground-muted">
+                                {action.subtitle}
+                              </Text>
+                            ) : null}
+                          </View>
+                          {hasSubmenu ? (
+                            <SymbolView
+                              name="chevron.right"
+                              size={13}
+                              tintColor={iconSubtleColor}
+                              type="monochrome"
+                            />
+                          ) : action.state === "on" ? (
+                            <SymbolView
+                              name="checkmark"
+                              size={15}
+                              tintColor={iconColor}
+                              type="monochrome"
+                            />
+                          ) : action.image ? (
+                            <SymbolView
+                              name={action.image as AppSymbolName}
+                              size={15}
+                              tintColor={destructive ? dangerColor : iconColor}
+                              type="monochrome"
+                            />
                           ) : null}
-                        </View>
-                        {hasSubmenu ? (
-                          <SymbolView
-                            name="chevron.right"
-                            size={13}
-                            tintColor={iconSubtleColor}
-                            type="monochrome"
-                          />
-                        ) : action.state === "on" ? (
-                          <SymbolView
-                            name="checkmark"
-                            size={15}
-                            tintColor={iconColor}
-                            type="monochrome"
-                          />
-                        ) : action.image ? (
-                          <SymbolView
-                            name={action.image as AppSymbolName}
-                            size={15}
-                            tintColor={destructive ? dangerColor : iconColor}
-                            type="monochrome"
-                          />
-                        ) : null}
-                      </Pressable>
+                        </Pressable>
+                      </Fragment>
                     );
                   })}
                 </ScrollView>

@@ -5,7 +5,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import {
@@ -45,6 +45,15 @@ function environmentSupportsPinReorder(environmentId: EnvironmentThreadShell["en
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadPinReorder === true
+  );
+}
+
+function environmentSupportsTitleRegeneration(
+  environmentId: EnvironmentThreadShell["environmentId"],
+) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadTitleRegeneration === true
   );
 }
 
@@ -223,6 +232,8 @@ export function useThreadListActions(): {
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly renameThread: (thread: EnvironmentThreadShell) => void;
+  readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly movePinnedThread: (
     thread: EnvironmentThreadShell,
     direction: "up" | "down",
@@ -233,7 +244,11 @@ export function useThreadListActions(): {
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
+  const updateMetadataMutation = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
+  const metadataInFlightThreadKeys = useRef(new Set<string>());
 
   const archiveThread = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -405,6 +420,65 @@ export function useThreadListActions(): {
     },
     [unpinMutation],
   );
+  const updateThreadTitle = useCallback(
+    async (
+      thread: EnvironmentThreadShell,
+      input: { readonly title: string } | { readonly regenerateTitle: true },
+    ) => {
+      const key = scopedThreadKey(thread.environmentId, thread.id);
+      if (metadataInFlightThreadKeys.current.has(key)) return false;
+      metadataInFlightThreadKeys.current.add(key);
+      try {
+        const result = await updateMetadataMutation({
+          environmentId: thread.environmentId,
+          input: { threadId: thread.id, ...input },
+        });
+        if (result._tag === "Failure") {
+          const error = Cause.squash(result.cause);
+          Alert.alert(
+            "Could not update thread title",
+            error instanceof Error && error.message.trim().length > 0
+              ? error.message
+              : "The thread title could not be updated.",
+          );
+          return false;
+        }
+        return true;
+      } finally {
+        metadataInFlightThreadKeys.current.delete(key);
+      }
+    },
+    [updateMetadataMutation],
+  );
+  const renameThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      showTextInputDialog({
+        title: "Rename thread",
+        defaultValue: thread.title,
+        confirmText: "Rename",
+        onSubmit: (value) => {
+          const title = value.trim();
+          if (title.length === 0 || title === thread.title) return;
+          void updateThreadTitle(thread, { title });
+        },
+      });
+    },
+    [updateThreadTitle],
+  );
+  const regenerateThreadTitle = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      if (thread.titleRegeneration != null) return false;
+      if (!environmentSupportsTitleRegeneration(thread.environmentId)) {
+        Alert.alert(
+          "Could not regenerate thread title",
+          "This environment's server does not support title regeneration yet. Update the server to use this action.",
+        );
+        return false;
+      }
+      return updateThreadTitle(thread, { regenerateTitle: true });
+    },
+    [updateThreadTitle],
+  );
 
   // Move up / Move down for the pinned block. Computed against the CANONICAL
   // keyed pinned order (not the rendered list), so the move is valid even
@@ -496,6 +570,8 @@ export function useThreadListActions(): {
     unsettleThread,
     pinThread,
     unpinThread,
+    renameThread,
+    regenerateThreadTitle,
     movePinnedThread,
   };
 }

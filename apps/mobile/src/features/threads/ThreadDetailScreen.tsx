@@ -14,6 +14,7 @@ import type {
   ServerConfig as T3ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
+import { useFocusEffect } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Platform, View, type GestureResponderEvent } from "react-native";
@@ -45,6 +46,7 @@ import {
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import { useThreadReadState } from "./use-thread-read-state";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -179,6 +181,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const insets = useSafeAreaInsets();
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const { markThreadVisited } = useThreadReadState({
+    environmentId: props.environmentId,
+    id: props.selectedThread.id,
+    latestTurn: props.selectedThread.latestTurn,
+  });
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const composerOverlayRef = useRef<View>(null);
   const listRef = useRef<LegendListRef>(null);
@@ -234,6 +241,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
+  useFocusEffect(
+    useCallback(() => {
+      markThreadVisited();
+    }, [markThreadVisited]),
+  );
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(
     () =>
