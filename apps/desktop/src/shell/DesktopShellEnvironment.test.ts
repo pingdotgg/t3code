@@ -195,7 +195,7 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("falls back to C.UTF-8 when no locale is available on macOS", () =>
+  it.effect("falls back to a UTF-8 LC_CTYPE when no locale is available on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
@@ -208,9 +208,9 @@ describe("DesktopShellEnvironment", () => {
         handler: () => envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" }),
       });
 
-      assert.equal(env.LANG, "C.UTF-8");
+      assert.equal(env.LANG, undefined);
       assert.equal(env.LC_ALL, undefined);
-      assert.equal(env.LC_CTYPE, undefined);
+      assert.equal(env.LC_CTYPE, "en_US.UTF-8");
     }),
   );
 

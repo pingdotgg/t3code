@@ -88,7 +88,7 @@ const LOGIN_SHELL_ENV_NAMES = [
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
-const FALLBACK_LOCALE = "C.UTF-8";
+const FALLBACK_LC_CTYPE = "en_US.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
@@ -481,14 +481,15 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     }
 
     // GUI launches inherit no locale from launchd, so spawned agents land in the C
-    // locale and pbcopy decodes their UTF-8 output as MacRoman. C.UTF-8 is what
-    // /etc/zprofile already falls back to: it fixes the codeset while keeping
-    // C-stable collation and formatting, so output parsing is unaffected.
+    // locale and pbcopy decodes their UTF-8 output as MacRoman. Older supported
+    // macOS releases do not provide C.UTF-8, so set only LC_CTYPE to a UTF-8 locale
+    // available on those releases. Leaving LANG unset keeps C-stable collation and
+    // formatting, so output parsing is unaffected.
     if (
       config.platform === "darwin" &&
       LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))
     ) {
-      config.env.LANG = FALLBACK_LOCALE;
+      config.env.LC_CTYPE = FALLBACK_LC_CTYPE;
     }
 
     if (
