@@ -82,6 +82,21 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   // connections by the network schemes the client supports instead of by host.
   const connectSources = ["'self'", "http:", "https:", "ws:", "wss:"];
 
+  // Framing is far narrower than connecting: the trusted renderer only embeds the
+  // Cloudflare Turnstile challenge and the plugin-asset iframe served from the
+  // environment backend. Scope frame-src to those specific origins (plus loopback
+  // for locally hosted environments) so the renderer cannot be coaxed into
+  // embedding an arbitrary http/https origin (phishing / UI redress).
+  const frameSources = Array.from(
+    new Set([
+      "'self'",
+      "https://challenges.cloudflare.com",
+      input.backendOrigin.origin,
+      "http://127.0.0.1:*",
+      "http://localhost:*",
+    ]),
+  );
+
   return [
     "default-src 'self'",
     `script-src ${scriptSources.join(" ")}`,
@@ -90,7 +105,7 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    "frame-src 'self' https://challenges.cloudflare.com",
+    `frame-src ${frameSources.join(" ")}`,
     "form-action 'self'",
   ].join("; ");
 }

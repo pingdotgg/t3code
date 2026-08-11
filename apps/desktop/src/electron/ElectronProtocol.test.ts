@@ -71,6 +71,19 @@ describe("ElectronProtocol", () => {
             response.headers.get("content-security-policy") ?? "",
             "font-src 'self' t3code-dev: data:",
           );
+          const policy = response.headers.get("content-security-policy") ?? "";
+          assert.include(
+            policy,
+            "frame-src 'self' https://challenges.cloudflare.com http://127.0.0.1:3774 http://127.0.0.1:* http://localhost:*",
+          );
+          const frameSources =
+            policy
+              .split("; ")
+              .find((directive) => directive.startsWith("frame-src "))
+              ?.slice("frame-src ".length)
+              .split(" ") ?? [];
+          assert.notInclude(frameSources, "http:");
+          assert.notInclude(frameSources, "https:");
         }),
       );
 
@@ -226,5 +239,14 @@ describe("ElectronProtocol", () => {
       "https:",
     ]);
     assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
+    assert.deepEqual(directives["frame-src"], [
+      "'self'",
+      "https://challenges.cloudflare.com",
+      "http://127.0.0.1:3773",
+      "http://127.0.0.1:*",
+      "http://localhost:*",
+    ]);
+    assert.notInclude(directives["frame-src"], "http:");
+    assert.notInclude(directives["frame-src"], "https:");
   });
 });

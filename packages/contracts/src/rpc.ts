@@ -20,6 +20,20 @@ import {
 } from "./filesystem.ts";
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
+  PluginAddSourceInput,
+  PluginCatalog,
+  PluginCreateInput,
+  PluginCreateViewUrlInput,
+  PluginDeleteInput,
+  PluginInvokeInput,
+  PluginInvokeResult,
+  PluginOperationError,
+  PluginRemoveSourceInput,
+  PluginSetEnabledInput,
+  PluginUpdateSourceInput,
+  PluginViewUrl,
+} from "./plugin.ts";
+import {
   GitActionProgressEvent,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
@@ -204,6 +218,17 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   assetsCreateUrl: "assets.createUrl",
+
+  // Environment-local plugins
+  pluginsList: "plugins.list",
+  pluginsCreate: "plugins.create",
+  pluginsSetEnabled: "plugins.setEnabled",
+  pluginsDelete: "plugins.delete",
+  pluginsAddSource: "plugins.addSource",
+  pluginsUpdateSource: "plugins.updateSource",
+  pluginsRemoveSource: "plugins.removeSource",
+  pluginsCreateViewUrl: "plugins.createViewUrl",
+  pluginsInvoke: "plugins.invoke",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -631,6 +656,60 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
+export const WsPluginsListRpc = Rpc.make(WS_METHODS.pluginsList, {
+  payload: Schema.Struct({}),
+  success: PluginCatalog,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsCreateRpc = Rpc.make(WS_METHODS.pluginsCreate, {
+  payload: PluginCreateInput,
+  success: PluginCatalog,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsSetEnabledRpc = Rpc.make(WS_METHODS.pluginsSetEnabled, {
+  payload: PluginSetEnabledInput,
+  success: PluginCatalog,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsDeleteRpc = Rpc.make(WS_METHODS.pluginsDelete, {
+  payload: PluginDeleteInput,
+  success: PluginCatalog,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsAddSourceRpc = Rpc.make(WS_METHODS.pluginsAddSource, {
+  payload: PluginAddSourceInput,
+  success: PluginCatalog,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsUpdateSourceRpc = Rpc.make(WS_METHODS.pluginsUpdateSource, {
+  payload: PluginUpdateSourceInput,
+  success: PluginCatalog,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsRemoveSourceRpc = Rpc.make(WS_METHODS.pluginsRemoveSource, {
+  payload: PluginRemoveSourceInput,
+  success: PluginCatalog,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsCreateViewUrlRpc = Rpc.make(WS_METHODS.pluginsCreateViewUrl, {
+  payload: PluginCreateViewUrlInput,
+  success: PluginViewUrl,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsPluginsInvokeRpc = Rpc.make(WS_METHODS.pluginsInvoke, {
+  payload: PluginInvokeInput,
+  success: PluginInvokeResult,
+  error: Schema.Union([PluginOperationError, EnvironmentAuthorizationError]),
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -994,6 +1073,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
+  WsPluginsListRpc,
+  WsPluginsCreateRpc,
+  WsPluginsSetEnabledRpc,
+  WsPluginsDeleteRpc,
+  WsPluginsAddSourceRpc,
+  WsPluginsUpdateSourceRpc,
+  WsPluginsRemoveSourceRpc,
+  WsPluginsCreateViewUrlRpc,
+  WsPluginsInvokeRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

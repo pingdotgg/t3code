@@ -1,8 +1,11 @@
-import { ChartNoAxesColumnIcon, GitPullRequestIcon, SettingsIcon } from "lucide-react";
-import { memo, useCallback } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { ChartNoAxesColumnIcon, GitPullRequestIcon, PlugIcon, SettingsIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { memo, useCallback, useMemo } from "react";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { pluginPageContributions } from "../../pluginCatalog";
+import { primaryPluginCatalogResultAtom } from "../../state/plugins";
 import { cn } from "../../lib/utils";
 import { usePrimaryEnvironment } from "../../state/environments";
 import {
@@ -111,8 +114,14 @@ function T3Wordmark() {
 
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
   const { isMobile, setOpenMobile } = useSidebar();
   const primaryEnvironment = usePrimaryEnvironment();
+  const pluginCatalog = useAtomValue(primaryPluginCatalogResultAtom);
+  const pluginPages = useMemo(
+    () => (pluginCatalog._tag === "Success" ? pluginPageContributions(pluginCatalog.value) : []),
+    [pluginCatalog],
+  );
   const pullRequestsSupported =
     primaryEnvironment?.serverConfig?.environment.capabilities.pullRequests === true;
   const closeMobileSidebar = useCallback(() => {
@@ -140,6 +149,29 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
+      {pluginPages.length > 0 ? (
+        <SidebarMenu className="max-h-[min(40vh,16rem)] overflow-y-auto">
+          {pluginPages.map(({ plugin, command }) => (
+            <SidebarMenuItem key={`${plugin.id}:${command.name}`}>
+              <SidebarMenuButton
+                isActive={pathname === `/plugins/${plugin.id}/${command.name}`}
+                onClick={() => {
+                  closeMobileSidebar();
+                  void navigate({
+                    to: "/plugins/$pluginId/$commandName",
+                    params: { pluginId: plugin.id, commandName: command.name },
+                  });
+                }}
+              >
+                <PlugIcon />
+                <span className="truncate">
+                  {plugin.commands.length === 1 ? plugin.name : `${plugin.name}: ${command.title}`}
+                </span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      ) : null}
       <SidebarMenu>
         {pullRequestsSupported ? (
           <SidebarMenuItem>
