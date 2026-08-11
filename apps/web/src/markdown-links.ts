@@ -1,4 +1,4 @@
-import { formatWorkspaceRelativePath } from "./filePathDisplay";
+import { formatWorkspaceRelativePath, resolveWorkspaceRelativePath } from "./filePathDisplay";
 import { resolvePathLinkTarget, splitPathAndPosition } from "./terminal-links";
 
 const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
@@ -363,19 +363,6 @@ function basenameOfPath(path: string): string {
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
-function workspaceRelativePath(path: string, workspaceRoot: string | undefined): string | null {
-  if (!workspaceRoot) return null;
-  const normalizedPath = normalizeWindowsDrivePath(path.replaceAll("\\", "/"));
-  const normalizedRoot = normalizeWindowsDrivePath(workspaceRoot.replaceAll("\\", "/")).replace(
-    /\/+$/,
-    "",
-  );
-  const pathForCompare = normalizedPath.toLowerCase();
-  const rootForCompare = normalizedRoot.toLowerCase();
-  if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
-  return normalizedPath.slice(normalizedRoot.length + 1);
-}
-
 export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
@@ -396,7 +383,7 @@ function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): Markdown
     filePath: path,
     targetPath,
     displayPath: formatWorkspaceRelativePath(targetPath, cwd),
-    workspaceRelativePath: workspaceRelativePath(path, cwd),
+    workspaceRelativePath: cwd ? resolveWorkspaceRelativePath(path, cwd) : null,
     basename: basenameOfPath(path),
     ...(lineNumber !== undefined ? { line: lineNumber } : {}),
     ...(columnNumber !== undefined ? { column: columnNumber } : {}),
