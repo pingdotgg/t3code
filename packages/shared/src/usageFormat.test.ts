@@ -24,6 +24,11 @@ describe("hourly usage formatting", () => {
     expect(formatDateTimeShort("2026-08-11T17:37:00.000Z", "UTC")).toBe("Aug 11, 5 PM");
   });
 
+  it("disambiguates repeated hours during a fall-back transition", () => {
+    expect(formatHourShort("2026-11-01T05:37:00.000Z", "America/New_York")).toBe("1 AM EDT");
+    expect(formatHourShort("2026-11-01T06:37:00.000Z", "America/New_York")).toBe("1 AM EST");
+  });
+
   it("makes hourly tooltip dates relative to the window in its requested time zone", () => {
     const windowEnd = "2026-08-11T14:37:00.000Z";
 

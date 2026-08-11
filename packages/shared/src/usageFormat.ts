@@ -95,13 +95,38 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
   return starts;
 }
 
-/** A rolling bucket start rendered in the viewer's requested time zone. */
+/**
+ * A rolling bucket start rendered in the viewer's requested time zone.
+ *
+ * Repeated wall-clock hours during a fall-back transition include their short
+ * zone name so the two distinct buckets remain distinguishable.
+ */
 export function formatHourShort(hourStart: string, timeZone?: string): string {
   const instant = new Date(hourStart);
   if (Number.isNaN(instant.getTime())) return hourStart;
+  const options = timeZone === undefined ? {} : { timeZone };
+  const hourFormat = new Intl.DateTimeFormat("en-US", {
+    ...options,
+    hour: "numeric",
+  });
+  const wallHourFormat = new Intl.DateTimeFormat("en-CA", {
+    ...options,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  });
+  const wallHour = wallHourFormat.format(instant);
+  const isRepeatedHour = [-HOUR_MS, HOUR_MS].some(
+    (offset) => wallHourFormat.format(new Date(instant.getTime() + offset)) === wallHour,
+  );
+
+  if (!isRepeatedHour) return hourFormat.format(instant);
   return new Intl.DateTimeFormat("en-US", {
     ...(timeZone === undefined ? {} : { timeZone }),
     hour: "numeric",
+    timeZoneName: "short",
   }).format(instant);
 }
 
