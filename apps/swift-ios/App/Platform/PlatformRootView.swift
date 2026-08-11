@@ -276,7 +276,7 @@ struct PlatformRootView: View {
                     model.errorMessage = "That thread's environment is no longer saved. Choose another destination."
                     return
                 }
-                guard await activateEnvironmentIfNeeded(destination.environmentID) else {
+                guard await enableEnvironmentIfNeeded(destination.environmentID) else {
                     // Keep the saved destination so a temporarily unavailable
                     // environment can retry when its connection recovers.
                     return
