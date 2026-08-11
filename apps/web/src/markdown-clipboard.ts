@@ -55,6 +55,12 @@ function codeFenceFor(code: string): string {
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 
+export function serializeMarkdownCodeFence(code: string, infoString: string): string {
+  const normalizedCode = code.replace(/\n$/, "");
+  const fence = codeFenceFor(normalizedCode);
+  return `${fence}${infoString}\n${normalizedCode}\n${fence}\n\n`;
+}
+
 function resolveCodeBlockLanguage(pre: Element): string | null {
   const declared =
     pre.closest("[data-language]")?.getAttribute("data-language") ??
@@ -64,9 +70,7 @@ function resolveCodeBlockLanguage(pre: Element): string | null {
 }
 
 function serializeCodeBlock(pre: Element): string {
-  const code = (pre.textContent ?? "").replace(/\n$/, "");
-  const fence = codeFenceFor(code);
-  return `${fence}${resolveCodeBlockLanguage(pre) ?? ""}\n${code}\n${fence}\n\n`;
+  return serializeMarkdownCodeFence(pre.textContent ?? "", resolveCodeBlockLanguage(pre) ?? "");
 }
 
 function serializeTableCell(cell: Element): string {

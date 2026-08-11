@@ -1,14 +1,23 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { RenderResult } from "mermaid";
+
+import { serializeMarkdownCodeFence } from "../markdown-clipboard";
 
 type MermaidTheme = "light" | "dark";
 
 // Mermaid configuration is global, so initialization and rendering must stay paired.
 let mermaidRenderQueue = Promise.resolve();
 
-export function renderMermaidDiagram(id: string, code: string, theme: MermaidTheme) {
+export function renderMermaidDiagram(
+  id: string,
+  code: string,
+  theme: MermaidTheme,
+  isActive: () => boolean = () => true,
+) {
   const render = async () => {
+    if (!isActive()) return null;
     const { default: mermaid } = await import("mermaid");
+    if (!isActive()) return null;
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: "strict",
@@ -29,14 +38,18 @@ export function renderMermaidDiagram(id: string, code: string, theme: MermaidThe
 export function MermaidDiagram({
   code,
   theme,
+  fenceTitle,
   fallback,
 }: {
   code: string;
   theme: MermaidTheme;
+  fenceTitle: string | null;
   fallback: ReactNode;
 }) {
   const reactId = useId();
   const diagramId = `t3-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const renderSequenceRef = useRef(0);
+  const diagramRef = useRef<HTMLDivElement>(null);
   const inputKey = `${theme}\0${code}`;
   const [renderState, setRenderState] = useState<{
     inputKey: string;
@@ -46,9 +59,10 @@ export function MermaidDiagram({
 
   useEffect(() => {
     let active = true;
-    void renderMermaidDiagram(diagramId, code, theme).then(
+    const renderId = `${diagramId}-${renderSequenceRef.current++}`;
+    void renderMermaidDiagram(renderId, code, theme, () => active).then(
       (nextResult) => {
-        if (active) setRenderState({ inputKey, result: nextResult });
+        if (active && nextResult) setRenderState({ inputKey, result: nextResult });
       },
       () => undefined,
     );
@@ -57,14 +71,30 @@ export function MermaidDiagram({
     };
   }, [code, diagramId, inputKey, theme]);
 
+  useLayoutEffect(() => {
+    const svg = diagramRef.current?.querySelector("svg");
+    const width = svg?.viewBox.baseVal.width ?? 0;
+    if (svg && Number.isFinite(width) && width > 0) {
+      svg.style.width = `${Math.ceil(width)}px`;
+      svg.style.maxWidth = "none";
+    }
+  }, [result]);
+
   if (!result) return fallback;
 
-  const markdownSource = `\`\`\`mermaid\n${code.replace(/\n$/, "")}\n\`\`\`\n\n`;
   return (
-    <div
+    <figure
       className="chat-markdown-mermaid"
-      data-markdown-copy={markdownSource}
-      dangerouslySetInnerHTML={{ __html: result.svg }}
-    />
+      data-markdown-copy={serializeMarkdownCodeFence(code, "mermaid")}
+    >
+      {fenceTitle ? (
+        <figcaption className="chat-markdown-mermaid-title">{fenceTitle}</figcaption>
+      ) : null}
+      <div
+        ref={diagramRef}
+        className="chat-markdown-mermaid-canvas"
+        dangerouslySetInnerHTML={{ __html: result.svg }}
+      />
+    </figure>
   );
 }

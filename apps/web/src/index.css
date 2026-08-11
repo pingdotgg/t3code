@@ -2086,16 +2086,28 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown .chat-markdown-mermaid {
   max-width: 100%;
   margin: 0.65rem 0;
-  overflow-x: auto;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 0.75rem;
   background: var(--muted);
+}
+
+.chat-markdown .chat-markdown-mermaid-title {
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 0.6875rem;
+}
+
+.chat-markdown .chat-markdown-mermaid-canvas {
+  overflow-x: auto;
   padding: 1rem;
 }
 
-.chat-markdown .chat-markdown-mermaid svg {
+.chat-markdown .chat-markdown-mermaid-canvas svg {
   display: block;
-  max-width: 100%;
+  max-width: none;
   height: auto;
   margin: 0 auto;
 }
