@@ -761,45 +761,45 @@ layer("ProviderEventIngestorV2", (it) => {
       }),
   );
 
-  it.effect(
-    "clears a keep-active pin when a provider session reactivates via provider ingest",
-    () =>
-      Effect.gen(function* () {
-        const now = yield* DateTime.now;
-        const eventSink = yield* EventSinkV2;
-        const projectionStore = yield* ProjectionStoreV2;
-        const ingestor = yield* ProviderEventIngestorV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const threadEvent = yield* threadCreatedEvent(now, {
-          fixtureName: "provider-event-active-session",
-          settledOverride: "active",
-        });
-        const providerSessionId = yield* idAllocator.allocate.providerSession({
-          providerInstanceId: modelSelection.instanceId,
-          threadId: threadEvent.threadId,
-        });
+  it.effect("does not clear a keep-active pin for a process-wide provider session update", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now, {
+        fixtureName: "provider-event-active-session",
+        settledOverride: "active",
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
 
-        yield* eventSink.write({ events: [threadEvent] });
-        const stored = yield* ingestor.ingestNormalized({
-          providerSessionId,
-          providerInstanceId: modelSelection.instanceId,
-          threadId: threadEvent.threadId,
-          event: {
-            type: "provider_session.updated",
-            driver: CODEX_DRIVER,
-            providerSession: makeProviderSession({
-              id: providerSessionId,
-              status: "running",
-              now,
-            }),
-          },
-        });
+      yield* eventSink.write({ events: [threadEvent] });
+      const stored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: makeProviderSession({
+            id: providerSessionId,
+            status: "running",
+            now,
+          }),
+        },
+      });
 
-        assert.equal(stored[0]?.event.type, "thread.unsettled");
-        assert.equal(stored[1]?.event.type, "provider-session.updated");
-        const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
-        assert.isNull(projection.thread.settledOverride);
-      }),
+      assert.deepEqual(
+        stored.map((row) => row.event.type),
+        ["provider-session.updated"],
+      );
+      const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+      assert.equal(projection.thread.settledOverride, "active");
+    }),
   );
 
   it.effect("does not clear settle pins for non-activity provider updates", () =>
@@ -908,7 +908,7 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
-  it.effect("classifies only pending request and live session events as settle-clearing", () =>
+  it.effect("classifies only pending thread-scoped requests as settle-clearing", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const idAllocator = yield* IdAllocatorV2;
@@ -955,7 +955,7 @@ layer("ProviderEventIngestorV2", (it) => {
           }),
         }),
       );
-      assert.isTrue(
+      assert.isFalse(
         isSettledClearingProviderActivity({
           ...base,
           type: "provider-session.updated",
@@ -1157,38 +1157,22 @@ layer("ProviderEventIngestorV2", (it) => {
             threadId: threadEvent.threadId,
           });
 
-          const stored =
-            override === "settled"
-              ? yield* ingestor.ingestNormalized({
-                  providerSessionId,
-                  providerInstanceId: modelSelection.instanceId,
-                  threadId: threadEvent.threadId,
-                  event: {
-                    type: "runtime_request.updated",
-                    driver: CODEX_DRIVER,
-                    runtimeRequest: makeRuntimeRequest({
-                      id: `delayed-approval-${override}`,
-                      kind: "command",
-                      status: "pending",
-                      providerSessionId,
-                      now: activityAt,
-                    }),
-                  },
-                })
-              : yield* ingestor.ingestNormalized({
-                  providerSessionId,
-                  providerInstanceId: modelSelection.instanceId,
-                  threadId: threadEvent.threadId,
-                  event: {
-                    type: "provider_session.updated",
-                    driver: CODEX_DRIVER,
-                    providerSession: makeProviderSession({
-                      id: providerSessionId,
-                      status: "running",
-                      now: activityAt,
-                    }),
-                  },
-                });
+          const stored = yield* ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: threadEvent.threadId,
+            event: {
+              type: "runtime_request.updated",
+              driver: CODEX_DRIVER,
+              runtimeRequest: makeRuntimeRequest({
+                id: `delayed-approval-${override}`,
+                kind: "command",
+                status: "pending",
+                providerSessionId,
+                now: activityAt,
+              }),
+            },
+          });
 
           // Candidate is always included; transactional ordering keeps the pin.
           const unsettle = stored.find((row) => row.event.type === "thread.unsettled");

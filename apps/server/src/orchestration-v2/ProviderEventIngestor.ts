@@ -109,9 +109,9 @@ function compactUndefined<T extends Record<string, unknown>>(record: T): T {
 
 /**
  * Provider-originated activity that should clear explicit settle pins.
- * Mirrors pre-CTM decider: pending approval/user-input requests and genuine
- * session reactivation only, not terminal status writes, request resolution,
- * or arbitrary provider updates.
+ * Pending approval/user-input requests are thread-scoped activity. Provider
+ * session status is process-wide and may be persisted onto unrelated attached
+ * threads, so it cannot clear a thread's settle pin.
  */
 export function isSettledClearingProviderActivity(event: OrchestrationV2DomainEvent): boolean {
   return providerActivityTimestamp(event) !== null;
@@ -132,15 +132,6 @@ export function providerActivityTimestamp(event: OrchestrationV2DomainEvent): Da
         return null;
       }
       return event.payload.createdAt;
-    case "provider-session.updated":
-      if (
-        event.payload.status !== "starting" &&
-        event.payload.status !== "running" &&
-        event.payload.status !== "waiting"
-      ) {
-        return null;
-      }
-      return event.payload.updatedAt;
     default:
       return null;
   }

@@ -318,7 +318,7 @@ describe("hasQueuedTurnStart", () => {
     expect(hasQueuedTurnStart(noTurn, { now: NOW })).toBe(false);
   });
 
-  it("clears once a run adopts the message or the start fails", () => {
+  it("clears once a run adopts the message or the current start fails", () => {
     const adopted = {
       ...makeShell({ activityAt: QUEUED_AT }),
       latestUserMessageAt: QUEUED_AT,
@@ -328,9 +328,19 @@ describe("hasQueuedTurnStart", () => {
     const failedShell = {
       ...makeShell({ activityAt: FRESH }),
       latestUserMessageAt: QUEUED_AT,
-      runtime: { status: "failed" as const },
+      runtime: { status: "failed" as const, updatedAt: "2026-04-09T12:00:10.000Z" },
     };
     expect(hasQueuedTurnStart(failedShell, JUST_AFTER)).toBe(false);
+
+    expect(
+      hasQueuedTurnStart(
+        {
+          ...failedShell,
+          latestUserMessageAt: "2026-04-09T12:00:20.000Z",
+        },
+        JUST_AFTER,
+      ),
+    ).toBe(true);
   });
 
   it("is quiet without user messages", () => {

@@ -105,11 +105,12 @@ export function hasQueuedTurnStart(
     return true;
   }
   if (shell.latestUserMessageAt == null) return false;
-  // A failed session/start clears the queued state: the failure is already
-  // visible (status edge / error). CTM shells report this on runtime.status.
-  if (shell.session?.status === "error" || shell.runtime?.status === "failed") return false;
   const messageAt = Date.parse(shell.latestUserMessageAt);
   if (Number.isNaN(messageAt)) return false;
+  if (shell.session?.status === "error" || shell.runtime?.status === "failed") {
+    const failedAt = Date.parse(shell.runtime?.updatedAt ?? shell.session?.updatedAt ?? "");
+    if (Number.isNaN(failedAt) || failedAt >= messageAt) return false;
+  }
   const nowMs = Date.parse(options.now);
   if (Number.isNaN(nowMs)) return false;
   // Bounded on both sides: message timestamps originate on whichever device
