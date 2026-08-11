@@ -15,6 +15,7 @@ export function ComposerEditor({
   onPasteImages,
   style,
   textStyle,
+  onContentSizeChange,
   contentInsetVertical = 0,
   singleLineCentered: _singleLineCentered,
   ...props
@@ -44,6 +45,12 @@ export function ComposerEditor({
         {...props}
         selection={selection}
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
+        onContentSizeChange={(event) =>
+          onContentSizeChange?.(
+            event.nativeEvent.contentSize.width,
+            event.nativeEvent.contentSize.height,
+          )
+        }
         multiline={props.multiline ?? true}
         placeholderTextColor={placeholderColor}
         style={[

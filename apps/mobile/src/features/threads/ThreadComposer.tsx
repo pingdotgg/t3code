@@ -65,6 +65,12 @@ import {
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import {
+  COMPOSER_EDITOR_EXPANDED_CONTENT_INSET_VERTICAL,
+  COMPOSER_EDITOR_MAX_HEIGHT,
+  COMPOSER_EDITOR_MIN_HEIGHT,
+  deriveComposerEditorSizing,
+} from "./composerSizing";
 import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
 import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
@@ -270,6 +276,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  const [contentHeight, setContentHeight] = useState(COMPOSER_EDITOR_MIN_HEIGHT);
+  const composerEditorSizing = deriveComposerEditorSizing(contentHeight);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: inputRef,
     isEditorFocused: isFocused,
@@ -719,18 +727,25 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onFocus={handleFocus}
               onBlur={handleBlur}
               onSubmit={handleSend}
-              scrollEnabled={isExpanded}
+              onContentSizeChange={(_width, height) => setContentHeight(height)}
+              scrollEnabled={isExpanded && composerEditorSizing.scrollEnabled}
               // Android: collapsed single line centers natively (gravity) in
               // a pill-height box matching the send button; iOS keeps insets.
               singleLineCentered={!isExpanded}
-              contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
+              contentInsetVertical={
+                isExpanded
+                  ? COMPOSER_EDITOR_EXPANDED_CONTENT_INSET_VERTICAL
+                  : Platform.OS === "android"
+                    ? 0
+                    : 6
+              }
               style={
                 isExpanded
                   ? {
-                      minHeight: 80,
-                      maxHeight: 160,
+                      height: composerEditorSizing.height,
+                      minHeight: COMPOSER_EDITOR_MIN_HEIGHT,
+                      maxHeight: COMPOSER_EDITOR_MAX_HEIGHT,
                       paddingHorizontal: 4,
-                      paddingVertical: 4,
                     }
                   : {
                       height: 36,
