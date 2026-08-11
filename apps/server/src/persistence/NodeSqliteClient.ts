@@ -25,6 +25,7 @@ import { SqlError, classifySqliteError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
+const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
 
 export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
@@ -127,6 +128,16 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
           }),
       }).pipe(Effect.orDie),
     );
+    yield* Effect.try({
+      try: () => db.exec(`PRAGMA busy_timeout = ${DEFAULT_BUSY_TIMEOUT_MS}`),
+      catch: (cause) =>
+        new SqlError({
+          reason: classifySqliteError(cause, {
+            message: "Failed to configure database busy timeout",
+            operation: "execute",
+          }),
+        }),
+    });
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
     const hasRows = (statement: NodeSqlite.StatementSync): boolean => {
@@ -250,6 +261,14 @@ const makeWithDatabase = Effect.fn("makeWithDatabase")(function* (
         );
       },
       executeUnprepared(sql, params, rowTransform) {
+        // SQLite can automatically roll back a transaction for some failures
+        // (for example, an ON CONFLICT ROLLBACK constraint). Effect's generic
+        // transaction cleanup still issues ROLLBACK in that case. Treat that
+        // cleanup as idempotent so its "no transaction is active" error does
+        // not replace the original database failure.
+        if (sql === "ROLLBACK" && !db.isTransaction) {
+          return Effect.succeed([]);
+        }
         const effect = prepare(sql).pipe(
           Effect.flatMap((statement) => runStatement(statement, params ?? [], false)),
         );
