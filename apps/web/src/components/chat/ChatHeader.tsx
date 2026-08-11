@@ -10,19 +10,11 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo, type ReactNode } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import {
-  ActivityIcon,
-  DiffIcon,
-  FileDownIcon,
-  GlobeIcon,
-  LoaderIcon,
-  TerminalSquareIcon,
-} from "lucide-react";
+import { FileDownIcon, LoaderIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
-import { Toggle } from "../ui/toggle";
 import { SidebarCollapsedTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
@@ -45,16 +37,9 @@ interface ChatHeaderProps {
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
-  terminalAvailable: boolean;
-  terminalOpen: boolean;
-  browserPreviewOpen: boolean;
-  insightsOpen: boolean;
   exportingThread: boolean;
   exportThreadDisabledReason: string | null;
-  terminalToggleShortcutLabel: string | null;
-  diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
-  diffOpen: boolean;
   workflowActions: ReadonlyArray<AgentWorkflowHeaderAction>;
   workflowRuns: ReadonlyArray<WorkflowRunPresentation>;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -67,10 +52,7 @@ interface ChatHeaderProps {
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onExportThread: () => void;
-  onToggleTerminal: () => void;
-  onToggleBrowserPreview: () => void;
-  onToggleInsights: () => void;
-  onToggleDiff: () => void;
+  panelToggles?: ReactNode;
   paneActions?: ReactNode;
 }
 
@@ -86,16 +68,9 @@ export const ChatHeader = memo(function ChatHeader({
   preferredScriptId,
   keybindings,
   availableEditors,
-  terminalAvailable,
-  terminalOpen,
-  browserPreviewOpen,
-  insightsOpen,
   exportingThread,
   exportThreadDisabledReason,
-  terminalToggleShortcutLabel,
-  diffToggleShortcutLabel,
   gitCwd,
-  diffOpen,
   workflowActions,
   workflowRuns,
   onRunProjectScript,
@@ -108,10 +83,7 @@ export const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onDeleteProjectScript,
   onExportThread,
-  onToggleTerminal,
-  onToggleBrowserPreview,
-  onToggleInsights,
-  onToggleDiff,
+  panelToggles,
   paneActions,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -172,23 +144,6 @@ export const ChatHeader = memo(function ChatHeader({
         <Tooltip>
           <TooltipTrigger
             render={
-              <Toggle
-                className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
-                pressed={insightsOpen}
-                onPressedChange={onToggleInsights}
-                aria-label="Toggle insights panel"
-                variant="outline"
-                size="xs"
-              >
-                <ActivityIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">Toggle insights panel</TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
               <Button
                 className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
                 variant="outline"
@@ -209,71 +164,7 @@ export const ChatHeader = memo(function ChatHeader({
             {exportThreadDisabledReason ?? (exportingThread ? "Exporting chat..." : "Export chat")}
           </TooltipPopup>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
-                pressed={browserPreviewOpen}
-                onPressedChange={onToggleBrowserPreview}
-                aria-label="Toggle browser preview"
-                variant="outline"
-                size="xs"
-              >
-                <GlobeIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">Toggle browser preview</TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
-                pressed={terminalOpen}
-                onPressedChange={onToggleTerminal}
-                aria-label="Toggle terminal drawer"
-                variant="outline"
-                size="xs"
-                disabled={!terminalAvailable}
-              >
-                <TerminalSquareIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!terminalAvailable
-              ? "Terminal is unavailable until this thread has an active project."
-              : terminalToggleShortcutLabel
-                ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                : "Toggle terminal drawer"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
-                pressed={diffOpen}
-                onPressedChange={onToggleDiff}
-                aria-label="Toggle diff panel"
-                variant="outline"
-                size="xs"
-                disabled={!isGitRepo && !diffOpen}
-              >
-                <DiffIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!isGitRepo && !diffOpen
-              ? "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
-          </TooltipPopup>
-        </Tooltip>
+        {panelToggles}
         {paneActions}
       </div>
     </div>

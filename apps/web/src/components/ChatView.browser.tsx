@@ -159,6 +159,30 @@ const COMPACT_FOOTER_VIEWPORT: ViewportSpec = {
   attachmentTolerancePx: 56,
 };
 
+/**
+ * Forces the narrow-layout breakpoint on or off.
+ *
+ * The viewport helpers resize the test container rather than the window, so
+ * `matchMedia` would keep reporting the real browser width. Stubbing only this
+ * one query leaves every other media query answering honestly.
+ */
+function stubNarrowLayout(matches: boolean) {
+  const originalMatchMedia = window.matchMedia.bind(window);
+  return vi.spyOn(window, "matchMedia").mockImplementation((query) => {
+    if (query !== RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY) return originalMatchMedia(query);
+    return {
+      matches,
+      media: query,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => true,
+    };
+  });
+}
+
 interface MountedChatView {
   [Symbol.asyncDispose]: () => Promise<void>;
   cleanup: () => Promise<void>;
@@ -7251,20 +7275,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("renders the right panel as a responsive sheet on compact viewports", async () => {
-    const originalMatchMedia = window.matchMedia.bind(window);
-    const matchMediaSpy = vi.spyOn(window, "matchMedia").mockImplementation((query) => {
-      if (query !== RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY) return originalMatchMedia(query);
-      return {
-        matches: true,
-        media: query,
-        onchange: null,
-        addListener: () => undefined,
-        removeListener: () => undefined,
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-        dispatchEvent: () => true,
-      };
-    });
+    const matchMediaSpy = stubNarrowLayout(true);
     const mounted = await mountChatView({
       viewport: COMPACT_FOOTER_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -7283,6 +7294,67 @@ describe("ChatView timeline estimator parity (full app)", () => {
     } finally {
       await mounted.cleanup();
       matchMediaSpy.mockRestore();
+    }
+  });
+
+  it("moves the panel toggles between the right rail and the header with the layout", async () => {
+    const toggleLabels = [
+      "Toggle insights panel",
+      "Toggle browser preview",
+      "Toggle terminal drawer",
+      "Toggle diff panel",
+    ];
+
+    async function expectTogglesIn(orientation: "vertical" | "horizontal") {
+      await vi.waitFor(() => {
+        const container = document.querySelector(`[data-chat-panel-toggles="${orientation}"]`);
+        expect(container).not.toBeNull();
+        // The toggles must exist exactly once — a stale second placement would
+        // leave two controls fighting over the same panel state.
+        for (const label of toggleLabels) {
+          expect(document.querySelectorAll(`[aria-label="${label}"]`)).toHaveLength(1);
+          expect(container?.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
+        }
+      });
+    }
+
+    const wideSpy = stubNarrowLayout(false);
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-panel-rail" as MessageId,
+        targetText: "panel rail",
+      }),
+    });
+
+    try {
+      await expectTogglesIn("vertical");
+      expect(
+        document.querySelector("header [data-chat-panel-toggles]"),
+        "the rail must live beside the pane body, not inside the header",
+      ).toBeNull();
+    } finally {
+      await mounted.cleanup();
+      wideSpy.mockRestore();
+    }
+
+    const narrowSpy = stubNarrowLayout(true);
+    const narrowMounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-panel-header" as MessageId,
+        targetText: "panel header",
+      }),
+    });
+
+    try {
+      await expectTogglesIn("horizontal");
+      expect(
+        document.querySelector('header [data-chat-panel-toggles="horizontal"]'),
+      ).not.toBeNull();
+    } finally {
+      await narrowMounted.cleanup();
+      narrowSpy.mockRestore();
     }
   });
 

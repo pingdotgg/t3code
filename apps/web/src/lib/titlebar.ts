@@ -24,15 +24,14 @@ export const TITLEBAR_CONTROL_INSET_CLASS =
  * controls) so the leading header content starts just after them.
  *
  * macOS draws the traffic lights in screen points at a fixed 12pt diameter and
- * 20pt pitch, and Chromium's page zoom does not scale them. The main process
- * places the first control at `16 * zoom` points, so the last one ends at
- * `16 * zoom + 52` points. Expressed in the renderer's zoomed CSS pixels that
- * is `16 + 52 / zoom`; adding a constant 12pt gap (`12 / zoom` CSS pixels)
- * gives `16px + 64px / zoom`, which keeps the gap after the last control the
+ * 20pt pitch, and Chromium's page zoom does not scale them. Main pins the first
+ * one 10pt from the window edge, so three of them end 62pt in (`10 + 2 * 20 +
+ * 12`); a 12pt gap after the last one puts the content at 74pt. Dividing by the
+ * zoom converts that to the renderer's zoomed CSS pixels, so the gap stays the
  * same on screen at every zoom level instead of widening with it.
  */
 export const TITLEBAR_TRAFFIC_LIGHT_INSET_CLASS =
-  "pl-[calc(16px+64px/var(--app-zoom,1))] wco:pl-[calc(env(titlebar-area-x)+1em)]";
+  "pl-[calc(74px/var(--app-zoom,1))] wco:pl-[calc(env(titlebar-area-x)+1em)]";
 
 /** CSS custom property holding the window's current page-zoom factor. */
 export const APP_ZOOM_CSS_VARIABLE = "--app-zoom";
