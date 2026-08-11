@@ -8,6 +8,7 @@ import { resolveStorage } from "./lib/storage";
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
+  | { kind: "commit"; commitSha: string; baseRef: string | null }
   | { kind: "turn"; turnId: TurnId; filePath: string | null; revealRequestId: number };
 
 export type DiffRenderMode = "stacked" | "split";
@@ -22,8 +23,13 @@ interface DiffPanelStoreState {
   setDiffRenderMode: (mode: DiffRenderMode) => void;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
+  selectCommit: (ref: ScopedThreadRef, commitSha: string) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: TurnId, filePath?: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<TurnId>) => void;
+  reconcileCommitSelection: (
+    ref: ScopedThreadRef,
+    availableCommitShas: ReadonlyArray<string>,
+  ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
 
@@ -76,6 +82,26 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             },
           };
         }),
+      selectCommit: (ref, commitSha) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const previous = state.byThreadKey[threadKey];
+          // A commit stays scoped to the branch comparison that listed it.
+          const baseRef =
+            previous?.kind === "branch"
+              ? previous.baseRef
+              : (state.branchBaseRefByThreadKey[threadKey] ?? null);
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: { kind: "commit", commitSha, baseRef },
+            },
+            branchBaseRefByThreadKey: {
+              ...state.branchBaseRefByThreadKey,
+              [threadKey]: baseRef,
+            },
+          };
+        }),
       selectTurn: (ref, turnId, filePath) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -108,6 +134,20 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             byThreadKey: {
               ...state.byThreadKey,
               [threadKey]: { ...previous, turnId: latestTurnId },
+            },
+          };
+        }),
+      reconcileCommitSelection: (ref, availableCommitShas) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const previous = state.byThreadKey[threadKey];
+          if (previous?.kind !== "commit" || availableCommitShas.includes(previous.commitSha)) {
+            return state;
+          }
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: { kind: "branch", baseRef: previous.baseRef },
             },
           };
         }),

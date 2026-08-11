@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "./diffPanelStore";
 
 const THREAD_REF = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
+const COMMIT_SHA = "0123456789abcdef0123456789abcdef01234567";
+const OTHER_COMMIT_SHA = "89abcdef0123456789abcdef0123456789abcdef";
 
 describe("diffPanelStore", () => {
   beforeEach(() =>
@@ -88,6 +90,41 @@ describe("diffPanelStore", () => {
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
     ).toEqual({ kind: "branch", baseRef: "origin/main" });
+  });
+
+  it("keeps the branch base while a commit is selected and after leaving it", () => {
+    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/main");
+    useDiffPanelStore.getState().selectCommit(THREAD_REF, COMMIT_SHA);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "commit", commitSha: COMMIT_SHA, baseRef: "origin/main" });
+
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "branch");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: "origin/main" });
+  });
+
+  it("falls back to branch changes when a selected commit leaves the branch range", () => {
+    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/main");
+    useDiffPanelStore.getState().selectCommit(THREAD_REF, COMMIT_SHA);
+    useDiffPanelStore.getState().reconcileCommitSelection(THREAD_REF, [OTHER_COMMIT_SHA]);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: "origin/main" });
+  });
+
+  it("keeps a commit selection that is still in the branch range", () => {
+    useDiffPanelStore.getState().selectCommit(THREAD_REF, COMMIT_SHA);
+    useDiffPanelStore
+      .getState()
+      .reconcileCommitSelection(THREAD_REF, [OTHER_COMMIT_SHA, COMMIT_SHA]);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "commit", commitSha: COMMIT_SHA, baseRef: null });
   });
 
   it("reconciles a missing turn selection to the latest available turn", () => {

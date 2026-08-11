@@ -97,6 +97,8 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         generatedAt: yield* DateTime.now,
         sources: [],
+        branchCommits: [],
+        branchCommitsTruncated: false,
       };
     }
 

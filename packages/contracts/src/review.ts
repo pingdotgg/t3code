@@ -3,15 +3,33 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { GitCommandError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
+/** Git object ids are lowercase hex, sized by the repository's SHA-1 or SHA-256 object format. */
+const GitObjectId = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+);
+
 export const ReviewDiffPreviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(TrimmedNonEmptyString),
+  /** Requests one commit's first-parent diff instead of the working tree and branch range. */
+  commitSha: Schema.optional(GitObjectId),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
 
-export const ReviewDiffPreviewSourceKind = Schema.Literals(["working-tree", "branch-range"]);
+export const ReviewDiffPreviewSourceKind = Schema.Literals([
+  "working-tree",
+  "branch-range",
+  "commit",
+]);
 export type ReviewDiffPreviewSourceKind = typeof ReviewDiffPreviewSourceKind.Type;
+
+export const ReviewBranchCommit = Schema.Struct({
+  sha: GitObjectId,
+  subject: Schema.String,
+  committedAt: Schema.DateTimeUtc,
+});
+export type ReviewBranchCommit = typeof ReviewBranchCommit.Type;
 
 export const ReviewDiffPreviewSource = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -46,6 +64,9 @@ export const ReviewDiffPreviewResult = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   generatedAt: Schema.DateTimeUtc,
   sources: Schema.Array(ReviewDiffPreviewSource),
+  /** Newest first, capped by the server; empty while a single commit is being previewed. */
+  branchCommits: Schema.Array(ReviewBranchCommit),
+  branchCommitsTruncated: Schema.Boolean,
 });
 export type ReviewDiffPreviewResult = typeof ReviewDiffPreviewResult.Type;
 
