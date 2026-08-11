@@ -1,9 +1,18 @@
-import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  defaultInstanceIdForDriver,
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderInstanceConfig,
+} from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
+  deriveOrderedProviderSettingsRows,
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
@@ -18,6 +27,114 @@ const environments = [
   { environmentId: relayId, label: "Alpha Relay" },
   { environmentId: primaryId, label: "This device" },
 ] as const;
+
+const codex = ProviderDriverKind.make("codex");
+const claude = ProviderDriverKind.make("claudeAgent");
+const unknown = ProviderDriverKind.make("future-driver");
+
+const instance = (driver: ProviderDriverKind, enabled?: boolean): ProviderInstanceConfig => ({
+  driver,
+  ...(enabled === undefined ? {} : { enabled }),
+});
+
+const rowsFor = (input: {
+  readonly providerInstances?: Readonly<Record<string, ProviderInstanceConfig>>;
+  readonly driverOrder: ReadonlyArray<ProviderDriverKind>;
+  readonly providers?: typeof DEFAULT_UNIFIED_SETTINGS.providers;
+}) =>
+  deriveOrderedProviderSettingsRows({
+    settings: {
+      providerInstances: (input.providerInstances ?? {}) as Readonly<
+        Record<ProviderInstanceId, ProviderInstanceConfig>
+      >,
+      providers: input.providers ?? DEFAULT_UNIFIED_SETTINGS.providers,
+    },
+    driverOrder: input.driverOrder,
+  });
+
+describe("provider settings row ordering", () => {
+  it("uses the supplied known-driver order", () => {
+    const rows = rowsFor({
+      driverOrder: [claude, codex],
+      providerInstances: {
+        [defaultInstanceIdForDriver(codex)]: instance(codex),
+        [defaultInstanceIdForDriver(claude)]: instance(claude),
+      },
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["claudeAgent", "codex"]);
+  });
+
+  it("places a default before custom instances of the same driver", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        codex_work: instance(codex),
+        codex: instance(codex),
+      },
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["codex", "codex_work"]);
+  });
+
+  it("retains settings-author order for custom instances", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        codex_second: instance(codex),
+        codex_first: instance(codex),
+      },
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["codex", "codex_second", "codex_first"]);
+  });
+
+  it("appends unknown-driver instances in settings-author order", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        future_second: instance(unknown),
+        codex: instance(codex),
+        future_first: instance(unknown),
+      },
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["codex", "future_second", "future_first"]);
+  });
+
+  it("retains disabled provider rows", () => {
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        codex_disabled: instance(codex, false),
+      },
+    });
+
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        instanceId: "codex_disabled",
+        instance: { driver: codex, enabled: false },
+      }),
+    );
+  });
+
+  it("synthesizes a default row from legacy provider settings", () => {
+    const rows = rowsFor({ driverOrder: [codex], providerInstances: {} });
+
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        instanceId: "codex",
+        driver: codex,
+        isDefault: true,
+        isDirty: false,
+        instance: expect.objectContaining({
+          driver: codex,
+          config: DEFAULT_UNIFIED_SETTINGS.providers.codex,
+        }),
+      }),
+    );
+  });
+});
 
 describe("provider environment selection", () => {
   it("sorts the primary environment first and the rest by label", () => {

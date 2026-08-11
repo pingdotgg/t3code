@@ -2,8 +2,96 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import {
   AuthOrchestrationOperateScope,
   type AuthSessionState,
+  defaultInstanceIdForDriver,
   type EnvironmentId,
+  type ProviderDriverKind,
+  type ProviderInstanceConfig,
+  type ProviderInstanceId,
+  type ServerSettings,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import * as Equal from "effect/Equal";
+
+export interface OrderedProviderSettingsRow {
+  readonly instanceId: ProviderInstanceId;
+  readonly instance: ProviderInstanceConfig;
+  readonly driver: ProviderDriverKind;
+  readonly isDefault: boolean;
+  readonly isDirty?: boolean;
+}
+
+export function deriveOrderedProviderSettingsRows(input: {
+  readonly settings: Pick<ServerSettings, "providerInstances" | "providers">;
+  readonly driverOrder: ReadonlyArray<ProviderDriverKind>;
+}): ReadonlyArray<OrderedProviderSettingsRow> {
+  const instancesByDriver = new Map<
+    ProviderDriverKind,
+    Array<[ProviderInstanceId, ProviderInstanceConfig]>
+  >();
+  for (const [rawId, instance] of Object.entries(input.settings.providerInstances ?? {})) {
+    const driver = instance.driver;
+    const list = instancesByDriver.get(driver) ?? [];
+    list.push([rawId as ProviderInstanceId, instance]);
+    instancesByDriver.set(driver, list);
+  }
+
+  const defaultSlotIdsBySource = new Set<string>(
+    input.driverOrder.map((driver) => String(defaultInstanceIdForDriver(driver))),
+  );
+  const knownDrivers = new Set(input.driverOrder);
+  const rows: OrderedProviderSettingsRow[] = [];
+  type LegacyProviderSettings =
+    (typeof input.settings.providers)[keyof typeof input.settings.providers];
+  const legacyProviders = input.settings.providers as Record<string, LegacyProviderSettings>;
+  const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
+    string,
+    LegacyProviderSettings
+  >;
+
+  for (const driver of input.driverOrder) {
+    const defaultInstanceId = defaultInstanceIdForDriver(driver);
+    const explicitInstance = input.settings.providerInstances?.[defaultInstanceId];
+    const legacyConfig = legacyProviders[driver];
+    const defaultLegacyConfig = defaultLegacyProviders[driver];
+    const effectiveInstance: ProviderInstanceConfig | undefined =
+      explicitInstance ??
+      (legacyConfig !== undefined
+        ? ({
+            driver,
+            enabled: legacyConfig.enabled,
+            config: legacyConfig,
+          } satisfies ProviderInstanceConfig)
+        : undefined);
+
+    if (effectiveInstance !== undefined) {
+      rows.push({
+        instanceId: defaultInstanceId,
+        instance: effectiveInstance,
+        driver,
+        isDefault: true,
+        isDirty: explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig),
+      });
+    }
+    for (const [id, instance] of instancesByDriver.get(driver) ?? []) {
+      if (id === defaultInstanceId) continue;
+      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
+    }
+  }
+
+  for (const [driver, list] of instancesByDriver) {
+    if (knownDrivers.has(driver)) continue;
+    for (const [id, instance] of list) {
+      rows.push({
+        instanceId: id,
+        instance,
+        driver: instance.driver,
+        isDefault: defaultSlotIdsBySource.has(String(id)),
+      });
+    }
+  }
+
+  return rows;
+}
 
 export interface ProviderEnvironmentOptionLike {
   readonly environmentId: EnvironmentId;
