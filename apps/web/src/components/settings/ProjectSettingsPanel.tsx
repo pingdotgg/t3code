@@ -1152,7 +1152,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 onClick={() => void removeMembers(group.memberProjects)}
               >
                 <Trash2Icon />
-                {group.memberProjects.length > 1 ? "Remove all entries" : "Remove project"}
+                Remove project
               </Button>
             }
           />
