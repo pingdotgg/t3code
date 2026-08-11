@@ -23,6 +23,14 @@ export function resolveSidebarStageBackdropVariant(
   return null;
 }
 
+export function resolveSidebarStageFocusRingOffsetClass(
+  variant: SidebarStageBackdropVariant,
+): string {
+  return variant === "nightly"
+    ? "focus-visible:ring-offset-(--stage-night-bottom)"
+    : "focus-visible:ring-offset-(--stage-art-bottom)";
+}
+
 export function resolveEnvironmentIdentificationPillLabel(
   stageLabel: string,
 ): EnvironmentIdentificationPillLabel | null {

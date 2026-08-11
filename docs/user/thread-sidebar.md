@@ -15,6 +15,6 @@ their pinned threads keep the default newest-first order below the ones you have
 ## Environment artwork
 
 Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in
-the send button. Choose **Artwork**, **Pill**, or **None** in Settings under environment
-identification. Artwork is recolored to match each built-in theme. Custom themes use the pill
-fallback because their colors are not controlled by T3 Code.
+the send button. Choose **Artwork**, **Version pill**, or **None** in Settings under environment
+identification. Artwork is recolored to match each built-in theme. Custom themes use the **Version
+pill** fallback because their colors are not controlled by T3 Code.
