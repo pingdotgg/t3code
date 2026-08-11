@@ -4134,11 +4134,12 @@ function ChatViewContent(props: ChatViewProps) {
 
     const writeRevertedMessageToComposer = () => {
       const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-      const existingPrompt = currentDraft?.prompt.trimEnd() ?? "";
-      const existingText = stripInlineTerminalContextPlaceholders(existingPrompt).trim();
+      const existingPrompt = stripInlineTerminalContextPlaceholders(
+        currentDraft?.prompt ?? "",
+      ).trimEnd();
       const nextPrompt =
         existingPrompt.length > 0 && pending.draft.prompt.length > 0
-          ? `${existingPrompt}${existingText.length > 0 ? "\n\n" : ""}${pending.draft.prompt}`
+          ? `${existingPrompt}\n\n${pending.draft.prompt}`
           : existingPrompt || pending.draft.prompt;
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
       const existingImages = currentDraft?.images ?? [];
