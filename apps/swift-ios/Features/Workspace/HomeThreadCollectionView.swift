@@ -11,32 +11,32 @@ enum HomeThreadSwipeActionKind: Equatable, Sendable {
 }
 
 struct HomeThreadSwipeActionPlan: Equatable, Sendable {
-    let primary: HomeThreadSwipeActionKind
-    let secondary: HomeThreadSwipeActionKind = .delete
-    let performsPrimaryWithFullSwipe = true
-    let deleteFinishesOptimistically = false
-
-    var orderedActions: [HomeThreadSwipeActionKind] {
-        [primary, secondary]
-    }
+    let actions: [HomeThreadSwipeActionKind]
+    let performsFirstActionWithFullSwipe: Bool
+    let deleteFinishesOptimistically: Bool
 
     static func make(
         thread: FeatureThread,
         isArchived: Bool,
         now: Date
     ) -> HomeThreadSwipeActionPlan {
+        let primary: HomeThreadSwipeActionKind
         if isArchived {
-            return HomeThreadSwipeActionPlan(primary: .restore)
+            primary = .restore
+        } else if thread.pinnedAt != nil, thread.canTogglePin {
+            primary = .unpin
+        } else if thread.canToggleSettlement {
+            primary = thread.isSettled || thread.isEffectivelySettled(at: now)
+                ? .reopen
+                : .settle
+        } else {
+            primary = .archive
         }
-        if thread.pinnedAt != nil, thread.canTogglePin {
-            return HomeThreadSwipeActionPlan(primary: .unpin)
-        }
-        if thread.canToggleSettlement {
-            return HomeThreadSwipeActionPlan(
-                primary: thread.isEffectivelySettled(at: now) ? .reopen : .settle
-            )
-        }
-        return HomeThreadSwipeActionPlan(primary: .archive)
+        return HomeThreadSwipeActionPlan(
+            actions: [primary, .delete],
+            performsFirstActionWithFullSwipe: true,
+            deleteFinishesOptimistically: false
+        )
     }
 }
 
@@ -237,65 +237,71 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 isArchived: isArchived,
                 now: .now
             )
-            let delete = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, finish in
-                self?.parent.onDelete(thread)
-                // Deletion is deferred until the confirmation alert. Keep the
-                // row in place if the user cancels instead of letting UIKit
-                // animate an optimistic removal that never reached the model.
-                finish(plan.deleteFinishesOptimistically)
+            let actions = plan.actions.map {
+                swipeAction($0, for: thread, plan: plan)
             }
-            delete.image = UIImage(systemName: "trash")
+            let configuration = UISwipeActionsConfiguration(actions: actions)
+            configuration.performsFirstActionWithFullSwipe =
+                plan.performsFirstActionWithFullSwipe
+            return configuration
+        }
 
-            let primaryAction: UIContextualAction
-            switch plan.primary {
+        private func swipeAction(
+            _ kind: HomeThreadSwipeActionKind,
+            for thread: FeatureThread,
+            plan: HomeThreadSwipeActionPlan
+        ) -> UIContextualAction {
+            let action: UIContextualAction
+            switch kind {
             case .restore:
-                primaryAction = UIContextualAction(style: .normal, title: "Restore") {
+                action = UIContextualAction(style: .normal, title: "Restore") {
                     [weak self] _, _, finish in
                     self?.parent.onArchive(thread, false)
                     finish(true)
                 }
-                primaryAction.image = UIImage(systemName: "arrow.uturn.backward")
-                primaryAction.backgroundColor = .systemBlue
+                action.image = UIImage(systemName: "arrow.uturn.backward")
+                action.backgroundColor = .systemBlue
             case .unpin:
-                primaryAction = UIContextualAction(style: .normal, title: "Unpin") {
+                action = UIContextualAction(style: .normal, title: "Unpin") {
                     [weak self] _, _, finish in
                     self?.parent.onPin(thread, false)
                     finish(true)
                 }
-                primaryAction.image = UIImage(systemName: "pin.slash")
-                primaryAction.backgroundColor = .systemBlue
+                action.image = UIImage(systemName: "pin.slash")
+                action.backgroundColor = .systemBlue
             case .settle, .reopen:
-                let wasEffectivelySettled = plan.primary == .reopen
-                primaryAction = UIContextualAction(
+                let wasSettled = kind == .reopen
+                action = UIContextualAction(
                     style: .normal,
-                    title: wasEffectivelySettled ? "Reopen" : "Settle"
+                    title: wasSettled ? "Reopen" : "Settle"
                 ) { [weak self] _, _, finish in
-                    self?.parent.onSettle(
-                        thread,
-                        !wasEffectivelySettled,
-                        wasEffectivelySettled
-                    )
+                    self?.parent.onSettle(thread, !wasSettled, wasSettled)
                     finish(true)
                 }
-                primaryAction.image = UIImage(
-                    systemName: wasEffectivelySettled ? "arrow.counterclockwise" : "checkmark"
+                action.image = UIImage(
+                    systemName: wasSettled ? "arrow.counterclockwise" : "checkmark"
                 )
-                primaryAction.backgroundColor = wasEffectivelySettled ? .systemBlue : .systemGreen
+                action.backgroundColor = wasSettled ? .systemBlue : .systemGreen
             case .archive:
-                primaryAction = UIContextualAction(style: .normal, title: "Archive") {
+                action = UIContextualAction(style: .normal, title: "Archive") {
                     [weak self] _, _, finish in
                     self?.parent.onArchive(thread, true)
                     finish(true)
                 }
-                primaryAction.image = UIImage(systemName: "archivebox")
-                primaryAction.backgroundColor = .systemGray
+                action.image = UIImage(systemName: "archivebox")
+                action.backgroundColor = .systemGray
             case .delete:
-                preconditionFailure("Delete cannot be the primary full-swipe action")
+                action = UIContextualAction(style: .destructive, title: "Delete") {
+                    [weak self] _, _, finish in
+                    self?.parent.onDelete(thread)
+                    // Deletion is deferred until the confirmation alert. Keep
+                    // the row if the user cancels instead of letting UIKit
+                    // animate a removal that never reached the model.
+                    finish(plan.deleteFinishesOptimistically)
+                }
+                action.image = UIImage(systemName: "trash")
             }
-
-            let configuration = UISwipeActionsConfiguration(actions: [primaryAction, delete])
-            configuration.performsFirstActionWithFullSwipe = plan.performsPrimaryWithFullSwipe
-            return configuration
+            return action
         }
 
         private func configure(
@@ -458,19 +464,15 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     )
                 }
                 if thread.canToggleSettlement {
-                    let wasEffectivelySettled = thread.isEffectivelySettled(at: .now)
+                    let wasSettled = thread.isSettled || thread.isEffectivelySettled(at: .now)
                     actions.append(
                         UIAction(
-                            title: wasEffectivelySettled ? "Reopen" : "Settle",
+                            title: wasSettled ? "Reopen" : "Settle",
                             image: UIImage(
-                                systemName: wasEffectivelySettled ? "arrow.counterclockwise" : "checkmark"
+                                systemName: wasSettled ? "arrow.counterclockwise" : "checkmark"
                             )
                         ) { [weak self] _ in
-                            self?.parent.onSettle(
-                                thread,
-                                !wasEffectivelySettled,
-                                wasEffectivelySettled
-                            )
+                            self?.parent.onSettle(thread, !wasSettled, wasSettled)
                         }
                     )
                 }

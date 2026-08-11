@@ -88,15 +88,20 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
         return notice
     }
 
+    mutating func dismiss(threadID: String) {
+        guard notice?.threadID == threadID else { return }
+        notice = nil
+    }
+
     static func shouldPresent(
         afterRequesting settled: Bool,
         didSucceed: Bool,
-        previousWasEffectivelySettled: Bool,
+        previousWasSettled: Bool,
         updatedThread: FeatureThread?
     ) -> Bool {
         settled
             && didSucceed
-            && !previousWasEffectivelySettled
+            && !previousWasSettled
             && updatedThread?.isSettled == true
     }
 }
@@ -282,6 +287,7 @@ public struct WorkspaceView: View {
             Button("Delete", role: .destructive) {
                 guard let confirmed = deleteConfirmation.takeConfirmedRequest(),
                       confirmed == request else { return }
+                settleUndo.dismiss(threadID: confirmed.id)
                 Task { await model.deleteThread(confirmed.id) }
             }
         } message: { request in
@@ -295,6 +301,10 @@ public struct WorkspaceView: View {
         }
         .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
             if !isAvailable { selectedProjectID = nil }
+        }
+        .onChange(of: settleUndoTargetIsValid) { _, isValid in
+            guard !isValid, let notice = settleUndo.notice else { return }
+            settleUndo.dismiss(threadID: notice.threadID)
         }
         .onChange(of: navigationRequest?.id, initial: true) { _, _ in
             consumeNavigationRequest()
@@ -385,9 +395,11 @@ public struct WorkspaceView: View {
                     renamingThread = thread
                 },
                 onArchive: { thread, archived in
+                    settleUndo.dismiss(threadID: thread.id)
                     Task { await model.setArchived(thread.id, archived: archived) }
                 },
-                onSettle: { thread, settled, wasEffectivelySettled in
+                onSettle: { thread, settled, wasSettled in
+                    if !settled { settleUndo.dismiss(threadID: thread.id) }
                     let requestID = settleUndo.beginSettleRequest(ifSettling: settled)
                     let restoration = HomeThreadSettleUndoRestoration.capture(from: thread)
                     Task {
@@ -398,7 +410,7 @@ public struct WorkspaceView: View {
                         guard HomeThreadSettleUndoState.shouldPresent(
                             afterRequesting: settled,
                             didSucceed: didSucceed,
-                            previousWasEffectivelySettled: wasEffectivelySettled,
+                            previousWasSettled: wasSettled,
                             updatedThread: updatedThread
                         ), let requestID else { return }
                         let notice = withAnimation(
@@ -494,21 +506,16 @@ public struct WorkspaceView: View {
                 let didReopen = await model.setSettled(notice.threadID, settled: false)
                 let reopened = model.snapshot.threads.first { $0.id == notice.threadID }
                 guard didReopen, reopened?.isSettled == false, notice.restoresPin else { return }
-                guard await model.setPinned(notice.threadID, pinned: true) else {
-                    model.errorMessage = "Thread reopened, but its pin could not be restored. Try pinning it again."
-                    return
-                }
+                guard await model.setPinned(notice.threadID, pinned: true) else { return }
                 if let snoozeUntil = notice.restoresSnoozeUntil {
-                    guard await model.setSnoozed(notice.threadID, until: snoozeUntil) else {
-                        model.errorMessage = "Thread reopened and pinned, but its snooze could not be restored. Try snoozing it again."
-                        return
-                    }
+                    guard await model.setSnoozed(notice.threadID, until: snoozeUntil) else { return }
                 }
             }
         }
         .font(T3Typography.supportingStrong)
         .buttonStyle(.bordered)
         .frame(minHeight: T3Metrics.minimumTapTarget)
+        .contentShape(Rectangle())
         .accessibilityLabel("Undo settle \(notice.title)")
     }
 
@@ -804,6 +811,13 @@ public struct WorkspaceView: View {
     private var selectedProjectIsAvailable: Bool {
         guard let selectedProjectID else { return true }
         return model.snapshot.projects.contains { $0.id == selectedProjectID }
+    }
+
+    private var settleUndoTargetIsValid: Bool {
+        guard let notice = settleUndo.notice else { return true }
+        return model.snapshot.threads.contains {
+            $0.id == notice.threadID && $0.isSettled && !$0.isArchived
+        }
     }
 
     private func openThread(_ id: String) {

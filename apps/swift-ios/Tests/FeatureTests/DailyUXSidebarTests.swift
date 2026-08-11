@@ -46,6 +46,18 @@ struct DailyUXSidebarTests {
             state: .working,
             isSettled: true
         )
+        let pinned = thread(
+            id: "pinned",
+            created: -20,
+            updated: -10,
+            pinned: -5
+        )
+        let archiveOnly = thread(
+            id: "archive-only",
+            created: -20,
+            updated: -10,
+            supportsSettlement: false
+        )
 
         let activePlan = HomeThreadSwipeActionPlan.make(
             thread: active,
@@ -62,13 +74,30 @@ struct DailyUXSidebarTests {
             isArchived: false,
             now: now
         )
+        let archivedPlan = HomeThreadSwipeActionPlan.make(
+            thread: active,
+            isArchived: true,
+            now: now
+        )
+        let pinnedPlan = HomeThreadSwipeActionPlan.make(
+            thread: pinned,
+            isArchived: false,
+            now: now
+        )
+        let archiveOnlyPlan = HomeThreadSwipeActionPlan.make(
+            thread: archiveOnly,
+            isArchived: false,
+            now: now
+        )
 
-        #expect(activePlan.orderedActions == [.settle, .delete])
-        #expect(settledPlan.orderedActions == [.reopen, .delete])
-        #expect(settledButWorkingPlan.orderedActions == [.settle, .delete])
-        #expect(activePlan.performsPrimaryWithFullSwipe)
+        #expect(activePlan.actions == [.settle, .delete])
+        #expect(settledPlan.actions == [.reopen, .delete])
+        #expect(settledButWorkingPlan.actions == [.reopen, .delete])
+        #expect(archivedPlan.actions == [.restore, .delete])
+        #expect(pinnedPlan.actions == [.unpin, .delete])
+        #expect(archiveOnlyPlan.actions == [.archive, .delete])
+        #expect(activePlan.performsFirstActionWithFullSwipe)
         #expect(!activePlan.deleteFinishesOptimistically)
-        #expect(activePlan.orderedActions.first != .delete)
     }
 
     @Test
@@ -115,6 +144,24 @@ struct DailyUXSidebarTests {
         )
         #expect(state.beginSettleRequest(ifSettling: false) == nil)
         #expect(state.latestSettleRequestID == settleRequestID)
+    }
+
+    @Test
+    func settleUndoDismissesOnlyTheMatchingThread() {
+        var state = HomeThreadSettleUndoState()
+        let requestID = state.beginSettleRequest()
+        state.present(
+            requestID: requestID,
+            threadID: "target",
+            title: "Target",
+            restoresPin: false,
+            restoresSnoozeUntil: nil
+        )
+
+        state.dismiss(threadID: "other")
+        #expect(state.notice?.threadID == "target")
+        state.dismiss(threadID: "target")
+        #expect(state.notice == nil)
     }
 
     @Test
@@ -209,7 +256,7 @@ struct DailyUXSidebarTests {
             HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousWasEffectivelySettled: false,
+                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -217,7 +264,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: false,
                 didSucceed: true,
-                previousWasEffectivelySettled: false,
+                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -225,7 +272,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: false,
-                previousWasEffectivelySettled: false,
+                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -233,7 +280,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousWasEffectivelySettled: true,
+                previousWasSettled: true,
                 updatedThread: settled
             )
         )
@@ -241,7 +288,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousWasEffectivelySettled: false,
+                previousWasSettled: false,
                 updatedThread: active
             )
         )
@@ -249,7 +296,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousWasEffectivelySettled: false,
+                previousWasSettled: false,
                 updatedThread: nil
             )
         )
@@ -711,7 +758,8 @@ struct DailyUXSidebarTests {
         state: FeatureThreadState = .idle,
         isSettled: Bool = false,
         pinned: TimeInterval? = nil,
-        snoozedUntil: Date? = nil
+        snoozedUntil: Date? = nil,
+        supportsSettlement: Bool? = nil
     ) -> FeatureThread {
         FeatureThread(
             id: id,
@@ -724,7 +772,8 @@ struct DailyUXSidebarTests {
             lastActivityAt: now.addingTimeInterval(updated),
             snoozedUntil: snoozedUntil,
             snoozedAt: snoozedUntil.map { _ in now.addingTimeInterval(updated) },
-            pinnedAt: pinned.map(now.addingTimeInterval)
+            pinnedAt: pinned.map(now.addingTimeInterval),
+            supportsSettlement: supportsSettlement
         )
     }
 }
