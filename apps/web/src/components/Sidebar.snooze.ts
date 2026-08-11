@@ -11,7 +11,7 @@ import { formatShortTimestamp, parseTimestampDate } from "../timestampFormat";
 export { snoozeWakeLabel, type SnoozePreset };
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
-const HOUR_MS = 60 * 60 * 1_000;
+const MINUTE_MS = 60 * 1_000;
 
 export type SnoozeForInputResult =
   | { readonly ok: true; readonly value: Date }
@@ -44,8 +44,8 @@ function matchesLocalParts(
 
 /**
  * Parses a browser local wall time. Component round-tripping rejects DST-gap
- * normalization, while checking the adjacent hour lets a repeated-hour
- * default resolve to its still-future occurrence.
+ * normalization, while nearby timezone offsets let a repeated wall time
+ * resolve to its still-future occurrence regardless of the fallback size.
  */
 export function parseSnoozeForInput(
   input: string,
@@ -65,11 +65,14 @@ export function parseSnoozeForInput(
     return { ok: false, error: "Choose a valid date and time." };
   }
 
-  const candidates = [
-    new Date(initial.getTime() - HOUR_MS),
-    initial,
-    new Date(initial.getTime() + HOUR_MS),
-  ]
+  const initialOffset = initial.getTimezoneOffset();
+  const nearbyOffsets = new Set(
+    [-2, -1, 0, 1, 2].map((dayDelta) =>
+      new Date(initial.getTime() + dayDelta * DAY_MS).getTimezoneOffset(),
+    ),
+  );
+  const candidates = [...nearbyOffsets]
+    .map((offset) => new Date(initial.getTime() + (offset - initialOffset) * MINUTE_MS))
     .filter((candidate) => matchesLocalParts(candidate, parts))
     .toSorted((left, right) => left.getTime() - right.getTime());
   const future = candidates.findLast(

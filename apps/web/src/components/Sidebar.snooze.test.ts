@@ -150,4 +150,22 @@ describe("custom snooze browser input", () => {
       }),
     ).toEqual({ ok: true, value: secondOccurrence });
   });
+
+  it("supports repeated local times from a 30-minute fallback", () => {
+    const originalTimezone = process.env.TZ;
+    try {
+      process.env.TZ = "Australia/Lord_Howe";
+      const firstOccurrence = localDate(2026, 4, 5, 1, 45);
+      const secondOccurrence = new Date(firstOccurrence.getTime() + 30 * 60 * 1_000);
+
+      expect(formatSnoozeForInput(secondOccurrence)).toBe("2026-04-05T01:45");
+      expect(
+        parseSnoozeForInput("2026-04-05T01:45", {
+          now: new Date(firstOccurrence.getTime() + 15 * 60 * 1_000),
+        }),
+      ).toEqual({ ok: true, value: secondOccurrence });
+    } finally {
+      process.env.TZ = originalTimezone;
+    }
+  });
 });
