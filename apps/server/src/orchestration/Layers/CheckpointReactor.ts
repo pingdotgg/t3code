@@ -326,6 +326,17 @@ const make = Effect.gen(function* () {
       status: input.status,
       createdAt: input.createdAt,
     });
+
+    // Mirrored project: ship the turn's results back to the origin working
+    // copy. `queueApplyBack` snapshots and persists the pending apply under
+    // the project lock synchronously — this must complete *before*
+    // turn.processing.quiesced signals completion, or a fast-following
+    // turn's ensureFresh can acquire the lock first and pull the origin's
+    // state over the mirror before this turn's edits are captured,
+    // permanently losing them. Only the network delivery to the origin is
+    // backgrounded; that can safely wait for the next reconnect.
+    yield* mirrorService.queueApplyBack(input.projectId);
+
     yield* receiptBus.publish({
       type: "turn.processing.quiesced",
       threadId: input.threadId,
@@ -333,11 +344,6 @@ const make = Effect.gen(function* () {
       checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
     });
-
-    // Mirrored project: ship the turn's results back to the origin working
-    // copy. Non-blocking — turn completion never waits on the laptop; an
-    // offline origin leaves the apply queued for its next reconnect.
-    yield* mirrorService.applyBack(input.projectId).pipe(Effect.forkDetach);
 
     yield* orchestrationEngine.dispatch({
       type: "thread.activity.append",

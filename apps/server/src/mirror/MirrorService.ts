@@ -16,6 +16,7 @@ import {
   MirrorSyncFailedError,
   type MirrorAgentResponse,
   type MirrorConnectInput,
+  type MirrorConnectionId,
   type MirrorDirective,
   type MirrorProjectStatus,
   type MirrorRefUpdate,
@@ -130,6 +131,14 @@ export class MirrorService extends Context.Service<
     ) => Effect.Effect<Stream.Stream<MirrorStreamEvent>, MirrorProjectNotMirroredError>;
     readonly respond: (input: MirrorRespondInput) => Effect.Effect<void, MirrorSyncFailedError>;
     /**
+     * The project a live connection id belongs to, or null if there is no
+     * such connection. Used to bind `mirror.respond` to the caller's
+     * authenticated peer subject before the response is accepted.
+     */
+    readonly projectIdForConnection: (
+      connectionId: MirrorConnectionId,
+    ) => Effect.Effect<ProjectId | null>;
+    /**
      * The turn gate: bring the mirror up to date with the origin working
      * copy before a turn starts. No-op for projects without an origin.
      */
@@ -140,8 +149,16 @@ export class MirrorService extends Context.Service<
       void,
       MirrorOriginOfflineError | MirrorSyncFailedError | MirrorProjectNotMirroredError
     >;
-    /** Queue (and, when the agent is connected, deliver) a post-turn apply-back. */
+    /** Queue and deliver a post-turn apply-back; resolves once delivery finishes (or is queued for later). */
     readonly applyBack: (projectId: ProjectId) => Effect.Effect<void>;
+    /**
+     * Stage a post-turn apply-back synchronously (snapshot + persist under
+     * the project lock) and deliver it in the background. Use this instead
+     * of `applyBack` when the caller must not block on network delivery to
+     * the origin but a following turn's `ensureFresh` must never race the
+     * still-unstaged mirror working tree.
+     */
+    readonly queueApplyBack: (projectId: ProjectId) => Effect.Effect<void>;
     readonly requestSync: (
       projectId: ProjectId,
     ) => Effect.Effect<
@@ -405,14 +422,18 @@ export const make = Effect.gen(function* () {
 
   // --- broker --------------------------------------------------------------
 
-  const failPending = (pending: ReadonlyArray<[string, PendingRequest]>, detail: string) =>
+  const failPending = (
+    projectId: ProjectId,
+    pending: ReadonlyArray<[string, PendingRequest]>,
+    detail: string,
+  ) =>
     Effect.forEach(
       pending,
       ([syncId, entry]) =>
         Deferred.fail(
           entry.deferred,
           new MirrorSyncFailedError({
-            projectId: "" as ProjectId,
+            projectId,
             syncId,
             detail,
           }),
@@ -441,7 +462,7 @@ export const make = Effect.gen(function* () {
       }
       return [dropped, { ...current, connections, pending }] as const;
     });
-    yield* failPending(dropped, "The origin agent disconnected mid-sync.");
+    yield* failPending(projectId, dropped, "The origin agent disconnected mid-sync.");
     yield* Queue.shutdown(queue);
     yield* publishStatus(projectId);
   });
@@ -471,18 +492,37 @@ export const make = Effect.gen(function* () {
           queue,
           supportsSubmodules: input.supportsSubmodules === true,
         };
-        const previous = yield* SynchronizedRef.modify(state, (current) => {
+        // The old connection's pending requests must be dropped in the same
+        // atomic step that replaces it: calling disconnect() afterward would
+        // check current.connections against the now-superseded queue and
+        // find no match, silently skipping failPending and leaking the old
+        // requests until their multi-minute timeout.
+        const { previous, droppedPending } = yield* SynchronizedRef.modify(state, (current) => {
           const connections = new Map(current.connections);
           const previous = connections.get(input.projectId);
           connections.set(input.projectId, connection);
-          return [previous, { ...current, connections }] as const;
+          const pending = new Map(current.pending);
+          const droppedPending: Array<[string, PendingRequest]> = [];
+          if (previous !== undefined) {
+            for (const [syncId, entry] of pending) {
+              if (entry.connectionId === previous.connectionId) {
+                pending.delete(syncId);
+                droppedPending.push([syncId, entry]);
+              }
+            }
+          }
+          return [
+            { previous, droppedPending },
+            { ...current, connections, pending },
+          ] as const;
         });
         if (previous !== undefined) {
-          yield* disconnect(input.projectId, previous.queue).pipe(
-            // The new registration already replaced it; only the queue and
-            // its pending requests need tearing down.
-            Effect.ignore,
+          yield* failPending(
+            input.projectId,
+            droppedPending,
+            "A new origin connection replaced this one.",
           );
+          yield* Queue.shutdown(previous.queue);
         }
         yield* publishStatus(input.projectId);
         // Kick work the agent owes us as soon as it appears: the initial
@@ -1158,19 +1198,27 @@ export const make = Effect.gen(function* () {
         const pending = runtime.pendingApplyJson;
         if (pending != null) {
           yield* saveRuntime({ projectId, pendingApplyJson: null });
-          yield* enqueueApplyBackCore(projectId).pipe(Effect.ignore);
+          yield* stageAndDeliverApplyBack(projectId).pipe(Effect.ignore);
         }
       }),
     );
   });
 
-  const enqueueApplyBackCore = Effect.fn("MirrorService.enqueueApplyBack")(function* (
+  /**
+   * Snapshots the mirror's current working tree and persists it as a
+   * pending apply-back, returning whether there is anything to deliver.
+   * Must run to completion under the project lock *before* turn completion
+   * is signaled — only the network delivery in `processPendingApplyCore`
+   * is safe to detach, since it's the persisted pending-apply row (not the
+   * live mirror working tree) that a concurrent `ensureFresh` would race.
+   */
+  const stageApplyBackCore = Effect.fn("MirrorService.stageApplyBack")(function* (
     projectId: ProjectId,
-  ) {
+  ): Effect.fn.Return<boolean> {
     const project = yield* resolveMirroredProject(projectId);
-    if (project === null) return;
+    if (project === null) return false;
     const runtime = yield* loadRuntime(projectId);
-    if (runtime?.lastSyncedSnapshotOid == null) return;
+    if (runtime?.lastSyncedSnapshotOid == null) return false;
     const root = project.workspaceRoot;
     const syncId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     const rootIncludePaths = yield* includePathsFor(root);
@@ -1245,7 +1293,7 @@ export const make = Effect.gen(function* () {
       yield* gitSync
         .pruneSnapshotRefs({ root, keepOids: [runtime.lastSyncedSnapshotOid] })
         .pipe(Effect.ignore);
-      return;
+      return false;
     }
     yield* saveRuntime({
       projectId,
@@ -1256,8 +1304,14 @@ export const make = Effect.gen(function* () {
         submodules: submodulesForApplyBack,
       }),
     });
-    yield* processPendingApplyCore(projectId);
+    return true;
   });
+
+  /** Stage synchronously, then deliver in the same call — used by callers already inside a lock. */
+  const stageAndDeliverApplyBack = (projectId: ProjectId) =>
+    stageApplyBackCore(projectId).pipe(
+      Effect.andThen((staged) => (staged ? processPendingApplyCore(projectId) : Effect.void)),
+    );
 
   const processPendingApplyCore = Effect.fn("MirrorService.processPendingApply")(function* (
     projectId: ProjectId,
@@ -1361,6 +1415,11 @@ export const make = Effect.gen(function* () {
               snapshotRef: mirrorSnapshotRef(sub.syncId),
               includeBranches: true,
             });
+            // Every exit past this point (skipped, unexpected response,
+            // caught error) must still clear the staged bundle — only the
+            // success path below removed it, so skipped submodules leaked
+            // their bundle on every sync.
+            yield* Effect.addFinalizer(() => transfer.removeStaged(sub.syncId));
             const subDownload = yield* transfer.issueUrl({
               projectId,
               syncId: sub.syncId,
@@ -1399,7 +1458,6 @@ export const make = Effect.gen(function* () {
             yield* gitSync
               .pruneSnapshotRefs({ root: nestedRoot, keepOids: [sub.targetOid] })
               .pipe(Effect.ignore);
-            yield* transfer.removeStaged(sub.syncId);
             if (subResponse.outcome === "conflicted") {
               yield* Effect.logWarning("Submodule apply-back hit conflicts on the origin.", {
                 projectId,
@@ -1408,6 +1466,7 @@ export const make = Effect.gen(function* () {
               });
             }
           }).pipe(
+            Effect.scoped,
             Effect.catch((cause) => {
               submoduleWarnings.push({ path: sub.path, detail: cause.message });
               return Effect.void;
@@ -1446,8 +1505,27 @@ export const make = Effect.gen(function* () {
   const originConnected: MirrorService["Service"]["originConnected"] = (projectId) =>
     SynchronizedRef.get(state).pipe(Effect.map((current) => current.connections.has(projectId)));
 
+  // Fully synchronous: stage (snapshot + persist) and deliver, both under
+  // the project lock. Used where the caller wants to know delivery actually
+  // happened (e.g. a manual "sync now").
   const applyBack: MirrorService["Service"]["applyBack"] = (projectId) =>
-    withProjectLock(projectId, enqueueApplyBackCore(projectId));
+    withProjectLock(projectId, stageAndDeliverApplyBack(projectId));
+
+  // Fire-and-forget variant for turn completion: the snapshot-and-persist
+  // half runs under the project lock and is awaited by the caller (turn
+  // completion must not signal quiesced until this durably records the
+  // turn's edits, or a fast-following turn's ensureFresh can pull the
+  // origin's state over the mirror first and lose them); only the network
+  // delivery half is detached, since that's the part safe to leave for the
+  // next reconnect.
+  const queueApplyBack: MirrorService["Service"]["queueApplyBack"] = (projectId) =>
+    withProjectLock(projectId, stageApplyBackCore(projectId)).pipe(
+      Effect.andThen((staged) =>
+        staged
+          ? withProjectLock(projectId, processPendingApplyCore(projectId)).pipe(Effect.forkDetach)
+          : Effect.void,
+      ),
+    );
 
   const requestSync: MirrorService["Service"]["requestSync"] = Effect.fn(
     "MirrorService.requestSync",
@@ -1459,7 +1537,7 @@ export const make = Effect.gen(function* () {
     yield* withProjectLock(
       projectId,
       ensureFreshCore(projectId, { reason: "manual" }).pipe(
-        Effect.andThen(enqueueApplyBackCore(projectId).pipe(Effect.ignore)),
+        Effect.andThen(stageAndDeliverApplyBack(projectId).pipe(Effect.ignore)),
       ),
     );
   });
@@ -1507,11 +1585,23 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const projectIdForConnection = (connectionId: MirrorConnectionId) =>
+    SynchronizedRef.get(state).pipe(
+      Effect.map((current) => {
+        for (const [projectId, connection] of current.connections) {
+          if (connection.connectionId === connectionId) return projectId as ProjectId;
+        }
+        return null;
+      }),
+    );
+
   return MirrorService.of({
     connect,
     respond,
+    projectIdForConnection,
     ensureFresh,
     applyBack,
+    queueApplyBack,
     requestSync,
     originConnected,
     statusStream,
@@ -1532,8 +1622,10 @@ export const layerTest = Layer.succeed(
     connect: (input) =>
       Effect.fail(new MirrorProjectNotMirroredError({ projectId: input.projectId })),
     respond: () => Effect.void,
+    projectIdForConnection: () => Effect.succeed(null),
     ensureFresh: () => Effect.void,
     applyBack: () => Effect.void,
+    queueApplyBack: () => Effect.void,
     requestSync: (projectId) => Effect.fail(new MirrorProjectNotMirroredError({ projectId })),
     originConnected: () => Effect.succeed(false),
     statusStream: () => Effect.succeed(Stream.empty),

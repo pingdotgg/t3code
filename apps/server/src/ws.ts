@@ -2184,14 +2184,35 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "mirror" },
           ),
+        // Peer credentials are minted with a project-specific subject
+        // (`mirror-peer:<projectId>`), but AuthMirrorSyncScope alone doesn't
+        // encode which project a token was issued for. Without binding the
+        // subject to the request's project, a peer token for one mirrored
+        // project could connect (or respond) as the origin for any other,
+        // replacing its live connection and receiving its sync directives.
         [WS_METHODS.mirrorConnect]: (input) =>
-          observeRpcStreamEffect(WS_METHODS.mirrorConnect, mirrorService.connect(input), {
-            "rpc.aggregate": "mirror",
-          }),
+          observeRpcStreamEffect(
+            WS_METHODS.mirrorConnect,
+            Effect.gen(function* () {
+              if (currentSession.subject !== `mirror-peer:${input.projectId}`) {
+                return yield* Effect.fail(authorizationError(AuthMirrorSyncScope));
+              }
+              return yield* mirrorService.connect(input);
+            }),
+            { "rpc.aggregate": "mirror" },
+          ),
         [WS_METHODS.mirrorRespond]: (input) =>
-          observeRpcEffect(WS_METHODS.mirrorRespond, mirrorService.respond(input), {
-            "rpc.aggregate": "mirror",
-          }),
+          observeRpcEffect(
+            WS_METHODS.mirrorRespond,
+            Effect.gen(function* () {
+              const projectId = yield* mirrorService.projectIdForConnection(input.connectionId);
+              if (projectId === null || currentSession.subject !== `mirror-peer:${projectId}`) {
+                return yield* Effect.fail(authorizationError(AuthMirrorSyncScope));
+              }
+              return yield* mirrorService.respond(input);
+            }),
+            { "rpc.aggregate": "mirror" },
+          ),
         [WS_METHODS.mirrorRequestSync]: (input) =>
           observeRpcEffect(
             WS_METHODS.mirrorRequestSync,

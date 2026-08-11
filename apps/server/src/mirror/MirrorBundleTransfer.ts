@@ -32,7 +32,7 @@ import * as ServerConfig from "../config.ts";
 export const MIRROR_BUNDLE_ROUTE_PREFIX = "/api/mirror/bundle";
 
 const SIGNING_SECRET_NAME = "mirror-bundle-signing-key";
-const BUNDLE_TOKEN_TTL_MS = 10 * 60 * 1000;
+const BUNDLE_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 const MirrorBundleClaimsSchema = Schema.Struct({
   version: Schema.Literal(1),
@@ -89,10 +89,16 @@ export class MirrorBundleTransfer extends Context.Service<
       MirrorBundleSigningError
     >;
     /**
-     * Validate a route token. Tokens are single-use per direction: a second
-     * request with the same token is rejected.
+     * Validate a route token for the expected direction. Tokens are
+     * single-use: a second request with the same token is rejected. A
+     * request using the wrong method (and thus the wrong direction) fails
+     * before the token is consumed, so the legitimate request can still
+     * succeed.
      */
-    readonly resolve: (token: string) => Effect.Effect<ResolvedBundleTransfer | null>;
+    readonly resolve: (
+      token: string,
+      expectedDirection: "upload" | "download",
+    ) => Effect.Effect<ResolvedBundleTransfer | null>;
     readonly removeStaged: (syncId: MirrorSyncId) => Effect.Effect<void>;
     /**
      * Record the cumulative byte count of an in-flight bundle upload.
@@ -154,7 +160,7 @@ export const make = Effect.gen(function* () {
 
   const resolve: MirrorBundleTransfer["Service"]["resolve"] = Effect.fn(
     "MirrorBundleTransfer.resolve",
-  )(function* (token) {
+  )(function* (token, expectedDirection) {
     const [encodedPayload, signature] = token.split(".");
     if (!encodedPayload || !signature) return null;
     const signingSecret = yield* loadSigningSecret.pipe(Effect.orElseSucceed(() => null));
@@ -165,6 +171,9 @@ export const make = Effect.gen(function* () {
     const claims = decodeClaims(encodedPayload);
     const now = yield* Clock.currentTimeMillis;
     if (!claims || claims.expiresAt <= now) return null;
+    // Checked before consuming the token: a wrong-method request (e.g. a
+    // GET against an upload URL) must not burn the single legitimate use.
+    if (claims.direction !== expectedDirection) return null;
 
     const firstUse = yield* SynchronizedRef.modify(usedTokens, (current) => {
       const pruned = new Map(Array.from(current).filter(([, expiry]) => expiry > now));

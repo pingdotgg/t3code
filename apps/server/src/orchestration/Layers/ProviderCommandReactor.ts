@@ -326,9 +326,15 @@ const make = Effect.gen(function* () {
   const serverSettingsService = yield* ServerSettingsService;
   const mirrorService = yield* MirrorService;
   // Offering "run against last-synced files" after an offline gate failure:
-  // the failure records an offer; resending the same thread's message within
-  // the window is the user's explicit acceptance.
-  const staleRunOffers = new Map<string, number>();
+  // the failure records an offer; resending the same failed message within
+  // the window is the user's explicit acceptance. Keyed by messageId (not
+  // just threadId) so a different message on the same thread — from this
+  // user or another client — can't silently ride the open offer into a
+  // stale-run turn.
+  const staleRunOffers = new Map<
+    string,
+    { readonly messageId: string; readonly offeredAt: number }
+  >();
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -1176,9 +1182,11 @@ const make = Effect.gen(function* () {
     const gateProject = yield* resolveProject(thread.projectId);
     if (gateProject?.origin != null) {
       const now = yield* Clock.currentTimeMillis;
-      const offeredAt = staleRunOffers.get(event.payload.threadId);
+      const offer = staleRunOffers.get(event.payload.threadId);
       const staleRunApproved =
-        offeredAt !== undefined && now - offeredAt <= STALE_RUN_OFFER_WINDOW_MS;
+        offer !== undefined &&
+        offer.messageId === event.payload.messageId &&
+        now - offer.offeredAt <= STALE_RUN_OFFER_WINDOW_MS;
       staleRunOffers.delete(event.payload.threadId);
       if (staleRunApproved) {
         yield* appendProviderFailureActivity({
@@ -1196,7 +1204,10 @@ const make = Effect.gen(function* () {
           .pipe(Effect.result);
         if (gate._tag === "Failure") {
           if (gate.failure._tag === "MirrorOriginOfflineError") {
-            staleRunOffers.set(event.payload.threadId, now);
+            staleRunOffers.set(event.payload.threadId, {
+              messageId: event.payload.messageId,
+              offeredAt: now,
+            });
             yield* appendProviderFailureActivity({
               threadId: event.payload.threadId,
               kind: "provider.turn.start.failed",

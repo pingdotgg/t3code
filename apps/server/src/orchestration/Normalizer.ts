@@ -85,7 +85,16 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       // client-supplied root is ignored so a client can never point a
       // mirror at an arbitrary host path.
       if (canonicalCommand.origin != null) {
-        const mirrorRoot = path.join(serverConfig.mirrorsDir, canonicalCommand.projectId);
+        const mirrorsDir = path.resolve(serverConfig.mirrorsDir);
+        const mirrorRoot = path.resolve(mirrorsDir, canonicalCommand.projectId);
+        // `projectId` is only validated as a trimmed non-empty string, so a
+        // client-controlled value like "../../target" must be rejected here
+        // rather than trusted to stay inside mirrorsDir.
+        if (mirrorRoot !== mirrorsDir && !mirrorRoot.startsWith(mirrorsDir + path.sep)) {
+          return yield* new OrchestrationDispatchCommandError({
+            message: "Invalid project id for a mirrored project.",
+          });
+        }
         yield* fileSystem.makeDirectory(mirrorRoot, { recursive: true }).pipe(
           Effect.mapError(
             (cause) =>

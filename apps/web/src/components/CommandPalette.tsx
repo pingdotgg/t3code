@@ -2249,6 +2249,7 @@ function OpenCommandPaletteDialog(props: {
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
+    !isMirrorProjectLinking &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
   const willCreateProjectPath =
     canSubmitBrowsePath &&

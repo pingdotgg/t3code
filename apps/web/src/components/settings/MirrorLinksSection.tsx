@@ -57,13 +57,15 @@ function EnvironmentMirrorLinks({
       setRemovingProjectId(link.projectId);
       try {
         const result = await detach({ environmentId, input: { projectId: link.projectId } });
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add({
-            type: "error",
-            title: "Failed to remove mirror link",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add({
+              type: "error",
+              title: "Failed to remove mirror link",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            });
+          }
           return;
         }
         toastManager.add({

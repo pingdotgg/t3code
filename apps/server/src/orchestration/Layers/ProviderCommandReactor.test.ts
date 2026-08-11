@@ -528,9 +528,11 @@ describe("ProviderCommandReactor", () => {
         connect: (input) =>
           Effect.fail(new MirrorProjectNotMirroredError({ projectId: input.projectId })),
         respond: () => Effect.void,
+        projectIdForConnection: () => Effect.succeed(null),
         ensureFresh: (projectId) =>
           Effect.fail(new MirrorOriginOfflineError({ projectId, originLabel: "Laptop" })),
         applyBack: () => Effect.void,
+        queueApplyBack: () => Effect.void,
         requestSync: (projectId) => Effect.fail(new MirrorProjectNotMirroredError({ projectId })),
         originConnected: () => Effect.succeed(false),
         statusStream: () => Effect.succeed(Stream.empty),
@@ -613,8 +615,9 @@ describe("ProviderCommandReactor", () => {
     });
     expect(harness.sendTurn).not.toHaveBeenCalled();
 
-    // Resending within the window is the explicit stale-run approval.
-    await startTurn("cmd-mirrored-turn-2", "mirrored-message-2", "2026-01-01T00:00:05.000Z");
+    // Resending the SAME failed message within the window is the explicit
+    // stale-run approval; a different message must not ride the open offer.
+    await startTurn("cmd-mirrored-turn-2", "mirrored-message-1", "2026-01-01T00:00:05.000Z");
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-mirrored"));

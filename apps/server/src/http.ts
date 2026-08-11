@@ -242,8 +242,7 @@ const resolveBundleTransfer = (direction: "upload" | "download") =>
     const token = url.value.pathname.slice(`${MIRROR_BUNDLE_ROUTE_PREFIX}/`.length);
     if (token.length === 0 || token.includes("/")) return null;
     const transfer = yield* MirrorBundleTransfer;
-    const resolved = yield* transfer.resolve(token);
-    return resolved !== null && resolved.direction === direction ? resolved : null;
+    return yield* transfer.resolve(token, direction);
   });
 
 export const mirrorBundleRouteLayer = Layer.mergeAll(

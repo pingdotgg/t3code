@@ -55,6 +55,24 @@ const TRANSFER_TIMEOUT = Duration.minutes(30);
 
 const linkTokenSecretName = (projectId: string) => `mirror-link-token-${projectId}`;
 
+/**
+ * Bounded description of a failed HTTP request to the host, safe to surface
+ * in status and logs. `String(cause)` on an HttpClientError normally embeds
+ * the full request URL, which for bundle transfer requests is the
+ * single-use HMAC-signed token — so it must never be interpolated directly.
+ */
+const describeHttpFailure = (cause: unknown): string => {
+  const tag =
+    typeof cause === "object" && cause !== null && "_tag" in cause
+      ? String((cause as { _tag: unknown })._tag)
+      : "RequestFailed";
+  const reason =
+    typeof cause === "object" && cause !== null && "reason" in cause
+      ? String((cause as { reason: unknown }).reason)
+      : null;
+  return reason ? `${tag}: ${reason}` : tag;
+};
+
 const WebSocketTicketResponse = Schema.Struct({ ticket: Schema.String });
 const decodeTicket = Schema.decodeUnknownEffect(WebSocketTicketResponse);
 
@@ -169,7 +187,7 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new MirrorSyncFailedError({
               projectId: link.projectId,
-              detail: `Websocket ticket request failed: ${String(cause)}`,
+              detail: `Websocket ticket request failed: ${describeHttpFailure(cause)}`,
             }),
         ),
       );
@@ -228,7 +246,7 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new MirrorSyncFailedError({
             projectId: link.projectId,
-            detail: `Bundle upload failed: ${String(cause)}`,
+            detail: `Bundle upload failed: ${describeHttpFailure(cause)}`,
           }),
       ),
     );
@@ -251,7 +269,7 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new MirrorSyncFailedError({
             projectId: link.projectId,
-            detail: `Bundle download failed: ${String(cause)}`,
+            detail: `Bundle download failed: ${describeHttpFailure(cause)}`,
           }),
       ),
     );
@@ -445,7 +463,7 @@ export const make = Effect.gen(function* () {
       if (currentUpdate !== undefined) {
         yield* gitSync
           .applyBranchUpdatesToCurrent({ root, ref: currentUpdate.ref, oid: currentUpdate.oid })
-          .pipe(Effect.ignore);
+          .pipe(Effect.mapError(gitFailed));
         remainingRefUpdates = refUpdates.filter((update) => update.ref !== currentBranch);
       }
     }
@@ -481,12 +499,30 @@ export const make = Effect.gen(function* () {
 
   // --- submodule directive handlers -------------------------------------------
 
+  /**
+   * Joins a host-supplied submodule path to the project root and rejects
+   * anything that escapes it (e.g. `../other-repository`), so a compromised
+   * host can't point the origin agent at an arbitrary local directory.
+   */
+  const resolveSubmoduleRoot = (link: MirrorLink, submodulePath: string) =>
+    Effect.gen(function* () {
+      const localRoot = path.resolve(link.localRoot);
+      const root = path.resolve(localRoot, submodulePath);
+      if (root !== localRoot && !root.startsWith(localRoot + path.sep)) {
+        return yield* new MirrorSyncFailedError({
+          projectId: link.projectId,
+          detail: "Submodule path escapes the project root.",
+        });
+      }
+      return root;
+    });
+
   const handleSubmoduleSeedRequested = Effect.fn("MirrorAgent.handleSubmoduleSeedRequested")(
     function* (
       link: MirrorLink,
       directive: Extract<MirrorDirective, { type: "submodule-seed-requested" }>,
     ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
-      const root = path.join(link.localRoot, directive.path);
+      const root = yield* resolveSubmoduleRoot(link, directive.path);
       const isRepo = yield* gitSync.isRepository(root).pipe(Effect.orElseSucceed(() => false));
       if (!isRepo) {
         return {
@@ -512,7 +548,7 @@ export const make = Effect.gen(function* () {
       link: MirrorLink,
       directive: Extract<MirrorDirective, { type: "submodule-sync-requested" }>,
     ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
-      const root = path.join(link.localRoot, directive.path);
+      const root = yield* resolveSubmoduleRoot(link, directive.path);
       const isRepo = yield* gitSync.isRepository(root).pipe(Effect.orElseSucceed(() => false));
       if (!isRepo) {
         return {
@@ -551,7 +587,7 @@ export const make = Effect.gen(function* () {
       link: MirrorLink,
       directive: Extract<MirrorDirective, { type: "submodule-apply-requested" }>,
     ): Effect.fn.Return<MirrorAgentResponse, MirrorSyncFailedError> {
-      const root = path.join(link.localRoot, directive.path);
+      const root = yield* resolveSubmoduleRoot(link, directive.path);
       const isRepo = yield* gitSync.isRepository(root).pipe(Effect.orElseSucceed(() => false));
       if (!isRepo) {
         return {
@@ -684,23 +720,24 @@ export const make = Effect.gen(function* () {
             }
             const directive = event.directive;
             const response = yield* handleDirective(link, directive).pipe(
-              Effect.catchTag("MirrorSyncFailedError", (error) =>
-                Effect.succeed<MirrorAgentResponse>(
-                  isSubmoduleDirective(directive)
-                    ? {
-                        type: "submodule-skipped",
-                        syncId: directive.syncId,
-                        path: directive.path,
-                        reason: "error",
-                        detail: error.detail,
-                      }
-                    : {
-                        type: "sync-failed",
-                        syncId: directiveSyncId(directive) ?? "",
-                        message: error.detail,
-                      },
-                ),
-              ),
+              Effect.catchTags({
+                MirrorSyncFailedError: (error) =>
+                  Effect.succeed<MirrorAgentResponse>(
+                    isSubmoduleDirective(directive)
+                      ? {
+                          type: "submodule-skipped",
+                          syncId: directive.syncId,
+                          path: directive.path,
+                          reason: "error",
+                          detail: error.detail,
+                        }
+                      : {
+                          type: "sync-failed",
+                          syncId: directiveSyncId(directive) ?? "",
+                          message: error.detail,
+                        },
+                  ),
+              }),
             );
             if (response !== null) {
               yield* client[WS_METHODS.mirrorRespond]({ connectionId, response });
@@ -745,12 +782,13 @@ export const make = Effect.gen(function* () {
           while: (error) => error._tag !== "MirrorProjectNotMirroredError",
           schedule: RECONNECT_SCHEDULE,
         }),
-        Effect.catchTag("MirrorProjectNotMirroredError", (error) =>
-          Effect.logWarning("Mirror link is stale on the host; agent stopped.", {
-            projectId: link.projectId,
-            detail: error.message,
-          }),
-        ),
+        Effect.catchTags({
+          MirrorProjectNotMirroredError: (error) =>
+            Effect.logWarning("Mirror link is stale on the host; agent stopped.", {
+              projectId: link.projectId,
+              detail: error.message,
+            }),
+        }),
       );
     });
 

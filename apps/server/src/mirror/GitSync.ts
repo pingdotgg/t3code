@@ -433,6 +433,11 @@ export const make = Effect.gen(function* () {
           "--write-tree",
           "--no-messages",
           "--name-only",
+          // NUL-terminated, unquoted paths: without -z, git escapes paths
+          // with tabs/newlines/quotes/backslashes/non-ASCII bytes, and the
+          // conflict list below must be the real on-disk path since it's
+          // used to look the entry up again with ls-tree.
+          "-z",
           `--merge-base=${input.baseOid}`,
           local.snapshotOid,
           input.targetOid,
@@ -449,7 +454,7 @@ export const make = Effect.gen(function* () {
           stderr: merge.stderr,
         });
       }
-      const lines = merge.stdout.split("\n").filter((line) => line.length > 0);
+      const lines = merge.stdout.split("\0").filter((line) => line.length > 0);
       const mergedTree = lines[0]?.trim() ?? "";
       if (mergedTree.length === 0) {
         return yield* new GitSyncCommandError({
@@ -482,7 +487,12 @@ export const make = Effect.gen(function* () {
                 // Deleted locally: drop it from the final tree too.
                 indexInfoLines.push(`000000 ${"0".repeat(40)}\t${conflictPath}`);
               } else {
-                const match = entry.match(/^(\d{6}) blob ([0-9a-f]+)\t/);
+                // Matches both plain blobs and submodule gitlinks (mode
+                // 160000, type commit) — a conflicted gitlink otherwise
+                // produces no update-index instruction and keeps
+                // merge-tree's synthetic result instead of either side's
+                // real submodule pointer.
+                const match = entry.match(/^(\d{6}) (?:blob|commit) ([0-9a-f]+)\t/);
                 if (match?.[1] !== undefined && match[2] !== undefined) {
                   indexInfoLines.push(`${match[1]} ${match[2]}\t${conflictPath}`);
                 }
@@ -536,10 +546,15 @@ export const make = Effect.gen(function* () {
 
   const listGitlinks: GitSync["Service"]["listGitlinks"] = Effect.fn("GitSync.listGitlinks")(
     function* (root, treeOid) {
-      const result = yield* run({ root, args: ["ls-tree", "-r", treeOid] });
+      // `-z` disables git's pathname quoting (tabs, newlines, quotes,
+      // backslashes, non-ASCII bytes), so entries are NUL-terminated instead
+      // of newline-terminated and the path is the real on-disk path rather
+      // than an escaped display form.
+      const result = yield* run({ root, args: ["ls-tree", "-r", "-z", treeOid] });
       const gitlinks: Array<{ path: string; oid: string }> = [];
-      for (const line of result.stdout.split("\n")) {
-        const match = line.match(/^160000 commit ([0-9a-f]+)\t(.+)$/);
+      for (const entry of result.stdout.split("\0")) {
+        if (entry.length === 0) continue;
+        const match = entry.match(/^160000 commit ([0-9a-f]+)\t(.+)$/);
         if (match?.[1] !== undefined && match[2] !== undefined) {
           gitlinks.push({ path: match[2], oid: match[1] });
         }
