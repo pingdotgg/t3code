@@ -17,7 +17,10 @@ import {
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
-import { CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS } from "./lib/cli-external-packages.ts";
+import {
+  CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS,
+  findInlinedExternalPackages,
+} from "./lib/cli-external-packages.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
@@ -375,6 +378,15 @@ const desktopBuildInputArtifactNames = {
   "server-dist": "serverDist",
   "bundled-server-client": "bundled server client",
 } satisfies Record<DesktopBuildInputArtifact, string>;
+
+export class InlinedExternalPackageError extends Schema.TaggedErrorClass<InlinedExternalPackageError>()(
+  "InlinedExternalPackageError",
+  { packages: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `The server bundle inlined packages that must stay external: ${this.packages.join(", ")}. These are native addons or their loaders; inlined, they resolve prebuilds relative to the bundle and silently lose native acceleration. Check the deps.neverBundle wiring in apps/server/vite.config.ts.`;
+  }
+}
 
 export class MissingDesktopBuildInputError extends Schema.TaggedErrorClass<MissingDesktopBuildInputError>()(
   "MissingDesktopBuildInputError",
@@ -1822,6 +1834,39 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       return yield* new MissingDesktopBuildInputError({
         ...input,
         buildCommand: "vp run build:desktop",
+      });
+    }
+  }
+
+  // Assert against the emitted bundle, not the bundler config. `alwaysBundle`
+  // only forces packages IN, so a transitive dependency of an external package
+  // is bundled by default however the predicate is written — that silently
+  // inlined msgpackr-extract and its native loader while every list-based test
+  // still passed. An inlined native loader resolves its prebuilds relative to
+  // the bundle and quietly falls back to a slower pure-JS path, so this fails
+  // the build rather than shipping a silent regression.
+  {
+    const chunkNames = (yield* fs.readDirectory(distDirs.serverDist)).filter((entry) =>
+      entry.endsWith(".mjs"),
+    );
+    let totalRegions = 0;
+    const inlined = new Set<string>();
+    for (const chunkName of chunkNames) {
+      const source = yield* fs.readFileString(path.join(distDirs.serverDist, chunkName));
+      const scan = findInlinedExternalPackages(source);
+      totalRegions += scan.regionCount;
+      for (const name of scan.inlined) inlined.add(name);
+    }
+    if (inlined.size > 0) {
+      return yield* new InlinedExternalPackageError({
+        packages: [...inlined].sort(),
+      });
+    }
+    // No regions at all means the scan went blind (marker format changed), not
+    // that the bundle is clean.
+    if (totalRegions === 0) {
+      return yield* new InlinedExternalPackageError({
+        packages: ["<no module regions found; the bundle scan needs updating>"],
       });
     }
   }

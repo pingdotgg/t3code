@@ -13,7 +13,10 @@ import packageJson from "./package.json" with { type: "json" };
 //
 // Inverted here — bundle everything except the packages that genuinely cannot be
 // inlined. See scripts/lib/cli-external-packages.ts for what earns an exemption.
-import { shouldBundleCliDependency } from "../../scripts/lib/cli-external-packages.ts";
+import {
+  isExternalCliDependency,
+  shouldBundleCliDependency,
+} from "../../scripts/lib/cli-external-packages.ts";
 
 export { shouldBundleCliDependency };
 
@@ -38,7 +41,14 @@ export default mergeConfig(
       sourcemap: true,
       clean: true,
       deps: {
+        // Both halves are required. `alwaysBundle` forces the JS dependencies in
+        // (declared deps are external by default, which is what this change is
+        // undoing). `neverBundle` forces the native packages out: returning
+        // false from `alwaysBundle` only means "no opinion", so a transitive
+        // dependency would still be bundled — which silently inlined
+        // msgpackr-extract and its loader, losing native acceleration.
         alwaysBundle: shouldBundleCliDependency,
+        neverBundle: (id: string) => isExternalCliDependency(id),
         onlyBundle: false,
       },
       banner: {

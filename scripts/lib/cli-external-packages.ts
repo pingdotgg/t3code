@@ -60,10 +60,24 @@ export const CLI_EXTERNAL_PACKAGE_PREFIXES = [
   ...CLI_BUILD_ONLY_EXTERNAL_PREFIXES,
 ] as const;
 
+/**
+ * True when `id` must stay out of the bundle.
+ *
+ * This has to be wired to the bundler's `neverBundle`, not just to
+ * `alwaysBundle`. `alwaysBundle` only forces packages IN — returning false from
+ * it means "no opinion", and the default then applies: a declared dependency
+ * stays external, but a transitive one gets bundled. That is how
+ * msgpackr-extract, node-gyp-build-optional-packages and detect-libc ended up
+ * inlined while node-pty (a declared dependency) stayed external.
+ */
+export function isExternalCliDependency(id: string): boolean {
+  return CLI_EXTERNAL_PACKAGE_PREFIXES.some((prefix) => id.startsWith(prefix));
+}
+
 /** True when the CLI bundle should inline `id` rather than leave it external. */
 export function shouldBundleCliDependency(id: string): boolean {
   if (id.startsWith("node:")) return false;
-  return !CLI_EXTERNAL_PACKAGE_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return !isExternalCliDependency(id);
 }
 
 /**
@@ -80,3 +94,38 @@ export const CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS = CLI_EXTERNAL_PACKAGE_PREFIXES.f
   (prefix) =>
     [`node_modules/${prefix}*/**/*`, `node_modules/.pnpm/**/node_modules/${prefix}*/**/*`] as const,
 );
+
+/**
+ * Scan an emitted bundle chunk for runtime-external packages that were inlined.
+ *
+ * Configuring the bundler is not the same as checking what it produced. The
+ * `alwaysBundle` predicate only forces packages IN; returning false from it
+ * means "no opinion", so a transitive dependency still gets bundled by default.
+ * msgpackr-extract, node-gyp-build-optional-packages and detect-libc were
+ * inlined that way while every list-based test passed, which is why this reads
+ * the artifact instead.
+ *
+ * `regionCount` is reported so the caller can tell "nothing was inlined" apart
+ * from "the marker format changed and this scan no longer sees anything".
+ */
+export function findInlinedExternalPackages(source: string): {
+  readonly regionCount: number;
+  readonly inlined: ReadonlyArray<string>;
+} {
+  // Rolldown marks each inlined module with a `//#region <path>` comment.
+  const regionPattern = /\/\/#region\s+(\S+)/g;
+  const packagePattern = /node_modules\/((?:@[^/\s]+\/)?[^/\s]+)\//g;
+
+  let regionCount = 0;
+  const inlined = new Set<string>();
+  for (const region of source.matchAll(regionPattern)) {
+    regionCount += 1;
+    const regionPath = region[1] ?? "";
+    for (const candidate of regionPath.matchAll(packagePattern)) {
+      const name = candidate[1];
+      if (name !== undefined && isExternalCliDependency(name)) inlined.add(name);
+    }
+  }
+
+  return { regionCount, inlined: [...inlined].sort() };
+}

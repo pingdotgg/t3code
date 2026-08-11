@@ -11,6 +11,7 @@ import {
   CLI_EXTERNAL_PACKAGE_PREFIXES,
   CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS,
   CLI_RUNTIME_EXTERNAL_PREFIXES,
+  findInlinedExternalPackages,
   shouldBundleCliDependency,
 } from "./cli-external-packages.ts";
 
@@ -193,4 +194,50 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
       );
     }),
   );
+});
+
+// Configuring the bundler is not the same as checking what it emitted. These
+// exercise the scanner against the marker shape rolldown actually produces.
+describe("findInlinedExternalPackages", () => {
+  const region = (path: string) => `//#region ${path}
+var x = 1;
+//#endregion
+`;
+
+  it("flags an external package that was inlined", () => {
+    const source =
+      region("../../node_modules/.pnpm/detect-libc@2.1.2/node_modules/detect-libc/lib/process.js") +
+      region(
+        "../../node_modules/.pnpm/msgpackr-extract@3.0.4/node_modules/msgpackr-extract/index.js",
+      );
+    const result = findInlinedExternalPackages(source);
+
+    assert.deepStrictEqual(result.inlined, ["detect-libc", "msgpackr-extract"]);
+    assert.strictEqual(result.regionCount, 2);
+  });
+
+  it("flags scoped external packages", () => {
+    const result = findInlinedExternalPackages(
+      region("../../node_modules/@ff-labs/fff-node/dist/src/index.js"),
+    );
+    assert.deepStrictEqual(result.inlined, ["@ff-labs/fff-node"]);
+  });
+
+  it("ignores packages that are meant to be bundled", () => {
+    const source =
+      region("../../node_modules/.pnpm/effect@4.0.0/node_modules/effect/dist/index.js") +
+      region("../../src/server/main.ts");
+    const result = findInlinedExternalPackages(source);
+
+    assert.deepStrictEqual(result.inlined, []);
+    assert.strictEqual(result.regionCount, 2);
+  });
+
+  // regionCount is what separates "clean" from "this scan went blind because the
+  // marker format changed". A caller that ignores it gets a vacuous pass.
+  it("reports no regions when the marker format is absent", () => {
+    const result = findInlinedExternalPackages("var x = 1; // node_modules/detect-libc/lib.js");
+    assert.strictEqual(result.regionCount, 0);
+    assert.deepStrictEqual(result.inlined, []);
+  });
 });
