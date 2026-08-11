@@ -510,8 +510,12 @@ function EmptySourceControlDiscovery({
 export function SourceControlSettingsPanel() {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
-  // Relay-only app.t3.codes sessions have no primary environment.
-  const environmentId = primaryEnvironment?.environmentId ?? environments[0]?.environmentId ?? null;
+  const environmentId =
+    primaryEnvironment?.connection.phase === "connected"
+      ? primaryEnvironment.environmentId
+      : (environments.find((environment) => environment.connection.phase === "connected")
+          ?.environmentId ?? null);
+  const isPrimaryEnvironment = environmentId === primaryEnvironment?.environmentId;
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -564,7 +568,7 @@ export function SourceControlSettingsPanel() {
             >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" && primaryEnvironment !== null ? (
+                  {item.kind === "git" && isPrimaryEnvironment ? (
                     <GitFetchIntervalSettings />
                   ) : undefined}
                 </DiscoveryItemRow>
@@ -592,7 +596,7 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      {primaryEnvironment !== null ? <SourceControlWritingSettingsSection /> : null}
+      {isPrimaryEnvironment ? <SourceControlWritingSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }
