@@ -1,0 +1,167 @@
+.stage-sky {
+  --stage-sky-fade-duration: 900ms;
+  --stage-sky-fade-easing: cubic-bezier(0.22, 1, 0.36, 1);
+  --stage-sky-blueprint-top: 58 122 209;
+  --stage-sky-blueprint-mid: 32 80 174;
+  position: absolute;
+  z-index: 0;
+  inset: 0 0 auto;
+  height: 420px;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent);
+  mask-image: linear-gradient(to bottom, #000 30%, transparent);
+}
+
+.stage-sky::after {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 17% 22%, rgba(255, 255, 255, 0.22) 0 1px, transparent 2px),
+    radial-gradient(circle at 37% 9%, rgba(255, 255, 255, 0.16) 0 1px, transparent 2px),
+    radial-gradient(circle at 61% 18%, rgba(255, 255, 255, 0.2) 0 1px, transparent 2px),
+    radial-gradient(circle at 79% 7%, rgba(255, 255, 255, 0.14) 0 1px, transparent 2px),
+    radial-gradient(circle at 91% 28%, rgba(255, 255, 255, 0.18) 0 1px, transparent 2px);
+  content: "";
+  opacity: 0.16;
+}
+
+.stage-sky__ray {
+  position: absolute;
+  top: -210px;
+  width: 170px;
+  height: 680px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--ray-color, rgba(255, 255, 255, 0.07)) 28%,
+    var(--ray-hot, rgba(255, 255, 255, 0.14)) 48%,
+    var(--ray-hot, rgba(255, 255, 255, 0.14)) 52%,
+    var(--ray-color, rgba(255, 255, 255, 0.07)) 72%,
+    transparent
+  );
+  -webkit-mask-image: linear-gradient(to bottom, #000, rgba(0, 0, 0, 0.76) 34%, transparent 82%);
+  mask-image: linear-gradient(to bottom, #000, rgba(0, 0, 0, 0.76) 34%, transparent 82%);
+  opacity: var(--ray-idle-opacity, 0.5);
+  transform: rotate(var(--ray-angle)) translateX(var(--ray-drift));
+  transform-origin: top center;
+}
+
+.stage-sky__ray::before,
+.stage-sky__ray::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  opacity: 0;
+  transition: opacity var(--stage-sky-fade-duration) var(--stage-sky-fade-easing);
+}
+
+.stage-sky__ray::before {
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgb(var(--stage-sky-blueprint-mid) / 0.16) 28%,
+    rgb(var(--stage-sky-blueprint-top) / 0.3) 48%,
+    rgb(var(--stage-sky-blueprint-top) / 0.3) 52%,
+    rgb(var(--stage-sky-blueprint-mid) / 0.16) 72%,
+    transparent
+  );
+}
+
+.stage-sky__ray::after {
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(112, 96, 232, 0.16) 28%,
+    rgba(196, 132, 252, 0.3) 48%,
+    rgba(196, 132, 252, 0.3) 52%,
+    rgba(112, 96, 232, 0.16) 72%,
+    transparent
+  );
+}
+
+.stage-sky__ray--1 {
+  left: -1%;
+  width: 210px;
+  --ray-angle: 14deg;
+  --ray-drift: -13px;
+  --ray-idle-opacity: 0.56;
+}
+
+.stage-sky__ray--2 {
+  left: 20%;
+  width: 115px;
+  --ray-angle: 7deg;
+  --ray-drift: 9px;
+  --ray-idle-opacity: 0.4;
+}
+
+.stage-sky__ray--3 {
+  left: 44%;
+  width: 230px;
+  --ray-angle: 0.5deg;
+  --ray-drift: -8px;
+  --ray-idle-opacity: 0.62;
+}
+
+.stage-sky__ray--4 {
+  left: 70%;
+  width: 125px;
+  --ray-angle: -8deg;
+  --ray-drift: 11px;
+  --ray-idle-opacity: 0.34;
+}
+
+.stage-sky__ray--5 {
+  left: 89%;
+  width: 205px;
+  --ray-angle: -15deg;
+  --ray-drift: -10px;
+  --ray-idle-opacity: 0.5;
+}
+
+.stage-sky__cloud {
+  position: absolute;
+  top: -60px;
+  width: 480px;
+  height: 240px;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    rgba(168, 91, 234, 0.3),
+    rgba(81, 101, 216, 0.14) 60%,
+    transparent
+  );
+  filter: blur(46px);
+  opacity: 0;
+  transition: opacity var(--stage-sky-fade-duration) var(--stage-sky-fade-easing);
+}
+
+.stage-sky__cloud--1 {
+  left: 8%;
+}
+
+.stage-sky__cloud--2 {
+  top: -100px;
+  left: 56%;
+  width: 620px;
+}
+
+html[data-stage="nightly"] .stage-sky__ray::after,
+html[data-stage="dev"] .stage-sky__ray::before,
+html[data-stage="nightly"] .stage-sky__cloud {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-sky__ray,
+  .stage-sky__ray::before,
+  .stage-sky__ray::after,
+  .stage-sky__cloud {
+    transition: none;
+  }
+
+  .stage-sky__ray {
+    opacity: var(--ray-idle-opacity);
+    transform: rotate(var(--ray-angle)) translateX(var(--ray-drift));
+  }
+}

@@ -1,60 +1,120 @@
 ---
-import {
-  ANDROID_PLAY_STORE_URL,
-  GITHUB_REPOSITORY_URL,
-  IOS_APP_STORE_URL,
-  MARKETING_STATS,
-} from "../lib/site";
+import devAppIcon from "../assets/t3-dev-384.webp?url";
+import nightlyAppIcon from "../assets/t3-nightly-384.webp?url";
+import stableAppIcon from "../assets/t3-latest-384.webp?url";
+import { GITHUB_REPOSITORY_URL } from "../lib/site";
 
 interface Props {
   title?: string;
   description?: string;
   pageClass?: string;
+  favicon?: string;
+  socialImage?: string;
+  socialImageAlt?: string;
 }
 
 const {
   title = "T3 Code",
   description = "T3 Code — The open-source control plane for coding agents.",
   pageClass,
+  favicon = stableAppIcon,
+  socialImage = "/og-image.png",
+  socialImageAlt = "T3 Code model picker shown in cinematic perspective",
 } = Astro.props;
+
+const siteUrl = Astro.site ?? Astro.url;
+const canonicalUrl = new URL(Astro.url.pathname, siteUrl);
+const socialImageUrl = new URL(socialImage, siteUrl);
 ---
 
-<html lang="en">
+<html lang="en" data-stage="latest">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalUrl} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="T3 Code" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:image" content={socialImageUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={socialImageAlt} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={socialImageUrl} />
+    <meta name="twitter:image:alt" content={socialImageAlt} />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" href="/favicon.ico" sizes="48x48" />
-    <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32" />
-    <link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16" />
+    <link
+      id="stage-favicon"
+      rel="icon"
+      href={favicon}
+      sizes="any"
+      data-stage-icon-latest={stableAppIcon}
+      data-stage-icon-nightly={nightlyAppIcon}
+      data-stage-icon-dev={devAppIcon}
+    />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>{title}</title>
+    <script is:inline>
+      (() => {
+        try {
+          const stage = localStorage.getItem("t3code:marketing-stage");
+          if (stage === "latest" || stage === "nightly" || stage === "dev") {
+            document.documentElement.dataset.stage = stage;
+          }
+        } catch {
+          // Storage can be unavailable in privacy-restricted browsing contexts.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div class:list={["page", pageClass]}>
       <nav class="nav">
+        <div class="nav-blur" aria-hidden="true">
+          <span class="nav-blur-layer nav-blur-layer--32"></span>
+          <span class="nav-blur-layer nav-blur-layer--16"></span>
+          <span class="nav-blur-layer nav-blur-layer--8"></span>
+          <span class="nav-blur-layer nav-blur-layer--4"></span>
+          <span class="nav-blur-layer nav-blur-layer--2"></span>
+          <span class="nav-blur-layer nav-blur-layer--1"></span>
+          <span class="nav-blur-layer nav-blur-layer--half"></span>
+        </div>
         <div class="nav-inner">
           <a href="/" class="nav-brand" aria-label="T3 Code home">
-            <span class="nav-brand-name">T3 Code</span>
+            <svg
+              class="nav-brand-mark"
+              viewBox="15.5309 37 94.3941 56.96"
+              aria-hidden="true"
+            >
+              <path
+                d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
+                fill="currentColor"
+              />
+            </svg>
+            <span class="nav-brand-name">Code</span>
           </a>
           <div class="nav-right">
+            <a class="nav-link nav-download" href="/download">Download</a>
             <a
               class="nav-stars"
               href={GITHUB_REPOSITORY_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`Star T3 Code on GitHub — ${MARKETING_STATS.githubStars} stars`}
+              aria-label="View T3 Code on GitHub"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 2.3l2.9 5.88 6.49.94-4.7 4.58 1.11 6.47L12 17.12l-5.8 3.05 1.11-6.47-4.7-4.58 6.49-.94L12 2.3z"/>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.3c-3.3.7-4-1.4-4-1.4-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3Z" />
               </svg>
-              <span><strong>{MARKETING_STATS.githubStars}</strong> GitHub stars</span>
             </a>
           </div>
         </div>
@@ -66,40 +126,132 @@ const {
 
       <footer class="footer">
         <div class="footer-inner">
-          <div class="footer-brand">
-            <img src="/icon.webp" alt="" />
-            <span>&copy; {new Date().getFullYear()} T3 Tools Inc · MIT licensed</span>
+          <div class="footer-wordmark" aria-hidden="true">
+            <svg viewBox="15.5309 37 94.3941 56.96">
+              <path d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"></path>
+            </svg>
+            <span>Code</span>
           </div>
-          <div class="footer-links">
-            <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
-            <a href="/download">Download</a>
-            <a href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">iOS app</a>
-            <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">Android app</a>
-            <a href="/terms-of-service">Terms</a>
-            <a href="/privacy-policy">Privacy</a>
-            <a href="/security-policy">Security</a>
-          </div>
+          <nav class="footer-columns" aria-label="Footer navigation">
+            <div class="footer-column">
+              <div class="footer-links">
+                <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer"
+                  >GitHub</a
+                >
+                <a href="/download">Download</a>
+                <a
+                  href={`${GITHUB_REPOSITORY_URL}/releases`}
+                  target="_blank"
+                  rel="noopener noreferrer">Releases</a
+                >
+              </div>
+            </div>
+            <div class="footer-column">
+              <div class="footer-links">
+                <a
+                  href={`${GITHUB_REPOSITORY_URL}/fork`}
+                  target="_blank"
+                  rel="noopener noreferrer">Fork</a
+                >
+                <a
+                  href={`${GITHUB_REPOSITORY_URL}/issues`}
+                  target="_blank"
+                  rel="noopener noreferrer">Issues</a
+                >
+                <a
+                  href="https://discord.gg/jn4EGJjrvv"
+                  target="_blank"
+                  rel="noopener noreferrer">Discord</a
+                >
+              </div>
+            </div>
+            <div class="footer-column">
+              <div class="footer-links">
+                <a href="/terms-of-service">Terms</a>
+                <a href="/privacy-policy">Privacy</a>
+                <a href="/security-policy">Security</a>
+              </div>
+            </div>
+          </nav>
         </div>
       </footer>
     </div>
 
     <script>
-      const nav = document.querySelector(".nav");
-      const onScroll = () => {
-        if (!nav) return;
-        if (window.scrollY > 12) nav.classList.add("is-scrolled");
-        else nav.classList.remove("is-scrolled");
+      type Stage = "latest" | "nightly" | "dev";
+
+      const STORAGE_KEY = "t3code:marketing-stage";
+      const stageLabels: Record<Stage, string> = {
+        latest: "Latest",
+        nightly: "Nightly",
+        dev: "Dev",
       };
-      window.addEventListener("scroll", onScroll, { passive: true });
-      onScroll();
+      const stageOrder: ReadonlyArray<Stage> = ["latest", "nightly", "dev"];
+
+      function isStage(value: unknown): value is Stage {
+        return value === "latest" || value === "nightly" || value === "dev";
+      }
+
+      function setSiteStage(stage: Stage, persist: boolean, notify: boolean) {
+        document.documentElement.dataset.stage = stage;
+
+        const favicon = document.getElementById("stage-favicon") as HTMLLinkElement | null;
+        const faviconUrl = favicon?.dataset[
+          `stageIcon${stage[0]?.toUpperCase()}${stage.slice(1)}`
+        ];
+        if (favicon && faviconUrl) favicon.href = faviconUrl;
+
+        const nextStage = stageOrder[(stageOrder.indexOf(stage) + 1) % stageOrder.length] ?? "latest";
+        for (const trigger of document.querySelectorAll<HTMLButtonElement>(
+          "[data-site-stage-trigger]",
+        )) {
+          trigger.setAttribute(
+            "aria-label",
+            `Release channel: ${stageLabels[stage]}. Switch to ${stageLabels[nextStage]}`,
+          );
+          trigger.title = `${stageLabels[stage]} channel — click to switch`;
+        }
+
+        for (const icon of document.querySelectorAll<HTMLImageElement>("[data-site-stage-icon]")) {
+          if (faviconUrl) icon.src = faviconUrl;
+        }
+
+        if (persist) {
+          try {
+            localStorage.setItem(STORAGE_KEY, stage);
+          } catch {
+            // The selected channel still applies for this page when storage is unavailable.
+          }
+        }
+
+        if (notify) {
+          document.dispatchEvent(
+            new CustomEvent("t3-marketing-stage-change", { detail: { stage } }),
+          );
+        }
+      }
+
+      const trigger = document.querySelector<HTMLButtonElement>("[data-site-stage-trigger]");
+      trigger?.addEventListener("click", () => {
+        const currentStage = document.documentElement.dataset.stage;
+        const currentIndex = isStage(currentStage) ? stageOrder.indexOf(currentStage) : 0;
+        const nextStage = stageOrder[(currentIndex + 1) % stageOrder.length] ?? "latest";
+        setSiteStage(nextStage, true, true);
+      });
+      document.addEventListener("t3-marketing-stage-request", (event) => {
+        const stage = (event as CustomEvent<{ stage?: unknown }>).detail?.stage;
+        if (isStage(stage)) setSiteStage(stage, true, true);
+      });
+
+      const initialStage = document.documentElement.dataset.stage;
+      setSiteStage(isStage(initialStage) ? initialStage : "latest", false, false);
     </script>
   </body>
 </html>
 
 <style is:global>
   :root {
-    --bg: #09090b;
+    --bg: #000;
     --bg-elev: #0c0c0e;
     --bg-card: #111113;
     --fg: #fafafa;
@@ -128,7 +280,22 @@ const {
 
   html {
     color-scheme: dark;
+    overscroll-behavior-y: none;
     scroll-behavior: smooth;
+  }
+
+  html[data-stage="nightly"] {
+    --accent-h: 292;
+  }
+
+  html[data-stage="dev"] {
+    --accent-h: 240;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
   }
 
   body {
@@ -139,6 +306,7 @@ const {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     min-height: 100vh;
+    overscroll-behavior-y: none;
     overflow-x: hidden;
     line-height: 1.5;
   }
@@ -227,14 +395,12 @@ const {
 
   .btn-ghost {
     color: var(--fg-muted);
-    border: 1px solid var(--border);
     background: transparent;
   }
 
   .btn-ghost:hover {
     color: var(--fg);
-    border-color: var(--border-strong);
-    background: rgba(255, 255, 255, 0.02);
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .btn-lg {
@@ -276,11 +442,6 @@ const {
     to { transform: rotate(360deg); }
   }
 
-  @keyframes floatDrift {
-    0%, 100% { translate: 0 0; }
-    50%      { translate: 0 -10px; }
-  }
-
   @keyframes blink {
     50% { opacity: 0; }
   }
@@ -294,25 +455,99 @@ const {
     overflow-x: clip;
   }
 
+  /* Layered backdrop filters create a progressive blur: strongest directly
+     behind the navigation, then dissolving into the page without a hard edge. */
   .nav {
     position: sticky;
     top: 0;
     z-index: 50;
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-    background: color-mix(in srgb, var(--bg) 75%, transparent);
-    border-bottom: 1px solid transparent;
-    transition: border-color 0.3s ease;
+    isolation: isolate;
+    background: transparent;
   }
 
-  .nav.is-scrolled {
-    border-bottom-color: var(--border);
+  .page.marketing-home .nav,
+  .page.marketing-downloads .nav,
+  .page.legal-simple-page .nav {
+    position: fixed;
+    right: 0;
+    left: 0;
+  }
+
+  .nav-blur {
+    position: absolute;
+    inset: 0 0 -64px;
+    z-index: -1;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .nav-blur::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.12) 52%, transparent);
+  }
+
+  .nav-blur-layer {
+    position: absolute;
+    inset: 0;
+  }
+
+  .nav-blur-layer--32 {
+    -webkit-backdrop-filter: blur(32px);
+    backdrop-filter: blur(32px);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 12.5%, transparent 25%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 12.5%, transparent 25%);
+  }
+
+  .nav-blur-layer--16 {
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 12.5%, #000 25%, transparent 37.5%);
+    mask-image: linear-gradient(to bottom, transparent 0%, #000 12.5%, #000 25%, transparent 37.5%);
+  }
+
+  .nav-blur-layer--8 {
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 12.5%, #000 25%, #000 37.5%, transparent 50%);
+    mask-image: linear-gradient(to bottom, transparent 12.5%, #000 25%, #000 37.5%, transparent 50%);
+  }
+
+  .nav-blur-layer--4 {
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 25%, #000 37.5%, #000 50%, transparent 62.5%);
+    mask-image: linear-gradient(to bottom, transparent 25%, #000 37.5%, #000 50%, transparent 62.5%);
+  }
+
+  .nav-blur-layer--2 {
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 37.5%, #000 50%, #000 62.5%, transparent 75%);
+    mask-image: linear-gradient(to bottom, transparent 37.5%, #000 50%, #000 62.5%, transparent 75%);
+  }
+
+  .nav-blur-layer--1 {
+    -webkit-backdrop-filter: blur(1px);
+    backdrop-filter: blur(1px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 50%, #000 62.5%, #000 75%, transparent 87.5%);
+    mask-image: linear-gradient(to bottom, transparent 50%, #000 62.5%, #000 75%, transparent 87.5%);
+  }
+
+  .nav-blur-layer--half {
+    -webkit-backdrop-filter: blur(0.5px);
+    backdrop-filter: blur(0.5px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 62.5%, #000 75%, #000 87.5%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 62.5%, #000 75%, #000 87.5%, transparent 100%);
   }
 
   .nav-inner {
-    max-width: 1240px;
+    position: relative;
+    z-index: 1;
+    width: min(100% - 48px, 1240px);
     margin: 0 auto;
-    padding: 12px 32px;
+    padding: 12px 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -322,6 +557,7 @@ const {
   .nav-brand {
     display: inline-flex;
     align-items: center;
+    gap: 4px;
     color: var(--fg);
     transition: color 0.2s ease;
   }
@@ -330,49 +566,71 @@ const {
     color: #fff;
   }
 
+  .nav-brand-mark {
+    display: block;
+    width: auto;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
   .nav-brand-name {
-    font-size: 16px;
-    font-weight: 650;
-    letter-spacing: -0.025em;
+    color: var(--fg-muted);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
     line-height: 1;
+    transition: color 0.2s ease;
+  }
+
+  .nav-brand:hover .nav-brand-name {
+    color: #fff;
   }
 
   .nav-right {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 20px;
+  }
+
+  .nav-download {
+    white-space: nowrap;
+  }
+
+  .nav-link {
+    color: rgba(255, 255, 255, 0.34);
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.015em;
+    transition: color 0.18s ease;
+  }
+
+  .nav-link:hover {
+    color: var(--fg);
   }
 
   .nav-stars {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
     height: 36px;
-    padding: 0 14px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.02);
+    width: 36px;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
     color: var(--fg-muted);
-    font-size: 13px;
-    letter-spacing: -0.01em;
-    white-space: nowrap;
-    transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+    transition: color 0.18s ease, transform 0.18s ease;
   }
 
   .nav-stars:hover {
-    color: var(--fg);
-    border-color: var(--border-strong);
-    background: rgba(255, 255, 255, 0.04);
-  }
-
-  .nav-stars strong {
-    color: var(--fg);
-    font-weight: 600;
+    color: #fff;
+    transform: scale(1.06);
   }
 
   .nav-stars svg {
-    color: var(--warn);
+    width: 23px;
+    height: 23px;
     flex-shrink: 0;
+    fill: currentColor;
   }
 
   .main {
@@ -382,47 +640,88 @@ const {
   }
 
   .footer {
+    position: relative;
+    min-height: 320px;
     margin-top: auto;
-    border-top: 1px solid var(--border);
-    padding: 40px 0 32px;
+    padding: 0;
+    overflow: hidden;
   }
 
   .footer-inner {
-    max-width: 1240px;
+    position: relative;
+    height: 320px;
+    width: min(100% - 48px, 1240px);
+    max-width: none;
     margin: 0 auto;
-    padding: 0 32px;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .footer-wordmark {
+    --footer-wordmark-size: clamp(194px, 17vw, 217px);
+    position: absolute;
+    top: 188px;
+    left: 0;
+    width: 62%;
     display: flex;
-    flex-wrap: wrap;
-    gap: 24px;
     align-items: center;
+    justify-content: flex-start;
+    gap: clamp(10px, 1.2vw, 16px);
+    color: rgb(255 255 255 / 0.065);
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .footer-wordmark svg {
+    width: auto;
+    height: calc(var(--footer-wordmark-size) * 0.74);
+    flex: 0 0 auto;
+    fill: currentColor;
+  }
+
+  .footer-wordmark span {
+    min-width: 0;
+    color: currentColor;
+    font-size: var(--footer-wordmark-size);
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .footer-columns {
+    position: absolute;
+    z-index: 1;
+    right: 0;
+    bottom: 18px;
+    display: grid;
+    width: min(330px, 33%);
+    grid-template-columns: repeat(3, max-content);
     justify-content: space-between;
+    gap: 0;
   }
 
-  .footer-brand {
+  .footer-column {
     display: flex;
-    align-items: center;
+    min-width: 0;
+    flex-direction: column;
+    align-items: flex-start;
     gap: 10px;
-    font-size: 13px;
-    color: var(--fg-dim);
-  }
-
-  .footer-brand img {
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
   }
 
   .footer-links {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 20px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
   }
 
   .footer-links a {
-    font-size: 13px;
     color: var(--fg-dim);
-    transition: color 0.2s ease;
+    font-size: 15px;
+    line-height: 1.4;
+    text-decoration: none;
+    transition: color 0.18s ease;
   }
 
   .footer-links a:hover {
@@ -430,33 +729,74 @@ const {
   }
 
   @media (max-width: 820px) {
-    .nav-inner,
-    .footer-inner {
-      padding-left: 20px;
-      padding-right: 20px;
+    .nav-inner {
+      width: min(100% - 40px, 680px);
     }
 
-    .legal-document-page .nav {
+    .footer-inner {
+      width: min(100% - 40px, 680px);
+    }
+
+    .footer {
+      min-height: 410px;
+    }
+
+    .footer-inner {
+      height: 410px;
+    }
+
+    .footer-wordmark {
+      --footer-wordmark-size: clamp(132px, 27.3vw, 200px);
+      top: auto;
+      right: 20px;
+      bottom: 0;
+      left: 20px;
+      width: auto;
+      transform: translateY(47%);
+    }
+
+    .footer-columns {
+      top: 68px;
+      right: 20px;
+      bottom: auto;
+      width: calc(100% - 40px);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      justify-content: normal;
+      gap: 32px 24px;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .nav-inner {
+      width: min(100% - 32px, 480px);
+    }
+
+    .nav-link {
+      display: none;
+    }
+
+    .nav-stars span {
       display: none;
     }
 
     .footer {
-      padding-bottom: max(32px, env(safe-area-inset-bottom));
+      min-height: 480px;
     }
 
     .footer-inner {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 28px;
+      width: min(100% - 32px, 480px);
+      height: 480px;
     }
 
-    .footer-links {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      width: 100%;
-      gap: 14px 20px;
-      justify-content: initial;
+    .footer-columns {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 32px 24px;
     }
+
+    .footer-wordmark {
+      --footer-wordmark-size: clamp(105px, 24.2vw, 139px);
+    }
+
   }
 
   @media (max-width: 420px) {
@@ -467,8 +807,8 @@ const {
     .nav-stars {
       height: 34px;
       gap: 6px;
-      padding: 0 12px;
       font-size: 12px;
     }
+
   }
 </style>

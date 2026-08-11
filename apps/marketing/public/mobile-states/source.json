@@ -1,0 +1,20 @@
+{
+  "artifacts": [
+    {
+      "id": 8791333399,
+      "name": "app-store-connect-screenshots"
+    },
+    {
+      "id": 8791283952,
+      "name": "google-play-screenshots"
+    }
+  ],
+  "artifactCreatedAt": "2026-07-31T10:54:46Z",
+  "runId": 30625175356,
+  "runUrl": "https://github.com/pingdotgg/t3code/actions/runs/30625175356",
+  "headSha": "0647dbc12be4e83b95337eb0bccbeaa982967d39",
+  "workflow": "mobile-showcase-screenshots.yml",
+  "devices": ["iphone-6.9", "ipad-13", "pixel"],
+  "scenes": ["thread", "terminal", "review", "threads", "environments"],
+  "appearance": "dark"
+}

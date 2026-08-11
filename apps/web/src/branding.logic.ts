@@ -1,4 +1,5 @@
 const NIGHTLY_SERVER_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/;
+const DEV_SERVER_VERSION_PATTERN = /-dev(\.\d+)?$/;
 
 export function formatAppDisplayName(input: {
   readonly baseName: string;
@@ -15,10 +16,12 @@ export function resolveServerBackedAppStageLabel(input: {
   readonly primaryServerVersion: string | null | undefined;
   readonly fallbackStageLabel: string;
 }): string {
-  return input.primaryServerVersion &&
-    NIGHTLY_SERVER_VERSION_PATTERN.test(input.primaryServerVersion)
-    ? "Nightly"
-    : input.fallbackStageLabel;
+  if (input.primaryServerVersion) {
+    if (NIGHTLY_SERVER_VERSION_PATTERN.test(input.primaryServerVersion)) return "Nightly";
+    if (DEV_SERVER_VERSION_PATTERN.test(input.primaryServerVersion)) return "Dev";
+  }
+
+  return input.fallbackStageLabel;
 }
 
 export function resolveServerBackedAppDisplayName(input: {
