@@ -37,6 +37,7 @@ import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3Conne
 import { useLegacySidebarEnabled } from "../../hooks/useSettings";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
+  clampSettingsSearchResultIndex,
   searchSettings,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
@@ -84,16 +85,20 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     () => searchSettings(query, visibleSettingsSearchItems(legacySidebarEnabled)),
     [legacySidebarEnabled, query],
   );
+  const resolvedActiveResultIndex = clampSettingsSearchResultIndex(
+    activeResultIndex,
+    results.length,
+  );
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
 
   useEffect(() => {
-    const result = results[activeResultIndex];
+    const result = results[resolvedActiveResultIndex];
     if (!result) return;
     document
       .getElementById(`settings-search-result-${result.id}`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [activeResultIndex, results]);
+  }, [resolvedActiveResultIndex, results]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -166,21 +171,21 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       if (results.length === 0) return;
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveResultIndex((index) => (index + 1) % results.length);
+        setActiveResultIndex((resolvedActiveResultIndex + 1) % results.length);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        setActiveResultIndex((index) => (index - 1 + results.length) % results.length);
+        setActiveResultIndex((resolvedActiveResultIndex - 1 + results.length) % results.length);
         return;
       }
       if (event.key === "Enter") {
         event.preventDefault();
-        const result = results[activeResultIndex];
+        const result = results[resolvedActiveResultIndex];
         if (result) handleSearchResultClick(result);
       }
     },
-    [activeResultIndex, clearSearch, handleSearchResultClick, isSearching, results],
+    [clearSearch, handleSearchResultClick, isSearching, resolvedActiveResultIndex, results],
   );
   const handleBackClick = useCallback(() => {
     if (isMobile) {
@@ -217,8 +222,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               aria-expanded={isSearching && hasResults}
               aria-controls={isSearching && hasResults ? "settings-search-results" : undefined}
               aria-activedescendant={
-                isSearching && results[activeResultIndex]
-                  ? `settings-search-result-${results[activeResultIndex].id}`
+                isSearching && results[resolvedActiveResultIndex]
+                  ? `settings-search-result-${results[resolvedActiveResultIndex].id}`
                   : undefined
               }
               className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground"
@@ -261,10 +266,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     <SidebarMenuButton
                       id={`settings-search-result-${item.id}`}
                       role="option"
-                      aria-selected={index === activeResultIndex}
+                      aria-selected={index === resolvedActiveResultIndex}
                       tabIndex={-1}
                       size="sm"
-                      isActive={index === activeResultIndex}
+                      isActive={index === resolvedActiveResultIndex}
                       className="h-auto min-h-10 items-start gap-2 rounded-md px-2 py-2 text-left hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                       onMouseMove={() => setActiveResultIndex(index)}
                       onClick={() => handleSearchResultClick(item)}

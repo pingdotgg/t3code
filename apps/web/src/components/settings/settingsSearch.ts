@@ -226,6 +226,10 @@ function normalizeSearchText(value: string): string {
     .trim();
 }
 
+export function clampSettingsSearchResultIndex(index: number, resultCount: number): number {
+  return Math.max(0, Math.min(index, resultCount - 1));
+}
+
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,

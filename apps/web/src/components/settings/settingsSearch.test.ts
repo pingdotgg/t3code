@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clampSettingsSearchResultIndex,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
@@ -73,6 +74,12 @@ describe("searchSettings", () => {
     expect(
       visibleSettingsSearchItems(true).some((item) => item.id === "archive-confirmation"),
     ).toBe(true);
+  });
+
+  it("clamps the active result after visible settings shrink", () => {
+    expect(clampSettingsSearchResultIndex(1, 1)).toBe(0);
+    expect(clampSettingsSearchResultIndex(1, 2)).toBe(1);
+    expect(clampSettingsSearchResultIndex(0, 0)).toBe(0);
   });
 
   it("serves anchor props to panels from the catalog", () => {
