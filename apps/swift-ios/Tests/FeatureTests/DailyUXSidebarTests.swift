@@ -190,6 +190,51 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func settleUndoRejectsAThreadThatDoesNotMatchTheRequest() {
+        var state = HomeThreadSettleUndoState()
+        let requestID = state.beginSettleRequest(threadID: "target")
+
+        #expect(
+            state.present(
+                requestID: requestID,
+                threadID: "other",
+                title: "Other",
+                restoresPin: false,
+                restoresSnoozeUntil: nil
+            ) == nil
+        )
+        #expect(state.notice == nil)
+        #expect(state.latestSettleRequestID == requestID)
+        #expect(state.latestSettleThreadID == "target")
+    }
+
+    @Test
+    func settleUndoRequestCanPresentOnlyOnce() {
+        var state = HomeThreadSettleUndoState()
+        let requestID = state.beginSettleRequest(threadID: "target")
+
+        #expect(
+            state.present(
+                requestID: requestID,
+                threadID: "target",
+                title: "Target",
+                restoresPin: false,
+                restoresSnoozeUntil: nil
+            ) != nil
+        )
+        #expect(
+            state.present(
+                requestID: requestID,
+                threadID: "target",
+                title: "Target again",
+                restoresPin: false,
+                restoresSnoozeUntil: nil
+            ) == nil
+        )
+        #expect(state.notice?.title == "Target")
+    }
+
+    @Test
     func settleUndoTargetsOnlyTheLatestNoticeOnce() {
         let firstID = UUID()
         let secondID = UUID()
@@ -282,7 +327,6 @@ struct DailyUXSidebarTests {
             HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -290,7 +334,6 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: false,
                 didSucceed: true,
-                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -298,7 +341,6 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: false,
-                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -306,15 +348,6 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousWasSettled: true,
-                updatedThread: settled
-            )
-        )
-        #expect(
-            !HomeThreadSettleUndoState.shouldPresent(
-                afterRequesting: true,
-                didSucceed: true,
-                previousWasSettled: false,
                 updatedThread: active
             )
         )
@@ -322,7 +355,6 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
-                previousWasSettled: false,
                 updatedThread: nil
             )
         )

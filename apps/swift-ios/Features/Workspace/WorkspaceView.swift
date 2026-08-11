@@ -110,12 +110,10 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
     static func shouldPresent(
         afterRequesting settled: Bool,
         didSucceed: Bool,
-        previousWasSettled: Bool,
         updatedThread: FeatureThread?
     ) -> Bool {
         settled
             && didSucceed
-            && !previousWasSettled
             && updatedThread?.isSettled == true
     }
 
@@ -321,7 +319,9 @@ public struct WorkspaceView: View {
         }
         .onChange(of: settleUndoTargetIsValid) { _, isValid in
             guard !isValid, let notice = settleUndo.notice else { return }
-            settleUndo.dismiss(threadID: notice.threadID)
+            withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.18)) {
+                settleUndo.dismiss(threadID: notice.threadID)
+            }
         }
         .onChange(of: navigationRequest?.id, initial: true) { _, _ in
             consumeNavigationRequest()
@@ -415,7 +415,7 @@ public struct WorkspaceView: View {
                     settleUndo.dismiss(threadID: thread.id)
                     Task { await model.setArchived(thread.id, archived: archived) }
                 },
-                onSettle: { thread, settled, wasSettled in
+                onSettle: { thread, settled in
                     if !settled { settleUndo.dismiss(threadID: thread.id) }
                     let requestID = settleUndo.beginSettleRequest(
                         ifSettling: settled,
@@ -430,7 +430,6 @@ public struct WorkspaceView: View {
                         guard HomeThreadSettleUndoState.shouldPresent(
                             afterRequesting: settled,
                             didSucceed: didSucceed,
-                            previousWasSettled: wasSettled,
                             updatedThread: updatedThread
                         ), let requestID else { return }
                         let notice = withAnimation(

@@ -9,7 +9,7 @@ and choose **Move up** or **Move down**. The order is stored by the server and a
 other connected devices.
 
 In the native iPhone app, swipe a thread to reveal its lifecycle action and **Delete**. A full
-swipe uses the lifecycle action, such as **Settle** or **Reopen**; it never deletes the thread.
+swipe settles or reopens a thread; it never deletes the thread.
 Deleting asks for confirmation. After settling a thread, use the temporary **Undo** message to
 return it to active work and restore its previous pin and snooze state.
 

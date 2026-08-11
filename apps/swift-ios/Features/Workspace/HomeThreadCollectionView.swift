@@ -57,7 +57,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onShowMoreSettled: () -> Void
     let onRename: (FeatureThread) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
-    let onSettle: (FeatureThread, Bool, Bool) -> Void
+    let onSettle: (FeatureThread, Bool) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
     let onDelete: (FeatureThread) -> Void
@@ -270,7 +270,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     style: .normal,
                     title: wasSettled ? "Reopen" : "Settle"
                 ) { [weak self] _, _, finish in
-                    self?.parent.onSettle(thread, !wasSettled, wasSettled)
+                    self?.parent.onSettle(thread, !wasSettled)
                     finish(true)
                 }
                 action.image = UIImage(
@@ -468,7 +468,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                                 systemName: wasSettled ? "arrow.counterclockwise" : "checkmark"
                             )
                         ) { [weak self] _ in
-                            self?.parent.onSettle(thread, !wasSettled, wasSettled)
+                            self?.parent.onSettle(thread, !wasSettled)
                         }
                     )
                 }
