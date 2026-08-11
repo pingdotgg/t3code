@@ -243,6 +243,14 @@ import { FindInChatBar } from "./chat/FindInChatBar";
 import { useChatFind } from "./chat/useChatFind";
 import { isInsightActivity } from "../insights";
 
+export function shouldClosePreviewMiniPlayer(input: {
+  readonly hasAuthoritativeServerState: boolean;
+  readonly sameTabOpenInPanel: boolean;
+  readonly tabExists: boolean;
+}): boolean {
+  return input.sameTabOpenInPanel || (input.hasAuthoritativeServerState && !input.tabExists);
+}
+
 async function ensureRoutableServerThread(threadRef: ScopedThreadRef): Promise<void> {
   if (await waitForRoutableServerThread(threadRef)) {
     return;
@@ -2163,14 +2171,16 @@ function ChatViewBody(
   useEffect(() => {
     if (!activeThreadRef || !activePreviewMiniPlayer) return;
     const floatingTabId = activePreviewMiniPlayer.tabId;
-    if (!previewState.sessions[floatingTabId]) {
-      usePreviewMiniPlayerStore.getState().close(activeThreadRef);
-      return;
-    }
-    if (
+    const sameTabOpenInPanel =
       browserPanel.isOpen &&
       activeBrowserSurface?.kind === "preview" &&
-      activeBrowserSurface.resourceId === floatingTabId
+      activeBrowserSurface.resourceId === floatingTabId;
+    if (
+      shouldClosePreviewMiniPlayer({
+        hasAuthoritativeServerState: previewState.serverEpoch !== null,
+        sameTabOpenInPanel,
+        tabExists: previewState.sessions[floatingTabId] != null,
+      })
     ) {
       usePreviewMiniPlayerStore.getState().close(activeThreadRef);
     }

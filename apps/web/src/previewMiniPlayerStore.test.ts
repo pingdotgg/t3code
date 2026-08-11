@@ -1,7 +1,13 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { scopedThreadKey } from "@t3tools/client-runtime";
+import { createJSONStorage } from "zustand/middleware";
 
-import { usePreviewMiniPlayerStore } from "./previewMiniPlayerStore";
+import {
+  normalizePersistedPreviewMiniPlayerState,
+  usePreviewMiniPlayerStore,
+} from "./previewMiniPlayerStore";
+import { createMemoryStorage } from "./lib/storage";
 
 const first = {
   environmentId: "local" as ScopedThreadRef["environmentId"],
@@ -62,5 +68,77 @@ describe("previewMiniPlayerStore", () => {
     store.resize(first, "tab-a", { width: 360, height: 220 });
 
     expect(usePreviewMiniPlayerStore.getState().byThreadKey).toBe(before);
+  });
+
+  it("persists only valid thread-scoped floating preview state", () => {
+    expect(
+      normalizePersistedPreviewMiniPlayerState({
+        byThreadKey: {
+          [scopedThreadKey(first)]: {
+            tabId: "tab-a",
+            position: { x: 20, y: 30 },
+            size: { width: 360, height: 220 },
+          },
+          invalid: {
+            tabId: "tab-b",
+            position: null,
+            size: null,
+          },
+          [scopedThreadKey(second)]: {
+            tabId: "",
+            position: null,
+            size: null,
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        [scopedThreadKey(first)]: {
+          tabId: "tab-a",
+          position: { x: 20, y: 30 },
+          size: { width: 360, height: 220 },
+        },
+      },
+    });
+  });
+
+  it("restores floating preview state after the store is rehydrated", async () => {
+    const options = usePreviewMiniPlayerStore.persist.getOptions();
+    if (!options.name) throw new Error("Expected preview mini-player persistence to have a name.");
+    const storage = createMemoryStorage();
+    storage.setItem(
+      options.name,
+      JSON.stringify({
+        state: {
+          byThreadKey: {
+            [scopedThreadKey(first)]: {
+              tabId: "tab-a",
+              position: { x: 20, y: 30 },
+              size: { width: 360, height: 220 },
+            },
+          },
+        },
+        version: 1,
+      }),
+    );
+
+    try {
+      usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+      usePreviewMiniPlayerStore.persist.setOptions({
+        storage: createJSONStorage(() => storage),
+      });
+
+      await usePreviewMiniPlayerStore.persist.rehydrate();
+
+      expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({
+        [scopedThreadKey(first)]: {
+          tabId: "tab-a",
+          position: { x: 20, y: 30 },
+          size: { width: 360, height: 220 },
+        },
+      });
+    } finally {
+      usePreviewMiniPlayerStore.persist.setOptions(options);
+    }
   });
 });

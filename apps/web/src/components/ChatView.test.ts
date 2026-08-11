@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { getCopilotResumeCommand, isScrollMetricsAtEnd } from "./ChatView";
+import {
+  getCopilotResumeCommand,
+  isScrollMetricsAtEnd,
+  shouldClosePreviewMiniPlayer,
+} from "./ChatView";
 import type { Thread } from "../types";
 
 const COPILOT_SESSION_ID = "a7f0c803-7cce-4554-9ad6-dfd9df539e33";
@@ -102,5 +106,37 @@ describe("getCopilotResumeCommand", () => {
         }),
       ),
     ).toBeNull();
+  });
+});
+
+describe("shouldClosePreviewMiniPlayer", () => {
+  it("keeps persisted state while preview sessions restore after refresh", () => {
+    expect(
+      shouldClosePreviewMiniPlayer({
+        hasAuthoritativeServerState: false,
+        sameTabOpenInPanel: false,
+        tabExists: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("closes stale state after the server confirms the tab is gone", () => {
+    expect(
+      shouldClosePreviewMiniPlayer({
+        hasAuthoritativeServerState: true,
+        sameTabOpenInPanel: false,
+        tabExists: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("closes the float when the same tab is explicitly open in the panel", () => {
+    expect(
+      shouldClosePreviewMiniPlayer({
+        hasAuthoritativeServerState: false,
+        sameTabOpenInPanel: true,
+        tabExists: false,
+      }),
+    ).toBe(true);
   });
 });

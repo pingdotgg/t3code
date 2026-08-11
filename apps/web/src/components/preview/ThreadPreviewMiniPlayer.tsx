@@ -48,6 +48,7 @@ export function ThreadPreviewMiniPlayer(props: {
   );
   const previewState = useThreadPreviewState(threadRef);
   const tabId = props.tabId ?? miniPlayer?.tabId ?? previewState.activeTabId;
+  const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
   const overlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const runtimeTabId = tabId
     ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
@@ -55,10 +56,8 @@ export function ThreadPreviewMiniPlayer(props: {
   const size = miniPlayer?.size ?? PREVIEW_MINI_PLAYER_DEFAULT_SIZE;
   const position = miniPlayer?.tabId === tabId ? (miniPlayer.position ?? null) : null;
   const isOpen =
-    tabId != null &&
-    runtimeTabId != null &&
-    miniPlayer?.tabId === tabId &&
-    previewState.sessions[tabId] != null;
+    tabId != null && runtimeTabId != null && miniPlayer?.tabId === tabId && snapshot != null;
+  const preserveSourceViewport = snapshot?.viewport != null && snapshot.viewport._tag !== "fill";
 
   useLayoutEffect(() => {
     if (!isOpen || !tabId) return;
@@ -275,7 +274,7 @@ export function ThreadPreviewMiniPlayer(props: {
           tabId={runtimeTabId}
           visible={overlay !== null}
           cornerRadius={12}
-          fitSourceContent
+          fitSourceContent={preserveSourceViewport}
           layoutVersion={
             position
               ? `${position.x}:${position.y}:${size.width}:${size.height}`
