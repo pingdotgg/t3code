@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Tests verify disposable showcase fixtures on disk.
 import { assert, it } from "@effect/vitest";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
