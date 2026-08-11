@@ -25,6 +25,19 @@ data class Project(
   val workspaceRoot: String,
   val defaultModelSelection: ModelSelection?,
   val scripts: List<ProjectScript>,
+  val repositoryIdentity: RepositoryIdentity? = null,
+  val createdAt: String = "",
+  val updatedAt: String = "",
+)
+
+@Serializable
+data class RepositoryIdentity(
+  val canonicalKey: String,
+  val rootPath: String? = null,
+  val displayName: String? = null,
+  val provider: String? = null,
+  val owner: String? = null,
+  val name: String? = null,
 )
 
 @Serializable

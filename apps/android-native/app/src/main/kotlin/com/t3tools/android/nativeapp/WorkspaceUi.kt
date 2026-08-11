@@ -562,6 +562,7 @@ private fun MarkdownFile(markdown: String) {
 
 @Composable
 private fun SourceFile(contents: String) {
+  val appearance = LocalT3Appearance.current
   AndroidView(
     factory = {
       TextView(it).apply {
@@ -569,13 +570,15 @@ private fun SourceFile(contents: String) {
         setBackgroundColor(android.graphics.Color.BLACK)
         setTextIsSelectable(true)
         typeface = Typeface.MONOSPACE
-        textSize = 13f
         setPadding(28, 20, 28, 40)
-        setHorizontallyScrolling(true)
         movementMethod = ScrollingMovementMethod.getInstance()
       }
     },
-    update = { it.text = contents },
+    update = {
+      it.textSize = appearance.codeFontSize
+      it.setHorizontallyScrolling(!appearance.codeWordBreak)
+      it.text = contents
+    },
     modifier = Modifier.fillMaxSize(),
   )
 }

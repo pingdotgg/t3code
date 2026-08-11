@@ -64,8 +64,9 @@ class ChatReducersTest {
           "snapshotSequence":10,
           "projects":[{
             "id":"project-1","title":"T3","workspaceRoot":"/repo",
+            "repositoryIdentity":{"canonicalKey":"github.com/t3dotgg/t3code","rootPath":"/repo","displayName":"t3code","name":"t3code"},
             "defaultModelSelection":{"instanceId":"codex","model":"gpt-5.6-sol"},
-            "scripts":[]
+            "scripts":[],"createdAt":"2026-08-01T00:00:00Z","updatedAt":"2026-08-08T00:00:00Z"
           }],
           "threads":[${threadSummaryJson("Original")}]
         }
@@ -89,6 +90,8 @@ class ChatReducersTest {
     )
 
     assertEquals(10, initial.sequence)
+    assertEquals("github.com/t3dotgg/t3code", initial.projects.getValue("project-1").repositoryIdentity?.canonicalKey)
+    assertEquals("/repo", initial.projects.getValue("project-1").repositoryIdentity?.rootPath)
     assertEquals("Updated", updated.threads.getValue("thread-1").title)
     assertSame(updated, duplicate)
     assertTrue(updated.reduce(json("""{"kind":"synchronized"}""")).synchronized)

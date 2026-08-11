@@ -236,6 +236,20 @@ private fun JsonObject.toProject(): Project? {
       val command = script.text("command") ?: return@mapNotNull null
       ProjectScript(name, command)
     },
+    repositoryIdentity = obj("repositoryIdentity")?.let { identity ->
+      identity.text("canonicalKey")?.let { canonicalKey ->
+        RepositoryIdentity(
+          canonicalKey = canonicalKey,
+          rootPath = identity.text("rootPath"),
+          displayName = identity.text("displayName"),
+          provider = identity.text("provider"),
+          owner = identity.text("owner"),
+          name = identity.text("name"),
+        )
+      }
+    },
+    createdAt = text("createdAt").orEmpty(),
+    updatedAt = text("updatedAt").orEmpty(),
   )
 }
 

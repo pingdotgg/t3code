@@ -1620,7 +1620,9 @@ class AppViewModel(
   }
 
   fun updateTerminalFontSize(value: Float) {
-    updateSettings(runtime.value.settings.copy(terminalFontSize = value.coerceIn(6f, 14f)))
+    updateSettings(
+      runtime.value.settings.copy(terminalFontSizeOverride = normalizeTerminalFontSize(value)),
+    )
   }
 
   private fun resolveTerminalTarget(threadId: String, terminalId: String): TerminalTarget? {

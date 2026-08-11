@@ -73,6 +73,11 @@ fun ReviewScreen(
   val draftRevision by viewModel.draftRevision.collectAsState()
   val targetKey = state.targetKey
   val files = (state.parsed as? ParsedReviewDiff.Files)?.files.orEmpty()
+  val appearance = LocalT3Appearance.current
+  val codeSurface = resolveCodeSurfaceMetrics(appearance.codeFontSize)
+  val diffStyleJson = remember(codeSurface) {
+    """{"rowHeight":${codeSurface.rowHeight},"codeFontSize":${codeSurface.fontSize},"lineNumberFontSize":${codeSurface.lineNumberFontSize}}"""
+  }
   val section = state.selectedSection
   val draftKey = state.environmentId?.let { DraftStore.threadKey(it, threadId) }
   val comments = remember(draftRevision, draftKey) {
@@ -245,7 +250,7 @@ fun ReviewScreen(
             factory = { context ->
               ReviewDiffSurfaceView(context).apply {
                 setAppearanceScheme("dark")
-                setRowHeight(24f)
+                setStyleJson(diffStyleJson)
                 setContentWidth(2800f)
                 setRowsJson(rowsJson)
                 onToggleFile = { event ->
@@ -272,6 +277,7 @@ fun ReviewScreen(
               }
             },
             update = { view ->
+              view.setStyleJson(diffStyleJson)
               view.setContentResetKey("${state.targetKey}:${section?.id}")
               view.setCollapsedFileIdsJson(collapsedFileIdsJson)
               view.setViewedFileIdsJson(viewedFileIdsJson)

@@ -104,6 +104,7 @@ import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.WarningAmber
@@ -137,6 +138,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -222,6 +224,8 @@ private const val T3_WORDMARK_PATH =
 private const val ARCHIVED_THREADS = "settings/archived"
 private const val USAGE = "settings/usage"
 private const val SETTINGS_ENVIRONMENTS = "settings/environments"
+private const val PROJECT_GROUPING = "settings/project-grouping"
+private const val APPEARANCE = "settings/appearance"
 private const val CLIENT_STORAGE = "settings/storage"
 private const val LEGAL = "settings/legal"
 private const val THREAD = "thread/{threadId}"
@@ -399,6 +403,8 @@ fun T3NativeApp(viewModel: AppViewModel) {
         onOpenEnvironments = { navController.navigate(SETTINGS_ENVIRONMENTS) },
         onOpenArchivedThreads = { navController.navigate(ARCHIVED_THREADS) },
         onOpenUsage = { navController.navigate(USAGE) },
+        onOpenProjectGrouping = { navController.navigate(PROJECT_GROUPING) },
+        onOpenAppearance = { navController.navigate(APPEARANCE) },
         onOpenClientStorage = { navController.navigate(CLIENT_STORAGE) },
         onOpenLegal = { navController.navigate(LEGAL) },
       )
@@ -409,6 +415,22 @@ fun T3NativeApp(viewModel: AppViewModel) {
         viewModel = viewModel,
         onBack = { navController.popBackStack() },
         onAddEnvironment = { navController.navigate(ONBOARDING) },
+      )
+    }
+    composable(PROJECT_GROUPING) {
+      ProjectGroupingScreen(
+        settings = runtime.settings,
+        onChange = { mode ->
+          viewModel.updateSettings(runtime.settings.copy(projectGroupingMode = mode))
+        },
+        onBack = { navController.popBackStack() },
+      )
+    }
+    composable(APPEARANCE) {
+      AppearanceScreen(
+        settings = runtime.settings,
+        onChange = viewModel::updateSettings,
+        onBack = { navController.popBackStack() },
       )
     }
     composable(USAGE) {
@@ -566,7 +588,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
           environmentId = environment.environmentId,
           environmentLabel = environment.label,
           connectionPhase = runtime.connectionPhase,
-          fontSize = runtime.settings.terminalFontSize,
+          fontSize = runtime.settings.resolveAppearance().terminalFontSize,
           viewModel = viewModel,
           onBack = { navController.popBackStack() },
           onSelectTerminal = ::replaceTerminal,
@@ -1078,7 +1100,7 @@ private fun HomeScreen(
 
   var search by remember { mutableStateOf("") }
   var filterStatus by remember { mutableStateOf(ThreadFilterStatus.All) }
-  var filterProjectId by remember { mutableStateOf<String?>(null) }
+  var filterProjectKey by remember { mutableStateOf<String?>(null) }
   var showFilterSheet by remember { mutableStateOf(false) }
   var snoozedExpanded by remember { mutableStateOf(false) }
   var settledExpanded by remember { mutableStateOf(true) }
@@ -1086,6 +1108,18 @@ private fun HomeScreen(
   val threadListState = rememberLazyListState()
   var previousRevealSignal by remember { mutableStateOf(HomeListRevealSignal()) }
   val caps = runtime.threadCapabilities
+  val projectGroups = remember(runtime.shell.projects, runtime.settings.projectGroupingMode) {
+    buildLogicalProjectGroups(runtime.shell.projects.values, runtime.settings.projectGroupingMode)
+  }
+  LaunchedEffect(projectGroups, filterProjectKey) {
+    if (filterProjectKey != null && projectGroups.none { it.key == filterProjectKey }) {
+      filterProjectKey = null
+    }
+  }
+  val projectGroupLabels = remember(projectGroups) {
+    projectGroups.flatMap { group -> group.projectIds.map { it to group.label } }.toMap()
+  }
+  val filteredProjectIds = projectGroups.firstOrNull { it.key == filterProjectKey }?.projectIds
 
   val revealSignal = HomeListRevealSignal(
     draftVisible = activeDraft != null,
@@ -1097,11 +1131,11 @@ private fun HomeScreen(
     if (revealTop) threadListState.scrollToItem(0)
   }
 
-  val rawThreads = remember(runtime.shell.threads, filterProjectId) {
-    if (filterProjectId == null) {
+  val rawThreads = remember(runtime.shell.threads, filteredProjectIds) {
+    if (filteredProjectIds == null) {
       runtime.shell.threads.values
     } else {
-      runtime.shell.threads.values.filter { it.projectId == filterProjectId }
+      runtime.shell.threads.values.filter { it.projectId in filteredProjectIds }
     }
   }
 
@@ -1137,7 +1171,7 @@ private fun HomeScreen(
   val showSettledSection = filterStatus in listOf(ThreadFilterStatus.All, ThreadFilterStatus.Settled) &&
     layout.settledCount > 0
 
-  val isFiltered = filterStatus != ThreadFilterStatus.All || filterProjectId != null
+  val isFiltered = filterStatus != ThreadFilterStatus.All || filterProjectKey != null
 
   Scaffold(
     topBar = {
@@ -1218,11 +1252,11 @@ private fun HomeScreen(
               },
             )
           }
-          if (filterProjectId != null) {
-            val pTitle = runtime.shell.projects[filterProjectId]?.title ?: filterProjectId
+          if (filterProjectKey != null) {
+            val pTitle = projectGroups.firstOrNull { it.key == filterProjectKey }?.label ?: filterProjectKey
             FilterChip(
               selected = true,
-              onClick = { filterProjectId = null },
+              onClick = { filterProjectKey = null },
               label = { Text("Project: $pTitle") },
               trailingIcon = {
                 Icon(Icons.Rounded.Clear, contentDescription = "Clear filter", modifier = Modifier.size(16.dp))
@@ -1284,6 +1318,7 @@ private fun HomeScreen(
           viewModel = viewModel,
           capabilities = caps,
           compact = runtime.settings.compactThreadRows,
+          projectGroupLabels = projectGroupLabels,
           onOpenThread = onOpenThread,
         )
 
@@ -1319,6 +1354,7 @@ private fun HomeScreen(
               viewModel = viewModel,
               capabilities = caps,
               compact = true,
+              projectGroupLabels = projectGroupLabels,
               onOpenThread = onOpenThread,
             )
           }
@@ -1341,6 +1377,7 @@ private fun HomeScreen(
               viewModel = viewModel,
               capabilities = caps,
               compact = true,
+              projectGroupLabels = projectGroupLabels,
               onOpenThread = onOpenThread,
             )
             if (layout.hiddenSettledCount > 0) {
@@ -1372,12 +1409,12 @@ private fun HomeScreen(
   if (showFilterSheet) {
     ThreadFilterBottomSheet(
       filterStatus = filterStatus,
-      filterProjectId = filterProjectId,
-      projects = runtime.shell.projects.values.sortedBy(Project::title),
+      filterProjectKey = filterProjectKey,
+      projectGroups = projectGroups,
       environments = runtime.environments,
       selectedEnvironmentId = runtime.environment?.environmentId,
       onSelectStatus = { filterStatus = it },
-      onSelectProject = { filterProjectId = it },
+      onSelectProject = { filterProjectKey = it },
       onSelectEnvironment = { viewModel.selectEnvironment(it) },
       onDismiss = { showFilterSheet = false },
     )
@@ -1391,6 +1428,7 @@ private fun LazyListScope.threadListRows(
   viewModel: AppViewModel,
   capabilities: ThreadCapabilities,
   compact: Boolean,
+  projectGroupLabels: Map<String, String>,
   onOpenThread: (String) -> Unit,
 ) {
   val orderedPinned = sortPinnedThreads(
@@ -1404,7 +1442,7 @@ private fun LazyListScope.threadListRows(
       item = item,
       capabilities = capabilities,
       compact = compact,
-      projectTitle = project?.title,
+      projectTitle = projectGroupLabels[project?.id] ?: project?.title,
       projectPath = project?.workspaceRoot,
       providerDriver = resolveProviderDriver(
         item.thread.modelSelection.instanceId,
@@ -1432,8 +1470,8 @@ private fun LazyListScope.threadListRows(
 @Composable
 private fun ThreadFilterBottomSheet(
   filterStatus: ThreadFilterStatus,
-  filterProjectId: String?,
-  projects: List<Project>,
+  filterProjectKey: String?,
+  projectGroups: List<LogicalProjectGroup>,
   environments: List<SavedEnvironment>,
   selectedEnvironmentId: String?,
   onSelectStatus: (ThreadFilterStatus) -> Unit,
@@ -1469,7 +1507,7 @@ private fun ThreadFilterBottomSheet(
           fontWeight = FontWeight.Bold,
           color = Color.White,
         )
-        if (filterStatus != ThreadFilterStatus.All || filterProjectId != null) {
+        if (filterStatus != ThreadFilterStatus.All || filterProjectKey != null) {
           TextButton(onClick = {
             onSelectStatus(ThreadFilterStatus.All)
             onSelectProject(null)
@@ -1503,7 +1541,7 @@ private fun ThreadFilterBottomSheet(
         }
       }
 
-      if (projects.isNotEmpty()) {
+      if (projectGroups.isNotEmpty()) {
         Text("Project", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
           Surface(
@@ -1511,7 +1549,7 @@ private fun ThreadFilterBottomSheet(
               onSelectProject(null)
               onDismiss()
             },
-            color = if (filterProjectId == null) Color(0xFF1E293B) else Color(0xFF18181B),
+            color = if (filterProjectKey == null) Color(0xFF1E293B) else Color(0xFF18181B),
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
@@ -1521,16 +1559,16 @@ private fun ThreadFilterBottomSheet(
               verticalAlignment = Alignment.CenterVertically,
             ) {
               Text("All Projects", fontWeight = FontWeight.Medium, color = Color.White)
-              if (filterProjectId == null) {
+              if (filterProjectKey == null) {
                 Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
               }
             }
           }
-          projects.forEach { proj ->
-            val isSel = filterProjectId == proj.id
+          projectGroups.forEach { group ->
+            val isSel = filterProjectKey == group.key
             Surface(
               onClick = {
-                onSelectProject(proj.id)
+                onSelectProject(group.key)
                 onDismiss()
               },
               color = if (isSel) Color(0xFF1E293B) else Color(0xFF18181B),
@@ -1542,7 +1580,16 @@ private fun ThreadFilterBottomSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
               ) {
-                Text(proj.title, fontWeight = FontWeight.Medium, color = Color.White)
+                Column(Modifier.weight(1f)) {
+                  Text(group.label, fontWeight = FontWeight.Medium, color = Color.White)
+                  if (group.projects.size > 1) {
+                    Text(
+                      "${group.projects.size} workspaces",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
+                }
                 if (isSel) {
                   Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 }
@@ -1766,6 +1813,8 @@ private fun SettingsScreen(
   onOpenEnvironments: () -> Unit,
   onOpenArchivedThreads: () -> Unit,
   onOpenUsage: () -> Unit,
+  onOpenProjectGrouping: () -> Unit,
+  onOpenAppearance: () -> Unit,
   onOpenClientStorage: () -> Unit,
   onOpenLegal: () -> Unit,
 ) {
@@ -1801,12 +1850,16 @@ private fun SettingsScreen(
       }
 
       NativeSettingsSection("General") {
+        NativeSettingsRow(Icons.Rounded.FolderOpen, "Project Grouping", onClick = onOpenProjectGrouping)
+        HorizontalDivider(color = Color(0xFF27272A))
         NativeSettingsRow(Icons.Rounded.BarChart, "Usage", onClick = onOpenUsage)
       }
 
       NativeSettingsSection("Appearance") {
-        NativeSettingsRow(Icons.Rounded.Palette, "Theme", value = "AMOLED dark")
-        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsRow(Icons.Rounded.Palette, "Appearance", onClick = onOpenAppearance)
+      }
+
+      NativeSettingsSection("Legacy") {
         NativeSettingsSwitchRow(
           icon = Icons.Rounded.FilterList,
           label = "Compact thread rows",
@@ -1896,6 +1949,209 @@ private fun NativeSettingsSwitchRow(
     Text(label, color = Color.White, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
     Switch(checked = checked, onCheckedChange = onCheckedChange)
   }
+}
+
+@Composable
+private fun ProjectGroupingScreen(
+  settings: AppSettings,
+  onChange: (ProjectGroupingMode) -> Unit,
+  onBack: () -> Unit,
+) {
+  val options = listOf(
+    Triple(ProjectGroupingMode.Repository, "Group by repository", "Matching repositories appear as one project."),
+    Triple(ProjectGroupingMode.RepositoryPath, "Group by repository path", "Keep monorepo paths separate."),
+    Triple(ProjectGroupingMode.Separate, "Keep separate", "Show every workspace as its own project."),
+  )
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("Project Grouping", onBack) }) { padding ->
+    Column(Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
+      NativeSettingsSection("Default grouping") {
+        options.forEachIndexed { index, (mode, label, description) ->
+          if (index > 0) HorizontalDivider(color = Color(0xFF27272A))
+          Row(
+            modifier = Modifier.fillMaxWidth().clickable { onChange(mode) }.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+          ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+              Text(label, style = MaterialTheme.typography.bodyLarge, color = Color.White)
+              Text(
+                description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+            if (settings.projectGroupingMode == mode) {
+              Icon(Icons.Rounded.Check, contentDescription = "Selected", modifier = Modifier.size(18.dp))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun AppearanceScreen(
+  settings: AppSettings,
+  onChange: (AppSettings) -> Unit,
+  onBack: () -> Unit,
+) {
+  var previewSettings by remember { mutableStateOf(settings) }
+  LaunchedEffect(settings) { previewSettings = settings }
+  val appearance = previewSettings.resolveAppearance()
+  fun commit(next: AppSettings) {
+    previewSettings = next
+    onChange(next)
+  }
+  BackHandler(onBack = onBack)
+  Scaffold(topBar = { BackTopBar("Appearance", onBack) }) { padding ->
+    Column(
+      Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
+      verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+      NativeSettingsSection("Text") {
+        TextAppearancePreview(appearance.baseFontSize)
+        HorizontalDivider(color = Color(0xFF27272A))
+        AppearanceSliderRow(
+          label = "Text size",
+          value = appearance.baseFontSize,
+          valueLabel = "${appearance.baseFontSize.toInt()} pt",
+          range = MIN_BASE_FONT_SIZE..MAX_BASE_FONT_SIZE,
+          steps = 10,
+          onPreview = { previewSettings = previewSettings.copy(baseFontSize = normalizeBaseFontSize(it)) },
+          onCommit = { commit(previewSettings.copy(baseFontSize = normalizeBaseFontSize(it))) },
+        )
+      }
+
+      NativeSettingsSection("Terminal") {
+        TerminalAppearancePreview(appearance.terminalFontSize)
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsSwitchRow(
+          icon = Icons.Rounded.Terminal,
+          label = "Custom font size",
+          checked = appearance.terminalFontSizeCustom,
+          onCheckedChange = { enabled ->
+            commit(previewSettings.copy(terminalFontSizeOverride = if (enabled) appearance.terminalFontSize else null))
+          },
+        )
+        if (appearance.terminalFontSizeCustom) {
+          HorizontalDivider(color = Color(0xFF27272A))
+          AppearanceSliderRow(
+            label = "Font size",
+            value = appearance.terminalFontSize,
+            valueLabel = "${"%.1f".format(appearance.terminalFontSize)} pt",
+            range = MIN_TERMINAL_FONT_SIZE..MAX_TERMINAL_FONT_SIZE,
+            steps = 15,
+            onPreview = {
+              previewSettings = previewSettings.copy(terminalFontSizeOverride = normalizeTerminalFontSize(it))
+            },
+            onCommit = { commit(previewSettings.copy(terminalFontSizeOverride = normalizeTerminalFontSize(it))) },
+          )
+        }
+      }
+
+      NativeSettingsSection("Code & Diffs") {
+        CodeAppearancePreview(appearance.codeFontSize, appearance.codeWordBreak)
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsSwitchRow(
+          icon = Icons.Rounded.Build,
+          label = "Custom font size",
+          checked = appearance.codeFontSizeCustom,
+          onCheckedChange = { enabled ->
+            commit(previewSettings.copy(codeFontSizeOverride = if (enabled) appearance.codeFontSize else null))
+          },
+        )
+        if (appearance.codeFontSizeCustom) {
+          HorizontalDivider(color = Color(0xFF27272A))
+          AppearanceSliderRow(
+            label = "Font size",
+            value = appearance.codeFontSize,
+            valueLabel = "${appearance.codeFontSize.toInt()} pt",
+            range = MIN_CODE_FONT_SIZE..MAX_CODE_FONT_SIZE,
+            steps = 9,
+            onPreview = {
+              previewSettings = previewSettings.copy(codeFontSizeOverride = normalizeCodeFontSize(it))
+            },
+            onCommit = { commit(previewSettings.copy(codeFontSizeOverride = normalizeCodeFontSize(it))) },
+          )
+        }
+        HorizontalDivider(color = Color(0xFF27272A))
+        NativeSettingsSwitchRow(
+          icon = Icons.Rounded.TextFields,
+          label = "Word break",
+          checked = appearance.codeWordBreak,
+          onCheckedChange = { commit(previewSettings.copy(codeWordBreak = it)) },
+        )
+      }
+      Spacer(Modifier.height(8.dp))
+    }
+  }
+}
+
+@Composable
+private fun AppearanceSliderRow(
+  label: String,
+  value: Float,
+  valueLabel: String,
+  range: ClosedFloatingPointRange<Float>,
+  steps: Int,
+  onPreview: (Float) -> Unit,
+  onCommit: (Float) -> Unit,
+) {
+  Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+      Text(label, style = MaterialTheme.typography.bodyMedium)
+      Text(valueLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Slider(
+      value = value,
+      onValueChange = onPreview,
+      onValueChangeFinished = { onCommit(value) },
+      valueRange = range,
+      steps = steps,
+    )
+  }
+}
+
+@Composable
+private fun TextAppearancePreview(fontSize: Float) {
+  val sizes = resolveMarkdownFontSizes(fontSize)
+  Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Text("The quick brown fox jumps over the lazy dog.", fontSize = sizes.body.sp, lineHeight = sizes.bodyLineHeight.sp)
+    Text(
+      "Messages, labels, and headings scale with this size.",
+      fontSize = sizes.small.sp,
+      lineHeight = (sizes.small * 1.4f).sp,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+  }
+}
+
+@Composable
+private fun TerminalAppearancePreview(fontSize: Float) {
+  Column(
+    Modifier.fillMaxWidth().background(Color.Black).padding(16.dp),
+    verticalArrangement = Arrangement.spacedBy(2.dp),
+  ) {
+    Text("→ t3code git:(main) ✗ vpr dev", fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, color = Color(0xFFE4E4E7))
+    Text("VITE v7.1.1 ready in 1.24s", fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, color = Color(0xFF4ADE80))
+    Text("✓ 85 passed  △ 2 warnings  ✗ 0 failed", fontFamily = FontFamily.Monospace, fontSize = fontSize.sp, color = Color(0xFF60A5FA))
+  }
+}
+
+@Composable
+private fun CodeAppearancePreview(fontSize: Float, wordBreak: Boolean) {
+  val code = "function formatUser(user) {\n  return `${'$'}{user.name} <${'$'}{user.email}>` // demonstrates how long lines behave\n}"
+  Text(
+    code,
+    fontFamily = FontFamily.Monospace,
+    fontSize = fontSize.sp,
+    lineHeight = (fontSize + 6f).sp,
+    modifier = (if (wordBreak) Modifier.fillMaxWidth() else Modifier.horizontalScroll(rememberScrollState()))
+      .background(Color(0xFF0B0B0D))
+      .padding(16.dp),
+  )
 }
 
 @Composable
@@ -2428,12 +2684,21 @@ private fun NewTaskDrawer(
     val loaded = viewModel.loadDraft(draftKey)
     draft = loaded
   }
-  val projects = runtime.shell.projects.values.sortedBy(Project::title)
-  var projectId by remember(environmentId, initialProjectId) {
-    mutableStateOf(initialProjectId ?: draft.projectId ?: projects.firstOrNull()?.id.orEmpty())
+  val projectGroups = remember(runtime.shell.projects, runtime.settings.projectGroupingMode) {
+    buildLogicalProjectGroups(runtime.shell.projects.values, runtime.settings.projectGroupingMode)
   }
-  LaunchedEffect(projects, initialProjectId) {
-    val requested = projects.firstOrNull { it.id == initialProjectId }?.id
+  val projects = projectGroups.map(LogicalProjectGroup::representative)
+  val projectLabels = projectGroups.associate { it.representative.id to it.label }
+  fun groupedProjectId(id: String?): String? = projectGroups
+    .firstOrNull { id != null && id in it.projectIds }
+    ?.representative?.id
+  var projectId by remember(environmentId, initialProjectId) {
+    mutableStateOf(
+      groupedProjectId(initialProjectId ?: draft.projectId) ?: projects.firstOrNull()?.id.orEmpty(),
+    )
+  }
+  LaunchedEffect(projectGroups, initialProjectId) {
+    val requested = groupedProjectId(initialProjectId)
     if (requested != null) projectId = requested
     else if (projects.none { it.id == projectId }) projectId = projects.firstOrNull()?.id.orEmpty()
   }
@@ -2526,6 +2791,7 @@ private fun NewTaskDrawer(
         selectedEnvironmentId = environmentId,
         onSelectEnvironment = viewModel::selectEnvironment,
         projects = projects,
+        projectLabels = projectLabels,
         selectedProjectId = projectId,
         onSelectProject = { projectId = it },
         onAddProject = onAddProject,
@@ -2608,6 +2874,7 @@ private fun NewTaskContextStrip(
   selectedEnvironmentId: String,
   onSelectEnvironment: (String) -> Unit,
   projects: List<Project>,
+  projectLabels: Map<String, String>,
   selectedProjectId: String,
   onSelectProject: (String) -> Unit,
   onAddProject: () -> Unit,
@@ -2659,14 +2926,16 @@ private fun NewTaskContextStrip(
       Box {
         NewTaskContextPill(
           icon = Icons.Rounded.FolderOpen,
-          label = projects.firstOrNull { it.id == selectedProjectId }?.title ?: "Project",
+          label = projectLabels[selectedProjectId]
+            ?: projects.firstOrNull { it.id == selectedProjectId }?.title
+            ?: "Project",
           onClick = { showProjects = true },
         )
         ComposerOptionsMenu(showProjects, { showProjects = false }) {
           ComposerMenuSection("Project")
           projects.forEach { project ->
             ComposerMenuChoice(
-              label = project.title,
+              label = projectLabels[project.id] ?: project.title,
               description = project.workspaceRoot,
               selected = project.id == selectedProjectId,
               onClick = {
@@ -3648,11 +3917,12 @@ private fun MessageCopyButton(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun UserMessageContent(text: String, modifier: Modifier = Modifier) {
   val segments = remember(text) { parseReviewMessageSegments(text) }
+  val sizes = resolveMarkdownFontSizes(LocalT3Appearance.current.baseFontSize)
   Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
     segments.forEach { segment ->
       when (segment) {
         is ReviewMessageSegment.Text -> segment.value.trim().takeIf(String::isNotEmpty)?.let {
-          Text(it, fontSize = 15.sp)
+          Text(it, fontSize = sizes.body.sp, lineHeight = sizes.bodyLineHeight.sp)
         }
         is ReviewMessageSegment.Comment -> ReviewCommentCard(segment.value)
       }

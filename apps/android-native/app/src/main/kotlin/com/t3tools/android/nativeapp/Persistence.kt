@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.t3tools.android.protocol.ShellState
 import com.t3tools.android.protocol.ThreadState
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -44,8 +45,24 @@ data class CachedServerConfig(
 @Serializable
 data class AppSettings(
   val compactThreadRows: Boolean = false,
-  val terminalFontSize: Float = 10.5f,
+  val projectGroupingMode: ProjectGroupingMode = ProjectGroupingMode.Repository,
+  val baseFontSize: Float = DEFAULT_BASE_FONT_SIZE,
+  @SerialName("terminalFontSize")
+  val terminalFontSizeOverride: Float? = null,
+  val codeFontSizeOverride: Float? = null,
+  val codeWordBreak: Boolean = false,
 )
+
+internal fun migrateLegacyAppearanceSettings(
+  settings: AppSettings,
+  hasAppearanceSettings: Boolean,
+): AppSettings = if (
+  !hasAppearanceSettings && settings.terminalFontSizeOverride == DEFAULT_TERMINAL_FONT_SIZE
+) {
+  settings.copy(terminalFontSizeOverride = null)
+} else {
+  settings
+}
 
 data class CachedSnapshotSummary(
   val environmentId: String,
@@ -289,7 +306,13 @@ class NativeDatabase(
 
   @Synchronized
   fun appSettings(): AppSettings = setting(APP_SETTINGS)?.let {
-    runCatching { json.decodeFromString(AppSettings.serializer(), it) }.getOrNull()
+    runCatching {
+      val stored = json.parseToJsonElement(it) as? JsonObject
+      migrateLegacyAppearanceSettings(
+        json.decodeFromString(AppSettings.serializer(), it),
+        hasAppearanceSettings = stored?.containsKey("baseFontSize") == true,
+      )
+    }.getOrNull()
   } ?: AppSettings()
 
   @Synchronized

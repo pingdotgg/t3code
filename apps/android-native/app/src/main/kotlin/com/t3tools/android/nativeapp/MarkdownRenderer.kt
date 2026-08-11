@@ -78,22 +78,25 @@ private data class T3MarkdownStyle(
 
 @Composable
 private fun t3MarkdownStyle(): T3MarkdownStyle {
+  val appearance = LocalT3Appearance.current
+  val sizes = resolveMarkdownFontSizes(appearance.baseFontSize)
+  val codeLineHeight = maxOf(appearance.codeFontSize + 6f, appearance.codeFontSize * 1.45f)
   val body = TextStyle(
     color = MarkdownBody,
-    fontSize = 15.sp,
-    lineHeight = 19.sp,
+    fontSize = sizes.body.sp,
+    lineHeight = sizes.bodyLineHeight.sp,
   )
   val heading = body.copy(color = MarkdownStrong, fontWeight = FontWeight.Bold)
-  val components = remember {
+  val components = remember(appearance.codeWordBreak) {
     markdownComponents(
       codeFence = { model ->
         MarkdownCodeFence(model.content, model.node, model.typography.code) { code, language, style ->
-          T3MarkdownCodeBlock(code, language, style)
+          T3MarkdownCodeBlock(code, language, style, appearance.codeWordBreak)
         }
       },
       codeBlock = { model ->
         MarkdownCodeBlock(model.content, model.node, model.typography.code) { code, language, style ->
-          T3MarkdownCodeBlock(code, language, style)
+          T3MarkdownCodeBlock(code, language, style, appearance.codeWordBreak)
         }
       },
     )
@@ -107,9 +110,9 @@ private fun t3MarkdownStyle(): T3MarkdownStyle {
       tableBackground = Color(0x08FFFFFF),
     ),
     typography = markdownTypography(
-      h1 = heading.copy(fontSize = 21.sp, lineHeight = 27.sp),
-      h2 = heading.copy(fontSize = 19.sp, lineHeight = 25.sp),
-      h3 = heading.copy(fontSize = 17.sp, lineHeight = 23.sp),
+      h1 = heading.copy(fontSize = sizes.h1.sp, lineHeight = (sizes.h1 + 6f).sp),
+      h2 = heading.copy(fontSize = sizes.h2.sp, lineHeight = (sizes.h2 + 6f).sp),
+      h3 = heading.copy(fontSize = sizes.h3.sp, lineHeight = (sizes.h3 + 6f).sp),
       h4 = heading,
       h5 = heading,
       h6 = heading,
@@ -119,12 +122,20 @@ private fun t3MarkdownStyle(): T3MarkdownStyle {
       bullet = body,
       list = body,
       quote = body,
-      code = body.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 19.sp),
-      inlineCode = body.copy(color = MarkdownMuted, fontFamily = FontFamily.Monospace),
+      code = body.copy(
+        fontFamily = FontFamily.Monospace,
+        fontSize = appearance.codeFontSize.sp,
+        lineHeight = codeLineHeight.sp,
+      ),
+      inlineCode = body.copy(
+        color = MarkdownMuted,
+        fontFamily = FontFamily.Monospace,
+        fontSize = appearance.codeFontSize.sp,
+      ),
       textLink = TextLinkStyles(
         style = SpanStyle(color = MarkdownLink, textDecoration = TextDecoration.Underline),
       ),
-      table = body.copy(fontSize = 14.sp, lineHeight = 18.sp),
+      table = body.copy(fontSize = sizes.small.sp, lineHeight = (sizes.small + 4f).sp),
     ),
     padding = markdownPadding(
       block = 5.dp,
@@ -213,7 +224,12 @@ private fun StreamingMarkdown(markdown: String, style: T3MarkdownStyle) {
 }
 
 @Composable
-private fun T3MarkdownCodeBlock(code: String, language: String?, style: TextStyle) {
+private fun T3MarkdownCodeBlock(
+  code: String,
+  language: String?,
+  style: TextStyle,
+  wordBreak: Boolean,
+) {
   val context = LocalContext.current
   Surface(
     shape = RoundedCornerShape(10.dp),
@@ -250,9 +266,9 @@ private fun T3MarkdownCodeBlock(code: String, language: String?, style: TextStyl
       Text(
         text = code,
         style = style,
-        modifier = Modifier
-          .horizontalScroll(rememberScrollState())
-          .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+        modifier = (if (wordBreak) Modifier.fillMaxWidth() else {
+          Modifier.horizontalScroll(rememberScrollState())
+        }).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
       )
     }
   }
