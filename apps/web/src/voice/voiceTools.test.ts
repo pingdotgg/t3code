@@ -21,6 +21,13 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  MAX_VOICE_TOOL_CALL_ID_CHARS,
+  MAX_VOICE_TOOL_INSTRUCTION_CHARS,
+  MAX_VOICE_TOOL_LIST_ITEMS,
+  MAX_VOICE_TOOL_SELECTOR_CHARS,
+  MAX_VOICE_TOOL_TITLE_CHARS,
+  MAX_VOICE_TARGET_LABEL_CHARS,
+  buildVoiceTargetDisplayLabel,
   createVoiceToolsController,
   voiceSupervisorToolDefinitions,
   type VoiceSupervisorProjectRecord,
@@ -41,8 +48,17 @@ const PreviewResult = Schema.Struct({
   target: Schema.String,
   title: Schema.optionalKey(Schema.String),
   model: Schema.optionalKey(Schema.String),
+  runtimeMode: Schema.optionalKey(Schema.String),
+  interactionMode: Schema.optionalKey(Schema.String),
   workspace: Schema.optionalKey(
-    Schema.Struct({ mode: Schema.String, runSetupScript: Schema.Boolean }),
+    Schema.Struct({
+      mode: Schema.String,
+      baseBranch: Schema.optionalKey(Schema.String),
+      startFromOrigin: Schema.optionalKey(Schema.Boolean),
+      branch: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      hasWorktreePath: Schema.optionalKey(Schema.Boolean),
+      runSetupScript: Schema.Boolean,
+    }),
   ),
 });
 const decodePreview = Schema.decodeUnknownSync(PreviewResult);
@@ -51,6 +67,7 @@ function projectRecord(input: {
   environmentId: string;
   projectId: string;
   title: string;
+  environmentLabel?: string;
   version?: string;
   availability?: VoiceSupervisorProjectRecord["availability"];
   aliases?: ReadonlyArray<string>;
@@ -67,9 +84,13 @@ function projectRecord(input: {
       createdAt: NOW,
       updatedAt: NOW,
     },
+    displayLabel: buildVoiceTargetDisplayLabel(
+      input.title,
+      input.environmentLabel ?? "Test environment",
+    ),
     version: makeSupervisorTargetVersion(input.version ?? "1"),
     availability: input.availability ?? "live",
-    ...(input.aliases === undefined ? {} : { aliases: input.aliases }),
+    aliases: input.aliases ?? [input.title],
   };
 }
 
@@ -78,6 +99,7 @@ function threadRecord(input: {
   projectId: string;
   threadId: string;
   title: string;
+  environmentLabel?: string;
   version?: string;
   availability?: VoiceSupervisorThreadRecord["availability"];
   running?: boolean;
@@ -132,9 +154,13 @@ function threadRecord(input: {
         ? {}
         : { planProgress: { step: input.currentStep, completedSteps: 1, totalSteps: 3 } }),
     },
+    displayLabel: buildVoiceTargetDisplayLabel(
+      input.title,
+      input.environmentLabel ?? "Test environment",
+    ),
     version: makeSupervisorTargetVersion(input.version ?? "1"),
     availability: input.availability ?? "live",
-    ...(input.aliases === undefined ? {} : { aliases: input.aliases }),
+    aliases: input.aliases ?? [input.title],
   };
 }
 
@@ -259,6 +285,95 @@ describe("voice supervisor tool allowlist", () => {
         /approval|user.input|delete|archive|terminal/i.test(tool.name),
       ),
     ).toBe(false);
+    expect(
+      JSON.stringify(voiceSupervisorToolDefinitions.map((tool) => tool.parameters)),
+    ).not.toContain("call_id");
+    expect(voiceSupervisorToolDefinitions.map((tool) => tool.parameters)).toEqual([
+      {
+        type: "object",
+        properties: {
+          limit: { type: "integer", minimum: 0, maximum: MAX_VOICE_TOOL_LIST_ITEMS },
+        },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          limit: { type: "integer", minimum: 0, maximum: MAX_VOICE_TOOL_LIST_ITEMS },
+        },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          limit: { type: "integer", minimum: 0, maximum: MAX_VOICE_TOOL_LIST_ITEMS },
+        },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          thread: { type: "string", minLength: 1, maxLength: MAX_VOICE_TOOL_SELECTOR_CHARS },
+        },
+        required: ["thread"],
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          thread: { type: "string", minLength: 1, maxLength: MAX_VOICE_TOOL_SELECTOR_CHARS },
+        },
+        required: ["thread"],
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          project_handle: {
+            type: "string",
+            minLength: 1,
+            maxLength: MAX_VOICE_TOOL_SELECTOR_CHARS,
+          },
+          instruction: {
+            type: "string",
+            minLength: 1,
+            maxLength: MAX_VOICE_TOOL_INSTRUCTION_CHARS,
+          },
+          title: { type: "string", minLength: 1, maxLength: MAX_VOICE_TOOL_TITLE_CHARS },
+        },
+        required: ["project_handle", "instruction"],
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          thread_handle: {
+            type: "string",
+            minLength: 1,
+            maxLength: MAX_VOICE_TOOL_SELECTOR_CHARS,
+          },
+          instruction: {
+            type: "string",
+            minLength: 1,
+            maxLength: MAX_VOICE_TOOL_INSTRUCTION_CHARS,
+          },
+        },
+        required: ["thread_handle", "instruction"],
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        properties: {
+          thread_handle: {
+            type: "string",
+            minLength: 1,
+            maxLength: MAX_VOICE_TOOL_SELECTOR_CHARS,
+          },
+        },
+        required: ["thread_handle"],
+        additionalProperties: false,
+      },
+    ]);
 
     const harness = makeHarness({ projects: [], threads: [] });
     const invalidInput = { call_id: "strict-call", extra: true };
@@ -400,7 +515,9 @@ describe("voice supervisor tool allowlist", () => {
       }),
     ).resolves.toEqual({ status: "invalid-arguments" });
     await expect(
-      harness.controller.invoke("list_projects", { call_id: "x".repeat(161) }),
+      harness.controller.invoke("list_projects", {
+        call_id: "x".repeat(MAX_VOICE_TOOL_CALL_ID_CHARS + 1),
+      }),
     ).resolves.toEqual({ status: "invalid-arguments" });
     expect(harness.repository.listProjects).not.toHaveBeenCalled();
     expect(harness.repository.listThreads).not.toHaveBeenCalled();
@@ -408,16 +525,67 @@ describe("voice supervisor tool allowlist", () => {
 });
 
 describe("voice supervisor reads and navigation", () => {
+  it("reserves bounded display-label space for each environment qualifier", async () => {
+    const sharedTitle = `Shared ${"project ".repeat(80)}`.trimEnd();
+    const projects = [
+      projectRecord({
+        environmentId: "environment-a",
+        environmentLabel: "Laptop",
+        projectId: "project-a",
+        title: sharedTitle,
+      }),
+      projectRecord({
+        environmentId: "environment-b",
+        environmentLabel: "Desktop",
+        projectId: "project-b",
+        title: sharedTitle,
+      }),
+    ];
+    const harness = makeHarness({ projects, threads: [] });
+    const result = await harness.controller.invoke("list_projects", {
+      call_id: "long-project-labels",
+    });
+    if (result.status !== "ok") throw new Error("Expected a project list.");
+
+    expect(result.items.map((item) => item.label)).toEqual([
+      expect.stringMatching(/ · Laptop$/),
+      expect.stringMatching(/ · Desktop$/),
+    ]);
+    expect(new Set(result.items.map((item) => item.label)).size).toBe(2);
+    expect(result.items.every((item) => item.label.length <= MAX_VOICE_TARGET_LABEL_CHARS)).toBe(
+      true,
+    );
+
+    const longEnvironment = buildVoiceTargetDisplayLabel(
+      sharedTitle,
+      `Remote environment ${"region ".repeat(40)}Cape Town`,
+    );
+    expect(longEnvironment.length).toBeLessThanOrEqual(MAX_VOICE_TARGET_LABEL_CHARS);
+    expect(longEnvironment).toContain(" · Remote environment");
+    expect(longEnvironment).toMatch(/Cape Town$/);
+  });
+
   it("keeps duplicate environments ambiguous, partial names as candidates, and summaries bounded", async () => {
     const longStep = "Review every active worker and summarize progress ".repeat(20);
     const oversizedUpdatedAt = "oversized-updated-at".repeat(1_000);
     const projects = [
-      projectRecord({ environmentId: "environment-a", projectId: "project-a", title: "T3" }),
-      projectRecord({ environmentId: "environment-b", projectId: "project-b", title: "T3" }),
+      projectRecord({
+        environmentId: "environment-a",
+        environmentLabel: "Laptop",
+        projectId: "project-a",
+        title: "T3",
+      }),
+      projectRecord({
+        environmentId: "environment-b",
+        environmentLabel: "Desktop",
+        projectId: "project-b",
+        title: "T3",
+      }),
     ];
     const threads = [
       threadRecord({
         environmentId: "environment-a",
+        environmentLabel: "Laptop",
         projectId: "project-a",
         threadId: "thread-a",
         title: "Fix voice",
@@ -427,12 +595,14 @@ describe("voice supervisor reads and navigation", () => {
       }),
       threadRecord({
         environmentId: "environment-b",
+        environmentLabel: "Desktop",
         projectId: "project-b",
         threadId: "thread-b",
         title: "Fix voice",
       }),
       threadRecord({
         environmentId: "environment-a",
+        environmentLabel: "Laptop",
         projectId: "project-a",
         threadId: "thread-c",
         title: "Voice planning",
@@ -446,6 +616,7 @@ describe("voice supervisor reads and navigation", () => {
     expect(projectList.status).toBe("ok");
     if (projectList.status !== "ok") throw new Error("Expected a project list.");
     expect(projectList.items).toHaveLength(2);
+    expect(projectList.items.map((item) => item.label)).toEqual(["T3 · Laptop", "T3 · Desktop"]);
     const threadList = await harness.controller.invoke("list_threads", {
       call_id: "threads-list",
     });
@@ -467,18 +638,31 @@ describe("voice supervisor reads and navigation", () => {
     );
     expect(firstThread.label).toBe(firstLabel);
 
-    await expect(
-      harness.controller.invoke("get_thread_summary", {
-        call_id: "duplicate-summary",
-        thread: "Fix voice",
-      }),
-    ).resolves.toMatchObject({ status: "ambiguous", candidates: [{}, {}] });
+    const ambiguous = await harness.controller.invoke("get_thread_summary", {
+      call_id: "duplicate-summary",
+      thread: "Fix voice",
+    });
+    expect(ambiguous).toMatchObject({ status: "ambiguous", candidates: [{}, {}] });
+    if (ambiguous.status !== "ambiguous") throw new Error("Expected duplicate raw titles.");
+    expect(ambiguous.candidates.map((candidate) => candidate.label)).toEqual([
+      "Fix voice · Laptop",
+      "Fix voice · Desktop",
+    ]);
     await expect(
       harness.controller.invoke("get_thread_summary", {
         call_id: "partial-summary",
         thread: "planning",
       }),
     ).resolves.toMatchObject({ status: "candidates", candidates: [{}] });
+    await expect(
+      harness.controller.invoke("get_thread_summary", {
+        call_id: "qualified-summary",
+        thread: "Fix voice · Laptop",
+      }),
+    ).resolves.toMatchObject({
+      status: "ok",
+      thread: { label: "Fix voice · Laptop" },
+    });
 
     const summary = await harness.controller.invoke("get_thread_summary", {
       call_id: "bounded-summary",
@@ -516,7 +700,7 @@ describe("voice supervisor reads and navigation", () => {
     expect(active.status).toBe("ok");
     if (active.status !== "ok") throw new Error("Expected an active work list.");
     expect(active.items).toEqual([
-      expect.objectContaining({ label: "Fix voice", status: "working" }),
+      expect.objectContaining({ label: "Fix voice · Laptop", status: "working" }),
     ]);
   });
 
@@ -542,11 +726,17 @@ describe("voice supervisor reads and navigation", () => {
 describe("voice supervisor confirmed mutations", () => {
   it("routes start, follow-up, and interrupt only after confirmation with frozen exact previews", async () => {
     const projects = [
-      projectRecord({ environmentId: "environment-a", projectId: "project-a", title: "T3" }),
+      projectRecord({
+        environmentId: "environment-a",
+        environmentLabel: "Laptop",
+        projectId: "project-a",
+        title: "T3",
+      }),
     ];
     const threads = [
       threadRecord({
         environmentId: "environment-a",
+        environmentLabel: "Laptop",
         projectId: "project-a",
         threadId: "thread-a",
         title: "Voice implementation",
@@ -583,7 +773,7 @@ describe("voice supervisor confirmed mutations", () => {
     expect(Object.isFrozen(startProposal.proposal)).toBe(true);
     expect(Object.isFrozen(startProposal.proposal.target)).toBe(true);
     expect(Reflect.set(startProposal.proposal, "summary", "mutated")).toBe(false);
-    expect(startProposal.proposal.summary).toBe("Start Voice task");
+    expect(startProposal.proposal.summary).toBe("Start Voice task in T3 · Laptop");
     await expect(
       harness.controller.invoke("start_thread", {
         ...startInput,
@@ -598,10 +788,17 @@ describe("voice supervisor confirmed mutations", () => {
     expect(startPreview).toEqual({
       operation: "start_thread",
       instruction: "Implement the voice controller",
-      target: "T3",
+      target: "T3 · Laptop",
       title: "Voice task",
       model: "gpt-5",
-      workspace: { mode: "worktree", runSetupScript: true },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspace: {
+        mode: "worktree",
+        baseBranch: "main",
+        startFromOrigin: true,
+        runSetupScript: true,
+      },
     });
     expect(Object.isFrozen(localStart.payload.preview)).toBe(true);
     expect(Object.isFrozen(localStart.payload.target)).toBe(true);
@@ -665,6 +862,13 @@ describe("voice supervisor confirmed mutations", () => {
       instruction: "Continue with the focused tests",
     });
     expect(harness.started).toHaveLength(1);
+    const localFollow = harness.controller.getConfirmationPayloadLocally(
+      proposalHandle(followProposal),
+    );
+    expect(localFollow).toMatchObject({
+      status: "pending",
+      payload: { preview: { target: "Voice implementation · Laptop" } },
+    });
     await expect(
       harness.controller.confirmProposalLocally(proposalHandle(followProposal)),
     ).resolves.toMatchObject({ status: "executed", value: { operation: "send_follow_up" } });
@@ -684,6 +888,13 @@ describe("voice supervisor confirmed mutations", () => {
       thread_handle: threadHandle,
     });
     expect(harness.interrupted).toHaveLength(0);
+    const localInterrupt = harness.controller.getConfirmationPayloadLocally(
+      proposalHandle(interruptProposal),
+    );
+    expect(localInterrupt).toMatchObject({
+      status: "pending",
+      payload: { preview: { target: "Voice implementation · Laptop" } },
+    });
     await expect(
       harness.controller.confirmProposalLocally(proposalHandle(interruptProposal)),
     ).resolves.toMatchObject({ status: "executed", value: { operation: "interrupt_thread" } });

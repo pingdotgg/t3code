@@ -222,4 +222,29 @@ describe("voiceSupervisorStore", () => {
     expect(projection).not.toContain("peerConnection");
     expect(projection).not.toContain("dataChannel");
   });
+
+  it("clears retained transcript and activity when the persistent host is torn down", () => {
+    const store = useVoiceSupervisorStore.getState();
+    store.beginSession(5, 1);
+    store.ingestEvent(
+      5,
+      event({
+        event_id: "completed-before-unmount",
+        type: "conversation.item.input_audio_transcription.completed",
+        item_id: "item-before-unmount",
+        transcript: "Retained only while the host exists",
+      }),
+      2,
+    );
+    expect(useVoiceSupervisorStore.getState().transcript).toHaveLength(1);
+    expect(useVoiceSupervisorStore.getState().activity.length).toBeGreaterThan(0);
+
+    store.reset();
+    expect(useVoiceSupervisorStore.getState()).toMatchObject({
+      generation: 0,
+      phase: "idle",
+      transcript: [],
+      activity: [],
+    });
+  });
 });

@@ -4,6 +4,7 @@ import {
   createRealtimeSessionController,
   OPENAI_REALTIME_CALLS_URL,
   REALTIME_MEDIA_CONSTRAINTS,
+  REALTIME_NEGOTIATION_TIMEOUT_MS,
   RealtimeSessionError,
   type RealtimeFunctionCallEnvelope,
   type RealtimeServerEventEnvelope,
@@ -26,6 +27,11 @@ function deferred<T>(): Deferred<T> {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 class FakeTrack {
@@ -212,13 +218,35 @@ function harness(
   const getMediaDevices = vi.fn(
     () => ({ getUserMedia }) as unknown as Pick<MediaDevices, "getUserMedia">,
   );
+  const scheduled = new Map<
+    ReturnType<typeof setTimeout>,
+    { readonly callback: () => void; readonly delayMs: number }
+  >();
+  const schedule = vi.fn((callback: () => void, delayMs: number) => {
+    const handle = setTimeout(() => undefined, 0);
+    clearTimeout(handle);
+    scheduled.set(handle, { callback, delayMs });
+    return handle;
+  });
+  const cancelScheduled = vi.fn((handle: ReturnType<typeof setTimeout>) => {
+    scheduled.delete(handle);
+  });
   const controller = createRealtimeSessionController({
     isSecureContext: () => options.secure ?? true,
     getMediaDevices,
     createPeerConnection,
     fetch,
     nowEpochMs: () => 1_000_000,
+    schedule,
+    cancelScheduled,
   });
+  const runScheduled = (delayMs: number) => {
+    const matches = [...scheduled.entries()].filter(([, task]) => task.delayMs === delayMs);
+    for (const [handle, task] of matches) {
+      scheduled.delete(handle);
+      task.callback();
+    }
+  };
   return {
     controller,
     track,
@@ -229,6 +257,10 @@ function harness(
     getMediaDevices,
     createPeerConnection,
     fetch,
+    scheduled,
+    schedule,
+    cancelScheduled,
+    runScheduled,
   };
 }
 
@@ -273,6 +305,26 @@ describe("RealtimeSessionController", () => {
     expect(getClientSecret).not.toHaveBeenCalled();
     expect(setup.fetch).not.toHaveBeenCalled();
     expect(states.mock.calls.map(([event]) => event.state)).toEqual(["connecting", "closed"]);
+  });
+
+  it("distinguishes recoverable peer disconnect from terminal data-channel close", async () => {
+    const states = vi.fn<(event: RealtimeTransportStateEnvelope) => void>();
+    const setup = harness();
+    const attempt = setup.controller.connect(
+      connectInput(new FakeAudioElement(), { onTransportState: states }),
+    );
+    await attempt.ready;
+
+    setup.peer.setConnectionState("disconnected");
+    expect(states).toHaveBeenLastCalledWith({
+      generation: attempt.generation,
+      state: "disconnected",
+    });
+    expect(setup.track.stop).not.toHaveBeenCalled();
+
+    setup.channel.closeFromRemote();
+    expect(states).toHaveBeenLastCalledWith({ generation: attempt.generation, state: "closed" });
+    expect(setup.track.stop).toHaveBeenCalledOnce();
   });
 
   it("stops media when disposal lands between stage resolution and ownership", async () => {
@@ -391,6 +443,74 @@ describe("RealtimeSessionController", () => {
     await attempt.ready;
     expect(ready).toBe(true);
     setup.controller.dispose();
+  });
+
+  it("does not time the user microphone permission prompt", async () => {
+    const media = deferred<MediaStream>();
+    const setup = harness({ getUserMedia: async () => media.promise });
+    const attempt = setup.controller.connect(connectInput(new FakeAudioElement()));
+
+    await vi.waitFor(() => expect(setup.getUserMedia).toHaveBeenCalledOnce());
+    expect(setup.scheduled.size).toBe(0);
+
+    setup.controller.dispose();
+    await expect(attempt.ready).rejects.toMatchObject({ reason: "aborted" });
+  });
+
+  it("times out a stalled SDP request after media permission resolves", async () => {
+    const fetchStarted = deferred<AbortSignal>();
+    const fetchResult = deferred<Response>();
+    const states = vi.fn<(event: RealtimeTransportStateEnvelope) => void>();
+    const setup = harness({
+      fetch: async (_input, init) => {
+        fetchStarted.resolve(init?.signal as AbortSignal);
+        return fetchResult.promise;
+      },
+    });
+    const attempt = setup.controller.connect(
+      connectInput(new FakeAudioElement(), { onTransportState: states }),
+    );
+    const signal = await fetchStarted.promise;
+
+    expect(
+      [...setup.scheduled.values()].some(
+        (task) => task.delayMs === REALTIME_NEGOTIATION_TIMEOUT_MS,
+      ),
+    ).toBe(true);
+    setup.runScheduled(REALTIME_NEGOTIATION_TIMEOUT_MS);
+
+    await expect(attempt.ready).rejects.toMatchObject({
+      reason: "negotiation_timeout",
+      message: "The voice connection timed out while starting.",
+    });
+    expect(signal.aborted).toBe(true);
+    expect(setup.track.stop).toHaveBeenCalledOnce();
+    expect(setup.channel.close).toHaveBeenCalledOnce();
+    expect(setup.peer.close).toHaveBeenCalledOnce();
+    expect(states).toHaveBeenLastCalledWith({
+      generation: attempt.generation,
+      state: "failed",
+      error: expect.objectContaining({ reason: "negotiation_timeout" }),
+    });
+
+    fetchResult.resolve(new Response("late-answer-sdp"));
+    await flushPromises();
+    expect(setup.peer.setRemoteDescription).not.toHaveBeenCalled();
+  });
+
+  it("times out when the negotiated data channel never opens", async () => {
+    const channel = new FakeDataChannel("connecting");
+    const peer = new FakePeerConnection(channel);
+    const setup = harness({ channel, peer });
+    const attempt = setup.controller.connect(connectInput(new FakeAudioElement()));
+    await peer.remoteDescriptionFinished.promise;
+
+    setup.runScheduled(REALTIME_NEGOTIATION_TIMEOUT_MS);
+
+    await expect(attempt.ready).rejects.toMatchObject({ reason: "negotiation_timeout" });
+    expect(setup.track.stop).toHaveBeenCalledOnce();
+    expect(channel.close).toHaveBeenCalledOnce();
+    expect(peer.close).toHaveBeenCalledOnce();
   });
 
   it("rejects when the peer fails before the session becomes ready", async () => {
@@ -585,10 +705,13 @@ describe("RealtimeSessionController", () => {
       type: "realtime",
       instructions: "Keep the user informed.",
     });
-    setup.controller.sendToolOutputs([
-      { callId: "call-1", output: { threadId: "thread-1" } },
-      { callId: "call-2", output: "Second result" },
-    ]);
+    setup.controller.sendToolOutputs({
+      outputs: [
+        { eventId: "output-1", callId: "call-1", output: { threadId: "thread-1" } },
+        { eventId: "output-2", callId: "call-2", output: "Second result" },
+      ],
+      responseCreateEventId: "continue-1",
+    });
 
     expect(setup.channel.sent.map((message) => JSON.parse(message))).toEqual([
       {
@@ -596,6 +719,7 @@ describe("RealtimeSessionController", () => {
         session: { type: "realtime", instructions: "Keep the user informed." },
       },
       {
+        event_id: "output-1",
         type: "conversation.item.create",
         item: {
           type: "function_call_output",
@@ -604,6 +728,7 @@ describe("RealtimeSessionController", () => {
         },
       },
       {
+        event_id: "output-2",
         type: "conversation.item.create",
         item: {
           type: "function_call_output",
@@ -611,7 +736,7 @@ describe("RealtimeSessionController", () => {
           output: "Second result",
         },
       },
-      { type: "response.create" },
+      { event_id: "continue-1", type: "response.create" },
     ]);
     expect(
       setup.channel.sent
@@ -668,10 +793,13 @@ describe("RealtimeSessionController", () => {
     circular.self = circular;
 
     expect(() =>
-      setup.controller.sendToolOutputs([
-        { callId: "call-1", output: { ok: true } },
-        { callId: "call-2", output: circular },
-      ]),
+      setup.controller.sendToolOutputs({
+        outputs: [
+          { eventId: "output-1", callId: "call-1", output: { ok: true } },
+          { eventId: "output-2", callId: "call-2", output: circular },
+        ],
+        responseCreateEventId: "continue-1",
+      }),
     ).toThrow(expect.objectContaining({ reason: "serialization_failed" }));
     expect(setup.channel.sent).toEqual([]);
     setup.controller.dispose();
@@ -704,6 +832,61 @@ describe("RealtimeSessionController", () => {
     expect(audio.srcObject).toBeNull();
   });
 
+  it("fails setup with a redacted error when remote audio cannot play before readiness", async () => {
+    const remoteDescriptionGate = deferred<void>();
+    const channel = new FakeDataChannel("open");
+    const peer = new FakePeerConnection(channel, remoteDescriptionGate);
+    const setup = harness({ channel, peer });
+    const audio = new FakeAudioElement();
+    audio.play.mockRejectedValueOnce(new Error("autoplay raw browser detail"));
+    const states = vi.fn<(event: RealtimeTransportStateEnvelope) => void>();
+    const attempt = setup.controller.connect(connectInput(audio, { onTransportState: states }));
+    await peer.remoteDescriptionStarted.promise;
+
+    const remoteTrack = new FakeTrack();
+    peer.emitTrack(remoteTrack, new FakeStream([remoteTrack]));
+
+    await expect(attempt.ready).rejects.toMatchObject({
+      reason: "audio_playback_failed",
+      message: "T3 Code could not play voice audio.",
+    });
+    expect(states).toHaveBeenLastCalledWith({
+      generation: attempt.generation,
+      state: "failed",
+      error: expect.objectContaining({ reason: "audio_playback_failed" }),
+    });
+    expect(JSON.stringify(states.mock.calls)).not.toContain("raw browser detail");
+    expect(remoteTrack.stop).toHaveBeenCalledOnce();
+
+    remoteDescriptionGate.resolve();
+    await peer.remoteDescriptionFinished.promise;
+  });
+
+  it("terminates a ready session when later remote audio playback fails", async () => {
+    const states = vi.fn<(event: RealtimeTransportStateEnvelope) => void>();
+    const setup = harness();
+    const audio = new FakeAudioElement();
+    const attempt = setup.controller.connect(connectInput(audio, { onTransportState: states }));
+    await attempt.ready;
+    audio.play.mockRejectedValueOnce(new Error("late autoplay raw detail"));
+
+    const remoteTrack = new FakeTrack();
+    setup.peer.emitTrack(remoteTrack, new FakeStream([remoteTrack]));
+    await vi.waitFor(() =>
+      expect(states).toHaveBeenLastCalledWith({
+        generation: attempt.generation,
+        state: "failed",
+        error: expect.objectContaining({ reason: "audio_playback_failed" }),
+      }),
+    );
+
+    expect(JSON.stringify(states.mock.calls)).not.toContain("late autoplay raw detail");
+    expect(setup.track.stop).toHaveBeenCalledOnce();
+    expect(remoteTrack.stop).toHaveBeenCalledOnce();
+    expect(setup.channel.close).toHaveBeenCalledOnce();
+    expect(setup.peer.close).toHaveBeenCalledOnce();
+  });
+
   it("aborts in-flight negotiation and never exposes provider or credential errors", async () => {
     const fetchStarted = deferred<AbortSignal>();
     const fetchResult = deferred<Response>();
@@ -721,14 +904,16 @@ describe("RealtimeSessionController", () => {
 
     setup.controller.dispose();
     expect(signal.aborted).toBe(true);
+    expect(setup.scheduled.size).toBe(0);
     await expect(attempt.ready).rejects.toMatchObject({
       name: "RealtimeSessionError",
       reason: "aborted",
       message: "The voice connection was cancelled.",
     });
     fetchResult.reject(new Error("upstream leaked ek_short_lived"));
-    await Promise.resolve();
+    await flushPromises();
     expect(JSON.stringify(states.mock.calls)).not.toContain("ek_short_lived");
+    expect(setup.peer.setRemoteDescription).not.toHaveBeenCalled();
   });
 
   it("redacts client-secret failures before notifying consumers", async () => {

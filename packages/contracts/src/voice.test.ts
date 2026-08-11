@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   EnvironmentVoiceHttpError,
+  REALTIME_VOICES,
   RealtimeVoice,
   VoiceCredentialMutation,
   VoiceCredentialStatus,
@@ -21,11 +22,7 @@ const decodeVoiceHttpError = Schema.decodeUnknownSync(EnvironmentVoiceHttpError)
 
 describe("voice contracts", () => {
   it("accepts every supported Realtime voice and rejects unknown voices", () => {
-    expect(
-      ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"].map(
-        (voice) => decodeVoice(voice),
-      ),
-    ).toEqual([
+    expect(REALTIME_VOICES.map((voice) => decodeVoice(voice))).toEqual([
       "alloy",
       "ash",
       "ballad",

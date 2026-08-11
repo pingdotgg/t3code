@@ -19,17 +19,29 @@ export const REALTIME_MEDIA_CONSTRAINTS = {
 } as const satisfies MediaStreamConstraints;
 
 const MAX_REALTIME_SDP_CHARS = 1_000_000;
+export const MAX_REALTIME_CLIENT_EVENT_ID_CHARS = 160;
+export const REALTIME_NEGOTIATION_TIMEOUT_MS = 20_000;
+
+type RealtimeSessionTimer = ReturnType<typeof setTimeout>;
 
 export type RealtimeSessionErrorReason =
   | "insecure_context"
   | "media_devices_unavailable"
   | "microphone_access_failed"
   | "client_secret_failed"
+  | "voice_not_configured"
+  | "voice_credential_rejected"
+  | "voice_model_unavailable"
+  | "voice_rate_limited"
+  | "voice_environment_timeout"
+  | "voice_upstream_failed"
   | "client_secret_expired"
+  | "negotiation_timeout"
   | "negotiation_failed"
   | "upstream_rejected"
   | "data_channel_failed"
   | "connection_failed"
+  | "audio_playback_failed"
   | "not_ready"
   | "serialization_failed"
   | "aborted";
@@ -39,11 +51,19 @@ const ERROR_MESSAGES = {
   media_devices_unavailable: "Microphone access is unavailable in this browser.",
   microphone_access_failed: "T3 Code could not access the microphone.",
   client_secret_failed: "T3 Code could not start a voice session.",
+  voice_not_configured: "Configure an OpenAI API key for this environment before starting voice.",
+  voice_credential_rejected: "OpenAI rejected this environment's API key.",
+  voice_model_unavailable: "The OpenAI Realtime model is unavailable for this API key.",
+  voice_rate_limited: "Voice is temporarily rate limited. Try again shortly.",
+  voice_environment_timeout: "The voice host environment timed out while starting the session.",
+  voice_upstream_failed: "OpenAI could not start the Realtime voice session.",
   client_secret_expired: "The voice session credential expired before it could be used.",
+  negotiation_timeout: "The voice connection timed out while starting.",
   negotiation_failed: "T3 Code could not establish the voice connection.",
   upstream_rejected: "The voice provider rejected the connection.",
   data_channel_failed: "The voice control channel failed.",
   connection_failed: "The voice connection failed.",
+  audio_playback_failed: "T3 Code could not play voice audio.",
   not_ready: "The voice session is not ready.",
   serialization_failed: "The voice message could not be prepared.",
   aborted: "The voice connection was cancelled.",
@@ -103,16 +123,21 @@ export interface RealtimeSessionAttempt {
 }
 
 export interface RealtimeToolOutput {
+  readonly eventId: string;
   readonly callId: string;
   readonly output: unknown;
+}
+
+export interface RealtimeToolOutputBatch {
+  readonly outputs: ReadonlyArray<RealtimeToolOutput>;
+  readonly responseCreateEventId: string;
 }
 
 export interface RealtimeSessionController {
   readonly connect: (input: RealtimeSessionConnectInput) => RealtimeSessionAttempt;
   readonly setMuted: (muted: boolean) => void;
   readonly sendSessionUpdate: (session: RealtimeSessionUpdate) => void;
-  readonly sendToolOutputs: (outputs: ReadonlyArray<RealtimeToolOutput>) => void;
-  readonly sendToolOutput: (output: RealtimeToolOutput) => void;
+  readonly sendToolOutputs: (batch: RealtimeToolOutputBatch) => void;
   readonly dispose: () => void;
 }
 
@@ -122,6 +147,8 @@ export interface RealtimeSessionDependencies {
   readonly createPeerConnection: () => RTCPeerConnection;
   readonly fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly nowEpochMs: () => number;
+  readonly schedule: (callback: () => void, delayMs: number) => RealtimeSessionTimer;
+  readonly cancelScheduled: (handle: RealtimeSessionTimer) => void;
 }
 
 type ChannelState = "pending" | "open" | "failed";
@@ -142,6 +169,7 @@ interface SessionAttemptState extends RealtimeSessionConnectInput {
   connected: boolean;
   cleanedUp: boolean;
   terminalError: RealtimeSessionError | undefined;
+  negotiationTimer: RealtimeSessionTimer | undefined;
 }
 
 const defaultDependencies: RealtimeSessionDependencies = {
@@ -150,6 +178,8 @@ const defaultDependencies: RealtimeSessionDependencies = {
   createPeerConnection: () => new globalThis.RTCPeerConnection(),
   fetch: (input, init) => globalThis.fetch(input, init),
   nowEpochMs: () => Date.now(),
+  schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+  cancelScheduled: (handle) => clearTimeout(handle),
 };
 
 function stopTracks(stream: MediaStream): void {
@@ -193,6 +223,7 @@ function makeAttemptState(
     connected: false,
     cleanedUp: false,
     terminalError: undefined,
+    negotiationTimer: undefined,
   };
 }
 
@@ -336,6 +367,10 @@ export function createRealtimeSessionController(
   const cleanup = (attempt: SessionAttemptState) => {
     if (attempt.cleanedUp) return;
     attempt.cleanedUp = true;
+    if (attempt.negotiationTimer !== undefined) {
+      dependencies.cancelScheduled(attempt.negotiationTimer);
+      attempt.negotiationTimer = undefined;
+    }
     attempt.abortController.abort();
     settleChannelState(attempt, "failed");
 
@@ -387,7 +422,7 @@ export function createRealtimeSessionController(
 
   const terminate = (
     attempt: SessionAttemptState,
-    state: Extract<RealtimeTransportState, "disconnected" | "failed">,
+    state: Extract<RealtimeTransportState, "disconnected" | "failed" | "closed">,
     error?: RealtimeSessionError,
   ) => {
     if (!isOwned(attempt)) return;
@@ -418,11 +453,20 @@ export function createRealtimeSessionController(
     if (!stream) return;
     attempt.assignedRemoteStream = stream;
     attempt.audioElement.srcObject = stream;
+    const failPlayback = () => {
+      const error = new RealtimeSessionError("audio_playback_failed");
+      if (!isOwned(attempt)) return;
+      if (attempt.connected) {
+        terminate(attempt, "failed", error);
+      } else {
+        failBeforeReady(attempt, error);
+      }
+    };
     try {
       const playResult = attempt.audioElement.play();
-      void playResult.catch(() => undefined);
+      void playResult.catch(failPlayback);
     } catch {
-      // Autoplay policy failures are recoverable through the visible audio control.
+      failPlayback();
     }
   };
 
@@ -456,7 +500,7 @@ export function createRealtimeSessionController(
         failBeforeReady(attempt, new RealtimeSessionError("data_channel_failed"));
         return;
       }
-      terminate(attempt, "disconnected");
+      terminate(attempt, "closed");
     };
     channel.addEventListener("open", onOpen);
     attempt.removeEventListeners.push(() => channel.removeEventListener("open", onOpen));
@@ -499,6 +543,10 @@ export function createRealtimeSessionController(
       throw new RealtimeSessionError("microphone_access_failed");
     }
     for (const track of audioTracks) track.enabled = !attempt.muted;
+    attempt.negotiationTimer = dependencies.schedule(() => {
+      attempt.negotiationTimer = undefined;
+      failBeforeReady(attempt, new RealtimeSessionError("negotiation_timeout"));
+    }, REALTIME_NEGOTIATION_TIMEOUT_MS);
 
     let peerConnection: RTCPeerConnection;
     let dataChannel: RTCDataChannel;
@@ -522,7 +570,7 @@ export function createRealtimeSessionController(
           if (attempt.connected) {
             terminate(
               attempt,
-              peerConnection.connectionState === "failed" ? "failed" : "disconnected",
+              peerConnection.connectionState === "failed" ? "failed" : "closed",
               peerConnection.connectionState === "failed"
                 ? new RealtimeSessionError("connection_failed")
                 : undefined,
@@ -620,6 +668,10 @@ export function createRealtimeSessionController(
       throw attempt.terminalError ?? new RealtimeSessionError("connection_failed");
     }
 
+    if (attempt.negotiationTimer !== undefined) {
+      dependencies.cancelScheduled(attempt.negotiationTimer);
+      attempt.negotiationTimer = undefined;
+    }
     attempt.connected = true;
   };
 
@@ -662,14 +714,17 @@ export function createRealtimeSessionController(
     return attempt.dataChannel;
   };
 
-  const sendEvent = (event: unknown) => {
-    const channel = requireReadyChannel();
-    let encoded: string;
+  const encodeEvent = (event: unknown): string => {
     try {
-      encoded = JSON.stringify(event);
+      const encoded = JSON.stringify(event);
+      if (encoded === undefined) throw new RealtimeSessionError("serialization_failed");
+      return encoded;
     } catch {
       throw new RealtimeSessionError("serialization_failed");
     }
+  };
+
+  const sendEncodedEvent = (channel: RTCDataChannel, encoded: string) => {
     try {
       channel.send(encoded);
     } catch {
@@ -677,11 +732,26 @@ export function createRealtimeSessionController(
     }
   };
 
-  const sendToolOutputs = (outputs: ReadonlyArray<RealtimeToolOutput>) => {
+  const sendEvent = (event: unknown) => {
+    sendEncodedEvent(requireReadyChannel(), encodeEvent(event));
+  };
+
+  const sendToolOutputs = ({ outputs, responseCreateEventId }: RealtimeToolOutputBatch) => {
     if (outputs.length === 0) return;
-    const serialized = outputs.map(({ callId, output }) => {
+    const validEventId = (value: string) =>
+      value.length > 0 &&
+      value.length <= MAX_REALTIME_CLIENT_EVENT_ID_CHARS &&
+      value.trim() === value;
+    if (
+      !validEventId(responseCreateEventId) ||
+      outputs.some((output) => !validEventId(output.eventId))
+    ) {
+      throw new RealtimeSessionError("serialization_failed");
+    }
+    const serialized = outputs.map(({ eventId, callId, output }) => {
       try {
         return {
+          eventId,
           callId,
           output: typeof output === "string" ? output : (JSON.stringify(output) ?? "null"),
         };
@@ -690,17 +760,24 @@ export function createRealtimeSessionController(
       }
     });
 
-    for (const output of serialized) {
-      sendEvent({
-        type: "conversation.item.create",
-        item: {
-          type: "function_call_output",
-          call_id: output.callId,
-          output: output.output,
-        },
-      });
+    const encoded = [
+      ...serialized.map((output) =>
+        encodeEvent({
+          event_id: output.eventId,
+          type: "conversation.item.create",
+          item: {
+            type: "function_call_output",
+            call_id: output.callId,
+            output: output.output,
+          },
+        }),
+      ),
+      encodeEvent({ event_id: responseCreateEventId, type: "response.create" }),
+    ];
+    const channel = requireReadyChannel();
+    for (const event of encoded) {
+      sendEncodedEvent(channel, event);
     }
-    sendEvent({ type: "response.create" });
   };
 
   return {
@@ -715,7 +792,6 @@ export function createRealtimeSessionController(
     },
     sendSessionUpdate: (session) => sendEvent({ type: "session.update", session }),
     sendToolOutputs,
-    sendToolOutput: (output) => sendToolOutputs([output]),
     dispose: () => {
       const attempt = current;
       current = undefined;

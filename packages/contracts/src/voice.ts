@@ -7,7 +7,7 @@ import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const OPENAI_REALTIME_MODEL = "gpt-realtime-2.1" as const;
 export const DEFAULT_REALTIME_VOICE = "marin" as const;
 
-export const RealtimeVoice = Schema.Literals([
+export const REALTIME_VOICES = [
   "alloy",
   "ash",
   "ballad",
@@ -18,7 +18,9 @@ export const RealtimeVoice = Schema.Literals([
   "verse",
   "marin",
   "cedar",
-]);
+] as const;
+
+export const RealtimeVoice = Schema.Literals(REALTIME_VOICES);
 export type RealtimeVoice = typeof RealtimeVoice.Type;
 
 export const VoiceOpenAiApiKey = TrimmedNonEmptyString.check(Schema.isMaxLength(4_096));

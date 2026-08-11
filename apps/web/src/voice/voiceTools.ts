@@ -49,12 +49,15 @@ import type {
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-const MAX_TOOL_CALL_ID_CHARS = 160;
-const MAX_SELECTOR_CHARS = 512;
-const MAX_INSTRUCTION_CHARS = 4_000;
-const MAX_TITLE_CHARS = 72;
-const MAX_LIST_ITEMS = 20;
-const MAX_SUMMARY_TEXT_CHARS = 240;
+export const MAX_VOICE_TOOL_CALL_ID_CHARS = 160;
+export const MAX_VOICE_TOOL_SELECTOR_CHARS = 512;
+export const MAX_VOICE_TOOL_INSTRUCTION_CHARS = 4_000;
+export const MAX_VOICE_TOOL_TITLE_CHARS = 72;
+export const MAX_VOICE_TOOL_LIST_ITEMS = 20;
+export const MAX_VOICE_TARGET_LABEL_CHARS = 240;
+const MAX_VOICE_ENVIRONMENT_QUALIFIER_CHARS = 96;
+const VOICE_TARGET_LABEL_SEPARATOR = " · ";
+const MAX_SUMMARY_TEXT_CHARS = MAX_VOICE_TARGET_LABEL_CHARS;
 const MAX_PATH_CHARS = 4_096;
 const DEFAULT_MAX_TOOL_CALLS = 256;
 const VOICE_RESULT_SNAPSHOT_BOUNDS = Object.freeze({
@@ -62,17 +65,35 @@ const VOICE_RESULT_SNAPSHOT_BOUNDS = Object.freeze({
   maxNodes: 512,
   maxBytes: 16 * 1_024,
   maxKeys: 512,
-  maxArrayItems: MAX_LIST_ITEMS,
+  maxArrayItems: MAX_VOICE_TOOL_LIST_ITEMS,
 });
 const UNSAFE_TOOL_ARGUMENT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
-const VoiceCallId = TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TOOL_CALL_ID_CHARS));
-const VoiceSelector = TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_SELECTOR_CHARS));
-const VoiceInstruction = TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_INSTRUCTION_CHARS));
-const VoiceTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_TITLE_CHARS));
+export function buildVoiceTargetDisplayLabel(title: string, environmentLabel: string): string {
+  const environmentBudget = Math.min(
+    MAX_VOICE_ENVIRONMENT_QUALIFIER_CHARS,
+    MAX_VOICE_TARGET_LABEL_CHARS - VOICE_TARGET_LABEL_SEPARATOR.length - 1,
+  );
+  const boundedEnvironment =
+    environmentLabel.length <= environmentBudget
+      ? environmentLabel
+      : `${environmentLabel.slice(0, Math.ceil((environmentBudget - 3) / 2)).trimEnd()}...${environmentLabel.slice(-Math.floor((environmentBudget - 3) / 2)).trimStart()}`;
+  const titleBudget =
+    MAX_VOICE_TARGET_LABEL_CHARS - VOICE_TARGET_LABEL_SEPARATOR.length - boundedEnvironment.length;
+  return `${boundSupervisorText(title, titleBudget)}${VOICE_TARGET_LABEL_SEPARATOR}${boundedEnvironment}`;
+}
+
+const VoiceCallId = TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_VOICE_TOOL_CALL_ID_CHARS));
+const VoiceSelector = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(MAX_VOICE_TOOL_SELECTOR_CHARS),
+);
+const VoiceInstruction = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(MAX_VOICE_TOOL_INSTRUCTION_CHARS),
+);
+const VoiceTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_VOICE_TOOL_TITLE_CHARS));
 const VoiceListLimit = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
-  Schema.isLessThanOrEqualTo(MAX_LIST_ITEMS),
+  Schema.isLessThanOrEqualTo(MAX_VOICE_TOOL_LIST_ITEMS),
 );
 
 export const VoiceListToolArguments = Schema.Struct({
@@ -116,11 +137,89 @@ export const VoiceToolArgumentSchemas = {
 
 export type VoiceSupervisorToolName = keyof typeof VoiceToolArgumentSchemas;
 
+type VoiceSupervisorWireProperty =
+  | {
+      readonly type: "string";
+      readonly minLength: 1;
+      readonly maxLength: number;
+    }
+  | {
+      readonly type: "integer";
+      readonly minimum: 0;
+      readonly maximum: number;
+    };
+
+export interface VoiceSupervisorWireParameters {
+  readonly type: "object";
+  readonly properties: Readonly<Record<string, VoiceSupervisorWireProperty>>;
+  readonly required?: ReadonlyArray<string>;
+  readonly additionalProperties: false;
+}
+
+const stringParameter = (maxLength: number): VoiceSupervisorWireProperty => ({
+  type: "string",
+  minLength: 1,
+  maxLength,
+});
+
+const listParameters: VoiceSupervisorWireParameters = {
+  type: "object",
+  properties: {
+    limit: { type: "integer", minimum: 0, maximum: MAX_VOICE_TOOL_LIST_ITEMS },
+  },
+  additionalProperties: false,
+};
+
+export const voiceSupervisorToolParameters = {
+  list_active_work: listParameters,
+  list_projects: listParameters,
+  list_threads: listParameters,
+  get_thread_summary: {
+    type: "object",
+    properties: { thread: stringParameter(MAX_VOICE_TOOL_SELECTOR_CHARS) },
+    required: ["thread"],
+    additionalProperties: false,
+  },
+  open_thread: {
+    type: "object",
+    properties: { thread: stringParameter(MAX_VOICE_TOOL_SELECTOR_CHARS) },
+    required: ["thread"],
+    additionalProperties: false,
+  },
+  start_thread: {
+    type: "object",
+    properties: {
+      project_handle: stringParameter(MAX_VOICE_TOOL_SELECTOR_CHARS),
+      instruction: stringParameter(MAX_VOICE_TOOL_INSTRUCTION_CHARS),
+      title: stringParameter(MAX_VOICE_TOOL_TITLE_CHARS),
+    },
+    required: ["project_handle", "instruction"],
+    additionalProperties: false,
+  },
+  send_follow_up: {
+    type: "object",
+    properties: {
+      thread_handle: stringParameter(MAX_VOICE_TOOL_SELECTOR_CHARS),
+      instruction: stringParameter(MAX_VOICE_TOOL_INSTRUCTION_CHARS),
+    },
+    required: ["thread_handle", "instruction"],
+    additionalProperties: false,
+  },
+  interrupt_thread: {
+    type: "object",
+    properties: { thread_handle: stringParameter(MAX_VOICE_TOOL_SELECTOR_CHARS) },
+    required: ["thread_handle"],
+    additionalProperties: false,
+  },
+} as const satisfies Record<VoiceSupervisorToolName, VoiceSupervisorWireParameters>;
+
 export interface VoiceSupervisorToolDefinition {
   readonly name: VoiceSupervisorToolName;
   readonly description: string;
   readonly kind: "read" | "navigation" | "mutation";
   readonly inputSchema: Schema.Top;
+  /** Closed model-facing schema. The protocol-authoritative call_id is injected locally. */
+  readonly parameters: VoiceSupervisorWireParameters;
 }
 
 export const voiceSupervisorToolDefinitions: ReadonlyArray<VoiceSupervisorToolDefinition> =
@@ -130,30 +229,35 @@ export const voiceSupervisorToolDefinitions: ReadonlyArray<VoiceSupervisorToolDe
       description: "List bounded active coding work and return opaque thread handles.",
       kind: "read",
       inputSchema: VoiceListToolArguments,
+      parameters: voiceSupervisorToolParameters.list_active_work,
     },
     {
       name: "list_projects",
       description: "List bounded projects and return opaque project handles.",
       kind: "read",
       inputSchema: VoiceListToolArguments,
+      parameters: voiceSupervisorToolParameters.list_projects,
     },
     {
       name: "list_threads",
       description: "List bounded non-archived threads and return opaque thread handles.",
       kind: "read",
       inputSchema: VoiceListToolArguments,
+      parameters: voiceSupervisorToolParameters.list_threads,
     },
     {
       name: "get_thread_summary",
       description: "Read one bounded thread summary by opaque handle or exact display name.",
       kind: "read",
       inputSchema: VoiceThreadReadToolArguments,
+      parameters: voiceSupervisorToolParameters.get_thread_summary,
     },
     {
       name: "open_thread",
       description: "Navigate the local client to a thread by opaque handle or exact display name.",
       kind: "navigation",
       inputSchema: VoiceThreadReadToolArguments,
+      parameters: voiceSupervisorToolParameters.open_thread,
     },
     {
       name: "start_thread",
@@ -161,6 +265,7 @@ export const voiceSupervisorToolDefinitions: ReadonlyArray<VoiceSupervisorToolDe
         "Prepare a new coding thread for local confirmation using an opaque project handle.",
       kind: "mutation",
       inputSchema: VoiceStartThreadToolArguments,
+      parameters: voiceSupervisorToolParameters.start_thread,
     },
     {
       name: "send_follow_up",
@@ -168,6 +273,7 @@ export const voiceSupervisorToolDefinitions: ReadonlyArray<VoiceSupervisorToolDe
         "Prepare a thread follow-up for local confirmation using an opaque thread handle.",
       kind: "mutation",
       inputSchema: VoiceFollowUpToolArguments,
+      parameters: voiceSupervisorToolParameters.send_follow_up,
     },
     {
       name: "interrupt_thread",
@@ -175,6 +281,7 @@ export const voiceSupervisorToolDefinitions: ReadonlyArray<VoiceSupervisorToolDe
         "Prepare an active-turn interrupt for local confirmation using an opaque thread handle.",
       kind: "mutation",
       inputSchema: VoiceInterruptToolArguments,
+      parameters: voiceSupervisorToolParameters.interrupt_thread,
     },
   ]);
 
@@ -250,6 +357,7 @@ type MaybePromise<T> = T | Promise<T>;
 
 export interface VoiceSupervisorProjectRecord {
   readonly project: EnvironmentProject;
+  readonly displayLabel: string;
   readonly version: SupervisorTargetVersion;
   readonly availability: SupervisorTargetCandidate["availability"];
   readonly aliases?: ReadonlyArray<string>;
@@ -257,6 +365,7 @@ export interface VoiceSupervisorProjectRecord {
 
 export interface VoiceSupervisorThreadRecord {
   readonly thread: EnvironmentThreadShell;
+  readonly displayLabel: string;
   readonly version: SupervisorTargetVersion;
   readonly availability: SupervisorTargetCandidate["availability"];
   readonly aliases?: ReadonlyArray<string>;
@@ -506,7 +615,9 @@ function extractOwnDataCallId(input: unknown): string | null {
       return null;
     }
     const callId = descriptor.value;
-    return callId.length > 0 && callId.length <= MAX_TOOL_CALL_ID_CHARS && callId.trim() === callId
+    return callId.length > 0 &&
+      callId.length <= MAX_VOICE_TOOL_CALL_ID_CHARS &&
+      callId.trim() === callId
       ? callId
       : null;
   } catch {
@@ -618,7 +729,7 @@ function projectCandidate(record: VoiceSupervisorProjectRecord): SupervisorTarge
       projectId: record.project.id,
       version: record.version,
     },
-    label: record.project.title,
+    label: record.displayLabel,
     ...(record.aliases === undefined ? {} : { aliases: record.aliases }),
     availability: record.availability,
   };
@@ -633,7 +744,7 @@ function threadCandidate(record: VoiceSupervisorThreadRecord): SupervisorTargetC
       threadId: record.thread.id,
       version: record.version,
     },
-    label: record.thread.title,
+    label: record.displayLabel,
     ...(record.aliases === undefined ? {} : { aliases: record.aliases }),
     availability: record.availability,
   };
@@ -973,18 +1084,30 @@ export function createVoiceToolsController(
         targetHandle: args.project_handle,
         expectedTargetKind: "project",
         action: "Start thread",
-        summary: `Start ${preparation.title}`,
+        summary: `Start ${preparation.title} in ${project.displayLabel}`,
         mutation,
         preview: {
           operation: "start_thread",
           instruction: args.instruction,
-          target: project.project.title,
+          target: project.displayLabel,
           title: preparation.title,
           model: preparation.modelSelection.model,
-          workspace: {
-            mode: preparation.workspace.mode,
-            runSetupScript: preparation.workspace.mode === "worktree",
-          },
+          runtimeMode: preparation.runtimeMode,
+          interactionMode: preparation.interactionMode,
+          workspace:
+            preparation.workspace.mode === "worktree"
+              ? {
+                  mode: "worktree",
+                  baseBranch: preparation.workspace.baseBranch,
+                  startFromOrigin: preparation.workspace.startFromOrigin,
+                  runSetupScript: true,
+                }
+              : {
+                  mode: "local",
+                  branch: preparation.workspace.branch,
+                  hasWorktreePath: preparation.workspace.worktreePath !== null,
+                  runSetupScript: false,
+                },
         },
       }),
     );
@@ -1018,12 +1141,12 @@ export function createVoiceToolsController(
         targetHandle: args.thread_handle,
         expectedTargetKind: "thread",
         action: "Send follow-up",
-        summary: `Follow up ${thread.thread.title}`,
+        summary: `Follow up ${thread.displayLabel}`,
         mutation,
         preview: {
           operation: "send_follow_up",
           instruction: args.instruction,
-          target: thread.thread.title,
+          target: thread.displayLabel,
           model: thread.thread.modelSelection.model,
         },
       }),
@@ -1052,11 +1175,11 @@ export function createVoiceToolsController(
         targetHandle: args.thread_handle,
         expectedTargetKind: "thread",
         action: "Interrupt thread",
-        summary: `Interrupt ${thread.thread.title}`,
+        summary: `Interrupt ${thread.displayLabel}`,
         mutation,
         preview: {
           operation: "interrupt_thread",
-          target: thread.thread.title,
+          target: thread.displayLabel,
           hasActiveTurn: (thread.thread.session?.activeTurnId ?? null) !== null,
         },
       }),

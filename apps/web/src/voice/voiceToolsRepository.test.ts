@@ -33,6 +33,7 @@ import {
   type VoiceToolsWebRepositoryDependencies,
   type VoiceWebStartThreadDefaults,
 } from "./voiceToolsRepository";
+import { MAX_VOICE_TARGET_LABEL_CHARS } from "./voiceTools";
 
 const NOW = "2026-08-10T12:00:00.000Z";
 const LATER = "2026-08-10T12:01:00.000Z";
@@ -197,6 +198,35 @@ function firstThread(repository: ReturnType<typeof createVoiceToolsWebRepository
 }
 
 describe("createVoiceToolsWebRepository", () => {
+  it("preserves environment qualifiers when duplicate project titles are very long", () => {
+    const sharedTitle = `Shared ${"project ".repeat(80)}`.trimEnd();
+    const environments = [
+      environment({
+        environmentId: ENVIRONMENT_A,
+        label: "Laptop",
+        projects: [project({ id: ProjectId.make("project-long-a"), title: sharedTitle })],
+        threads: [],
+      }),
+      environment({
+        environmentId: ENVIRONMENT_B,
+        label: "Desktop",
+        projects: [project({ id: ProjectId.make("project-long-b"), title: sharedTitle })],
+        threads: [],
+      }),
+    ];
+    const repository = createVoiceToolsWebRepository(
+      makeDependencies({ readEnvironments: () => environments }).dependencies,
+    );
+    const labels = repository.listProjects().map((record) => record.displayLabel);
+
+    expect(labels).toEqual([
+      expect.stringMatching(/ · Laptop$/),
+      expect.stringMatching(/ · Desktop$/),
+    ]);
+    expect(new Set(labels).size).toBe(2);
+    expect(labels.every((label) => label.length <= MAX_VOICE_TARGET_LABEL_CHARS)).toBe(true);
+  });
+
   it("lists duplicate names across environments without losing connection freshness", () => {
     const environments = [
       environment({ environmentId: ENVIRONMENT_A, label: "Laptop" }),
@@ -236,9 +266,19 @@ describe("createVoiceToolsWebRepository", () => {
       "stale",
     ]);
     expect(projects.map((record) => record.aliases)).toEqual([
-      ["Shared project (Laptop)"],
-      ["Shared project (Desktop)"],
-      ["Shared project (Remote)"],
+      ["Shared project"],
+      ["Shared project"],
+      ["Shared project"],
+    ]);
+    expect(projects.map((record) => record.displayLabel)).toEqual([
+      "Shared project · Laptop",
+      "Shared project · Desktop",
+      "Shared project · Remote",
+    ]);
+    expect(threads.map((record) => record.displayLabel)).toEqual([
+      "Shared thread · Laptop",
+      "Shared thread · Desktop",
+      "Shared thread · Remote",
     ]);
     expect(threads.map((record) => record.availability)).toEqual(["live", "disconnected", "stale"]);
     expect(repository.getProject(ENVIRONMENT_B, PROJECT_ID)?.project.environmentId).toBe(

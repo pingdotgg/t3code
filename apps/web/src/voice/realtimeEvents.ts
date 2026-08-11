@@ -50,6 +50,7 @@ const InputTranscriptCompletedEvent = Schema.Struct({
 });
 
 const RealtimeErrorDetail = Schema.Struct({
+  event_id: Schema.optionalKey(RealtimeId),
   type: Schema.optionalKey(RealtimeId),
   code: Schema.optionalKey(Schema.NullOr(RealtimeId)),
   message: Schema.optionalKey(RealtimeText),

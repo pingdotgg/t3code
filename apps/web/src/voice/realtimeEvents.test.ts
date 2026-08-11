@@ -51,6 +51,20 @@ describe("Realtime server event decoding", () => {
     });
   });
 
+  it("keeps the bounded client event id used to correlate provider errors", () => {
+    expect(
+      decodeRealtimeServerEvent({
+        event_id: "server-error",
+        type: "error",
+        error: { event_id: "t3-voice-1-1-continue", message: "must stay hidden" },
+      }),
+    ).toEqual({
+      event_id: "server-error",
+      type: "error",
+      error: { event_id: "t3-voice-1-1-continue", message: "must stay hidden" },
+    });
+  });
+
   it("extracts complete canonical function calls only from response.done", () => {
     const event = decodeRealtimeServerEvent({
       event_id: "event-done",

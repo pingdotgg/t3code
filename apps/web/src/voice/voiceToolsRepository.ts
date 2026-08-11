@@ -35,12 +35,13 @@ import { truncate } from "@t3tools/shared/String";
 import * as Option from "effect/Option";
 
 import { newCommandId, newMessageId, newThreadId, randomHex } from "../lib/utils";
-import type {
-  VoiceCommandReceipt,
-  VoiceStartThreadPreparation,
-  VoiceSupervisorProjectRecord,
-  VoiceSupervisorRepository,
-  VoiceSupervisorThreadRecord,
+import {
+  buildVoiceTargetDisplayLabel,
+  type VoiceCommandReceipt,
+  type VoiceStartThreadPreparation,
+  type VoiceSupervisorProjectRecord,
+  type VoiceSupervisorRepository,
+  type VoiceSupervisorThreadRecord,
 } from "./voiceTools";
 
 type MaybePromise<T> = T | Promise<T>;
@@ -115,8 +116,8 @@ function environmentAvailability(
   return connectionPhase === "ready" && environment.shellState.status === "live" ? "live" : "stale";
 }
 
-function targetAliases(title: string, environmentLabel: string): ReadonlyArray<string> {
-  return [`${title} (${environmentLabel})`];
+function targetAliases(title: string): ReadonlyArray<string> {
+  return [title];
 }
 
 /**
@@ -130,11 +131,12 @@ function projectRecord(
 ): VoiceSupervisorProjectRecord {
   return {
     project,
+    displayLabel: buildVoiceTargetDisplayLabel(project.title, environment.label),
     version: makeSupervisorTargetVersion(
       JSON.stringify(["project", project.createdAt, project.updatedAt]),
     ),
     availability: environmentAvailability(environment),
-    aliases: targetAliases(project.title, environment.label),
+    aliases: targetAliases(project.title),
   };
 }
 
@@ -144,11 +146,12 @@ function threadRecord(
 ): VoiceSupervisorThreadRecord {
   return {
     thread,
+    displayLabel: buildVoiceTargetDisplayLabel(thread.title, environment.label),
     version: makeSupervisorTargetVersion(
       JSON.stringify(["thread", thread.createdAt, thread.updatedAt]),
     ),
     availability: environmentAvailability(environment),
-    aliases: targetAliases(thread.title, environment.label),
+    aliases: targetAliases(thread.title),
   };
 }
 
