@@ -317,6 +317,9 @@ public struct WorkspaceView: View {
         .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
             if !isAvailable { selectedProjectID = nil }
         }
+        .onChange(of: deleteConfirmationTargetIsValid) { _, isValid in
+            if !isValid { deleteConfirmation.cancel() }
+        }
         .onChange(of: settleUndoTargetIsValid) { _, isValid in
             guard !isValid, let notice = settleUndo.notice else { return }
             withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.18)) {
@@ -831,6 +834,11 @@ public struct WorkspaceView: View {
     private var selectedProjectIsAvailable: Bool {
         guard let selectedProjectID else { return true }
         return model.snapshot.projects.contains { $0.id == selectedProjectID }
+    }
+
+    private var deleteConfirmationTargetIsValid: Bool {
+        guard let request = deleteConfirmation.request else { return true }
+        return model.snapshot.threads.contains { $0.id == request.id }
     }
 
     private var settleUndoTargetIsValid: Bool {
