@@ -1,6 +1,7 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type {
   EnvironmentId,
+  ProviderUsageWindow,
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
@@ -18,6 +19,7 @@ import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Image,
   Platform,
   Pressable,
@@ -51,7 +53,15 @@ import {
   ComposerToolbarScroller,
   ComposerToolbarTrigger,
 } from "../../components/ComposerToolbarTrigger";
-import { ControlPill } from "../../components/ControlPill";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import {
+  formatUsagePercent,
+  formatUsageResetLabel,
+  formatUsageUpdatedAtLabel,
+  pickWorstUsageWindow,
+} from "@t3tools/client-runtime/state/provider-usage";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
@@ -73,6 +83,10 @@ import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-
  * Exported so the parent can compute feed overlap / content insets.
  */
 export const COMPOSER_COLLAPSED_CHROME = 60;
+
+// Stable empty reference — a fresh `[]` per render would defeat the memos
+// that keep the toolbar from rebuilding on every provider-status push.
+const EMPTY_USAGE_WINDOWS: ReadonlyArray<ProviderUsageWindow> = [];
 
 /**
  * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
@@ -623,6 +637,69 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     interactionMode: currentInteractionMode,
   });
 
+  // ── Account usage ────────────────────────────────────────
+  // Mobile gets one chevron button rather than a row of rings: three 44pt
+  // touch targets would crowd the toolbar, and hover tooltips do not exist
+  // on touch. Each window becomes a menu row whose subtitle carries the
+  // percentage and reset time, so nothing needs a second tap to read.
+  const usageWindows = selectedProviderStatus?.usageLimits?.windows ?? EMPTY_USAGE_WINDOWS;
+  const usageUpdatedAt = selectedProviderStatus?.usageLimits?.updatedAt ?? null;
+  const worstUsageWindow = useMemo(() => pickWorstUsageWindow(usageWindows), [usageWindows]);
+  const usageInstanceId = currentModelSelection.instanceId;
+  const refreshProviderUsage = useAtomCommand(serverEnvironment.refreshProviderUsage, {
+    reportFailure: false,
+  });
+  // Claude only ever reports usage in response to a pull, so without this
+  // the meters stay empty forever in a phone-only session — the web client's
+  // triggers are no substitute when no web client is connected.
+  const requestUsageRefresh = useCallback(() => {
+    void refreshProviderUsage({
+      environmentId: props.environmentId,
+      input: { instanceId: usageInstanceId },
+    });
+  }, [props.environmentId, refreshProviderUsage, usageInstanceId]);
+  useEffect(() => {
+    requestUsageRefresh();
+  }, [requestUsageRefresh]);
+  useEffect(() => {
+    // The touch analogue of the web client's window `focus` trigger.
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        requestUsageRefresh();
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [requestUsageRefresh]);
+
+  // Rebuilt when the menu opens, not only when the numbers change. The rows
+  // carry relative times ("resets in 2h 15m", "as of 12m ago"); keying the
+  // memo on the data alone freezes those at whatever the clock read when the
+  // reading last landed, which can be hours before anyone looks at them.
+  const [usageMenuNonce, setUsageMenuNonce] = useState(0);
+  const usageMenuActions = useMemo(() => {
+    void usageMenuNonce;
+    const nowMs = Date.now();
+    const staleLabel = formatUsageUpdatedAtLabel(usageUpdatedAt, nowMs);
+    const windowRows = usageWindows.map((window) => {
+      const resetLabel = formatUsageResetLabel(window.resetsAt, nowMs);
+      const percentLabel = formatUsagePercent(window.usedPercent);
+      return {
+        id: `usage:${window.id}`,
+        title: window.label,
+        subtitle: resetLabel ? `${percentLabel} · ${resetLabel}` : percentLabel,
+        attributes: { disabled: true },
+      };
+    });
+    return staleLabel
+      ? [
+          ...windowRows,
+          { id: "usage:updated-at", title: staleLabel, attributes: { disabled: true } },
+        ]
+      : windowRows;
+  }, [usageWindows, usageUpdatedAt, usageMenuNonce]);
+
   return (
     <Animated.View
       className="px-4"
@@ -801,6 +878,32 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   maxWidth={320}
                   onPress={settingsSheetPresentation.open}
                 />
+                {worstUsageWindow ? (
+                  <ControlPillMenu actions={usageMenuActions} title="Usage">
+                    {/*
+                      Render-function form so the trigger stays interactive on
+                      Android, where a plain child sits under a
+                      `pointerEvents="none"` view and never sees the tap.
+                      `open` is a no-op on iOS, which opens natively.
+                    */}
+                    {(open) => (
+                      <ComposerToolbarTrigger
+                        accessibilityLabel={`Usage, ${worstUsageWindow.label} ${formatUsagePercent(
+                          worstUsageWindow.usedPercent,
+                        )} used`}
+                        icon="gauge.with.dots.needle.bottom.50percent"
+                        label={formatUsagePercent(worstUsageWindow.usedPercent)}
+                        onPress={() => {
+                          // Restamp the relative labels and ask for a fresh
+                          // reading; the server debounces the pull.
+                          setUsageMenuNonce((nonce) => nonce + 1);
+                          requestUsageRefresh();
+                          open();
+                        }}
+                      />
+                    )}
+                  </ControlPillMenu>
+                ) : null}
                 {showStopAction ? (
                   <ComposerToolbarButton
                     accessibilityLabel="Stop"

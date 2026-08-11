@@ -21,6 +21,7 @@ import type {
   ProviderOptionDescriptor,
   ServerProviderModel,
   ServerProviderSkill,
+  ProviderUsageLimits,
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
@@ -32,11 +33,17 @@ import {
   buildServerProvider,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { normalizeCodexUsage } from "../usageLimits.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
+
+// Deadline for the ambient usage read inside the status probe. Deliberately
+// well under the probe's own budget: usage is a nice-to-have and must never
+// be able to consume the time the probe needs for models and skills.
+const CODEX_RATE_LIMITS_READ_TIMEOUT_MS = 2_000;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -48,6 +55,12 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  // Account quota usage, read on the app-server connection this probe
+  // already opened. Absent when the read failed or the account reports no
+  // windows. Live updates arrive separately via
+  // `account/rateLimits/updated`; this read exists so the meters are
+  // populated before the first turn of a session.
+  readonly usageLimits?: ProviderUsageLimits | undefined;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -395,15 +408,27 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      // Ambient extra on a connection we already paid for. An app-server
+      // that predates the method may never answer at all rather than
+      // failing, so this needs its own deadline: sharing only the probe's
+      // budget would let a silent request consume it and drop Codex to
+      // "no models, no skills" over a usage read nobody asked for.
+      client.request("account/rateLimits/read", undefined).pipe(
+        Effect.timeoutOption(Duration.millis(CODEX_RATE_LIMITS_READ_TIMEOUT_MS)),
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      ),
     ],
     { concurrency: "unbounded" },
   );
+
+  const usageLimits = normalizeCodexUsage(rateLimits, DateTime.formatIso(yield* DateTime.now));
 
   return {
     account: accountResponse,
@@ -412,6 +437,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    ...(usageLimits ? { usageLimits } : {}),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -595,20 +621,23 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
 
-  return buildServerProvider({
-    presentation: CODEX_PRESENTATION,
-    enabled: codexSettings.enabled,
-    checkedAt,
-    models: snapshot.models,
-    skills: snapshot.skills,
-    probe: {
-      installed: true,
-      version: snapshot.version ?? null,
-      status: accountStatus.status,
-      auth: accountStatus.auth,
-      ...(accountStatus.message ? { message: accountStatus.message } : {}),
-    },
-  });
+  return {
+    ...buildServerProvider({
+      presentation: CODEX_PRESENTATION,
+      enabled: codexSettings.enabled,
+      checkedAt,
+      models: snapshot.models,
+      skills: snapshot.skills,
+      probe: {
+        installed: true,
+        version: snapshot.version ?? null,
+        status: accountStatus.status,
+        auth: accountStatus.auth,
+        ...(accountStatus.message ? { message: accountStatus.message } : {}),
+      },
+    }),
+    ...(snapshot.usageLimits ? { usageLimits: snapshot.usageLimits } : {}),
+  };
 });
 
 // NOTE: the singleton `CodexProviderLive` Layer has been removed as part of

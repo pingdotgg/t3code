@@ -36,6 +36,7 @@ import {
   IconFolder,
   IconFolderOpen,
   IconFolderPlus,
+  IconGauge,
   IconGitBranch,
   IconHammer,
   IconGitMerge,
@@ -80,6 +81,7 @@ import { SymbolView as ExpoSymbolView, type SFSymbol, type SymbolViewProps } fro
 
 const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "arrow.branch": IconGitBranch,
+  "gauge.with.dots.needle.bottom.50percent": IconGauge,
   "arrow.clockwise": IconRefresh,
   "arrow.down.circle": IconArrowDownCircle,
   "arrow.right.circle": IconArrowRightCircle,

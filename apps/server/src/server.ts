@@ -61,6 +61,9 @@ import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletion
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
+import * as ProviderUsageLimits from "./provider/ProviderUsageLimits.ts";
+import { ProviderUsageIngestionLive } from "./provider/Layers/ProviderUsageIngestion.ts";
+import * as ProviderUsageRefresher from "./provider/ProviderUsageRefresher.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
@@ -360,12 +363,20 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
-const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
-  Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(OrchestrationLayerLive),
-);
+const ProviderRuntimeLayerLive = Layer.mergeAll(
+  ProviderSessionReaperLive,
+  // Turn-event usage feed. Sits here because it needs `ProviderService`'s
+  // runtime event stream; the store it writes into is provided further down.
+  ProviderUsageIngestionLive,
+).pipe(Layer.provideMerge(ProviderLayerLive), Layer.provideMerge(OrchestrationLayerLive));
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+const RuntimeCoreDependenciesLive = Layer.mergeAll(
+  ReactorLayerLive,
+  // On-demand usage pulls. Shallowest position in this graph because it
+  // reads `ServerSettingsService` to resolve each Claude instance's config
+  // directory.
+  ProviderUsageRefresher.layer,
+).pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),
@@ -382,7 +393,15 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ProviderInstanceRegistryHydrationLive,
+      // Volatile usage store. Deliberately dependency-free, and provided
+      // below `ProviderRegistryLive` because the registry reads it to
+      // decorate every provider snapshot it publishes.
+      ProviderUsageLimits.layer,
+    ),
+  ),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).

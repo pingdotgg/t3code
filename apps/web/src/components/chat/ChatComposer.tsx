@@ -5,6 +5,7 @@ import type {
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
   ProviderInteractionMode,
+  ProviderUsageWindow,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
@@ -18,6 +19,10 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import {
+  selectProviderUsageUpdatedAt,
+  selectProviderUsageWindows,
+} from "@t3tools/client-runtime/state/provider-usage";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
@@ -42,6 +47,8 @@ import {
   shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -102,6 +109,7 @@ import {
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
+import { UsageLimitsMeters } from "./UsageLimitsMeters";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
@@ -390,6 +398,13 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
   activeThreadProviderDisplayName: string | null;
+  // Scoped to the instance the meters read from, which is the selection for
+  // the *next* turn — not the thread's persisted provider. Picking a new
+  // provider swaps the numbers, so the title has to move with them.
+  usageProviderDisplayName: string | null;
+  usageWindows: ReadonlyArray<ProviderUsageWindow>;
+  usageUpdatedAt: string | null;
+  onRequestUsageRefresh: () => void;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -419,6 +434,13 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           providerDisplayName={props.activeThreadProviderDisplayName}
         />
       ) : null}
+      <UsageLimitsMeters
+        windows={props.usageWindows}
+        updatedAt={props.usageUpdatedAt}
+        compact={props.compact}
+        providerDisplayName={props.usageProviderDisplayName}
+        onRequestRefresh={props.onRequestUsageRefresh}
+      />
       {props.isPreparingWorktree ? (
         <span className="text-secondary-label text-xs">Preparing worktree...</span>
       ) : null}
@@ -918,6 +940,71 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
     [activeThreadActivities],
   );
+
+  // ------------------------------------------------------------------
+  // Account usage limits
+  // ------------------------------------------------------------------
+  // Scoped to the instance the *next* turn will use, not the thread's
+  // historical one — the meters answer "how much have I got left for this",
+  // and switching providers in the picker should switch the numbers.
+  const usageWindows = useMemo(
+    () => selectProviderUsageWindows(providerStatuses, selectedInstanceId),
+    [providerStatuses, selectedInstanceId],
+  );
+  const usageUpdatedAt = useMemo(
+    () => selectProviderUsageUpdatedAt(providerStatuses, selectedInstanceId),
+    [providerStatuses, selectedInstanceId],
+  );
+  const refreshProviderUsage = useAtomCommand(serverEnvironment.refreshProviderUsage, {
+    reportFailure: false,
+  });
+  // Ambient and best-effort: the server debounces, and a failed pull leaves
+  // the last-known numbers on screen. Nothing here is worth a toast.
+  const requestUsageRefresh = useCallback(() => {
+    // The placeholder selection is never a real instance — dispatching it
+    // would spend a round trip per composer per load, since the first render
+    // always precedes provider hydration.
+    if (selectedInstanceId === NO_PROVIDER_MODEL_SELECTION.instanceId) {
+      return;
+    }
+    void refreshProviderUsage({
+      environmentId,
+      input: { instanceId: selectedInstanceId },
+    });
+  }, [environmentId, refreshProviderUsage, selectedInstanceId]);
+
+  // Refresh on the two moments the number is most likely to have moved
+  // without us hearing about it: coming back to the app, and switching to a
+  // different provider instance. Hovering a meter is the third trigger and
+  // lives on the meter itself.
+  useEffect(() => {
+    requestUsageRefresh();
+  }, [requestUsageRefresh]);
+  useEffect(() => {
+    const onFocus = () => {
+      requestUsageRefresh();
+    };
+    globalThis.addEventListener("focus", onFocus);
+    return () => {
+      globalThis.removeEventListener("focus", onFocus);
+    };
+  }, [requestUsageRefresh]);
+  // The meters read `selectedInstanceId`, so their label must too. Using the
+  // thread's persisted provider here would attribute the new provider's
+  // quota to the old provider's name for the whole gap between picking a
+  // model and sending the next turn.
+  const usageProviderDisplayName = useMemo(() => {
+    const entry = providerStatuses.find((status) => status.instanceId === selectedInstanceId);
+    // The status's own displayName first: `getProviderDisplayName` resolves
+    // by driver, which names a custom instance after the driver's default
+    // instance — the exact misattribution these meters exist to avoid.
+    return (
+      entry?.displayName ??
+      (entry
+        ? getProviderDisplayName(providerStatuses, entry.driver)
+        : formatProviderDisplayName(selectedInstanceId))
+    );
+  }, [providerStatuses, selectedInstanceId]);
   const activeThreadProviderDisplayName = useMemo(() => {
     if (!activeThreadModelSelection) return null;
     const entry = providerStatuses.find(
@@ -3186,6 +3273,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}
                   activeThreadProviderDisplayName={activeThreadProviderDisplayName}
+                  usageProviderDisplayName={usageProviderDisplayName}
+                  usageWindows={usageWindows}
+                  usageUpdatedAt={usageUpdatedAt}
+                  onRequestUsageRefresh={requestUsageRefresh}
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}

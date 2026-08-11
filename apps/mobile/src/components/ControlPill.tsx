@@ -86,9 +86,18 @@ export function ControlPill(props: {
 // Android renders the token-styled AndroidAnchoredMenu, since the native
 // AppCompat popup can't be themed past its stock animation, metrics, and
 // submenu chrome.
+/**
+ * A render-function child keeps the trigger interactive on Android.
+ *
+ * The plain-node form there is wrapped in a `pointerEvents="none"` view so
+ * the anchor Pressable owns the tap, which silently swallows any `onPress`
+ * the child declared. Callers that need their own press side effects take
+ * `open` and call it themselves. On iOS the native menu opens on tap and the
+ * child's handlers already run, so `open` is a no-op there.
+ */
 export function ControlPillMenu(
   props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> & {
-    readonly children: ReactNode;
+    readonly children: ReactNode | ((open: () => void) => ReactNode);
     readonly className?: string;
   },
 ) {
@@ -133,7 +142,12 @@ export function ControlPillMenu(
   }
 
   const { className: _className, ...menuProps } = props;
-  let children = menuProps.children;
+  // iOS opens the native menu from the tap itself, so the render-function
+  // form has nothing to trigger.
+  let children: ReactNode =
+    typeof menuProps.children === "function"
+      ? menuProps.children(() => undefined)
+      : menuProps.children;
   // In long-press mode the wrapped pressable still receives the touch (the
   // patched MenuView button is touch-transparent) and RN's Fabric touch
   // handler is never cancelled by the in-tree UIContextMenuInteraction, so a

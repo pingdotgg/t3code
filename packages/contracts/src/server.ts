@@ -158,6 +158,35 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+/**
+ * One quota bucket a provider account is metered against — Claude's 5-hour
+ * session window, its weekly window, Codex's primary/secondary windows, and
+ * so on. Deliberately provider-agnostic: the UI maps over `windows` and never
+ * branches on which provider produced them, so adding a bucket later is a
+ * server-only change.
+ */
+export const ProviderUsageWindow = Schema.Struct({
+  // Stable identity for the bucket (`session`, `weekly`, `weekly-fable`,
+  // `codex-primary`, ...). Stays stable even when `label` changes.
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  usedPercent: Schema.Number,
+  // Absent when the provider does not report a reset time. Consumers omit
+  // the reset line rather than guessing one.
+  resetsAt: Schema.NullOr(IsoDateTime),
+});
+export type ProviderUsageWindow = typeof ProviderUsageWindow.Type;
+
+/**
+ * Account-level quota usage for one configured provider instance.
+ * `updatedAt` answers the only staleness question the UI asks ("as of when?").
+ */
+export const ProviderUsageLimits = Schema.Struct({
+  windows: Schema.Array(ProviderUsageWindow),
+  updatedAt: IsoDateTime,
+});
+export type ProviderUsageLimits = typeof ProviderUsageLimits.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -194,6 +223,10 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  // Account-level quota usage for this instance. Absent for providers that
+  // do not report usage (Cursor, Grok, OpenCode) and before the first
+  // reading lands; consumers render nothing rather than a placeholder.
+  usageLimits: Schema.optionalKey(ProviderUsageLimits),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

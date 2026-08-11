@@ -731,6 +731,17 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    // Ambient trigger from the usage meters. Single-flighted per instance so
+    // a burst of focus/hover events collapses client-side too, on top of the
+    // server's own debounce.
+    refreshProviderUsage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:refresh-provider-usage",
+      tag: WS_METHODS.serverRefreshProviderUsage,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.instanceId]),
+      },
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

@@ -249,6 +249,7 @@ export const WS_METHODS = {
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
+  serverRefreshProviderUsage: "server.refreshProviderUsage",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
@@ -340,6 +341,22 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
     instanceId: Schema.optional(ProviderInstanceId),
   }),
   success: ServerProviderUpdatedPayload,
+  error: EnvironmentAuthorizationError,
+});
+
+/**
+ * Ask the server to pull fresh account usage for one provider instance.
+ * Clients fire this on ambient triggers (window focus, thread opened,
+ * meter hovered) and the server debounces upstream calls, so callers never
+ * have to rate-limit themselves. The reading arrives out of band on the
+ * provider snapshot stream — this call resolves as soon as the refresh is
+ * scheduled.
+ */
+export const WsServerRefreshProviderUsageRpc = Rpc.make(WS_METHODS.serverRefreshProviderUsage, {
+  payload: Schema.Struct({
+    instanceId: ProviderInstanceId,
+  }),
+  success: Schema.Struct({}),
   error: EnvironmentAuthorizationError,
 });
 
@@ -950,6 +967,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
+  WsServerRefreshProviderUsageRpc,
   WsServerUpdateProviderRpc,
   WsServerUpdateServerRpc,
   WsServerUpdateServerWithProgressRpc,

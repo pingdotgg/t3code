@@ -116,6 +116,10 @@ Controls how assistant text reaches the thread timeline. In [the contracts][1], 
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
 
+#### Usage window
+
+One quota bucket a provider account is metered against — Claude's 5-hour session window, its weekly window, its weekly Fable window, Codex's primary and secondary windows. Modelled provider-agnostically in [the server contracts][26] as `{ id, label, usedPercent, resetsAt }`, so clients map over the list rather than branching per provider. Provider-shaped payloads are flattened into it by `normalizeClaudeUsage` / `normalizeCodexUsage` in [usageLimits.ts][25]. Readings are volatile and never persisted: two feeds write them, the free `account.rate-limits.updated` turn events and a debounced on-demand pull, and the newer reading always wins. Cursor, Grok, and OpenCode report none.
+
 ### Checkpointing
 
 Checkpointing captures workspace state over time so the app can diff turns and restore earlier points. The main pieces are [CheckpointStore.ts][19], [CheckpointDiffQuery.ts][20], and [CheckpointReactor.ts][6].
@@ -179,3 +183,5 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/server/src/provider/usageLimits.ts
+[26]: ../../packages/contracts/src/server.ts
