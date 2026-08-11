@@ -21,32 +21,24 @@ export function getTimestampFormatOptions(
 }
 
 /**
- * Pick the locale to format wall-clock times in, given what the host reports as
- * the OS locale.
+ * Pick the locale to format wall-clock times in, given the locale the host
+ * reports. Hosts that report nothing fall back to `undefined`, which is the
+ * runtime default and the right answer in a browser.
  *
- * Passing `undefined` to `Intl` means "the runtime default", which is correct in
- * a browser but wrong in the packaged desktop app: it ships only the `en-US`
- * Chromium locale pak (see `DESKTOP_ELECTRON_LANGUAGES`), and Chromium resolves
- * its default `Intl` locale from the application locale rather than from the OS.
- * The default is therefore pinned to `en-US` however the machine is configured,
- * so a `24-hour` region renders `3:44 PM` instead of `15:44`. The desktop bridge
- * reports the real OS locale, which the pak trim does not affect.
- *
- * Returns `undefined` when there is nothing usable to report, which keeps the
- * browser on its own default.
+ * A host reports a locale only when it knows better than the runtime does —
+ * see `getSystemLocale` on the desktop bridge for why desktop does.
  */
 export function resolveTimestampLocale(
   systemLocale: string | null | undefined,
 ): string | undefined {
-  const trimmed = systemLocale?.trim();
-  if (!trimmed) return undefined;
+  const tag = systemLocale?.trim();
+  if (!tag) return undefined;
 
-  // macOS reports POSIX-style identifiers (`en_GB`) in some paths, which `Intl`
-  // rejects outright rather than normalizing.
-  const tag = trimmed.replace(/_/g, "-");
   try {
-    // Throws on a structurally invalid tag. A well-formed tag that ICU has no
-    // data for still resolves here, and is left to ICU's own fallback.
+    // Every timestamp in the UI runs through this formatter, so a tag the host
+    // could not normalize falls back rather than throwing. Throws on a
+    // structurally invalid tag; a well-formed tag ICU has no data for resolves
+    // here and is left to ICU's own fallback.
     Intl.DateTimeFormat.supportedLocalesOf([tag]);
     return tag;
   } catch {
@@ -92,7 +84,10 @@ export function formatTimestamp(isoDate: string, timestampFormat: TimestampForma
   return getTimestampFormatter(timestampFormat, true).format(date);
 }
 
-const monthNameFormatter = new Intl.DateTimeFormat(timestampLocale, { month: "long" });
+// Deliberately not the host locale: the tooltip's ordinal suffix and
+// day-before-month order below are English, so a localized month alone would
+// read "4th Juni 2026". Localizing the whole label is a separate change.
+const monthNameFormatter = new Intl.DateTimeFormat(undefined, { month: "long" });
 
 function ordinalSuffix(day: number): string {
   const lastTwo = day % 100;

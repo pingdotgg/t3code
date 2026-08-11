@@ -1022,9 +1022,10 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /**
-   * The OS locale, which the renderer cannot read for itself: the packaged app
-   * ships only the `en-US` Chromium locale pak, so `navigator.language` and the
-   * default `Intl` locale are pinned to `en-US` regardless of OS settings.
+   * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
+   * the packaged app ships only the `en-US` Chromium locale pak, so
+   * `navigator.language` and the default `Intl` locale are pinned to `en-US`
+   * regardless of OS settings.
    */
   getSystemLocale?: () => string | null;
   // One bootstrap per pool instance currently registered with bootstrap
