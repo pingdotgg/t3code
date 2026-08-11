@@ -1,5 +1,8 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { make } from "./AetherMirrorRegistry.ts";
 
@@ -82,5 +85,31 @@ describe("AetherMirrorRegistry", () => {
         yield* registry.ownsPathWithin("/repos/parent", ".worktrees/aether-mirror-notes.md"),
       ).toBe(false);
     }),
+  );
+
+  it.effect("symlink bypass: a symlinked path to a registered mirror still hits its claim", () =>
+    Effect.gen(function* () {
+      // Real directories: `NodePath.resolve` collapses `..`/`.` but not
+      // symlinks, so a mirror registered by its real path was invisible to
+      // every guard when the RPC arrived through a link to the same checkout.
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mirror-registry-" });
+      const real = yield* fileSystem.realPath(base);
+      const mirror = path.join(real, "checkout");
+      const link = path.join(real, "linked-checkout");
+      yield* fileSystem.makeDirectory(mirror, { recursive: true });
+      yield* fileSystem.symlink(mirror, link);
+
+      const registry = yield* make;
+      yield* registry.register(mirror, "aether:thread-1");
+
+      expect(yield* registry.ownsCwd(link)).toBe(true);
+      expect(yield* registry.ownsTargetPath(real, "linked-checkout")).toBe(true);
+      expect(yield* registry.ownsPathWithin(link, "app.ts")).toBe(true);
+      // Deregistering through the link releases the same claim.
+      yield* registry.deregister(link, "aether:thread-1");
+      expect(yield* registry.ownsCwd(mirror)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

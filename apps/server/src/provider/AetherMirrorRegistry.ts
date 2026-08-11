@@ -21,13 +21,60 @@
  * @module provider/AetherMirrorRegistry
  */
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-const normalize = (cwd: string): string => NodePath.resolve(cwd);
+/**
+ * `realpath`, or `undefined` when the path is simply not on disk yet. ENOENT
+ * and ENOTDIR are the only two errnos that mean that; every other failure is
+ * real and rethrown rather than normalized into a wrong key.
+ */
+const realpathIfExists = async (candidate: string): Promise<string | undefined> => {
+  try {
+    return await NodeFSP.realpath(candidate);
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return undefined;
+    }
+    throw cause;
+  }
+};
+
+/**
+ * The claim key for a checkout path: the REAL path of its nearest existing
+ * ancestor plus the segments below it. `NodePath.resolve` alone collapses
+ * `..`/`.` but does NOT resolve symlinks, so a mirror registered by its real
+ * path and looked up through a symlinked path to the same checkout (macOS
+ * `/tmp` → `/private/tmp`, a symlinked worktree root) produced two different
+ * keys — and every `owns*` guard answered `false` for the very checkout it
+ * exists to protect. Deregistration canonicalizes the same way and stays
+ * stable after the worktree is removed, because the walk resumes at the
+ * surviving parent.
+ */
+const canonicalize = (target: string): Effect.Effect<string> =>
+  Effect.promise(async () => {
+    const resolved = NodePath.resolve(target);
+    const trailing: Array<string> = [];
+    let probe = resolved;
+    for (;;) {
+      const real = await realpathIfExists(probe);
+      if (real !== undefined) {
+        return trailing.length === 0 ? real : NodePath.join(real, ...trailing);
+      }
+      const parent = NodePath.dirname(probe);
+      if (parent === probe) {
+        // Not even the filesystem root resolved — nothing left to canonicalize.
+        return resolved;
+      }
+      trailing.unshift(NodePath.basename(probe));
+      probe = parent;
+    }
+  });
 
 export class AetherMirrorRegistry extends Context.Service<
   AetherMirrorRegistry,
@@ -58,15 +105,15 @@ export const make = Effect.sync(() => {
   const claims = new Map<string, Set<string>>();
   return AetherMirrorRegistry.of({
     register: (cwd, key) =>
-      Effect.sync(() => {
-        const normalized = normalize(cwd);
+      Effect.gen(function* () {
+        const normalized = yield* canonicalize(cwd);
         const keys = claims.get(normalized) ?? new Set<string>();
         keys.add(key);
         claims.set(normalized, keys);
       }),
     deregister: (cwd, key) =>
-      Effect.sync(() => {
-        const normalized = normalize(cwd);
+      Effect.gen(function* () {
+        const normalized = yield* canonicalize(cwd);
         const keys = claims.get(normalized);
         if (keys === undefined) {
           return;
@@ -76,12 +123,12 @@ export const make = Effect.sync(() => {
           claims.delete(normalized);
         }
       }),
-    ownsCwd: (cwd) => Effect.sync(() => claims.has(normalize(cwd))),
+    ownsCwd: (cwd) => canonicalize(cwd).pipe(Effect.map((normalized) => claims.has(normalized))),
     ownsTargetPath: (cwd, target) =>
-      Effect.sync(() => {
-        const resolved = NodePath.isAbsolute(target)
-          ? normalize(target)
-          : normalize(NodePath.join(cwd, target));
+      Effect.gen(function* () {
+        const resolved = yield* canonicalize(
+          NodePath.isAbsolute(target) ? target : NodePath.join(cwd, target),
+        );
         if (claims.has(resolved)) {
           return true;
         }
@@ -101,10 +148,10 @@ export const make = Effect.sync(() => {
         return false;
       }),
     ownsPathWithin: (cwd, target) =>
-      Effect.sync(() => {
-        const resolved = NodePath.isAbsolute(target)
-          ? normalize(target)
-          : normalize(NodePath.join(cwd, target));
+      Effect.gen(function* () {
+        const resolved = yield* canonicalize(
+          NodePath.isAbsolute(target) ? target : NodePath.join(cwd, target),
+        );
         for (const claim of claims.keys()) {
           if (resolved === claim || resolved.startsWith(claim + NodePath.sep)) {
             return true;
