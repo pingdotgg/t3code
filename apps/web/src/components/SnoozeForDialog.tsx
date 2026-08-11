@@ -47,7 +47,7 @@ function SnoozeForForm(props: {
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Snooze for…</DialogTitle>
+        <DialogTitle>Snooze until</DialogTitle>
         <DialogDescription>
           Choose when {request.threadCount === 1 ? "this thread" : "these threads"} should return to
           your inbox.

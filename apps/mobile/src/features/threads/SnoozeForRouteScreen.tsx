@@ -88,12 +88,12 @@ export function SnoozeForRouteScreen({ route }: StaticScreenProps<SnoozeForRoute
       <NativeStackScreenOptions
         options={{
           ...(Platform.OS === "android" ? { headerShown: false } : null),
-          title: "Snooze for",
+          title: "Snooze until",
         }}
       />
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
-          title="Snooze for"
+          title="Snooze until"
           subtitle={thread?.title ?? null}
           onBack={() => navigation.goBack()}
         />

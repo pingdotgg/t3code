@@ -502,7 +502,7 @@ export const RootStack = createNativeStackNavigator({
               presentation: "formSheet" as const,
               sheetAllowedDetents: [0.55, 0.8],
               sheetGrabberVisible: true,
-              title: "Snooze for",
+              title: "Snooze until",
             }),
       },
     }),
