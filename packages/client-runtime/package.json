@@ -39,6 +39,10 @@
       "types": "./src/operations/threadTasks.ts",
       "default": "./src/operations/threadTasks.ts"
     },
+    "./operations/voice-supervisor-tools": {
+      "types": "./src/operations/voiceSupervisorTools.ts",
+      "default": "./src/operations/voiceSupervisorTools.ts"
+    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"

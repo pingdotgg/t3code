@@ -7,18 +7,19 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import {
-  createThreadSupervisorCore,
-  makeSupervisorTargetVersion,
-  type SupervisorProposalHandle,
-} from "@t3tools/client-runtime/operations/thread-supervisor";
+import { describe, expect, it, vi } from "@effect/vitest";
+import * as Schema from "effect/Schema";
+
 import type {
   BuiltFollowUpThreadInput,
   BuiltInterruptThreadInput,
   BuiltStartProjectTaskInput,
-} from "@t3tools/client-runtime/operations/thread-tasks";
-import { describe, expect, it, vi } from "@effect/vitest";
-import * as Schema from "effect/Schema";
+} from "./threadTasks.ts";
+import {
+  createThreadSupervisorCore,
+  makeSupervisorTargetVersion,
+  type SupervisorProposalHandle,
+} from "./threadSupervisor.ts";
 
 import {
   MAX_VOICE_TOOL_CALL_ID_CHARS,
@@ -34,7 +35,7 @@ import {
   type VoiceSupervisorRepository,
   type VoiceSupervisorThreadRecord,
   type VoiceMutationResult,
-} from "./voiceTools";
+} from "./voiceSupervisorTools.ts";
 
 const NOW = "2026-08-10T12:00:00.000Z";
 const MODEL_SELECTION = {
