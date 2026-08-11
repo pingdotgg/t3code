@@ -218,6 +218,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./wslRuntimeArchive": {
+      "types": "./src/wslRuntimeArchive.ts",
+      "import": "./src/wslRuntimeArchive.ts"
     }
   },
   "scripts": {

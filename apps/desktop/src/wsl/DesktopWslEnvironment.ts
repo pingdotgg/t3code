@@ -26,9 +26,6 @@ const PACKAGED_RUNTIME_STAGE_TIMEOUT = Duration.minutes(10);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
-const PACKAGED_RUNTIME_TRANSPORT_RETRY_LIMIT = 2;
-const PACKAGED_RUNTIME_WSLPATH_FAILURE_EXIT_CODE = 5;
-const PACKAGED_RUNTIME_WSLPATH_RETRY_LIMIT = 12;
 
 export interface EnsureWslNodePtyOptions {
   readonly allowBuild?: boolean;
@@ -56,8 +53,6 @@ export type PrepareWslPackagedRuntimeResult =
   | {
       readonly ok: false;
       readonly reason: string;
-      readonly fatal: boolean;
-      readonly retryLimit?: number;
     };
 
 export class DesktopWslDistroListError extends Schema.TaggedErrorClass<DesktopWslDistroListError>()(
@@ -89,8 +84,8 @@ export class DesktopWslEnvironment extends Context.Service<
     // filesystem. A matching cached version never touches the Windows mount.
     readonly preparePackagedRuntime: (
       distro: string | null,
-      windowsRepoRoot: string,
-      runtimeId: string,
+      windowsArchivePath: string,
+      archiveHash: string,
     ) => Effect.Effect<PrepareWslPackagedRuntimeResult>;
     // Resolves the user's Linux home dir inside the chosen distro (e.g.
     // "/home/josh"). Used by the folder picker to expand `~` correctly.
@@ -112,6 +107,10 @@ export class DesktopWslEnvironment extends Context.Service<
 
 const buildDistroArgs = (distro: string | null): ReadonlyArray<string> =>
   distro ? ["-d", distro] : [];
+
+// Load the user's login profile, then replace that shell with a non-login child
+// so ~/.bash_logout cannot rewrite the stdin script's exit status.
+export const WSL_SCRIPT_SHELL_ARGS = ["--", "bash", "-l", "-c", "exec bash -s"] as const;
 
 const concatChunks = (arrays: ReadonlyArray<Uint8Array>): Uint8Array => {
   let totalLength = 0;
@@ -174,11 +173,11 @@ const runWslScript = (
   timeout: Duration.Duration,
 ): Effect.Effect<ShellResult, never, ChildProcessSpawner.ChildProcessSpawner> => {
   const spawner = ChildProcessSpawner.ChildProcessSpawner;
-  // -l picks up profile-managed shell state. -s makes bash read the script
-  // from stdin so wsl.exe never has to re-escape the script as an argument.
+  // The login shell picks up profile-managed state. Its non-login child reads
+  // stdin so wsl.exe never has to re-escape the script as an argument.
   const command = ChildProcess.make(
     "wsl.exe",
-    [...buildDistroArgs(distro), "--", "bash", "-l", "-s"],
+    [...buildDistroArgs(distro), ...WSL_SCRIPT_SHELL_ARGS],
     {
       stdin: Stream.encodeText(Stream.make(bashScript)),
       stdout: "pipe",
@@ -413,20 +412,20 @@ export const formatMissingToolsReason = (
 };
 
 export const buildPackagedRuntimeStageScript = (
-  windowsRepoRoot: string,
-  runtimeId: string,
+  windowsArchivePath: string,
+  archiveHash: string,
 ): string => {
-  const normalizedWindowsRepoRoot = windowsRepoRoot.replaceAll("\\", "/");
+  const normalizedWindowsArchivePath = windowsArchivePath.replaceAll("\\", "/");
   const cacheHitScript = [
-    'if [ "$(cat "$manifest_path" 2>/dev/null || true)" = "$runtime_id" ] && [ -f "$entry_path" ]; then',
+    'if [ "$(cat "$manifest_path" 2>/dev/null || true)" = "$archive_hash" ] && [ -f "$entry_path" ] && [ -f "$effect_package" ]; then',
     `  printf 'runtimeRoot:%s\\n' "$current_dir"`,
     "  exit 0",
     "fi",
   ];
   return [
     "set -eu",
-    `runtime_id=${shellQuote(runtimeId)}`,
-    `windows_repo_root=${shellQuote(normalizedWindowsRepoRoot)}`,
+    `archive_hash=${shellQuote(archiveHash)}`,
+    `windows_archive_path=${shellQuote(normalizedWindowsArchivePath)}`,
     'case "${XDG_CACHE_HOME:-}" in',
     "  /*)",
     '    cache_home="$XDG_CACHE_HOME"',
@@ -440,8 +439,9 @@ export const buildPackagedRuntimeStageScript = (
     "esac",
     'runtime_base="$cache_home/t3code/desktop-wsl-runtime"',
     'current_dir="$runtime_base/current"',
-    'manifest_path="$current_dir/.t3code-runtime-id"',
+    'manifest_path="$current_dir/.t3code-runtime-sha256"',
     'entry_path="$current_dir/apps/server/dist/bin.mjs"',
+    'effect_package="$current_dir/node_modules/effect/package.json"',
     ...cacheHitScript,
     "",
     'mkdir -p "$runtime_base"',
@@ -457,18 +457,26 @@ export const buildPackagedRuntimeStageScript = (
     "",
     // The installed artifact only crosses /mnt/c on a cache miss. Normal
     // launches return above without converting or reading the Windows path.
-    'if ! source_root=$(wslpath -u "$windows_repo_root"); then',
-    '  printf "wslpath conversion failed for packaged runtime source: %s\\n" "$windows_repo_root" >&2',
-    `  exit ${PACKAGED_RUNTIME_WSLPATH_FAILURE_EXIT_CODE}`,
+    'if ! source_archive=$(wslpath -u "$windows_archive_path"); then',
+    '  printf "wslpath conversion failed for packaged runtime archive: %s\\n" "$windows_archive_path" >&2',
+    "  exit 5",
     "fi",
-    'case "$source_root" in',
+    'case "$source_archive" in',
     "  /*) ;;",
-    '  *) printf "wslpath returned a non-absolute path: %s\\n" "$source_root" >&2; exit 2 ;;',
+    '  *) printf "wslpath returned a non-absolute path: %s\\n" "$source_archive" >&2; exit 2 ;;',
     "esac",
-    'source_entry="$source_root/apps/server/dist/bin.mjs"',
-    'if [ ! -f "$source_entry" ]; then',
-    '  printf "packaged WSL server entry is missing: %s\\n" "$source_entry" >&2',
+    'if [ ! -f "$source_archive" ]; then',
+    '  printf "packaged WSL runtime archive is missing: %s\\n" "$source_archive" >&2',
     "  exit 3",
+    "fi",
+    "if ! command -v sha256sum >/dev/null 2>&1; then",
+    '  printf "packaged WSL runtime preparation requires sha256sum (coreutils)\\n" >&2',
+    "  exit 6",
+    "fi",
+    'actual_hash=$(sha256sum "$source_archive" | cut -d " " -f 1)',
+    'if [ "$actual_hash" != "$archive_hash" ]; then',
+    '  printf "packaged WSL runtime archive checksum does not match\\n" >&2',
+    "  exit 7",
     "fi",
     "",
     'staging_dir="$runtime_base/.staging-$$"',
@@ -487,12 +495,16 @@ export const buildPackagedRuntimeStageScript = (
     "trap restore_previous EXIT",
     "trap 'exit 1' HUP INT TERM",
     'mkdir "$staging_dir"',
-    'cp -a "$source_root/." "$staging_dir/"',
-    'printf "%s\\n" "$runtime_id" > "$staging_dir/.t3code-runtime-id"',
+    'tar -xzf "$source_archive" -C "$staging_dir"',
     'if [ ! -f "$staging_dir/apps/server/dist/bin.mjs" ]; then',
     '  printf "staged WSL server entry is missing\\n" >&2',
     "  exit 4",
     "fi",
+    'if [ ! -f "$staging_dir/node_modules/effect/package.json" ]; then',
+    '  printf "staged WSL runtime dependencies are missing\\n" >&2',
+    "  exit 4",
+    "fi",
+    'printf "%s\\n" "$archive_hash" > "$staging_dir/.t3code-runtime-sha256"',
     'if [ -e "$current_dir" ]; then mv -- "$current_dir" "$previous_dir"; fi',
     'mv -- "$staging_dir" "$current_dir"',
     'rm -rf -- "$previous_dir"',
@@ -504,22 +516,10 @@ export const buildPackagedRuntimeStageScript = (
 export const formatPackagedRuntimeStageFailure = (
   exitCode: number,
   outputTail: string,
-): PrepareWslPackagedRuntimeResult => {
-  if (exitCode === PACKAGED_RUNTIME_WSLPATH_FAILURE_EXIT_CODE) {
-    return {
-      ok: false,
-      reason: outputTail || "wslpath conversion failed for packaged runtime source",
-      fatal: false,
-      retryLimit: PACKAGED_RUNTIME_WSLPATH_RETRY_LIMIT,
-    };
-  }
-
-  return {
-    ok: false,
-    reason: `Failed to prepare the packaged WSL runtime (exit ${exitCode}): ${outputTail || "no output captured"}`,
-    fatal: true,
-  };
-};
+): PrepareWslPackagedRuntimeResult => ({
+  ok: false,
+  reason: `Failed to prepare the packaged WSL runtime (exit ${exitCode}): ${outputTail || "no output captured"}`,
+});
 
 const parsePackagedRuntimeRoot = (stdout: string): string | null => {
   const prefix = "runtimeRoot:";
@@ -531,13 +531,13 @@ const parsePackagedRuntimeRoot = (stdout: string): string | null => {
 
 const preparePackagedRuntimeImpl = (
   distro: string | null,
-  windowsRepoRoot: string,
-  runtimeId: string,
+  windowsArchivePath: string,
+  archiveHash: string,
 ): Effect.Effect<PrepareWslPackagedRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const stage = yield* runWslScript(
       distro,
-      buildPackagedRuntimeStageScript(windowsRepoRoot, runtimeId),
+      buildPackagedRuntimeStageScript(windowsArchivePath, archiveHash),
       PACKAGED_RUNTIME_STAGE_TIMEOUT,
     );
     if (stage.transportFailure !== null) {
@@ -550,8 +550,6 @@ const preparePackagedRuntimeImpl = (
       return {
         ok: false,
         reason: `WSL packaged runtime preparation ${action}. Retry, or check that the distro is healthy.`,
-        fatal: false,
-        retryLimit: PACKAGED_RUNTIME_TRANSPORT_RETRY_LIMIT,
       } as const;
     }
 
@@ -940,8 +938,8 @@ export interface DesktopWslEnvironmentTestStub {
   readonly windowsToWslPath?: (distro: string | null, windowsPath: string) => Option.Option<string>;
   readonly preparePackagedRuntime?: (
     distro: string | null,
-    windowsRepoRoot: string,
-    runtimeId: string,
+    windowsArchivePath: string,
+    archiveHash: string,
   ) => PrepareWslPackagedRuntimeResult;
   readonly getUserHome?: (distro: string | null) => Option.Option<string>;
   readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
@@ -965,12 +963,11 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       preWarm: () => Effect.void,
       windowsToWslPath: (distro, windowsPath) =>
         Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
-      preparePackagedRuntime: (distro, windowsRepoRoot, runtimeId) =>
+      preparePackagedRuntime: (distro, windowsArchivePath, archiveHash) =>
         Effect.succeed(
-          stub.preparePackagedRuntime?.(distro, windowsRepoRoot, runtimeId) ?? {
+          stub.preparePackagedRuntime?.(distro, windowsArchivePath, archiveHash) ?? {
             ok: false,
             reason: "preparePackagedRuntime stub not configured",
-            fatal: true,
           },
         ),
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
@@ -1055,8 +1052,8 @@ export const layer = Layer.effect(
       preWarm: (distro) =>
         provideSpawner(preWarmImpl(distro)).pipe(Effect.withSpan("desktop.wsl.preWarm")),
       windowsToWslPath,
-      preparePackagedRuntime: (distro, windowsRepoRoot, runtimeId) =>
-        provideSpawner(preparePackagedRuntimeImpl(distro, windowsRepoRoot, runtimeId)).pipe(
+      preparePackagedRuntime: (distro, windowsArchivePath, archiveHash) =>
+        provideSpawner(preparePackagedRuntimeImpl(distro, windowsArchivePath, archiveHash)).pipe(
           Effect.withSpan("desktop.wsl.preparePackagedRuntime"),
         ),
       getUserHome,

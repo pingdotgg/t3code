@@ -176,13 +176,18 @@ describe("DesktopBackendConfiguration", () => {
       const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
       yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
       yield* fileSystem.writeFileString(entryPath, "");
+      const archiveHash = "a".repeat(64);
+      yield* fileSystem.writeFileString(
+        path.join(baseDir, "wsl-runtime.tar.gz.sha256"),
+        archiveHash,
+      );
 
       const observedDistros: Array<string | null> = [];
       const observedWindowsConversions: string[] = [];
       const observedRuntimePreparations: Array<{
         readonly distro: string | null;
-        readonly windowsRepoRoot: string;
-        readonly runtimeId: string;
+        readonly windowsArchivePath: string;
+        readonly archiveHash: string;
       }> = [];
       const observedNodePtyRoots: string[] = [];
       const linuxRepoRoot = "/home/test/.cache/t3code/desktop-wsl-runtime/current";
@@ -205,9 +210,13 @@ describe("DesktopBackendConfiguration", () => {
                   observedWindowsConversions.push(windowsPath);
                   return Option.some("/mnt/c/t3code");
                 },
-                preparePackagedRuntime: (distro, windowsRepoRoot, runtimeId) => {
+                preparePackagedRuntime: (distro, windowsArchivePath, preparedArchiveHash) => {
                   observedDistros.push(distro);
-                  observedRuntimePreparations.push({ distro, windowsRepoRoot, runtimeId });
+                  observedRuntimePreparations.push({
+                    distro,
+                    windowsArchivePath,
+                    archiveHash: preparedArchiveHash,
+                  });
                   return { ok: true, linuxRepoRoot };
                 },
                 ensureNodePty: (distro, root) => {
@@ -239,12 +248,69 @@ describe("DesktopBackendConfiguration", () => {
       assert.deepEqual(observedRuntimePreparations, [
         {
           distro: "Ubuntu",
-          windowsRepoRoot: path.join(baseDir, "app.asar.unpacked"),
-          runtimeId: "1.2.3-x64",
+          windowsArchivePath: path.join(baseDir, "wsl-runtime.tar.gz"),
+          archiveHash,
         },
       ]);
       assert.deepEqual(observedNodePtyRoots, [linuxRepoRoot]);
       assert.include(config.args, `${linuxRepoRoot}/apps/server/dist/bin.mjs`);
+      assert.isTrue(Option.isNone(config.preflightFailure));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("resolveWsl falls back to the mounted runtime when native staging fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+      yield* fileSystem.writeFileString(
+        path.join(baseDir, "wsl-runtime.tar.gz.sha256"),
+        `${"b".repeat(64)}\n`,
+      );
+
+      const observedNodePtyRoots: string[] = [];
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5001, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                preparePackagedRuntime: () => ({
+                  ok: false,
+                  reason: "archive extraction failed",
+                }),
+                windowsToWslPath: () => Option.some("/mnt/c/t3code"),
+                ensureNodePty: (_distro, root) => {
+                  observedNodePtyRoots.push(root);
+                  return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+                },
+                getDistroIp: () => Option.none(),
+              }),
+            ),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                appPath: baseDir,
+                platform: "win32",
+                resourcesPath: baseDir,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(observedNodePtyRoots, ["/mnt/c/t3code"]);
+      assert.include(config.args, "/mnt/c/t3code/apps/server/dist/bin.mjs");
       assert.isTrue(Option.isNone(config.preflightFailure));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

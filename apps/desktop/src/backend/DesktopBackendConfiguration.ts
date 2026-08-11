@@ -19,6 +19,11 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
+import {
+  parseWslRuntimeArchiveHash,
+  WSL_RUNTIME_ARCHIVE_FILENAME,
+  WSL_RUNTIME_ARCHIVE_HASH_FILENAME,
+} from "@t3tools/shared/wslRuntimeArchive";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -239,7 +244,10 @@ const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
   readonly isPackaged: boolean;
-  readonly runtimeId: string;
+  readonly packagedRuntime: {
+    readonly windowsArchivePath: string;
+    readonly archiveHash: string;
+  } | null;
   readonly windowsEntryPath: string;
   readonly windowsRepoRoot: string;
   readonly allowBuild: boolean;
@@ -301,23 +309,23 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     } as const;
   }
 
-  let linuxRepoRoot: string;
-  if (input.isPackaged) {
+  let linuxRepoRoot: string | null = null;
+  if (input.isPackaged && input.packagedRuntime !== null) {
     const prepared = yield* wslEnv.preparePackagedRuntime(
       runningDistro,
-      input.windowsRepoRoot,
-      input.runtimeId,
+      input.packagedRuntime.windowsArchivePath,
+      input.packagedRuntime.archiveHash,
     );
     if (!prepared.ok) {
-      return {
-        _tag: "Failed",
-        reason: prepared.reason,
-        fatal: prepared.fatal,
-        ...(prepared.retryLimit === undefined ? {} : { retryLimit: prepared.retryLimit }),
-      } as const;
+      yield* Effect.logWarning(
+        `Could not prepare the Linux-native WSL runtime; using the packaged runtime from its Windows mount instead. ${prepared.reason}`,
+      );
+    } else {
+      linuxRepoRoot = prepared.linuxRepoRoot;
     }
-    linuxRepoRoot = prepared.linuxRepoRoot;
-  } else {
+  }
+
+  if (linuxRepoRoot === null) {
     const convertedRepoRoot = yield* wslEnv.windowsToWslPath(runningDistro, input.windowsRepoRoot);
     if (Option.isNone(convertedRepoRoot)) {
       return {
@@ -450,6 +458,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 > {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // Bind to 0.0.0.0 inside WSL so the backend is reachable both via
   // WSL2's automatic localhost forwarding (wslhost: Windows 127.0.0.1
@@ -498,11 +507,33 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ? environment.path.join(environment.resourcesPath, "app.asar.unpacked")
     : environment.appRoot;
   const wslEntryPath = environment.path.join(wslAppRoot, "apps/server/dist/bin.mjs");
+  const runtimeArchivePath = environment.path.join(
+    environment.resourcesPath,
+    WSL_RUNTIME_ARCHIVE_FILENAME,
+  );
+  const runtimeArchiveHashPath = environment.path.join(
+    environment.resourcesPath,
+    WSL_RUNTIME_ARCHIVE_HASH_FILENAME,
+  );
+  const runtimeArchiveHash = environment.isPackaged
+    ? yield* fileSystem.readFileString(runtimeArchiveHashPath).pipe(
+        Effect.map(parseWslRuntimeArchiveHash),
+        Effect.orElseSucceed(() => null),
+      )
+    : null;
+  if (environment.isPackaged && runtimeArchiveHash === null) {
+    yield* Effect.logWarning(
+      "The packaged WSL runtime archive identity is missing or invalid; using the existing Windows-mounted runtime.",
+    );
+  }
 
   const preflight = yield* runWslPreflight({
     distro: input.distro,
     isPackaged: environment.isPackaged,
-    runtimeId: `${environment.appVersion}-${environment.processArch}`,
+    packagedRuntime:
+      environment.isPackaged && runtimeArchiveHash !== null
+        ? { windowsArchivePath: runtimeArchivePath, archiveHash: runtimeArchiveHash }
+        : null,
     windowsEntryPath: wslEntryPath,
     windowsRepoRoot: wslAppRoot,
     // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and

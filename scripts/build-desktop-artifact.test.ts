@@ -2,14 +2,17 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   BuildCommandFailedError,
+  buildWslRuntimeArchiveArgs,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
@@ -41,8 +44,10 @@ import {
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
   stageLinuxIconSize,
+  stageWslRuntimeArchive,
   STAGE_INSTALL_ARGS,
   WINDOWS_ASAR_UNPACK,
+  WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCES,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -349,6 +354,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.notProperty(mac, "asarUnpack");
       assert.notProperty(linux, "asarUnpack");
       assert.deepStrictEqual(win.asarUnpack, WINDOWS_ASAR_UNPACK);
+      assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);
+      assert.deepStrictEqual(linux.extraResources, DESKTOP_EXTRA_RESOURCES);
+      assert.deepStrictEqual(win.extraResources, [
+        ...DESKTOP_EXTRA_RESOURCES,
+        ...WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCES,
+      ]);
       // Linux must register the renderer schemes so the generated .desktop
       // entry advertises MimeType=x-scheme-handler/t3code; for OAuth deep links.
       assert.deepStrictEqual((linux.linux as Record<string, unknown>).protocols, [
@@ -572,6 +583,40 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resourceMonitorExecutableName("mac"), "t3-resource-monitor");
     assert.equal(resourceMonitorExecutableName("win"), "t3-resource-monitor.exe");
   });
+
+  it("builds the WSL runtime as one relative archive", () => {
+    assert.deepStrictEqual(buildWslRuntimeArchiveArgs(), [
+      "-czf",
+      "apps/desktop/prod-resources/wsl-runtime.tar.gz",
+      "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
+      "--exclude=node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*",
+      "apps/server/dist",
+      "node_modules",
+    ]);
+  });
+  it.effect("stages the WSL runtime archive and its checksum", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stageAppDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-wsl-runtime-archive-test-",
+      });
+      const serverEntry = path.join(stageAppDir, "apps/server/dist/bin.mjs");
+      const effectPackage = path.join(stageAppDir, "node_modules/effect/package.json");
+      yield* fileSystem.makeDirectory(path.dirname(serverEntry), { recursive: true });
+      yield* fileSystem.makeDirectory(path.dirname(effectPackage), { recursive: true });
+      yield* fileSystem.writeFileString(serverEntry, "server entry\n");
+      yield* fileSystem.writeFileString(effectPackage, "{}\n");
+
+      yield* stageWslRuntimeArchive(stageAppDir);
+
+      const archivePath = path.join(stageAppDir, "apps/desktop/prod-resources/wsl-runtime.tar.gz");
+      const archiveInfo = yield* fileSystem.stat(archivePath);
+      const hash = yield* fileSystem.readFileString(`${archivePath}.sha256`);
+      assert.isAbove(Number(archiveInfo.size), 0);
+      assert.match(hash, /^[a-f0-9]{64}\n$/u);
+    }),
+  );
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
       "@ff-labs/fff-bin-darwin-arm64": "0.9.4",

@@ -29,6 +29,13 @@ Windows:
 winget install T3Tools.T3Code
 ```
 
+### Windows with WSL
+
+When the desktop app runs its server in WSL, the first start unpacks a copy of the server into
+WSL's Linux filesystem. Later starts reuse that copy, which avoids repeatedly loading thousands
+of files through the slower Windows mount. T3 Code refreshes the copy automatically after an
+update. If it cannot prepare the copy, it falls back to running from the Windows install instead.
+
 macOS:
 
 ```bash

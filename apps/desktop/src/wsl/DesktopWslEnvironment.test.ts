@@ -1,3 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - these integration tests execute real POSIX shell tools against disposable directories.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { describe, it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import * as Duration from "effect/Duration";
@@ -22,9 +29,66 @@ import {
   parseResolvedPath,
   parseToolchainReport,
   probeWslDistros,
+  WSL_SCRIPT_SHELL_ARGS,
 } from "./DesktopWslEnvironment.ts";
+import { parseWslRuntimeArchiveHash } from "@t3tools/shared/wslRuntimeArchive";
 
 const encoder = new TextEncoder();
+
+const makeRuntimeArchiveFixture = () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-wsl-runtime-"));
+  const source = NodePath.join(root, "source");
+  const archive = NodePath.join(root, "wsl-runtime.tar.gz");
+  const tools = NodePath.join(root, "tools");
+  const cache = NodePath.join(root, "cache");
+  NodeFS.mkdirSync(NodePath.join(source, "apps/server/dist"), { recursive: true });
+  NodeFS.mkdirSync(NodePath.join(source, "node_modules/effect"), { recursive: true });
+  NodeFS.mkdirSync(tools);
+  NodeFS.writeFileSync(NodePath.join(source, "apps/server/dist/bin.mjs"), "version one\n");
+  NodeFS.writeFileSync(NodePath.join(source, "node_modules/effect/package.json"), "{}\n");
+  NodeFS.writeFileSync(NodePath.join(tools, "wslpath"), '#!/bin/sh\nprintf "%s\\n" "$2"\n', {
+    mode: 0o755,
+  });
+
+  const pack = () => {
+    const result = NodeChildProcess.spawnSync(
+      "tar",
+      ["-czf", archive, "-C", source, "apps", "node_modules"],
+      { encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    return NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(archive)).digest("hex");
+  };
+  const env = {
+    ...process.env,
+    HOME: root,
+    PATH: `${tools}:${process.env.PATH ?? ""}`,
+    XDG_CACHE_HOME: cache,
+  };
+  const run = (archiveHash: string) =>
+    NodeChildProcess.spawnSync(
+      "bash",
+      ["-c", buildPackagedRuntimeStageScript(archive, archiveHash)],
+      { encoding: "utf8", env },
+    );
+  const runAsync = (archiveHash: string) =>
+    new Promise<{ readonly status: number | null; readonly stderr: string }>((resolve) => {
+      const child = NodeChildProcess.spawn(
+        "bash",
+        ["-c", buildPackagedRuntimeStageScript(archive, archiveHash)],
+        { env },
+      );
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+      child.on("close", (status) => resolve({ status, stderr }));
+    });
+  const current = NodePath.join(cache, "t3code/desktop-wsl-runtime/current");
+
+  return { archive, current, pack, root, run, runAsync, source, tools };
+};
 
 const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exitCode?: number }) =>
   ChildProcessSpawner.make(() =>
@@ -112,6 +176,48 @@ describe("formatWslShellTransportFailureReason", () => {
   });
 });
 
+describe("WSL scripted shell transport", () => {
+  const runScript = (home: string, script: string) => {
+    const [, , ...bashArgs] = WSL_SCRIPT_SHELL_ARGS;
+    return NodeChildProcess.spawnSync("bash", bashArgs, {
+      input: script,
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    });
+  };
+
+  it("preserves exported login state without letting logout hooks rewrite success", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-wsl-shell-"));
+    try {
+      NodeFS.writeFileSync(
+        NodePath.join(home, ".bash_profile"),
+        "export T3_PROFILE_VALUE=loaded\n",
+      );
+      NodeFS.writeFileSync(NodePath.join(home, ".bash_logout"), "false\n");
+
+      const result = runScript(home, 'set -eu\nprintf "%s\\n" "$T3_PROFILE_VALUE"\nexit 0\n');
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("loaded\n");
+    } finally {
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a scripted failure status", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-wsl-shell-"));
+    try {
+      NodeFS.writeFileSync(NodePath.join(home, ".bash_logout"), "false\n");
+
+      const result = runScript(home, "set -eu\nexit 17\n");
+
+      expect(result.status).toBe(17);
+    } finally {
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("buildWslNodeEnvPreamble", () => {
   it("passes the required Node engine range into the shared resolver", () => {
     const preamble = buildWslNodeEnvPreamble("^22.16 || ^23.11 || >=24.10");
@@ -175,19 +281,139 @@ describe("buildPackagedRuntimeStageScript", () => {
     expect(lock).toBeGreaterThan(firstCacheCheck);
     expect(secondCacheCheck).toBeGreaterThan(lock);
     expect(sourceConversion).toBeGreaterThan(secondCacheCheck);
-    expect(script).toContain('if ! source_root=$(wslpath -u "$windows_repo_root"); then');
+    expect(script).toContain('if ! source_archive=$(wslpath -u "$windows_archive_path"); then');
     expect(script.slice(sourceConversion)).toContain("exit 5");
+  });
+
+  it("extracts one packaged archive instead of copying the mounted file tree", () => {
+    const script = buildPackagedRuntimeStageScript(
+      "C:\\Program Files\\T3 Code\\resources\\wsl-runtime.tar.gz",
+      "b".repeat(64),
+    );
+
+    expect(script).toContain('sha256sum "$source_archive"');
+    expect(script).toContain('if [ "$actual_hash" != "$archive_hash" ]; then');
+    expect(script).toContain('tar -xzf "$source_archive" -C "$staging_dir"');
+    expect(script).not.toContain('cp -a "$source_root/." "$staging_dir/"');
+  });
+
+  it("extracts once, then starts from the native cache without reading the archive", () => {
+    const fixture = makeRuntimeArchiveFixture();
+    try {
+      const archiveHash = fixture.pack();
+
+      const cold = fixture.run(archiveHash);
+      expect(cold.status, cold.stderr).toBe(0);
+      expect(
+        NodeFS.readFileSync(NodePath.join(fixture.current, ".t3code-runtime-sha256"), "utf8"),
+      ).toBe(`${archiveHash}\n`);
+      expect(
+        NodeFS.readFileSync(NodePath.join(fixture.current, "apps/server/dist/bin.mjs"), "utf8"),
+      ).toBe("version one\n");
+
+      NodeFS.rmSync(fixture.archive);
+      const warm = fixture.run(archiveHash);
+      expect(warm.status, warm.stderr).toBe(0);
+      expect(warm.stdout).toContain(`runtimeRoot:${fixture.current}`);
+    } finally {
+      NodeFS.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces an old cache when the archive changes", () => {
+    const fixture = makeRuntimeArchiveFixture();
+    try {
+      const firstHash = fixture.pack();
+      expect(fixture.run(firstHash).status).toBe(0);
+
+      NodeFS.writeFileSync(
+        NodePath.join(fixture.source, "apps/server/dist/bin.mjs"),
+        "version two\n",
+      );
+      const secondHash = fixture.pack();
+      const updated = fixture.run(secondHash);
+
+      expect(updated.status, updated.stderr).toBe(0);
+      expect(
+        NodeFS.readFileSync(NodePath.join(fixture.current, "apps/server/dist/bin.mjs"), "utf8"),
+      ).toBe("version two\n");
+      expect(
+        NodeFS.readFileSync(NodePath.join(fixture.current, ".t3code-runtime-sha256"), "utf8"),
+      ).toBe(`${secondHash}\n`);
+    } finally {
+      NodeFS.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the last good cache when a replacement archive is broken", () => {
+    const fixture = makeRuntimeArchiveFixture();
+    try {
+      const goodHash = fixture.pack();
+      expect(fixture.run(goodHash).status).toBe(0);
+
+      NodeFS.writeFileSync(fixture.archive, "not a tar archive\n");
+      const brokenHash = NodeCrypto.createHash("sha256")
+        .update(NodeFS.readFileSync(fixture.archive))
+        .digest("hex");
+      const broken = fixture.run(brokenHash);
+
+      expect(broken.status).not.toBe(0);
+      expect(
+        NodeFS.readFileSync(NodePath.join(fixture.current, "apps/server/dist/bin.mjs"), "utf8"),
+      ).toBe("version one\n");
+      expect(
+        NodeFS.readFileSync(NodePath.join(fixture.current, ".t3code-runtime-sha256"), "utf8"),
+      ).toBe(`${goodHash}\n`);
+    } finally {
+      NodeFS.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("serializes concurrent cache misses so the archive is extracted once", async () => {
+    const fixture = makeRuntimeArchiveFixture();
+    try {
+      const archiveHash = fixture.pack();
+      const extractionLog = NodePath.join(fixture.root, "tar-calls.log");
+      const realTar = NodeChildProcess.spawnSync("which", ["tar"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      NodeFS.writeFileSync(
+        NodePath.join(fixture.tools, "tar"),
+        `#!/bin/sh\nprintf 'extract\\n' >> ${JSON.stringify(extractionLog)}\nexec ${JSON.stringify(realTar)} "$@"\n`,
+        { mode: 0o755 },
+      );
+
+      const results = await Promise.all([
+        fixture.runAsync(archiveHash),
+        fixture.runAsync(archiveHash),
+      ]);
+
+      for (const result of results) expect(result.status, result.stderr).toBe(0);
+      expect(NodeFS.readFileSync(extractionLog, "utf8")).toBe("extract\n");
+    } finally {
+      NodeFS.rmSync(fixture.root, { recursive: true, force: true });
+    }
   });
 });
 
 describe("formatPackagedRuntimeStageFailure", () => {
-  it("keeps a packaged wslpath failure retryable while WSL starts", () => {
+  it("keeps the staging failure reason for fallback logging", () => {
     expect(formatPackagedRuntimeStageFailure(5, "wslpath conversion failed")).toEqual({
       ok: false,
-      reason: "wslpath conversion failed",
-      fatal: false,
-      retryLimit: 12,
+      reason: "Failed to prepare the packaged WSL runtime (exit 5): wslpath conversion failed",
     });
+  });
+});
+
+describe("parseWslRuntimeArchiveHash", () => {
+  it("normalizes a valid SHA-256 sidecar", () => {
+    expect(parseWslRuntimeArchiveHash(`${"A".repeat(64)}\n`)).toBe("a".repeat(64));
+  });
+
+  it("rejects missing and malformed identities", () => {
+    expect(parseWslRuntimeArchiveHash("")).toBeNull();
+    expect(parseWslRuntimeArchiveHash("not-a-hash")).toBeNull();
+    expect(parseWslRuntimeArchiveHash("a".repeat(63))).toBeNull();
   });
 });
 

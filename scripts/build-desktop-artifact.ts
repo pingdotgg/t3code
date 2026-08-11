@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import * as NodeCrypto from "node:crypto";
 import * as NodeModule from "node:module";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
@@ -19,6 +20,11 @@ import {
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import {
+  WSL_RUNTIME_ARCHIVE_FILENAME,
+  WSL_RUNTIME_ARCHIVE_HASH_FILENAME,
+  WSL_RUNTIME_ARCHIVE_STAGE_DIRECTORY,
+} from "@t3tools/shared/wslRuntimeArchive";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -644,6 +650,16 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+] as const;
+export const WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCES = [
+  {
+    from: `${WSL_RUNTIME_ARCHIVE_STAGE_DIRECTORY}/${WSL_RUNTIME_ARCHIVE_FILENAME}`,
+    to: WSL_RUNTIME_ARCHIVE_FILENAME,
+  },
+  {
+    from: `${WSL_RUNTIME_ARCHIVE_STAGE_DIRECTORY}/${WSL_RUNTIME_ARCHIVE_HASH_FILENAME}`,
+    to: WSL_RUNTIME_ARCHIVE_HASH_FILENAME,
   },
 ] as const;
 
@@ -1548,7 +1564,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // WINDOWS_ASAR_UNPACK); macOS and Linux stay packed — smart unpack
     // extracts native libraries, which fff-node finds in app.asar.unpacked.
     ...(platform === "win" ? { asarUnpack: [...WINDOWS_ASAR_UNPACK] } : {}),
-    extraResources: DESKTOP_EXTRA_RESOURCES,
+    extraResources: [
+      ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "win" ? WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCES : []),
+    ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
@@ -1714,6 +1733,45 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   yield* Effect.log(
     `[desktop-artifact] Staged WSL node-pty prebuild (linux-${linuxArch}, node-pty ${nodePtyVersion}).`,
   );
+});
+
+export const buildWslRuntimeArchiveArgs = (): ReadonlyArray<string> => [
+  "-czf",
+  `${WSL_RUNTIME_ARCHIVE_STAGE_DIRECTORY}/${WSL_RUNTIME_ARCHIVE_FILENAME}`,
+  "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
+  "--exclude=node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*",
+  "apps/server/dist",
+  "node_modules",
+];
+
+export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (
+  stageAppDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const archivePath = path.join(
+    stageAppDir,
+    WSL_RUNTIME_ARCHIVE_STAGE_DIRECTORY,
+    WSL_RUNTIME_ARCHIVE_FILENAME,
+  );
+  yield* fs.makeDirectory(path.dirname(archivePath), { recursive: true });
+  yield* runCommand(ChildProcess.make("tar", buildWslRuntimeArchiveArgs(), { cwd: stageAppDir }), {
+    label: "tar WSL runtime",
+    verbose: false,
+  });
+
+  const hash = NodeCrypto.createHash("sha256");
+  yield* fs
+    .stream(archivePath)
+    .pipe(Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))));
+  const digest = hash.digest("hex");
+  const hashPath = path.join(
+    stageAppDir,
+    WSL_RUNTIME_ARCHIVE_STAGE_DIRECTORY,
+    WSL_RUNTIME_ARCHIVE_HASH_FILENAME,
+  );
+  yield* fs.writeFileString(hashPath, `${digest}\n`);
+  yield* Effect.log(`[desktop-artifact] Staged compressed WSL runtime (${digest}).`);
 });
 
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
@@ -1979,6 +2037,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       arch: options.arch,
       prebuildPath: options.wslPrebuild,
     });
+    yield* stageWslRuntimeArchive(stageAppDir);
   }
 
   // electron-builder treats several set-but-empty variables (e.g. CSC_LINK="")
