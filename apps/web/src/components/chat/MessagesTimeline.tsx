@@ -89,6 +89,7 @@ import {
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
+import { WorkingGlyph } from "./WorkingGlyph";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   deriveDisplayedUserMessageState,
@@ -1287,12 +1288,8 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
   const { workingStepLabel } = use(TimelineRowActivityCtx);
   return (
     <div className="py-0.5 pl-1.5">
-      <div className="flex min-w-0 items-center gap-2 pt-1 text-secondary-label text-[11px] tabular-nums">
-        <span className="inline-flex items-center gap-[3px]">
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:200ms]" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-status-pulse [animation-delay:400ms]" />
-        </span>
+      <div className="flex min-w-0 items-center gap-2 pt-1 text-secondary-label text-2xs tabular-nums">
+        <WorkingGlyph />
         <span className="shrink-0">
           {row.createdAt ? (
             <>

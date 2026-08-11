@@ -258,6 +258,111 @@ html[data-panel-surface-transition="true"]::view-transition-new(t3-panel-surface
 }
 
 /* -------------------------------------------------------------------------
+ * Working glyph
+ *
+ * The beat for the running-agent mark in the chat timeline; WorkingGlyph.tsx
+ * owns the shape. Three dots ride a ring 120 degrees apart with descending
+ * opacity, so the ring reads as a comet with a tail.
+ *
+ * Two things make this affordable. It steps rather than spins, so the
+ * compositor is busy for about a third of each beat and idle the rest — the
+ * same duty-cycle reasoning behind the stepped indicator keyframes above. And
+ * exactly one of these is ever mounted, only while a run is in flight, unlike
+ * the status dots that sit resident by the dozen in the sidebar.
+ *
+ * Every duration is derived from --duration-slow instead of written in
+ * seconds. That is what routes the glyph through the single reduced-motion
+ * block in tokens.css: zeroing the token collapses the whole cycle. A mark
+ * that revolves is precisely what someone enables that setting to stop, and
+ * the 100% keyframes below are deliberately the resting pose (360deg reads as
+ * 0deg, the core returns to rest) so a collapsed cycle lands somewhere
+ * correct rather than mid-gesture.
+ * ------------------------------------------------------------------------- */
+
+.working-glyph {
+  /* One beat is a step plus the hold after it. Three beats carry the ring
+     back around to its starting orientation. */
+  --working-beat: calc(var(--duration-slow) * 3.5);
+
+  animation: working-glyph-enter var(--duration-base) var(--ease-spring) both;
+}
+
+@keyframes working-glyph-enter {
+  from {
+    opacity: 0;
+    scale: 0.4;
+  }
+
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@keyframes working-glyph-step {
+  /* A full turn over three beats, not a 120deg loop. The dots carry different
+     opacities, so only 360deg returns the tail to where it started — looping
+     120deg would snap the bright head backwards on every iteration. */
+  0% {
+    rotate: 0deg;
+    animation-timing-function: var(--ease-spring);
+  }
+
+  11%,
+  33.3% {
+    rotate: 120deg;
+    animation-timing-function: var(--ease-spring);
+  }
+
+  44.4%,
+  66.6% {
+    rotate: 240deg;
+    animation-timing-function: var(--ease-spring);
+  }
+
+  77.7%,
+  100% {
+    rotate: 360deg;
+  }
+}
+
+.working-glyph-ring {
+  /* view-box, not fill-box: the ring turns about the centre of the drawing,
+     and fill-box would use the bounding box of the three dots instead. */
+  transform-box: view-box;
+  transform-origin: 8px 8px;
+  animation: working-glyph-step calc(var(--working-beat) * 3) infinite;
+}
+
+@keyframes working-glyph-core {
+  0% {
+    opacity: 0.28;
+    scale: 1;
+    animation-timing-function: var(--ease-out);
+  }
+
+  22% {
+    opacity: 0.7;
+    scale: 1.75;
+    animation-timing-function: var(--ease-in-out);
+  }
+
+  70%,
+  100% {
+    opacity: 0.28;
+    scale: 1;
+  }
+}
+
+.working-glyph-core {
+  transform-box: view-box;
+  transform-origin: 8px 8px;
+  /* One beat exactly, so the core lands its pulse on the ring's step however
+     long the two run — they never drift apart. */
+  animation: working-glyph-core var(--working-beat) infinite;
+}
+
+/* -------------------------------------------------------------------------
  * Ultrathink accent
  *
  * The one deliberate exception to the transform/opacity rule: an animated
