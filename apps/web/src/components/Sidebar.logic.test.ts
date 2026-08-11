@@ -17,6 +17,7 @@ import {
   resolveSidebarThreadGitCwd,
   resolveFilteredSidebarProjects,
   resolveProjectExpanded,
+  resolveSidebarThreadRowStatus,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -59,13 +60,8 @@ describe("hasUnseenCompletion", () => {
   it("returns true when a thread completed after its last visit", () => {
     expect(
       hasUnseenCompletion({
-        hasActionableProposedPlan: false,
-        hasPendingApprovals: false,
-        hasPendingUserInput: false,
-        interactionMode: "default",
         latestTurn: makeLatestTurn(),
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
-        session: null,
       }),
     ).toBe(true);
   });
@@ -571,7 +567,6 @@ describe("resolveThreadStatusPill", () => {
     hasPendingUserInput: false,
     interactionMode: "plan" as const,
     latestTurn: null,
-    lastVisitedAt: undefined,
     session: {
       provider: ProviderDriverKind.make("codex"),
       status: "running" as const,
@@ -595,6 +590,7 @@ describe("resolveThreadStatusPill", () => {
             status: "running",
           },
         },
+        lastVisitedAt: null,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
@@ -610,6 +606,7 @@ describe("resolveThreadStatusPill", () => {
             status: "running",
           },
         },
+        lastVisitedAt: null,
       }),
     ).toMatchObject({ label: "Working", presentation: "corner-badge", pulse: true });
   });
@@ -618,6 +615,7 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: { ...baseThread, hasPendingApprovals: true },
+        lastVisitedAt: null,
       }),
     ).toMatchObject({ label: "Pending Approval", presentation: "label" });
   });
@@ -630,6 +628,7 @@ describe("resolveThreadStatusPill", () => {
           hasPendingApprovals: true,
           hasPendingUserInput: true,
         },
+        lastVisitedAt: null,
       }),
     ).toMatchObject({ label: "Pending Approval", pulse: false });
   });
@@ -641,6 +640,7 @@ describe("resolveThreadStatusPill", () => {
           ...baseThread,
           hasPendingUserInput: true,
         },
+        lastVisitedAt: null,
       }),
     ).toMatchObject({ label: "Awaiting Input", pulse: false });
   });
@@ -649,6 +649,7 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+        lastVisitedAt: null,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
@@ -661,6 +662,7 @@ describe("resolveThreadStatusPill", () => {
           latestTurn: null,
           session: null,
         },
+        lastVisitedAt: null,
         hasPendingTurn: true,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
@@ -676,6 +678,7 @@ describe("resolveThreadStatusPill", () => {
             activeTurnId: undefined,
           },
         },
+        lastVisitedAt: null,
       }),
     ).toBeNull();
   });
@@ -686,12 +689,12 @@ describe("resolveThreadStatusPill", () => {
         thread: {
           ...baseThread,
           latestTurn: makeLatestTurn(),
-          lastVisitedAt: "2026-03-09T10:06:00.000Z",
           session: {
             ...baseThread.session,
             activeTurnId: TurnId.make("turn-1"),
           },
         },
+        lastVisitedAt: "2026-03-09T10:06:00.000Z",
       }),
     ).toBeNull();
   });
@@ -709,6 +712,7 @@ describe("resolveThreadStatusPill", () => {
             orchestrationStatus: "ready",
           },
         },
+        lastVisitedAt: null,
       }),
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
@@ -725,6 +729,7 @@ describe("resolveThreadStatusPill", () => {
             orchestrationStatus: "ready",
           },
         },
+        lastVisitedAt: null,
       }),
     ).toMatchObject({ label: "Completed", pulse: false, presentation: "corner-badge" });
   });
@@ -736,15 +741,68 @@ describe("resolveThreadStatusPill", () => {
           ...baseThread,
           interactionMode: "default",
           latestTurn: makeLatestTurn(),
-          lastVisitedAt: "2026-03-09T10:04:00.000Z",
           session: {
             ...baseThread.session,
             status: "ready",
             orchestrationStatus: "ready",
           },
         },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
       }),
     ).toMatchObject({ label: "Completed", pulse: false, presentation: "corner-badge" });
+  });
+
+  it("hides completed when the latest completion has already been visited", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestTurn: makeLatestTurn(),
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+        lastVisitedAt: "2026-03-09T10:06:00.000Z",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveSidebarThreadRowStatus", () => {
+  it("preserves a seen completion when no local turn is pending", () => {
+    expect(
+      resolveSidebarThreadRowStatus({
+        threadStatus: null,
+        hasPendingTurn: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("overlays working while a local turn is pending", () => {
+    expect(
+      resolveSidebarThreadRowStatus({
+        threadStatus: null,
+        hasPendingTurn: true,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("keeps an actionable status above a local pending turn", () => {
+    expect(
+      resolveSidebarThreadRowStatus({
+        threadStatus: {
+          label: "Pending Approval",
+          colorClass: "text-amber-600",
+          dotClass: "bg-amber-500",
+          pulse: false,
+          presentation: "label",
+        },
+        hasPendingTurn: true,
+      }),
+    ).toMatchObject({ label: "Pending Approval" });
   });
 });
 

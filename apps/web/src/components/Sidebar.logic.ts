@@ -33,18 +33,63 @@ export type ThreadTraversalDirection = "previous" | "next";
 export type ThreadStatusPresentation = "label" | "dot" | "corner-badge";
 
 export interface ThreadStatusPill {
-  label:
+  readonly label:
     | "Working"
     | "Connecting"
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
     | "Plan Ready";
-  colorClass: string;
-  dotClass: string;
-  pulse: boolean;
-  presentation: ThreadStatusPresentation;
+  readonly colorClass: string;
+  readonly dotClass: string;
+  readonly pulse: boolean;
+  readonly presentation: ThreadStatusPresentation;
 }
+
+const THREAD_STATUSES = {
+  pendingApproval: {
+    label: "Pending Approval",
+    colorClass: "text-amber-600 dark:text-amber-300/90",
+    dotClass: "bg-amber-500 dark:bg-amber-300/90",
+    pulse: false,
+    presentation: "label",
+  },
+  awaitingInput: {
+    label: "Awaiting Input",
+    colorClass: "text-indigo-600 dark:text-indigo-300/90",
+    dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+    pulse: false,
+    presentation: "label",
+  },
+  working: {
+    label: "Working",
+    colorClass: "text-sky-600 dark:text-sky-300/80",
+    dotClass: "bg-sky-500 dark:bg-sky-300/80",
+    pulse: true,
+    presentation: "corner-badge",
+  },
+  connecting: {
+    label: "Connecting",
+    colorClass: "text-sky-600 dark:text-sky-300/80",
+    dotClass: "bg-sky-500 dark:bg-sky-300/80",
+    pulse: true,
+    presentation: "label",
+  },
+  planReady: {
+    label: "Plan Ready",
+    colorClass: "text-violet-600 dark:text-violet-300/90",
+    dotClass: "bg-violet-500 dark:bg-violet-300/90",
+    pulse: false,
+    presentation: "label",
+  },
+  completed: {
+    label: "Completed",
+    colorClass: "text-emerald-600 dark:text-emerald-300/90",
+    dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+    pulse: false,
+    presentation: "corner-badge",
+  },
+} as const satisfies Record<string, ThreadStatusPill>;
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
@@ -64,9 +109,7 @@ type ThreadStatusInput = Pick<
   | "latestTurn"
   | "session"
   | "virtualAgentRun"
-> & {
-  lastVisitedAt?: string | undefined;
-};
+>;
 
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
@@ -153,7 +196,11 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
-export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
+export function hasUnseenCompletion(
+  thread: Pick<SidebarThreadSummary, "latestTurn"> & {
+    lastVisitedAt?: string | null | undefined;
+  },
+): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
@@ -369,29 +416,18 @@ export function resolveThreadRowClassName(input: {
 }
 
 export function resolveThreadStatusPill(input: {
-  thread: ThreadStatusInput;
-  hasPendingTurn?: boolean;
+  readonly thread: ThreadStatusInput;
+  readonly lastVisitedAt: string | null | undefined;
+  readonly hasPendingTurn?: boolean;
 }): ThreadStatusPill | null {
   const { thread } = input;
 
   if (thread.hasPendingApprovals) {
-    return {
-      label: "Pending Approval",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-      presentation: "label",
-    };
+    return THREAD_STATUSES.pendingApproval;
   }
 
   if (thread.hasPendingUserInput) {
-    return {
-      label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
-      pulse: false,
-      presentation: "label",
-    };
+    return THREAD_STATUSES.awaitingInput;
   }
 
   if (
@@ -399,23 +435,11 @@ export function resolveThreadStatusPill(input: {
     thread.virtualAgentRun?.status === "running" ||
     isThreadActivelyWorking(thread.latestTurn, thread.session)
   ) {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-      presentation: "corner-badge",
-    };
+    return THREAD_STATUSES.working;
   }
 
   if (thread.session?.status === "connecting") {
-    return {
-      label: "Connecting",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-      presentation: "label",
-    };
+    return THREAD_STATUSES.connecting;
   }
 
   const hasPlanReadyPrompt =
@@ -424,26 +448,24 @@ export function resolveThreadStatusPill(input: {
     isLatestTurnSettled(thread.latestTurn, thread.session) &&
     thread.hasActionableProposedPlan;
   if (hasPlanReadyPrompt) {
-    return {
-      label: "Plan Ready",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
-      dotClass: "bg-violet-500 dark:bg-violet-300/90",
-      pulse: false,
-      presentation: "label",
-    };
+    return THREAD_STATUSES.planReady;
   }
 
-  if (hasUnseenCompletion(thread)) {
-    return {
-      label: "Completed",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
-      pulse: false,
-      presentation: "corner-badge",
-    };
+  if (hasUnseenCompletion({ latestTurn: thread.latestTurn, lastVisitedAt: input.lastVisitedAt })) {
+    return THREAD_STATUSES.completed;
   }
 
   return null;
+}
+
+export function resolveSidebarThreadRowStatus(input: {
+  readonly threadStatus: ThreadStatusPill | null;
+  readonly hasPendingTurn: boolean;
+}): ThreadStatusPill | null {
+  if (!input.hasPendingTurn) {
+    return input.threadStatus;
+  }
+  return resolveProjectStatusIndicator([THREAD_STATUSES.working, input.threadStatus]);
 }
 
 /**

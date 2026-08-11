@@ -286,10 +286,8 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   );
   const prStatus = prStatusIndicator(thread.pullRequest);
   const threadStatus = resolveThreadStatusPill({
-    thread: {
-      ...thread,
-      lastVisitedAt,
-    },
+    thread,
+    lastVisitedAt,
   });
 
   if (!prStatus && !threadStatus) {

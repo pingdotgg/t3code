@@ -168,6 +168,7 @@ import {
   isContextMenuPointerDown,
   resolveFilteredSidebarProjects,
   resolveProjectExpanded,
+  resolveSidebarThreadRowStatus,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -442,8 +443,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const pendingTurn = usePendingTurnStore(
     (state) => state.pendingByThreadKey[pendingTurnKey] ?? null,
   );
-  const effectiveThreadStatus = resolveThreadStatusPill({
-    thread,
+  const effectiveThreadStatus = resolveSidebarThreadRowStatus({
+    threadStatus,
     hasPendingTurn: isPendingTurnActive(pendingTurn, thread),
   });
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -794,8 +795,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         >
           {/* Every row reserves the same leading slot so titles share one left
               edge whether or not the thread currently has a status. */}
-          {(effectiveThreadStatus ?? threadStatus) ? (
-            <ThreadStatusLabel status={effectiveThreadStatus ?? threadStatus!} compact />
+          {effectiveThreadStatus ? (
+            <ThreadStatusLabel status={effectiveThreadStatus} compact />
           ) : (
             <span aria-hidden="true" className="size-3.5 shrink-0" />
           )}
@@ -1636,10 +1637,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
       return resolveThreadStatusPill({
-        thread: {
-          ...thread,
-          ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
-        },
+        thread,
+        lastVisitedAt,
       });
     };
     const visibleProjectThreads = selectVisibleSidebarThreads(projectThreads);
@@ -3442,6 +3441,16 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 export default function Sidebar() {
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const sidebarThreads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const sidebarThreadLastVisitedAts = useUiStateStore(
+    useShallow((state) =>
+      sidebarThreads.map(
+        (thread) =>
+          state.threadLastVisitedAtById[
+            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+          ] ?? null,
+      ),
+    ),
+  );
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const pinnedThreadKeysByProjectId = useUiStateStore((store) => store.pinnedThreadKeysByProjectId);
@@ -3762,52 +3771,65 @@ export default function Sidebar() {
       ),
     [threadExpandedById],
   );
-  const visibleSidebarThreadKeys = useMemo(
-    () =>
-      visibleProjects.flatMap((project) => {
-        // Match SidebarProjectItem: a filtered single-project list has no header
-        // disclosure, so force expansion for jump labels and prev/next too.
-        const projectExpanded = resolveProjectExpanded({
-          storedExpanded: projectExpandedById[project.projectKey] ?? true,
-          hasHeader: activeFilterProject === null,
-        });
-        const activeThreadKey = routeThreadKey ?? undefined;
-        const projectThreads = selectVisibleSidebarThreads(
-          threadsByProjectKey.get(project.projectKey) ?? [],
-        );
-        const pinnedCollapsedThreadKey =
-          !projectExpanded && activeThreadKey
-            ? (projectThreads
-                .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
-                .find((threadKey) => threadKey === activeThreadKey) ?? null)
-            : null;
-        if (!projectExpanded && pinnedCollapsedThreadKey === null) {
-          return [];
-        }
-        if (pinnedCollapsedThreadKey) {
-          return [pinnedCollapsedThreadKey];
-        }
-        const { rowViews } = buildSidebarThreadRows({
-          threads: projectThreads,
-          pinnedThreadKeys: pinnedThreadKeysByProjectId[project.projectKey] ?? [],
-          activeThreadKey,
-          expandedOverrideByThreadKey: threadExpandedOverrideMap,
-          sortOrder: sidebarThreadSortOrder,
-          resolveThreadStatus: (thread) => resolveThreadStatusPill({ thread }),
-        });
-        return rowViews.map((row) => row.threadKey);
-      }),
-    [
-      activeFilterProject,
-      threadExpandedOverrideMap,
-      pinnedThreadKeysByProjectId,
-      projectExpandedById,
-      routeThreadKey,
-      sidebarThreadSortOrder,
-      visibleProjects,
-      threadsByProjectKey,
-    ],
-  );
+  const visibleSidebarThreadKeys = useMemo(() => {
+    const lastVisitedAtByThreadKey = new Map(
+      sidebarThreads.map((thread, index) => [
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        sidebarThreadLastVisitedAts[index] ?? null,
+      ]),
+    );
+    return visibleProjects.flatMap((project) => {
+      // Match SidebarProjectItem: a filtered single-project list has no header
+      // disclosure, so force expansion for jump labels and prev/next too.
+      const projectExpanded = resolveProjectExpanded({
+        storedExpanded: projectExpandedById[project.projectKey] ?? true,
+        hasHeader: activeFilterProject === null,
+      });
+      const activeThreadKey = routeThreadKey ?? undefined;
+      const projectThreads = selectVisibleSidebarThreads(
+        threadsByProjectKey.get(project.projectKey) ?? [],
+      );
+      const pinnedCollapsedThreadKey =
+        !projectExpanded && activeThreadKey
+          ? (projectThreads
+              .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
+              .find((threadKey) => threadKey === activeThreadKey) ?? null)
+          : null;
+      if (!projectExpanded && pinnedCollapsedThreadKey === null) {
+        return [];
+      }
+      if (pinnedCollapsedThreadKey) {
+        return [pinnedCollapsedThreadKey];
+      }
+      const { rowViews } = buildSidebarThreadRows({
+        threads: projectThreads,
+        pinnedThreadKeys: pinnedThreadKeysByProjectId[project.projectKey] ?? [],
+        activeThreadKey,
+        expandedOverrideByThreadKey: threadExpandedOverrideMap,
+        sortOrder: sidebarThreadSortOrder,
+        resolveThreadStatus: (thread) =>
+          resolveThreadStatusPill({
+            thread,
+            lastVisitedAt:
+              lastVisitedAtByThreadKey.get(
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+              ) ?? null,
+          }),
+      });
+      return rowViews.map((row) => row.threadKey);
+    });
+  }, [
+    activeFilterProject,
+    threadExpandedOverrideMap,
+    pinnedThreadKeysByProjectId,
+    projectExpandedById,
+    routeThreadKey,
+    sidebarThreadLastVisitedAts,
+    sidebarThreads,
+    sidebarThreadSortOrder,
+    visibleProjects,
+    threadsByProjectKey,
+  ]);
   const threadJumpCommandByKey = useMemo(() => {
     const mapping = new Map<string, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     for (const [visibleThreadIndex, threadKey] of visibleSidebarThreadKeys.entries()) {

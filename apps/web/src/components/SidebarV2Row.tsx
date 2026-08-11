@@ -163,6 +163,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
   });
   const pill = resolveThreadStatusPill({
     thread,
+    lastVisitedAt,
     hasPendingTurn: displayStatus === "working",
   });
 
