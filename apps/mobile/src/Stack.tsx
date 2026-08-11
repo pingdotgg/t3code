@@ -48,6 +48,8 @@ import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnv
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
+import { VoiceSupervisorRoot } from "./features/voice/VoiceSupervisorRoot";
+import { VoiceSupervisorRouteScreen } from "./features/voice/VoiceSupervisorRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
@@ -294,6 +296,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "SettingsLegal",
   "SettingsSheet",
   "ThreadReviewComment",
+  "VoiceSupervisor",
 ]);
 
 /**
@@ -326,13 +329,13 @@ function RootStackLayout(props: {
   const navigation = useNavigation();
   const { pendingShare } = useIncomingShare();
   const sharePresentationRef = useRef(EMPTY_INCOMING_SHARE_PRESENTATION_STATE);
+  const topRouteName = props.state.routes[props.state.index]?.name;
   useAgentNotificationNavigation();
   // Presents the T3 Connect onboarding sheet after an in-session sign-in.
   useConnectOnboardingNavigation();
   // Launcher app shortcuts: routes shortcut taps and tracks opened threads.
   useAppShortcuts(props.state);
   useEffect(() => {
-    const topRouteName = props.state.routes[props.state.index]?.name;
     const transition = transitionIncomingSharePresentation(sharePresentationRef.current, {
       isShareSheetPresented: topRouteName === "NewTaskSheet",
       pendingShareId: pendingShare?.id ?? null,
@@ -354,11 +357,13 @@ function RootStackLayout(props: {
 
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
-      <ThreadOutboxDrainWorker />
-      <ShowcaseCaptureCoordinator pathname={pathname} />
-      <AdaptiveWorkspaceLayout pathname={workspacePathname}>
-        {props.children}
-      </AdaptiveWorkspaceLayout>
+      <VoiceSupervisorRoot topRouteName={topRouteName}>
+        <ThreadOutboxDrainWorker />
+        <ShowcaseCaptureCoordinator pathname={pathname} />
+        <AdaptiveWorkspaceLayout pathname={workspacePathname}>
+          {props.children}
+        </AdaptiveWorkspaceLayout>
+      </VoiceSupervisorRoot>
     </HardwareKeyboardCommandProvider>
   );
 }
@@ -560,6 +565,14 @@ export const RootStack = createNativeStackNavigator({
         presentation: "formSheet",
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
+      },
+    }),
+    VoiceSupervisor: createNativeStackScreen({
+      screen: VoiceSupervisorRouteScreen,
+      linking: "voice",
+      options: {
+        ...(Platform.OS === "android" ? { headerShown: false } : SOLID_HEADER_OPTIONS),
+        title: "Voice Supervisor",
       },
     }),
     NewTaskSheet: createNativeStackScreen({

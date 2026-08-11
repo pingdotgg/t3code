@@ -122,6 +122,7 @@ function LocalSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <VoiceSupervisorSettingsRow />
         </SettingsSection>
 
         <GeneralSettingsSection />
@@ -469,6 +470,7 @@ function ConfiguredSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <VoiceSupervisorSettingsRow />
           <SettingsSwitchRow
             icon="bell.badge"
             label="Device Notifications"
@@ -518,6 +520,17 @@ function ConfiguredSettingsRouteScreen() {
         <AppSettingsSection />
       </ScrollView>
     </View>
+  );
+}
+
+function VoiceSupervisorSettingsRow() {
+  const navigation = useNavigation();
+  return (
+    <SettingsRow
+      icon="mic"
+      label="Voice Supervisor"
+      onPress={() => navigation.navigate("VoiceSupervisor")}
+    />
   );
 }
 
