@@ -1,22 +1,25 @@
-import type { ConfirmDialogOptions, ConfirmDialogVariant } from "@t3tools/contracts";
+import type {
+  ConfirmDialogOptions,
+  ConfirmDialogResult,
+  ConfirmDialogSecondaryAction,
+  ConfirmDialogVariant,
+} from "@t3tools/contracts";
+
+type ConfirmDialogPayload = {
+  readonly message: string;
+  readonly variant: ConfirmDialogVariant;
+  readonly confirmLabel?: string | undefined;
+  readonly cancelLabel?: string | undefined;
+  readonly secondary?: ConfirmDialogSecondaryAction | undefined;
+};
 
 export type ConfirmDialogState =
   | { readonly status: "idle" }
-  | {
-      readonly status: "confirming";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
-    }
-  | {
-      readonly status: "closing";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
-    };
+  | ({ readonly status: "confirming" } & ConfirmDialogPayload)
+  | ({ readonly status: "closing" } & ConfirmDialogPayload);
 
-type PendingConfirmation = {
-  readonly message: string;
-  readonly variant: ConfirmDialogVariant;
-  readonly resolve: (confirmed: boolean) => void;
+type PendingConfirmation = ConfirmDialogPayload & {
+  readonly resolve: (result: ConfirmDialogResult) => void;
 };
 
 const idleState: ConfirmDialogState = { status: "idle" };
@@ -26,6 +29,16 @@ let queuedConfirmations: PendingConfirmation[] = [];
 let registeredHostCount = 0;
 const listeners = new Set<() => void>();
 
+function payloadFromOptions(message: string, options?: ConfirmDialogOptions): ConfirmDialogPayload {
+  return {
+    message,
+    variant: options?.variant ?? "default",
+    confirmLabel: options?.confirmLabel,
+    cancelLabel: options?.cancelLabel,
+    secondary: options?.secondary,
+  };
+}
+
 function publish(next: ConfirmDialogState): void {
   state = next;
   for (const listener of listeners) {
@@ -34,9 +47,10 @@ function publish(next: ConfirmDialogState): void {
 }
 
 function resolvePendingConfirmations(confirmed: boolean): void {
-  activeConfirmation?.resolve(confirmed);
+  const result: ConfirmDialogResult = { confirmed, secondary: false };
+  activeConfirmation?.resolve(result);
   for (const confirmation of queuedConfirmations) {
-    confirmation.resolve(confirmed);
+    confirmation.resolve(result);
   }
   activeConfirmation = null;
   queuedConfirmations = [];
@@ -80,34 +94,36 @@ export function registerConfirmDialogHost(): () => void {
 export function requestConfirmDialog(
   message: string,
   options?: ConfirmDialogOptions,
-): Promise<boolean> | undefined {
+): Promise<ConfirmDialogResult> | undefined {
   if (registeredHostCount === 0) return undefined;
 
-  const confirmation = new Promise<boolean>((resolve) => {
-    const pending = {
-      message,
-      variant: options?.variant ?? "default",
-      resolve,
-    } satisfies PendingConfirmation;
+  return new Promise<ConfirmDialogResult>((resolve) => {
+    const payload = payloadFromOptions(message, options);
+    const pending: PendingConfirmation = { ...payload, resolve };
     if (activeConfirmation || state.status === "closing") {
       queuedConfirmations.push(pending);
       return;
     }
 
     activeConfirmation = pending;
-    publish({ status: "confirming", message, variant: pending.variant });
+    publish({ status: "confirming", ...payload });
   });
-
-  return confirmation;
 }
 
-export function respondToConfirmDialog(confirmed: boolean): void {
+/**
+ * Resolves the active confirmation with the given result. The host calls this
+ * from each action button: cancel/close -> `confirmed: false`, the primary
+ * button -> `{ confirmed: true, secondary: false }`, the secondary button ->
+ * `{ confirmed: true, secondary: true }`.
+ */
+export function respondToConfirmDialog(result: ConfirmDialogResult): void {
   if (state.status !== "confirming" || !activeConfirmation) return;
 
   const confirmation = activeConfirmation;
+  const { status: _status, ...payload } = state;
   activeConfirmation = null;
-  confirmation.resolve(confirmed);
-  publish({ status: "closing", message: state.message, variant: state.variant });
+  confirmation.resolve(result);
+  publish({ status: "closing", ...payload });
 }
 
 export function completeConfirmDialogClose(): void {
@@ -120,7 +136,8 @@ export function completeConfirmDialogClose(): void {
   }
 
   activeConfirmation = next;
-  publish({ status: "confirming", message: next.message, variant: next.variant });
+  const { resolve: _resolve, ...payload } = next;
+  publish({ status: "confirming", ...payload });
 }
 
 export function resetConfirmDialogForTests(): void {

@@ -1,5 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 
+import type { ConfirmDialogResult } from "@t3tools/contracts";
+
 import {
   completeConfirmDialogClose,
   readConfirmDialogState,
@@ -51,6 +53,10 @@ export function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
   };
 }
 
+const primaryResult: ConfirmDialogResult = { confirmed: true, secondary: false };
+const secondaryResult: ConfirmDialogResult = { confirmed: true, secondary: true };
+const cancelledResult: ConfirmDialogResult = { confirmed: false, secondary: false };
+
 export function ConfirmDialogHost() {
   const state = useSyncExternalStore(
     subscribeConfirmDialog,
@@ -60,16 +66,25 @@ export function ConfirmDialogHost() {
 
   useEffect(() => registerConfirmDialogHost(), []);
 
-  const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
+  const message = state.status === "idle" ? "" : state.message;
+  const copy = resolveConfirmDialogCopy(message);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
-  const onCancel = () => respondToConfirmDialog(false);
-  const onConfirm = () => respondToConfirmDialog(true);
+  const confirmLabel = state.status === "idle" ? "Confirm" : (state.confirmLabel ?? "Confirm");
+  const cancelLabel = state.status === "idle" ? "Cancel" : (state.cancelLabel ?? "Cancel");
+  const secondary = state.status === "idle" ? undefined : state.secondary;
+
+  // A secondary destructive action renders as the lighter `destructive-outline`
+  // button so the solid destructive primary stays the visually dominant — and
+  // therefore default-reach — choice. The more consequential action should
+  // never be the easiest button to hit by reflex.
+  const secondaryButtonVariant =
+    secondary?.variant === "destructive" ? "destructive-outline" : "outline";
 
   return (
     <AlertDialog
       open={state.status === "confirming"}
       onOpenChange={(open) => {
-        if (!open) onCancel();
+        if (!open) respondToConfirmDialog(cancelledResult);
       }}
       onOpenChangeComplete={(open) => {
         if (!open) completeConfirmDialogClose();
@@ -85,9 +100,17 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant={confirmVariant} onClick={onConfirm}>
-            Confirm
+          <AlertDialogClose render={<Button variant="outline" />}>{cancelLabel}</AlertDialogClose>
+          {secondary ? (
+            <Button
+              variant={secondaryButtonVariant}
+              onClick={() => respondToConfirmDialog(secondaryResult)}
+            >
+              {secondary.label}
+            </Button>
+          ) : null}
+          <Button variant={confirmVariant} onClick={() => respondToConfirmDialog(primaryResult)}>
+            {confirmLabel}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

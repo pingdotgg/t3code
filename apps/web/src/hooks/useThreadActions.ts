@@ -135,6 +135,58 @@ export class ThreadPinReorderUnsupportedError extends Schema.TaggedErrorClass<Th
   }
 }
 
+/** Resolves the worktree a thread deletion would orphan, if any.
+ *
+ *  Deleting a thread only merits a worktree prompt when the thread is the
+ *  sole remaining occupant of its worktree and we know the project root
+ *  needed to remove it. Returns the raw + display paths and the project
+ *  workspace root, or `null` when there is nothing to clean up. Shared by the
+ *  confirmation step (so it can show the path up front) and the deletion step
+ *  (so it acts on exactly what was promised). */
+function resolveWorktreeDeleteContext(params: {
+  readonly threadRef: ScopedThreadRef;
+  readonly thread: NonNullable<ReturnType<typeof readThreadShell>>;
+  readonly deletedThreadKeys?: ReadonlySet<string> | undefined;
+}): {
+  readonly orphanedWorktreePath: string;
+  readonly displayWorktreePath: string;
+  readonly workspaceRoot: string;
+} | null {
+  const { threadRef, thread, deletedThreadKeys } = params;
+  const threads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
+    const shell = readThreadShell(ref);
+    return shell === null ? [] : [shell];
+  });
+  const deletedIds =
+    deletedThreadKeys && deletedThreadKeys.size > 0
+      ? new Set<ThreadId>(
+          [...deletedThreadKeys].flatMap((threadKey) => {
+            const ref = parseScopedThreadKey(threadKey);
+            return ref && ref.environmentId === threadRef.environmentId ? [ref.threadId] : [];
+          }),
+        )
+      : undefined;
+  const survivingThreads =
+    deletedIds && deletedIds.size > 0
+      ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
+      : threads;
+  const orphanedWorktreePath = getOrphanedWorktreePathForThread(
+    survivingThreads,
+    threadRef.threadId,
+  );
+  if (!orphanedWorktreePath) return null;
+  const threadProject = readProject({
+    environmentId: threadRef.environmentId,
+    projectId: thread.projectId,
+  });
+  if (!threadProject) return null;
+  return {
+    orphanedWorktreePath,
+    displayWorktreePath: formatWorktreePathForDisplay(orphanedWorktreePath),
+    workspaceRoot: threadProject.workspaceRoot,
+  };
+}
+
 export function useThreadActions() {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
@@ -270,7 +322,15 @@ export function useThreadActions() {
   );
 
   const deleteThread = useCallback(
-    async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
+    async (
+      target: ScopedThreadRef,
+      opts: {
+        deletedThreadKeys?: ReadonlySet<string>;
+        /** Pre-decided worktree outcome so the caller can fold the choice into a
+          single confirmation dialog and skip the follow-up prompt here. */
+        deleteWorktree?: boolean;
+      } = {},
+    ) => {
       const resolved = resolveThreadTarget(target);
       if (!resolved) {
         // Thread not in main store (e.g. archived thread) — dispatch delete directly.
@@ -288,10 +348,6 @@ export function useThreadActions() {
         const shell = readThreadShell(ref);
         return shell === null ? [] : [shell];
       });
-      const threadProject = readProject({
-        environmentId: threadRef.environmentId,
-        projectId: thread.projectId,
-      });
       const deletedIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
@@ -301,36 +357,37 @@ export function useThreadActions() {
               }),
             )
           : undefined;
-      const survivingThreads =
-        deletedIds && deletedIds.size > 0
-          ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
-          : threads;
-      const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        survivingThreads,
-        threadRef.threadId,
-      );
-      const displayWorktreePath = orphanedWorktreePath
-        ? formatWorktreePathForDisplay(orphanedWorktreePath)
-        : null;
-      const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
+      const worktreeContext = resolveWorktreeDeleteContext({
+        threadRef,
+        thread,
+        deletedThreadKeys: opts.deletedThreadKeys,
+      });
+      const orphanedWorktreePath = worktreeContext?.orphanedWorktreePath ?? null;
+      const displayWorktreePath = worktreeContext?.displayWorktreePath ?? null;
+      const canDeleteWorktree = worktreeContext !== null;
       const localApi = readLocalApi();
       let shouldDeleteWorktree = false;
-      if (canDeleteWorktree && localApi) {
-        const confirmationResult = await settlePromise(() =>
-          localApi.dialogs.confirm(
-            [
-              "This thread is the only one linked to this worktree:",
-              displayWorktreePath ?? orphanedWorktreePath,
-              "",
-              "Delete the worktree too?",
-            ].join("\n"),
-            { variant: "destructive" },
-          ),
-        );
-        if (confirmationResult._tag === "Failure") {
-          return confirmationResult;
+      if (canDeleteWorktree) {
+        if (opts.deleteWorktree !== undefined) {
+          // Caller already chose via the combined delete dialog — honor it.
+          shouldDeleteWorktree = opts.deleteWorktree;
+        } else if (localApi) {
+          const confirmationResult = await settlePromise(() =>
+            localApi.dialogs.confirm(
+              [
+                "This thread is the only one linked to this worktree:",
+                displayWorktreePath ?? orphanedWorktreePath,
+                "",
+                "Delete the worktree too?",
+              ].join("\n"),
+              { variant: "destructive" },
+            ),
+          );
+          if (confirmationResult._tag === "Failure") {
+            return confirmationResult;
+          }
+          shouldDeleteWorktree = confirmationResult.value;
         }
-        shouldDeleteWorktree = confirmationResult.value;
       }
 
       if (thread.session && thread.session.status !== "stopped") {
@@ -407,15 +464,15 @@ export function useThreadActions() {
         }
       }
 
-      if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
+      if (!shouldDeleteWorktree || !worktreeContext) {
         return deleteResult;
       }
 
       const removeResult = await removeWorktree({
         environmentId: threadRef.environmentId,
         input: {
-          cwd: threadProject.workspaceRoot,
-          path: orphanedWorktreePath,
+          cwd: worktreeContext.workspaceRoot,
+          path: worktreeContext.orphanedWorktreePath,
           force: true,
         },
       });
@@ -423,7 +480,7 @@ export function useThreadActions() {
         removeResult._tag === "Success"
           ? await refreshVcsStatus({
               environmentId: threadRef.environmentId,
-              input: { cwd: threadProject.workspaceRoot },
+              input: { cwd: worktreeContext.workspaceRoot },
             })
           : null;
       const cleanupFailure =
@@ -437,7 +494,7 @@ export function useThreadActions() {
         const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
         console.error("Failed to remove orphaned worktree after thread deletion", {
           threadId: threadRef.threadId,
-          projectCwd: threadProject.workspaceRoot,
+          projectCwd: worktreeContext.workspaceRoot,
           worktreePath: orphanedWorktreePath,
           error,
         });
@@ -671,25 +728,60 @@ export function useThreadActions() {
       const localApi = readLocalApi();
       const resolved = resolveThreadTarget(target);
 
-      if (confirmThreadDelete && localApi) {
-        const title = resolved?.thread.title ?? "this thread";
+      if (!confirmThreadDelete || !localApi) {
+        return deleteThread(target);
+      }
+
+      const title = resolved?.thread.title ?? "this thread";
+      // Fold the worktree decision into this same dialog instead of firing a
+      // second confirmation after the thread is already deleted. When the
+      // thread is the sole occupant of a worktree, offer cleanup as a second
+      // affirmative action; otherwise this is a plain yes/no.
+      const worktreeContext = resolved
+        ? resolveWorktreeDeleteContext({ threadRef: target, thread: resolved.thread })
+        : null;
+
+      if (worktreeContext) {
+        const message = [
+          `Delete thread "${title}"?`,
+          "This permanently clears conversation history for this thread.",
+          "",
+          "This thread is the only one using its worktree folder:",
+          worktreeContext.displayWorktreePath ?? worktreeContext.orphanedWorktreePath,
+        ].join("\n");
         const confirmationResult = await settlePromise(() =>
-          localApi.dialogs.confirm(
-            [
-              `Delete thread "${title}"?`,
-              "This permanently clears conversation history for this thread.",
-            ].join("\n"),
-            { variant: "destructive" },
-          ),
+          localApi.dialogs.confirmWithDetails(message, {
+            variant: "destructive",
+            confirmLabel: "Delete thread",
+            cancelLabel: "Cancel",
+            secondary: { label: "Delete thread & worktree", variant: "destructive" },
+          }),
         );
         if (confirmationResult._tag === "Failure") {
           return confirmationResult;
         }
-        if (!confirmationResult.value) {
+        const { confirmed, secondary } = confirmationResult.value;
+        if (!confirmed) {
           return AsyncResult.success(undefined);
         }
+        return deleteThread(target, { deleteWorktree: secondary });
       }
 
+      const confirmationResult = await settlePromise(() =>
+        localApi.dialogs.confirm(
+          [
+            `Delete thread "${title}"?`,
+            "This permanently clears conversation history for this thread.",
+          ].join("\n"),
+          { variant: "destructive" },
+        ),
+      );
+      if (confirmationResult._tag === "Failure") {
+        return confirmationResult;
+      }
+      if (!confirmationResult.value) {
+        return AsyncResult.success(undefined);
+      }
       return deleteThread(target);
     },
     [confirmThreadDelete, deleteThread, resolveThreadTarget],

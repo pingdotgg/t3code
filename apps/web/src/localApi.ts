@@ -1,4 +1,9 @@
-import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type {
+  ConfirmDialogOptions,
+  ConfirmDialogResult,
+  ContextMenuItem,
+  LocalApi,
+} from "@t3tools/contracts";
 
 import { requestConfirmDialog } from "./confirmDialog";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -15,7 +20,20 @@ function createBrowserLocalApi(): LocalApi {
         return window.desktopBridge.pickFolder(options);
       },
       confirm: async (message, options?: ConfirmDialogOptions) => {
-        return requestConfirmDialog(message, options) ?? false;
+        const result = requestConfirmDialog(message, options);
+        if (!result) return false;
+        return (await result).confirmed;
+      },
+      confirmWithDetails: async (
+        message,
+        options?: ConfirmDialogOptions,
+      ): Promise<ConfirmDialogResult> => {
+        return (
+          requestConfirmDialog(message, options) ?? {
+            confirmed: false,
+            secondary: false,
+          }
+        );
       },
     },
     shell: {

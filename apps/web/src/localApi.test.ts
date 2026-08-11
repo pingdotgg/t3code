@@ -1,6 +1,7 @@
 import {
   DEFAULT_CLIENT_SETTINGS,
   type ConfirmDialogOptions,
+  type ConfirmDialogResult,
   type ContextMenuItem,
   type DesktopBridge,
 } from "@t3tools/contracts";
@@ -15,7 +16,9 @@ const showContextMenuFallbackMock =
   >();
 
 const requestConfirmDialogMock =
-  vi.fn<(message: string, options?: ConfirmDialogOptions) => Promise<boolean> | undefined>();
+  vi.fn<
+    (message: string, options?: ConfirmDialogOptions) => Promise<ConfirmDialogResult> | undefined
+  >();
 
 vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
@@ -86,13 +89,29 @@ describe("LocalApi", () => {
   });
 
   it("uses the themed confirmation host when it is available", async () => {
-    requestConfirmDialogMock.mockResolvedValue(true);
+    requestConfirmDialogMock.mockResolvedValue({ confirmed: true, secondary: false });
     const { createLocalApi } = await import("./localApi");
     const options = { variant: "destructive" } as const;
 
     await expect(createLocalApi().dialogs.confirm("Delete this thread?", options)).resolves.toBe(
       true,
     );
+    expect(requestConfirmDialogMock).toHaveBeenCalledWith("Delete this thread?", options);
+  });
+
+  it("exposes the chosen action through confirmWithDetails", async () => {
+    const details = { confirmed: true, secondary: true } satisfies ConfirmDialogResult;
+    requestConfirmDialogMock.mockResolvedValue(details);
+    const { createLocalApi } = await import("./localApi");
+    const options = {
+      variant: "destructive",
+      confirmLabel: "Delete thread",
+      secondary: { label: "Delete thread & worktree", variant: "destructive" },
+    } as const;
+
+    await expect(
+      createLocalApi().dialogs.confirmWithDetails("Delete this thread?", options),
+    ).resolves.toEqual(details);
     expect(requestConfirmDialogMock).toHaveBeenCalledWith("Delete this thread?", options);
   });
 
@@ -122,6 +141,10 @@ describe("LocalApi", () => {
     await expect(api.contextMenu.show(items)).resolves.toBe("delete");
     requestConfirmDialogMock.mockReturnValue(undefined);
     await expect(api.dialogs.confirm("Install update?")).resolves.toBe(false);
+    await expect(api.dialogs.confirmWithDetails("Install update?")).resolves.toEqual({
+      confirmed: false,
+      secondary: false,
+    });
     await expect(api.dialogs.pickFolder({ initialPath: "/tmp" })).resolves.toBe("/tmp/project");
     await expect(api.persistence.getClientSettings()).resolves.toEqual(DEFAULT_CLIENT_SETTINGS);
     await api.persistence.setClientSettings(DEFAULT_CLIENT_SETTINGS);
