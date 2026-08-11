@@ -170,6 +170,10 @@
     "./state/voice": {
       "types": "./src/state/voiceHttp.ts",
       "default": "./src/state/voiceHttp.ts"
+    },
+    "./voice/realtime-events": {
+      "types": "./src/voice/realtimeEvents.ts",
+      "default": "./src/voice/realtimeEvents.ts"
     }
   },
   "scripts": {

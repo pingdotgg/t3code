@@ -5,7 +5,7 @@ import {
   decodeRealtimeServerEventMessage,
   extractRealtimeFunctionCalls,
   MAX_REALTIME_EVENT_JSON_CHARS,
-} from "./realtimeEvents";
+} from "./realtimeEvents.ts";
 
 describe("Realtime server event decoding", () => {
   it("accepts only the server events the voice UI consumes", () => {
