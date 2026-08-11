@@ -445,7 +445,13 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   // pro-rate the top-level ticks by each model's token share so provider cost
   // is not discarded on multi-model turns (rate-table fallback can still miss
   // slugs). Single-model turns simply inherit the aggregate below.
-  const anyPerModelTicks = modelEntries.some((entry) => entry.totals.costUsdTicks !== null);
+  // Only count ticks on entries the emit loop would keep: zero-token siblings
+  // (often costUsdTicks: 0) must not suppress aggregate pro-rating for
+  // billable models that omit per-model ticks.
+  const anyPerModelTicks = modelEntries.some(
+    (entry) =>
+      entry.totals.costUsdTicks !== null && totalTokens(grokTotalsToUsage(entry.totals)) > 0,
+  );
   const topLevelCostUsd = grokCostTicksToUsd(topLevel.costUsdTicks);
   let sharedTokenDenominator = 0;
   if (!anyPerModelTicks && topLevelCostUsd !== null && modelEntries.length > 1) {

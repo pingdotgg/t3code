@@ -432,6 +432,49 @@ describe("parseGrokLine", () => {
     expect(sum).toBeCloseTo(1, 12);
   });
 
+  it("pro-rates aggregate cost when a zero-token sibling carries costUsdTicks: 0", () => {
+    // Empty-usage modelUsage rows often ship costUsdTicks: 0. That must not
+    // count as "per-model ticks present" and suppress pro-rating for billable
+    // models that omit their own ticks — otherwise top-level provider cost is
+    // dropped entirely.
+    const records = parseGrokLine(
+      turnCompleted({
+        modelUsage: {
+          "grok-4.5": {
+            inputTokens: 300,
+            outputTokens: 0,
+            cachedReadTokens: 0,
+            reasoningTokens: 0,
+          },
+          "grok-composer-2.5-fast": {
+            inputTokens: 100,
+            outputTokens: 0,
+            cachedReadTokens: 0,
+            reasoningTokens: 0,
+          },
+          "empty-sibling": {
+            inputTokens: 0,
+            outputTokens: 0,
+            cachedReadTokens: 0,
+            reasoningTokens: 0,
+            costUsdTicks: 0,
+          },
+        },
+        usage: { costUsdTicks: GROK_COST_USD_TICKS_PER_DOLLAR },
+      }),
+    );
+
+    expect(records).toHaveLength(2);
+    expect(records.every((record) => record.model !== "empty-sibling")).toBe(true);
+    const byModel = Object.fromEntries(records.map((record) => [record.model, record]));
+    expect(byModel["grok-4.5"]?.reportedCostUsd).toBeCloseTo(0.75, 12);
+    expect(byModel["grok-composer-2.5-fast"]?.reportedCostUsd).toBeCloseTo(0.25, 12);
+    const sum =
+      (byModel["grok-4.5"]?.reportedCostUsd ?? 0) +
+      (byModel["grok-composer-2.5-fast"]?.reportedCostUsd ?? 0);
+    expect(sum).toBeCloseTo(1, 12);
+  });
+
   it("ignores non-turn lines and empty usage", () => {
     expect(parseGrokLine(JSON.stringify({ method: "session/update", params: {} }))).toEqual([]);
     expect(parseGrokLine("not json")).toEqual([]);
