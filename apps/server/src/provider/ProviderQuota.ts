@@ -19,7 +19,6 @@ import * as Schema from "effect/Schema";
 
 import type { ProviderInstance } from "./ProviderDriver.ts";
 
-const PROVIDER_QUOTA_MESSAGE_MAX_LENGTH = 512;
 const DEFAULT_UNAVAILABLE_MESSAGE = "Quota information is unavailable for this provider.";
 
 type ProviderQuotaInstance = Pick<ProviderInstance, "instanceId" | "driverKind">;
@@ -42,6 +41,18 @@ export interface ProviderQuotaCapability {
     input: Pick<ProviderQuotaConsumeResetInput, "creditId" | "idempotencyKey">,
   ) => Effect.Effect<ProviderQuotaConsumeResetOutcome, ProviderQuotaAdapterError>;
 }
+
+const publicMessageForReason = (reason: ProviderQuotaAdapterError["reason"]): string => {
+  switch (reason) {
+    case "authRequired":
+      return "Sign in to the provider to view quota information.";
+    case "unsupported":
+      return DEFAULT_UNAVAILABLE_MESSAGE;
+    case "timeout":
+    case "providerFailed":
+      return "Quota information could not be refreshed.";
+  }
+};
 
 /** Convert provider-reported usage into remaining capacity without rounding it. */
 export const remainingPercentFromUsed = (usedPercent: number): number =>
@@ -67,14 +78,10 @@ export const resolveHeadlineMetricKey = (
   return headline?.key ?? null;
 };
 
-const normalizedMessage = (detail: string): string =>
-  detail.trim().slice(0, PROVIDER_QUOTA_MESSAGE_MAX_LENGTH) || DEFAULT_UNAVAILABLE_MESSAGE;
-
 /** Create the honest fallback for drivers that do not expose quota data. */
 export const unknownProviderQuotaSnapshot = (
   instance: ProviderQuotaInstance,
   readAt: string,
-  message?: string,
 ): ProviderQuotaSnapshot => ({
   instanceId: instance.instanceId,
   driver: instance.driverKind,
@@ -87,7 +94,7 @@ export const unknownProviderQuotaSnapshot = (
   credits: null,
   bankedResets: null,
   detail: {},
-  message: normalizedMessage(message ?? DEFAULT_UNAVAILABLE_MESSAGE),
+  message: DEFAULT_UNAVAILABLE_MESSAGE,
 });
 
 const hasSuccessfulQuotaData = (
@@ -108,7 +115,7 @@ export const errorProviderQuotaSnapshot = (
 ): ProviderQuotaSnapshot => {
   const failure = {
     detail: { reason: error.reason },
-    message: normalizedMessage(error.detail),
+    message: publicMessageForReason(error.reason),
   };
 
   if (previous && hasSuccessfulQuotaData(previous)) {

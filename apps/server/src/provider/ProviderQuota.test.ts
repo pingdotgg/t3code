@@ -65,10 +65,15 @@ describe("resolveHeadlineMetricKey", () => {
 });
 
 describe("unknownProviderQuotaSnapshot", () => {
-  it("returns an unsupported snapshot without provider-specific data", () => {
-    expect(
-      unknownProviderQuotaSnapshot(instance, "2026-08-11T09:00:00.000Z", "Not available."),
-    ).toEqual({
+  it("uses fixed unsupported copy instead of caller-provided detail", () => {
+    // @ts-expect-error callers cannot supply arbitrary public copy
+    const snapshot = unknownProviderQuotaSnapshot(
+      instance,
+      "2026-08-11T09:00:00.000Z",
+      "API_TOKEN=sk-live-secret C:\\Users\\lucas\\.codex\\config.json",
+    );
+
+    expect(snapshot).toEqual({
       instanceId: ProviderInstanceId.make("codexPersonal"),
       driver: ProviderDriverKind.make("codex"),
       status: "unknown",
@@ -80,20 +85,14 @@ describe("unknownProviderQuotaSnapshot", () => {
       credits: null,
       bankedResets: null,
       detail: {},
-      message: "Not available.",
+      message: "Quota information is unavailable for this provider.",
     });
-  });
-
-  it("normalizes caller-provided fallback messages before exposing them", () => {
-    expect(
-      unknownProviderQuotaSnapshot(instance, "2026-08-11T09:00:00.000Z", "  Not available.  ")
-        .message,
-    ).toBe("Not available.");
+    expect(JSON.stringify(snapshot)).not.toContain("sk-live-secret");
   });
 });
 
 describe("errorProviderQuotaSnapshot", () => {
-  it("marks previous successful data stale and exposes only normalized failure detail", () => {
+  it("marks previous successful data stale without exposing adapter detail", () => {
     const previous: ProviderQuotaSnapshot = {
       instanceId: ProviderInstanceId.make("codexPersonal"),
       driver: ProviderDriverKind.make("codex"),
@@ -114,7 +113,8 @@ describe("errorProviderQuotaSnapshot", () => {
       "2026-08-11T09:00:00.000Z",
       new ProviderQuotaAdapterError({
         reason: "timeout",
-        detail: "  Provider request timed out.  ",
+        detail:
+          "API_TOKEN=sk-live-secret failed at C:\\Users\\lucas\\.codex\\config.json with HOME=/private/home",
         cause: new Error("secret-token-value"),
       }),
       previous,
@@ -126,9 +126,12 @@ describe("errorProviderQuotaSnapshot", () => {
       readAt: "2026-08-11T09:00:00.000Z",
       lastSuccessfulReadAt: "2026-08-11T08:00:00.000Z",
       detail: { reason: "timeout" },
-      message: "Provider request timed out.",
+      message: "Quota information could not be refreshed.",
     });
     expect(snapshot).not.toHaveProperty("cause");
     expect(JSON.stringify(snapshot)).not.toContain("secret-token-value");
+    expect(JSON.stringify(snapshot)).not.toContain("sk-live-secret");
+    expect(JSON.stringify(snapshot)).not.toContain("C:\\Users\\lucas");
+    expect(JSON.stringify(snapshot)).not.toContain("/private/home");
   });
 });
