@@ -75,10 +75,10 @@ The Android store encrypts the serialized credential with AES-GCM and a non-expo
 
 ## Verification
 
-Focused JVM tests, app unit tests, and APK build:
+Focused JVM tests, app unit tests, APK build, and Android Lint:
 
 ```bash
-./gradlew :protocol:test :app:testDebugUnitTest :app:assembleDebug
+./gradlew :protocol:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
 Persistence, onboarding, and credential restoration on a connected Android device:

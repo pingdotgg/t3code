@@ -586,8 +586,8 @@ private fun SourceFile(contents: String) {
 @Composable
 private fun WorkspaceError(
   message: String,
-  retry: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
+  retry: (() -> Unit)? = null,
 ) {
   Card(
     colors = CardDefaults.cardColors(containerColor = Color(0xFF2A0B0B)),

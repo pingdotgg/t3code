@@ -180,6 +180,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavType
@@ -1181,9 +1182,9 @@ private fun HomeScreen(
   onOpenShare: (String) -> Unit,
   onAddEnvironment: () -> Unit,
   onSettings: () -> Unit,
+  modifier: Modifier = Modifier,
   pane: HomePane = HomePane.Screen,
   selectedThreadId: String? = null,
-  modifier: Modifier = Modifier,
 ) {
   val allDrafts by viewModel.allDrafts.collectAsState()
   val activeEnvId = runtime.environment?.environmentId
@@ -5190,7 +5191,7 @@ private fun ChatComposerArea(
                 IconButton(
                   onClick = { onInterrupt?.invoke() },
                   modifier = Modifier
-                    .offset(x = stopOffsetX)
+                    .offset { IntOffset(stopOffsetX.roundToPx(), 0) }
                     .size(38.dp)
                     .background(Color(0xFFEF4444), CircleShape),
                 ) {

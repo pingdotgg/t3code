@@ -83,8 +83,8 @@ class EffectRpcSession private constructor(
       finish(RpcTransportException("WebSocket closed ($code): $reason"))
     }
 
-    override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
-      val failure = RpcTransportException("WebSocket transport failed.", error)
+    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+      val failure = RpcTransportException("WebSocket transport failed.", t)
       opened.completeExceptionally(failure)
       finish(failure)
     }

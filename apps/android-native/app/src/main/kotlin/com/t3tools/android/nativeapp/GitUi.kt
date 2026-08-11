@@ -254,7 +254,7 @@ fun GitCommitScreen(
   LaunchedEffect(threadId) { viewModel.observeGit(threadId) }
   val files = state.status?.workingTree?.files.orEmpty()
   var selected by remember(state.cwd, files.map(VcsChangedFile::path)) {
-    mutableStateOf(files.mapTo(mutableSetOf(), VcsChangedFile::path))
+    mutableStateOf<Set<String>>(files.map(VcsChangedFile::path).toSet())
   }
   var message by remember(state.cwd) { mutableStateOf("") }
   val selectedFiles = files.filter { it.path in selected }
@@ -282,9 +282,7 @@ fun GitCommitScreen(
               Checkbox(
                 checked = file.path in selected,
                 onCheckedChange = { checked ->
-                  selected = selected.toMutableSet().apply {
-                    if (checked) add(file.path) else remove(file.path)
-                  }
+                  selected = if (checked) selected + file.path else selected - file.path
                 },
               )
               Text(file.path, modifier = Modifier.weight(1f), maxLines = 2)

@@ -1,6 +1,5 @@
 plugins {
   id("com.android.application")
-  kotlin("android")
   kotlin("plugin.compose")
   kotlin("plugin.serialization")
 }
@@ -42,10 +41,6 @@ android {
   }
 }
 
-kotlin {
-  jvmToolchain(17)
-}
-
 dependencies {
   implementation(project(":protocol"))
   implementation(project(":terminal-renderer"))
@@ -84,9 +79,9 @@ dependencies {
 configurations.configureEach {
   resolutionStrategy {
     force(
-      "org.jetbrains.kotlin:kotlin-stdlib:2.4.0",
-      "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.4.0",
-      "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.0",
+      "org.jetbrains.kotlin:kotlin-stdlib:2.2.10",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.2.10",
       "androidx.browser:browser:1.8.0",
       "androidx.activity:activity:1.10.1",
       "androidx.activity:activity-ktx:1.10.1",

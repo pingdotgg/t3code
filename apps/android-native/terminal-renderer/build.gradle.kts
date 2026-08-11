@@ -1,6 +1,5 @@
 plugins {
   id("com.android.library")
-  kotlin("android")
 }
 
 val sharedTerminal = file("../../mobile/modules/t3-terminal/android")
@@ -26,18 +25,13 @@ android {
     }
   }
 
-  sourceSets {
-    named("main") {
-      assets.srcDir(sharedTerminal.resolve("src/main/assets"))
-      jniLibs.srcDir(sharedTerminal.resolve("src/main/jniLibs"))
-    }
-  }
 }
 
-kotlin {
-  jvmToolchain(17)
-  sourceSets.named("main") {
-    kotlin.srcDir(sharedTerminal.resolve("src/main/java"))
+androidComponents {
+  onVariants { variant ->
+    variant.sources.assets?.addStaticSourceDirectory(sharedTerminal.resolve("src/main/assets").path)
+    variant.sources.jniLibs?.addStaticSourceDirectory(sharedTerminal.resolve("src/main/jniLibs").path)
+    variant.sources.kotlin?.addStaticSourceDirectory(sharedTerminal.resolve("src/main/java").path)
   }
 }
 

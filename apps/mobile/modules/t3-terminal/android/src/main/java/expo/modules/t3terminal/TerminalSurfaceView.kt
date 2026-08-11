@@ -183,7 +183,7 @@ class TerminalSurfaceView(context: Context) : FrameLayout(context) {
     inputView.requestFocus()
     val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE)
       as? InputMethodManager
-    inputMethodManager?.showSoftInput(inputView, InputMethodManager.SHOW_IMPLICIT)
+    inputMethodManager?.showSoftInput(inputView, 0)
   }
 
   fun dismissKeyboard() {

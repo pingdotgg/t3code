@@ -44,7 +44,7 @@ class TerminalStateTest {
 
   @Test
   fun infers_the_same_host_modifier_family_as_rn() {
-    assertEquals(TerminalHostPlatform.Mac, inferTerminalHostPlatform("Ahmed's Mac mini"))
+    assertEquals(TerminalHostPlatform.Mac, inferTerminalHostPlatform("Mac mini"))
     assertEquals(TerminalHostPlatform.Linux, inferTerminalHostPlatform("ubuntu-dev01"))
     assertEquals(TerminalHostPlatform.Windows, inferTerminalHostPlatform("Windows workstation"))
   }

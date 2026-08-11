@@ -5,7 +5,11 @@
   <application
     android:name=".NativeAndroidApplication"
     android:allowBackup="false"
+    android:dataExtractionRules="@xml/data_extraction_rules"
+    android:fullBackupContent="false"
+    android:icon="@mipmap/ic_launcher"
     android:label="T3 Code Native"
+    android:roundIcon="@mipmap/ic_launcher_round"
     android:theme="@style/Theme.T3CodeNative"
     android:usesCleartextTraffic="true"
     android:supportsRtl="true">
@@ -48,14 +52,10 @@
         <action android:name="android.intent.action.VIEW" />
         <category android:name="android.intent.category.DEFAULT" />
         <category android:name="android.intent.category.BROWSABLE" />
-        <data
-          android:scheme="clerk"
-          android:host="com.t3tools.t3code.native.experimental"
-          android:pathPrefix="/callback" />
-        <data
-          android:scheme="clerk"
-          android:host="com.t3tools.t3code.native.experimental"
-          android:pathPrefix="/oauth" />
+        <data android:scheme="clerk" />
+        <data android:host="com.t3tools.t3code.native.experimental" />
+        <data android:pathPrefix="/callback" />
+        <data android:pathPrefix="/oauth" />
       </intent-filter>
       <meta-data
         android:name="android.app.shortcuts"

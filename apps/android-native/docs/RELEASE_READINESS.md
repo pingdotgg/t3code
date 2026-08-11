@@ -14,12 +14,12 @@ This is the authoritative closeout record for the independent native Android cli
 Run from `apps/android-native`:
 
 ```bash
-./gradlew :protocol:test :app:testDebugUnitTest :app:assembleDebug
+./gradlew :protocol:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
-This covers protocol fixtures and reducers, native app behavior, adaptive layout rules, and debug APK assembly. `git diff --check` and local Markdown-link validation complete the closeout gate.
+This covers protocol fixtures and reducers, native app behavior, adaptive layout rules, debug APK assembly, and Android Lint. `git diff --check` and local Markdown-link validation complete the closeout gate. The build uses AGP built-in Kotlin with its Kotlin toolchain aligned to 2.2.10; lint completes with no errors. Remaining warnings are dependency-update, target-SDK, KTX, and launcher compatibility recommendations.
 
-Android Lint is not part of this gate because the pinned toolchain crashes while initializing its own `InferredThreadDetector`. Gradle also reports that the project must eventually migrate to AGP built-in Kotlin. Both are tracked tooling maintenance; neither is an application diagnostic. Do not suppress or misreport the lint crash as a clean result.
+The tracked native source and its history were also scanned for private keys, high-risk credential patterns, email addresses, personal filesystem paths, and inappropriate fixture text. No secrets or personal content remain in the application source. The Clerk publishable key is intentionally public configuration; commit author metadata is outside the application artifact.
 
 ## Accepted device behavior
 
@@ -46,7 +46,5 @@ The client does not include camera capture, document or video attachments, direc
 
 ## Deferred maintenance
 
-- Migrate the Gradle modules to AGP built-in Kotlin and remove the legacy DSL flags.
-- Repair or upgrade the Android Lint toolchain after reproducing the detector crash in isolation.
 - Add production signing/store delivery only when this APK becomes a distribution target.
 - Revisit long-thread performance only with the documented release-build trace and a representative sustained-streaming fixture.
