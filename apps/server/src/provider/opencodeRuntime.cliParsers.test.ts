@@ -125,6 +125,31 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.ok(model.variants);
     NodeAssert.equal(model.variants!["medium"] !== undefined, true);
   });
+
+  it("keeps a model whose JSON body has a slash and no interior whitespace", () => {
+    // OpenRouter-style: the model id contains a `/` and no string value has a
+    // space, so the JSON body line itself matches the slug regex. It must still
+    // be treated as the body of the preceding slug, not a new slug.
+    const stdout = [
+      "openrouter/qwen/qwen3-coder",
+      JSON.stringify({
+        id: "qwen/qwen3-coder",
+        providerID: "openrouter",
+        name: "qwen3-coder",
+        status: "active",
+      }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.equal(result.providers.size, 1);
+    NodeAssert.deepEqual([...result.connected], ["openrouter"]);
+    const provider = result.providers.get("openrouter")!;
+    NodeAssert.ok(provider);
+    const model = provider.models["qwen/qwen3-coder"]!;
+    NodeAssert.ok(model);
+    NodeAssert.equal(model.id, "qwen/qwen3-coder");
+    NodeAssert.equal(model.providerID, "openrouter");
+  });
 });
 
 describe("parseAgentListCliOutput", () => {
