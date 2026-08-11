@@ -31,6 +31,10 @@
       "types": "./src/operations/projects.ts",
       "default": "./src/operations/projects.ts"
     },
+    "./interaction-sounds": {
+      "types": "./src/interactionSounds.ts",
+      "default": "./src/interactionSounds.ts"
+    },
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"

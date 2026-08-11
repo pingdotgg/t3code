@@ -1,5 +1,9 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { type ServerLifecycleWelcomePayload, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
@@ -9,6 +13,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { play } from "cuelume";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -30,7 +35,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -41,7 +46,7 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
-import { shellEnvironment } from "../state/shell";
+import { liveEnvironmentIdsAtom, shellEnvironment } from "../state/shell";
 import { useAtomValue } from "@effect/atom-react";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
@@ -50,7 +55,18 @@ import {
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  readProject,
+  setActiveEnvironmentId,
+  useActiveEnvironmentId,
+  useThreadRefs,
+  useThreadShell,
+} from "../state/entities";
+import {
+  observeThreadSoundState,
+  shouldPlayInteractionSound,
+  type ThreadSoundStateByKey,
+} from "@t3tools/client-runtime/interaction-sounds";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -140,6 +156,7 @@ function RootRouteView() {
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+        <InteractionSoundCoordinator />
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
         {/* Above the router: a theme draft is judged by walking the app, so the
@@ -187,6 +204,101 @@ function FontAppearanceSync() {
     fontSizeInterface,
     fontSizePrompt,
     fontSmoothing,
+  ]);
+
+  return null;
+}
+
+function InteractionSoundCoordinator() {
+  const threadRefs = useThreadRefs();
+  const liveEnvironmentIds = useAtomValue(liveEnvironmentIdsAtom);
+  const completionSoundEnabled = useClientSettings((settings) => settings.enableCompletionSounds);
+  const settingsHydrated = useClientSettingsHydrated();
+  const previouslyLiveEnvironmentIdsRef = useRef(new Set<ScopedThreadRef["environmentId"]>());
+
+  useEffect(() => {
+    const cleanup = () => {
+      document.removeEventListener("pointerdown", prime, true);
+      document.removeEventListener("keydown", prime, true);
+    };
+    const prime = (event: Event) => {
+      if (!event.isTrusted) {
+        return;
+      }
+      // Cuelume owns a lazy AudioContext. Touch it from the first real user
+      // gesture at an effectively inaudible level so later background cues
+      // are not rejected by browser autoplay policy.
+      play("press", { volume: 0.0001 });
+      cleanup();
+    };
+
+    document.addEventListener("pointerdown", prime, true);
+    document.addEventListener("keydown", prime, true);
+    return cleanup;
+  }, []);
+
+  useEffect(() => {
+    for (const environmentId of liveEnvironmentIds) {
+      previouslyLiveEnvironmentIdsRef.current.add(environmentId);
+    }
+  }, [liveEnvironmentIds]);
+
+  return threadRefs.map((threadRef) => (
+    <InteractionSoundThreadCoordinator
+      key={scopedThreadKey(threadRef)}
+      threadRef={threadRef}
+      environmentLive={liveEnvironmentIds.has(threadRef.environmentId)}
+      environmentPreviouslyLive={previouslyLiveEnvironmentIdsRef.current.has(
+        threadRef.environmentId,
+      )}
+      completionSoundEnabled={completionSoundEnabled}
+      settingsHydrated={settingsHydrated}
+    />
+  ));
+}
+
+function InteractionSoundThreadCoordinator({
+  threadRef,
+  environmentLive,
+  environmentPreviouslyLive,
+  completionSoundEnabled,
+  settingsHydrated,
+}: {
+  readonly threadRef: ScopedThreadRef;
+  readonly environmentLive: boolean;
+  readonly environmentPreviouslyLive: boolean;
+  readonly completionSoundEnabled: boolean;
+  readonly settingsHydrated: boolean;
+}) {
+  const thread = useThreadShell(threadRef);
+  const previousStateRef = useRef<ThreadSoundStateByKey | null>(null);
+  const environmentObservedLiveRef = useRef(environmentPreviouslyLive);
+
+  useEffect(() => {
+    if (thread === null) {
+      return;
+    }
+    const environmentWasLive = environmentObservedLiveRef.current || environmentPreviouslyLive;
+    const observation = observeThreadSoundState(previousStateRef.current, thread, {
+      environmentLive,
+      environmentPreviouslyLive: environmentWasLive,
+      settingsHydrated,
+    });
+    if (environmentLive || environmentPreviouslyLive) {
+      environmentObservedLiveRef.current = true;
+    }
+    previousStateRef.current = observation.state;
+    for (const cue of observation.cues) {
+      if (shouldPlayInteractionSound(cue, completionSoundEnabled)) {
+        play(cue);
+      }
+    }
+  }, [
+    completionSoundEnabled,
+    environmentLive,
+    environmentPreviouslyLive,
+    settingsHydrated,
+    thread,
   ]);
 
   return null;

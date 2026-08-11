@@ -31,6 +31,7 @@
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-router": "^1.160.2",
     "class-variance-authority": "^0.7.1",
+    "cuelume": "^0.2.1",
     "effect": "catalog:",
     "jose": "catalog:",
     "lexical": "^0.41.0",

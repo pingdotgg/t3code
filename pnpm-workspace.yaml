@@ -73,6 +73,7 @@ minimumReleaseAgeExclude:
   - "@effect/sql-sqlite-bun@4.0.0-beta.103"
   - "@effect/vitest@4.0.0-beta.103"
   - alchemy@2.0.0-beta.65
+  - cuelume@0.2.1
   - effect@4.0.0-beta.103
 
 overrides:

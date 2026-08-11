@@ -506,6 +506,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
+      ...(settings.enableCompletionSounds !== DEFAULT_UNIFIED_SETTINGS.enableCompletionSounds
+        ? ["Completion sound"]
+        : []),
       ...(settings.enableLegacyTokenStreaming !==
       DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
         ? ["Stream token by token"]
@@ -552,6 +555,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontSizePrompt,
       settings.fontSizeTerminal,
       settings.glassOpacity,
+      settings.enableCompletionSounds,
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarAutoSettleAfterDays,
@@ -633,6 +637,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      enableCompletionSounds: DEFAULT_UNIFIED_SETTINGS.enableCompletionSounds,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
@@ -1862,6 +1867,32 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("completion-sound")}
+          description="Play a sound when a turn completes."
+          resetAction={
+            settings.enableCompletionSounds !== DEFAULT_UNIFIED_SETTINGS.enableCompletionSounds ? (
+              <SettingResetButton
+                label="completion sound"
+                onClick={() =>
+                  updateSettings({
+                    enableCompletionSounds: DEFAULT_UNIFIED_SETTINGS.enableCompletionSounds,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableCompletionSounds}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableCompletionSounds: Boolean(checked) })
+              }
+              aria-label="Play a sound when a turn completes"
+            />
           }
         />
 
