@@ -17,6 +17,7 @@ import { expect } from "vite-plus/test";
 import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
+  ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -617,6 +618,7 @@ function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
+  providers?: ReadonlyArray<ServerProvider>;
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
@@ -650,7 +652,7 @@ function makeManager(input?: {
   const managerLayer = Layer.mergeAll(
     Layer.succeed(TextGeneration.TextGeneration, textGeneration),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
-      getProviders: Effect.succeed([]),
+      getProviders: Effect.succeed(input?.providers ?? []),
     }),
     Layer.succeed(
       ProjectSetupScriptRunner.ProjectSetupScriptRunner,
@@ -2705,7 +2707,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("creates PR when one does not already exist", () =>
+  it.effect("uses healthy OpenCode for PR content when global Codex is unavailable", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -2726,9 +2728,72 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["config", "branch.feature-create-pr.gh-merge-base", "main"]);
       let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
       let generatedChangeRequestTemplate: string | undefined;
+      const opencodeInstanceId = ProviderInstanceId.make("opencode");
+      const expectedModelSelection = {
+        instanceId: opencodeInstanceId,
+        model: "ollama/ornith:35b",
+        options: [
+          { id: "variant", value: "medium" },
+          { id: "agent", value: "build" },
+        ],
+      } satisfies TextGeneration.PrContentGenerationInput["modelSelection"];
+      const codexInstanceId = ProviderInstanceId.make("codex");
+      let generatedModelSelection:
+        | TextGeneration.PrContentGenerationInput["modelSelection"]
+        | undefined;
 
       const { manager, ghCalls } = yield* makeManager({
+        providers: [
+          {
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+            installed: false,
+            version: null,
+            status: "error",
+            auth: { status: "unknown" },
+            checkedAt: "2026-08-10T00:00:00.000Z",
+            availability: "unavailable",
+            unavailableReason: "Codex is not installed.",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } satisfies ServerProvider,
+          {
+            instanceId: opencodeInstanceId,
+            driver: ProviderDriverKind.make("opencode"),
+            enabled: true,
+            installed: true,
+            version: "1.0.0",
+            status: "ready",
+            auth: { status: "authenticated", type: "OpenCode" },
+            checkedAt: "2026-08-10T00:00:00.000Z",
+            availability: "available",
+            models: [
+              {
+                slug: "ollama/ornith:35b",
+                name: "Ornith 35B",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+            slashCommands: [],
+            skills: [],
+          } satisfies ServerProvider,
+        ],
         serverSettings: {
+          textGenerationModelSelection: {
+            instanceId: codexInstanceId,
+            model: "gpt-5.6-luna",
+          },
+          providerInstances: {
+            [opencodeInstanceId]: {
+              driver: ProviderDriverKind.make("opencode"),
+              enabled: false,
+              config: {},
+            },
+          },
+          sourceControlWriterModelSelection: expectedModelSelection,
           sourceControlWritingStyle: {
             mode: "custom" as const,
             customInstructions: "Lead with user impact.",
@@ -2736,6 +2801,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
         textGeneration: {
           generatePrContent: (input) => {
+            generatedModelSelection = input.modelSelection;
             generatedPolicy = input.policy;
             generatedChangeRequestTemplate = input.changeRequestTemplate;
             return Effect.succeed({
@@ -2762,7 +2828,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       });
       const result = yield* runStackedAction(manager, {
         cwd: repoDir,
-        action: "commit_push_pr",
+        action: "create_pr",
       });
 
       expect(result.branch.status).toBe("skipped_not_requested");
@@ -2772,6 +2838,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         changeRequestInstructions: "Lead with user impact.",
       });
       expect(generatedChangeRequestTemplate).toBe("## What changed?\n\n## Verification");
+      expect(generatedModelSelection).toEqual(expectedModelSelection);
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
       expect(
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),

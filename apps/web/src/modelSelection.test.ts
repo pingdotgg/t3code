@@ -320,4 +320,34 @@ describe("instance-scoped model selection", () => {
       model: "openai/gpt-5.5",
     });
   });
+
+  it("uses a healthy snapshot for the visible fallback while settings lag", () => {
+    const opencodeId = ProviderInstanceId.make("opencode");
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [opencodeId]: {
+          driver: ProviderDriverKind.make("opencode"),
+          enabled: false,
+          config: {},
+        },
+      },
+      textGenerationModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-luna",
+      },
+    };
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("opencode"),
+        instanceId: "opencode",
+        models: ["openai/gpt-5.6"],
+      }),
+    ];
+
+    expect(resolveAppModelSelectionState(settings, providers)).toEqual({
+      instanceId: opencodeId,
+      model: "openai/gpt-5.6",
+    });
+  });
 });

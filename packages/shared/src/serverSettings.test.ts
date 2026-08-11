@@ -264,6 +264,50 @@ describe("serverSettings helpers", () => {
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
   });
 
+  it("keeps an explicit OpenCode writer when settings lag a healthy provider snapshot", () => {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const sourceControlWriterModelSelection = createModelSelection(instanceId, "openai/gpt-5.6");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver: ProviderDriverKind.make("opencode"),
+          enabled: false,
+          config: {},
+        },
+      },
+      sourceControlWriterModelSelection,
+    };
+    const provider = {
+      instanceId,
+      driver: ProviderDriverKind.make("opencode"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated", type: "OpenCode" },
+      checkedAt: "2026-08-10T00:00:00.000Z",
+      availability: "available",
+      models: [
+        {
+          slug: "openai/gpt-5.6",
+          name: "GPT-5.6",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+
+    expect(isModelSelectionProviderEnabled(settings, sourceControlWriterModelSelection)).toBe(
+      false,
+    );
+    expect(resolveSourceControlWriterModelSelection(settings, [provider])).toBe(
+      sourceControlWriterModelSelection,
+    );
+  });
+
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
     const codexId = ProviderInstanceId.make("codex");
     const current = {
