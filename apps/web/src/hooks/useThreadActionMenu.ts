@@ -33,6 +33,7 @@ import { readLocalApi } from "../localApi";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { useReloadThreadSession } from "./useReloadThreadSession";
 import { useClientSettings } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
 
@@ -77,6 +78,7 @@ export function useThreadActionMenu(input: {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const reloadThreadSession = useReloadThreadSession();
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
@@ -137,6 +139,7 @@ export function useThreadActionMenu(input: {
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
+          sessionStatus: thread.session?.status ?? null,
           supports,
           snoozePresets,
         });
@@ -216,6 +219,10 @@ export function useThreadActionMenu(input: {
           case "rename":
             onStartRename();
             return;
+          case "reload-session": {
+            await reloadThreadSession(threadRef);
+            return;
+          }
           case "regenerate-title":
             if (isRegeneratingTitle) return;
             await reportFailure("Failed to regenerate thread title", () =>
@@ -297,6 +304,7 @@ export function useThreadActionMenu(input: {
       projectCwd,
       settleThread,
       snoozeThread,
+      reloadThreadSession,
       threadRef,
       timestampFormat,
       unpinThread,

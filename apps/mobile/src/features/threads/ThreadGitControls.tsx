@@ -70,6 +70,7 @@ type ThreadGitHeaderActionItems = {
   readonly terminal: HeaderItem;
   readonly files: HeaderItem;
   readonly git: HeaderItem;
+  readonly reloadSession: HeaderItem | null;
 };
 type QuickActionIcon =
   | "arrow.down.circle"
@@ -104,6 +105,11 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly onOpenTerminal: (terminalId?: string | null) => void;
   readonly onOpenNewTerminal: () => void;
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
+  readonly reloadSessionControl?: {
+    readonly accessibilityLabel: string;
+    readonly disabled: boolean;
+    readonly onPress: () => void;
+  };
 };
 
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
@@ -366,6 +372,19 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
         type: "menu",
         variant: "plain",
       },
+      reloadSession: props.reloadSessionControl
+        ? {
+            accessibilityLabel: props.reloadSessionControl.accessibilityLabel,
+            disabled: props.reloadSessionControl.disabled,
+            icon: { name: "arrow.clockwise", type: "sfSymbol" },
+            identifier: "thread-right-reload-session",
+            label: "Reload session",
+            onPress: props.reloadSessionControl.onPress,
+            sharesBackground: true,
+            type: "button",
+            variant: "plain",
+          }
+        : null,
     }),
     [
       model.currentBranchLabel,
@@ -385,6 +404,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       props.onOpenTerminal,
       props.onRunProjectScript,
       props.projectScripts,
+      props.reloadSessionControl,
       props.terminalSessions,
     ],
   );
@@ -393,7 +413,13 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems,
+    () =>
+      [
+        actionItems.git,
+        actionItems.files,
+        actionItems.terminal,
+        ...(actionItems.reloadSession ? [actionItems.reloadSession] : []),
+      ] as HeaderItems,
     [actionItems],
   );
 }
@@ -401,7 +427,13 @@ export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): Hea
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems,
+    () =>
+      [
+        actionItems.files,
+        actionItems.git,
+        actionItems.terminal,
+        ...(actionItems.reloadSession ? [actionItems.reloadSession] : []),
+      ] as HeaderItems,
     [actionItems],
   );
 }
@@ -486,6 +518,15 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           disabled={!props.canOpenFiles}
           icon="folder"
           onPress={model.openFiles}
+          separateBackground
+        />
+      ) : null}
+      {showActionControls && props.reloadSessionControl ? (
+        <NativeHeaderToolbar.Button
+          accessibilityLabel={props.reloadSessionControl.accessibilityLabel}
+          disabled={props.reloadSessionControl.disabled}
+          icon="arrow.clockwise"
+          onPress={props.reloadSessionControl.onPress}
           separateBackground
         />
       ) : null}

@@ -1,5 +1,6 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, OrchestrationSessionStatus } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import { threadSessionReloadAvailability } from "@t3tools/client-runtime/state/thread-session";
 
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
@@ -17,6 +18,7 @@ export type ThreadActionMenuId =
   | "unsnooze"
   | "rename"
   | "regenerate-title"
+  | "reload-session"
   | "mark-unread"
   | "copy-path"
   | "copy-branch"
@@ -30,6 +32,7 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
+  readonly sessionStatus: OrchestrationSessionStatus | null;
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
@@ -47,6 +50,7 @@ export interface ThreadActionMenuState {
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  const reloadAvailability = threadSessionReloadAvailability(state.sessionStatus);
   return [
     ...(state.branch
       ? [
@@ -86,6 +90,15 @@ export function buildThreadActionMenuItems(
                   label: `${preset.label} (${preset.whenLabel})`,
                 })),
               },
+        ]
+      : []),
+    ...(reloadAvailability !== "hidden"
+      ? [
+          {
+            id: "reload-session" as const,
+            label: "Reload agent session",
+            disabled: reloadAvailability === "disabled",
+          },
         ]
       : []),
     { id: "rename", label: "Rename thread" },

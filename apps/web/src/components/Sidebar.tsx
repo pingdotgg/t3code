@@ -97,6 +97,7 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useReloadThreadSession } from "../hooks/useReloadThreadSession";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
@@ -1610,6 +1611,7 @@ export default function Sidebar() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const reloadThreadSession = useReloadThreadSession();
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
@@ -2955,6 +2957,7 @@ export default function Sidebar() {
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
+              sessionStatus: thread.session?.status ?? null,
               supports: {
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
@@ -3016,6 +3019,10 @@ export default function Sidebar() {
           case "rename":
             startThreadRename(threadRef, thread.title);
             return;
+          case "reload-session": {
+            await reloadThreadSession(threadRef);
+            return;
+          }
           case "regenerate-title": {
             if (isRegeneratingTitle) return;
             const result = await updateThreadMetadata({
@@ -3107,6 +3114,7 @@ export default function Sidebar() {
       projectCwdByKey,
       serverConfigs,
       startThreadRename,
+      reloadThreadSession,
       updateThreadMetadata,
       timestampFormat,
     ],
