@@ -232,12 +232,6 @@ private struct T3BuildNavigationChromeModifier: ViewModifier {
                     warning: T3Colors.warning(for: colorScheme)
                 )
             )
-            .tint(
-                T3BuildChrome.foreground(
-                    for: surface,
-                    standard: T3Colors.accent
-                )
-            )
             .toolbarColorScheme(
                 T3BuildChrome.toolbarColorScheme(for: surface),
                 for: .navigationBar
