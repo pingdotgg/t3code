@@ -464,7 +464,7 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[nextLogicalKey]).toBe(false);
   });
 
-  it("syncThreads prunes missing thread UI state", () => {
+  it("syncThreads prunes transient UI state while preserving durable visit stamps", () => {
     const thread1 = ThreadId.make("thread-1");
     const thread2 = ThreadId.make("thread-2");
     const initialState = makeUiState({
@@ -484,9 +484,7 @@ describe("uiStateStore pure functions", () => {
 
     const next = syncThreads(initialState, [{ key: thread1 }]);
 
-    expect(next.threadLastVisitedAtById).toEqual({
-      [thread1]: "2026-02-25T12:35:00.000Z",
-    });
+    expect(next.threadLastVisitedAtById).toEqual(initialState.threadLastVisitedAtById);
     expect(next.threadChangedFilesExpandedById).toEqual({
       [thread1]: {
         "turn-1": false,
@@ -508,6 +506,79 @@ describe("uiStateStore pure functions", () => {
     expect(next.threadLastVisitedAtById).toEqual({
       [thread1]: "2026-02-25T12:35:00.000Z",
     });
+  });
+
+  it("syncThreads seeds a missing visit through the latest completion on startup", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const initialState = makeUiState();
+
+    const next = syncThreads(initialState, [
+      {
+        key: thread1,
+        seedVisitedAt: "2026-02-25T12:30:00.000Z",
+        latestTurnCompletedAt: "2026-02-25T12:35:00.000Z",
+      },
+    ]);
+
+    expect(next.threadLastVisitedAtById).toEqual({
+      [thread1]: "2026-02-25T12:35:00.000Z",
+    });
+  });
+
+  it("syncThreads repairs a persisted legacy seed that predates the latest completion", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const legacySeed = "2026-02-25T12:30:00.000Z";
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [thread1]: legacySeed,
+      },
+    });
+
+    const next = syncThreads(initialState, [
+      {
+        key: thread1,
+        seedVisitedAt: legacySeed,
+        latestTurnCompletedAt: "2026-02-25T12:35:00.000Z",
+      },
+    ]);
+
+    expect(next.threadLastVisitedAtById).toEqual({
+      [thread1]: "2026-02-25T12:35:00.000Z",
+    });
+  });
+
+  it("syncThreads preserves an explicitly unread completed thread", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [thread1]: "2026-02-25T12:34:59.999Z",
+      },
+    });
+
+    const next = syncThreads(initialState, [
+      {
+        key: thread1,
+        seedVisitedAt: "2026-02-25T12:30:00.000Z",
+        latestTurnCompletedAt: "2026-02-25T12:35:00.000Z",
+      },
+    ]);
+
+    expect(next).toBe(initialState);
+  });
+
+  it("syncThreads preserves visit stamps omitted by a partial environment snapshot", () => {
+    const thread1 = ThreadId.make("environment-1:thread-1");
+    const thread2 = ThreadId.make("environment-2:thread-2");
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [thread1]: "2026-02-25T12:35:00.000Z",
+        [thread2]: "2026-02-25T12:36:00.000Z",
+      },
+    });
+
+    const next = syncThreads(initialState, [{ key: thread1 }]);
+
+    expect(next.threadLastVisitedAtById).toEqual(initialState.threadLastVisitedAtById);
   });
 
   it("setProjectExpanded updates expansion without touching order", () => {

@@ -114,6 +114,7 @@ export interface SyncProjectInput {
 export interface SyncThreadInput {
   key: string;
   seedVisitedAt?: string | undefined;
+  latestTurnCompletedAt?: string | null | undefined;
 }
 
 const initialState: UiState = {
@@ -198,9 +199,9 @@ function readPersistedState(): UiState {
 /**
  * Visit stamps decide whether a finished thread still shows its "completed"
  * dot, so they have to survive a reload — otherwise every completed thread
- * reads as unseen on launch. Only the most recent stamps are kept: an evicted
- * thread is one the user has not opened in hundreds of visits, and the cost of
- * dropping it is a single stale dot rather than unbounded localStorage growth.
+ * reads as unseen on launch. Only the most recent stamps are kept; current
+ * threads missing from that bounded payload are seeded from the authoritative
+ * startup snapshot before their rows render.
  */
 const MAX_PERSISTED_THREAD_VISITS = 500;
 
@@ -604,18 +605,38 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
 
 export function syncThreads(state: UiState, threads: readonly SyncThreadInput[]): UiState {
   const retainedThreadIds = new Set(threads.map((thread) => thread.key));
-  const nextThreadLastVisitedAtById = Object.fromEntries(
-    Object.entries(state.threadLastVisitedAtById).filter(([threadId]) =>
-      retainedThreadIds.has(threadId),
-    ),
-  );
+  const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   for (const thread of threads) {
-    if (
-      nextThreadLastVisitedAtById[thread.key] === undefined &&
-      thread.seedVisitedAt !== undefined &&
-      thread.seedVisitedAt.length > 0
-    ) {
-      nextThreadLastVisitedAtById[thread.key] = thread.seedVisitedAt;
+    const existingVisitedAt = nextThreadLastVisitedAtById[thread.key];
+    if (existingVisitedAt !== undefined) {
+      const latestTurnCompletedAt = thread.latestTurnCompletedAt;
+      if (existingVisitedAt === thread.seedVisitedAt && latestTurnCompletedAt) {
+        const existingVisitedAtMs = Date.parse(existingVisitedAt);
+        const latestTurnCompletedAtMs = Date.parse(latestTurnCompletedAt);
+        if (
+          Number.isFinite(existingVisitedAtMs) &&
+          Number.isFinite(latestTurnCompletedAtMs) &&
+          latestTurnCompletedAtMs > existingVisitedAtMs
+        ) {
+          nextThreadLastVisitedAtById[thread.key] = latestTurnCompletedAt;
+        }
+      }
+      continue;
+    }
+    let seedVisitedAt: string | undefined;
+    let seedVisitedAtMs = Number.NEGATIVE_INFINITY;
+    for (const candidate of [thread.seedVisitedAt, thread.latestTurnCompletedAt]) {
+      if (!candidate) {
+        continue;
+      }
+      const candidateMs = Date.parse(candidate);
+      if (Number.isFinite(candidateMs) && candidateMs > seedVisitedAtMs) {
+        seedVisitedAt = candidate;
+        seedVisitedAtMs = candidateMs;
+      }
+    }
+    if (seedVisitedAt !== undefined) {
+      nextThreadLastVisitedAtById[thread.key] = seedVisitedAt;
     }
   }
   const nextThreadChangedFilesExpandedById = Object.fromEntries(

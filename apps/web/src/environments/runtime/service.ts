@@ -632,6 +632,7 @@ function syncThreadUiFromStore() {
     threads.map((thread) => ({
       key: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       seedVisitedAt: thread.updatedAt ?? thread.createdAt,
+      latestTurnCompletedAt: thread.latestTurn?.completedAt,
     })),
   );
   markPromotedDraftThreadsByRef(
@@ -762,6 +763,7 @@ function applyRecoveredEventBatch(
       threads.map((thread) => ({
         key: scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         seedVisitedAt: thread.updatedAt ?? thread.createdAt,
+        latestTurnCompletedAt: thread.latestTurn?.completedAt,
       })),
     );
   }
