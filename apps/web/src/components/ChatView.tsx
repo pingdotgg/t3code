@@ -67,21 +67,16 @@ import {
 } from "../diffRouteSearch";
 import { collapseExpandedComposerCursor } from "../composer-logic";
 import {
-  deriveCompletionDividerBeforeEntryId,
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
-  deriveTimelineEntries,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   findSidebarProposedPlan,
   findLatestProposedPlan,
-  deriveWorkLogEntries,
   hasActionableProposedPlan,
-  hasToolActivityForTurn,
   isThreadActivelyWorking,
   isLatestTurnSettled,
-  formatElapsed,
 } from "../session-logic";
 import { type LegendListRef, type LegendListState } from "@legendapp/list/react";
 import {
@@ -97,12 +92,16 @@ import {
   selectWorkflowRunsForParentThread,
   useStore,
 } from "../store";
-import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
+import {
+  createProjectSelectorByRef,
+  createThreadCoreSelectorByRef,
+  createThreadMessageIdsSelectorByRef,
+  createThreadSelectorByRef,
+} from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
   collectUserMessageBlobPreviewUrls,
   hasServerAcknowledgedPendingTurn,
-  revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   usePendingTurnStore,
 } from "../pendingTurnStore";
@@ -119,10 +118,8 @@ import {
   type ChatMessage,
   type SessionPhase,
   type Thread,
-  type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
-import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { REVIEW_CHANGES_WORKFLOW_ID } from "@t3tools/shared/workflows/reviewChanges";
@@ -191,7 +188,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { MessagesTimeline, type AssistantResponseMeta } from "./chat/MessagesTimeline";
+import { ChatTimelineSection, type ChatTimelineSectionHandle } from "./chat/ChatTimelineSection";
 import { ReviewFindingsCard } from "./chat/ReviewFindingsCard";
 import { formatReviewFindings } from "../lib/reviewFindingFormat";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -238,9 +235,6 @@ import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { InsightsPanel } from "./InsightsPanel";
-import { deriveMessagesTimelineRows } from "./chat/MessagesTimeline.logic";
-import { FindInChatBar } from "./chat/FindInChatBar";
-import { useChatFind } from "./chat/useChatFind";
 import { isInsightActivity } from "../insights";
 
 export function shouldClosePreviewMiniPlayer(input: {
@@ -745,10 +739,17 @@ function ChatViewBody(
     routeKind === "server" ? routeThreadRef : props.draftId;
   const serverThread = useStore(
     useMemo(
-      () => createThreadSelectorByRef(routeKind === "server" ? routeThreadRef : null),
+      () => createThreadCoreSelectorByRef(routeKind === "server" ? routeThreadRef : null),
       [routeKind, routeThreadRef],
     ),
   );
+  const serverMessageIds = useStore(
+    useMemo(
+      () => createThreadMessageIdsSelectorByRef(routeKind === "server" ? routeThreadRef : null),
+      [routeKind, routeThreadRef],
+    ),
+  );
+  const chatTimelineSectionRef = useRef<ChatTimelineSectionHandle | null>(null);
   const setStoreThreadError = useStore((store) => store.setError);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
@@ -861,9 +862,6 @@ function ChatViewBody(
   const [terminalLaunchContext, setTerminalLaunchContext] = useState<TerminalLaunchContext | null>(
     null,
   );
-  const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
-    Record<string, string[]>
-  >({});
   const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
     useState<DraftThreadEnvMode | null>(null);
   const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
@@ -875,8 +873,6 @@ function ChatViewBody(
   const legendListRef = useRef<LegendListRef | null>(null);
   const messagesViewportRef = useRef<HTMLDivElement | null>(null);
   const isAtEndRef = useRef(true);
-  const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
-  const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
 
@@ -1228,6 +1224,9 @@ function ChatViewBody(
     thread: activeThread,
     selectedProvider: selectedProviderByThreadId,
     threadProvider,
+    hasMessages: isServerThread
+      ? serverMessageIds.length > 0
+      : (activeThread?.messages.length ?? 0) > 0,
   });
   const primaryServerConfig = useServerConfig();
   const activeEnvRuntimeState = useSavedEnvironmentRuntimeStore((s) =>
@@ -1368,14 +1367,6 @@ function ChatViewBody(
     hasMoreOlderActivities,
     threadActivities,
   ]);
-  const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
-  const latestTurnHasToolActivity = useMemo(
-    () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadStateActivities),
     [threadStateActivities],
@@ -1468,373 +1459,6 @@ function ChatViewBody(
     activeThread?.session ?? null,
     localDispatchStartedAt,
   );
-  useEffect(() => {
-    attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
-  }, [attachmentPreviewHandoffByMessageId]);
-  const clearAttachmentPreviewHandoff = useCallback(
-    (messageId: MessageId, previewUrls?: ReadonlyArray<string>) => {
-      delete attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId];
-      const currentPreviewUrls =
-        previewUrls ?? attachmentPreviewHandoffByMessageIdRef.current[messageId] ?? [];
-      const existing = attachmentPreviewHandoffByMessageIdRef.current;
-      if (messageId in existing) {
-        const next = { ...existing };
-        delete next[messageId];
-        attachmentPreviewHandoffByMessageIdRef.current = next;
-        setAttachmentPreviewHandoffByMessageId(next);
-      }
-      for (const previewUrl of currentPreviewUrls) {
-        revokeBlobPreviewUrl(previewUrl);
-      }
-    },
-    [],
-  );
-  const clearAttachmentPreviewHandoffs = useCallback(() => {
-    attachmentPreviewPromotionInFlightByMessageIdRef.current = {};
-    for (const previewUrls of Object.values(attachmentPreviewHandoffByMessageIdRef.current)) {
-      for (const previewUrl of previewUrls) {
-        revokeBlobPreviewUrl(previewUrl);
-      }
-    }
-    attachmentPreviewHandoffByMessageIdRef.current = {};
-    setAttachmentPreviewHandoffByMessageId({});
-  }, []);
-  useEffect(() => {
-    return () => {
-      clearAttachmentPreviewHandoffs();
-    };
-  }, [clearAttachmentPreviewHandoffs]);
-  const handoffAttachmentPreviews = useCallback((messageId: MessageId, previewUrls: string[]) => {
-    if (previewUrls.length === 0) return;
-
-    const previousPreviewUrls = attachmentPreviewHandoffByMessageIdRef.current[messageId] ?? [];
-    for (const previewUrl of previousPreviewUrls) {
-      if (!previewUrls.includes(previewUrl)) {
-        revokeBlobPreviewUrl(previewUrl);
-      }
-    }
-    const next = {
-      ...attachmentPreviewHandoffByMessageIdRef.current,
-      [messageId]: previewUrls,
-    };
-    attachmentPreviewHandoffByMessageIdRef.current = next;
-    setAttachmentPreviewHandoffByMessageId(next);
-  }, []);
-  const serverMessages = activeThread?.messages;
-  useEffect(() => {
-    if (typeof Image === "undefined" || !serverMessages || serverMessages.length === 0) {
-      return;
-    }
-
-    const cleanups: Array<() => void> = [];
-
-    for (const [messageId, handoffPreviewUrls] of Object.entries(
-      attachmentPreviewHandoffByMessageId,
-    )) {
-      if (attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId]) {
-        continue;
-      }
-
-      const serverMessage = serverMessages.find(
-        (message) => message.id === messageId && message.role === "user",
-      );
-      if (!serverMessage?.attachments || serverMessage.attachments.length === 0) {
-        continue;
-      }
-
-      const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
-      );
-      if (
-        serverPreviewUrls.length === 0 ||
-        serverPreviewUrls.length !== handoffPreviewUrls.length ||
-        serverPreviewUrls.some((previewUrl) => previewUrl.startsWith("blob:"))
-      ) {
-        continue;
-      }
-
-      attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId] = true;
-
-      let cancelled = false;
-      const imageInstances: HTMLImageElement[] = [];
-
-      const preloadServerPreviews = Promise.all(
-        serverPreviewUrls.map(
-          (previewUrl) =>
-            new Promise<void>((resolve, reject) => {
-              const image = new Image();
-              imageInstances.push(image);
-              const handleLoad = () => resolve();
-              const handleError = () =>
-                reject(new Error(`Failed to load server preview for ${messageId}.`));
-              image.addEventListener("load", handleLoad, { once: true });
-              image.addEventListener("error", handleError, { once: true });
-              image.src = previewUrl;
-            }),
-        ),
-      );
-
-      void preloadServerPreviews
-        .then(() => {
-          if (cancelled) {
-            return;
-          }
-          clearAttachmentPreviewHandoff(messageId as MessageId, handoffPreviewUrls);
-        })
-        .catch(() => {
-          if (!cancelled) {
-            delete attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId];
-          }
-        });
-
-      cleanups.push(() => {
-        cancelled = true;
-        delete attachmentPreviewPromotionInFlightByMessageIdRef.current[messageId];
-        for (const image of imageInstances) {
-          image.src = "";
-        }
-      });
-    }
-
-    return () => {
-      for (const cleanup of cleanups) {
-        cleanup();
-      }
-    };
-  }, [attachmentPreviewHandoffByMessageId, clearAttachmentPreviewHandoff, serverMessages]);
-  const timelineMessages = useMemo(() => {
-    const messages = serverMessages ?? [];
-    const serverMessagesWithPreviewHandoff =
-      Object.keys(attachmentPreviewHandoffByMessageId).length === 0
-        ? messages
-        : // Spread only fires for the few messages that actually changed;
-          // unchanged ones early-return their original reference.
-          // In-place mutation would break React's immutable state contract.
-          messages.map((message) => {
-            if (
-              message.role !== "user" ||
-              !message.attachments ||
-              message.attachments.length === 0
-            ) {
-              return message;
-            }
-            const handoffPreviewUrls = attachmentPreviewHandoffByMessageId[message.id];
-            if (!handoffPreviewUrls || handoffPreviewUrls.length === 0) {
-              return message;
-            }
-
-            let changed = false;
-            let imageIndex = 0;
-            const attachments = message.attachments.map((attachment) => {
-              if (attachment.type !== "image") {
-                return attachment;
-              }
-              const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
-              imageIndex += 1;
-              if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
-                return attachment;
-              }
-              changed = true;
-              return {
-                ...attachment,
-                previewUrl: handoffPreviewUrl,
-              };
-            });
-
-            return changed ? { ...message, attachments } : message;
-          });
-
-    if (optimisticUserMessages.length === 0) {
-      return serverMessagesWithPreviewHandoff;
-    }
-    const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
-    const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
-    if (pendingMessages.length === 0) {
-      return serverMessagesWithPreviewHandoff;
-    }
-    return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-  }, [serverMessages, attachmentPreviewHandoffByMessageId, optimisticUserMessages]);
-  const timelineEntries = useMemo(
-    () =>
-      deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
-    [activeThread?.proposedPlans, timelineMessages, workLogEntries],
-  );
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
-    useTurnDiffSummaries(activeThread);
-  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
-    const byMessageId = new Map<MessageId, TurnDiffSummary>();
-    const byTurnId = new Map<string, TurnDiffSummary>();
-    const assignedSummaries = new WeakSet<TurnDiffSummary>();
-    for (const summary of turnDiffSummaries) {
-      if (summary.assistantMessageId && !byMessageId.has(summary.assistantMessageId)) {
-        byMessageId.set(summary.assistantMessageId, summary);
-        assignedSummaries.add(summary);
-      }
-      byTurnId.set(summary.turnId, summary);
-    }
-    // Defensive fallback: if the persisted assistantMessageId does not match any
-    // rendered message (e.g. server fell back to a synthetic id, or an upstream
-    // adapter assigned a different id than what was stored), attach the summary
-    // to the LAST assistant message in the matching turn.
-    const lastAssistantByTurnId = new Map<string, MessageId>();
-    for (const message of timelineMessages) {
-      if (message.role !== "assistant" || !message.turnId) continue;
-      lastAssistantByTurnId.set(message.turnId, message.id);
-    }
-    for (const [turnId, messageId] of lastAssistantByTurnId) {
-      if (byMessageId.has(messageId)) continue;
-      const summary = byTurnId.get(turnId);
-      if (!summary || assignedSummaries.has(summary)) continue;
-      byMessageId.set(messageId, summary);
-      assignedSummaries.add(summary);
-    }
-    return byMessageId;
-  }, [turnDiffSummaries, timelineMessages]);
-  const responseMetaByTurnId = useMemo(() => {
-    const metadata = new Map<TurnId, AssistantResponseMeta>();
-    for (const activity of threadActivities) {
-      if (activity.turnId === null || typeof activity.payload !== "object" || !activity.payload) {
-        continue;
-      }
-      const payload = activity.payload as Record<string, unknown>;
-      const existing = metadata.get(activity.turnId) ?? {};
-      if (activity.kind === "insights.turn.started" && typeof payload.model === "string") {
-        metadata.set(activity.turnId, { ...existing, model: payload.model });
-        continue;
-      }
-      if (activity.kind === "context-window.updated") {
-        const usedTokens =
-          typeof payload.lastUsedTokens === "number"
-            ? payload.lastUsedTokens
-            : typeof payload.usedTokens === "number"
-              ? payload.usedTokens
-              : undefined;
-        const rawCost = payload.cost;
-        const cost =
-          typeof rawCost === "object" &&
-          rawCost !== null &&
-          "amount" in rawCost &&
-          typeof rawCost.amount === "number" &&
-          "currency" in rawCost &&
-          typeof rawCost.currency === "string"
-            ? { amount: rawCost.amount, currency: rawCost.currency }
-            : undefined;
-        if (usedTokens !== undefined || cost !== undefined) {
-          metadata.set(activity.turnId, {
-            ...existing,
-            ...(usedTokens !== undefined ? { usedTokens } : {}),
-            ...(cost !== undefined ? { cost } : {}),
-          });
-        }
-        continue;
-      }
-      if (activity.kind === "insights.turn.completed" && typeof payload.totalCostUsd === "number") {
-        metadata.set(activity.turnId, {
-          ...existing,
-          cost: { amount: payload.totalCostUsd, currency: "USD" },
-        });
-      }
-    }
-    return metadata;
-  }, [threadActivities]);
-  const revertTurnCountByUserMessageId = useMemo(() => {
-    const byUserMessageId = new Map<MessageId, number>();
-    for (let index = 0; index < timelineEntries.length; index += 1) {
-      const entry = timelineEntries[index];
-      if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
-        continue;
-      }
-
-      for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
-        const nextEntry = timelineEntries[nextIndex];
-        if (!nextEntry || nextEntry.kind !== "message") {
-          continue;
-        }
-        if (nextEntry.message.role === "user") {
-          break;
-        }
-        const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-        if (!summary) {
-          continue;
-        }
-        const turnCount =
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-        if (typeof turnCount !== "number") {
-          break;
-        }
-        byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-        break;
-      }
-    }
-
-    return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
-
-  const completionSummary = useMemo(() => {
-    if (!latestTurnSettled) return null;
-    if (sessionActivelyWorking) return null;
-    if (isSendBusy) return null;
-    if (!activeLatestTurn?.startedAt) return null;
-    if (!activeLatestTurn.completedAt) return null;
-    if (!latestTurnHasToolActivity) return null;
-
-    const elapsed = formatElapsed(activeLatestTurn.startedAt, activeLatestTurn.completedAt);
-    return elapsed ? `Worked for ${elapsed}` : null;
-  }, [
-    activeLatestTurn?.completedAt,
-    activeLatestTurn?.startedAt,
-    isSendBusy,
-    latestTurnHasToolActivity,
-    latestTurnSettled,
-    sessionActivelyWorking,
-  ]);
-  const completionDividerBeforeEntryId = useMemo(() => {
-    if (!latestTurnSettled) return null;
-    if (sessionActivelyWorking) return null;
-    if (isSendBusy) return null;
-    if (!activeLatestTurn?.assistantMessageId) return null;
-    return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
-  }, [activeLatestTurn, isSendBusy, latestTurnSettled, sessionActivelyWorking, timelineEntries]);
-  const timelineRows = useMemo(
-    () =>
-      deriveMessagesTimelineRows({
-        timelineEntries,
-        completionDividerBeforeEntryId,
-        isWorking: timelineActiveWork,
-        activeTurnId: activeLatestTurn?.turnId ?? null,
-        activeTurnStartedAt: activeWorkStartedAt,
-        turnDiffSummaryByAssistantMessageId,
-        revertTurnCountByUserMessageId,
-      }),
-    [
-      activeWorkStartedAt,
-      completionDividerBeforeEntryId,
-      timelineActiveWork,
-      activeLatestTurn?.turnId,
-      revertTurnCountByUserMessageId,
-      timelineEntries,
-      turnDiffSummaryByAssistantMessageId,
-    ],
-  );
-  const {
-    open: chatFindOpen,
-    inputId: chatFindInputId,
-    query: chatFindQuery,
-    setQuery: setChatFindQuery,
-    matches: chatFindMatches,
-    activeMatchIndex: activeChatFindMatchIndex,
-    activeMatch: activeChatFindMatch,
-    openFind: openChatFind,
-    closeFind: closeChatFind,
-    cycleMatch: cycleChatFindMatch,
-  } = useChatFind({
-    timelineRows,
-    messagesViewportRef,
-    legendListRef,
-    routeThreadKey,
-    activeThreadId,
-  });
-
   const copilotResumeCommand = getCopilotResumeCommand(activeThread ?? null);
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -1955,7 +1579,7 @@ function ChatViewBody(
 
   const envLocked = Boolean(
     activeThread &&
-    (activeThread.messages.length > 0 ||
+    ((isServerThread ? serverMessageIds.length > 0 : activeThread.messages.length > 0) ||
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
 
@@ -2790,10 +2414,13 @@ function ChatViewBody(
 
   useEffect(() => {
     if (!activeThread?.id) return;
-    if (activeThread.messages.length === 0) {
+    const messageCount = isServerThread ? serverMessageIds.length : activeThread.messages.length;
+    if (messageCount === 0) {
       return;
     }
-    const serverIds = new Set(activeThread.messages.map((message) => message.id));
+    const serverIds = new Set(
+      isServerThread ? serverMessageIds : activeThread.messages.map((m) => m.id),
+    );
     if (!optimisticUserMessages.some((message) => serverIds.has(message.id))) {
       return;
     }
@@ -2803,7 +2430,7 @@ function ChatViewBody(
     for (const removedMessage of removedMessages) {
       const previewUrls = collectUserMessageBlobPreviewUrls(removedMessage);
       if (previewUrls.length > 0) {
-        handoffAttachmentPreviews(removedMessage.id, previewUrls);
+        chatTimelineSectionRef.current?.handoffAttachmentPreviews(removedMessage.id, previewUrls);
         continue;
       }
       revokeUserMessagePreviewUrls(removedMessage);
@@ -2811,9 +2438,10 @@ function ChatViewBody(
   }, [
     activeThread?.id,
     activeThread?.messages,
-    handoffAttachmentPreviews,
+    isServerThread,
     optimisticUserMessages,
     routeThreadRef,
+    serverMessageIds,
   ]);
 
   useEffect(() => {
@@ -3007,18 +2635,21 @@ function ChatViewBody(
         return;
       }
       const activeElement = document.activeElement as HTMLElement | null;
+      const findController = chatTimelineSectionRef.current?.getFindController();
+      const chatFindOpen = findController?.open ?? false;
+      const chatFindInputId = findController?.inputId ?? "";
       const searchInputFocused = activeElement?.id === chatFindInputId;
       if (chatFindOpen && !event.metaKey && !event.ctrlKey && !event.altKey) {
         if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();
-          closeChatFind();
+          findController?.closeFind();
           return;
         }
         if (searchInputFocused && event.key === "Enter") {
           event.preventDefault();
           event.stopPropagation();
-          cycleChatFindMatch(event.shiftKey ? -1 : 1);
+          findController?.cycleMatch(event.shiftKey ? -1 : 1);
           return;
         }
       }
@@ -3143,7 +2774,7 @@ function ChatViewBody(
       if (command === "chat.find") {
         event.preventDefault();
         event.stopPropagation();
-        openChatFind();
+        chatTimelineSectionRef.current?.getFindController()?.openFind();
         return;
       }
 
@@ -3162,14 +2793,9 @@ function ChatViewBody(
     terminalState.terminalOpen,
     terminalState.activeTerminalId,
     activeThreadId,
-    chatFindInputId,
-    chatFindOpen,
     closeTerminal,
-    closeChatFind,
     createNewTerminal,
-    cycleChatFindMatch,
     isPaneFocused,
-    openChatFind,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
@@ -3389,7 +3015,9 @@ function ChatViewBody(
       return;
     }
     const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+    const isFirstMessage =
+      !isServerThread ||
+      (isServerThread ? serverMessageIds.length === 0 : activeThread.messages.length === 0);
     const baseBranchForWorktree =
       sendEnvMode === "worktree" && !activeThread.worktreePath ? activeThreadBranch : null;
 
@@ -4634,19 +4262,10 @@ function ChatViewBody(
 
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
-  const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
   useLayoutEffect(() => {
-    revertTurnCountRef.current = revertTurnCountByUserMessageId;
     onRevertToTurnCountRef.current = onRevertToTurnCount;
-  }, [onRevertToTurnCount, revertTurnCountByUserMessageId]);
-  const onRevertUserMessage = useCallback((messageId: MessageId) => {
-    const targetTurnCount = revertTurnCountRef.current.get(messageId);
-    if (typeof targetTurnCount !== "number") {
-      return;
-    }
-    void onRevertToTurnCountRef.current(targetTurnCount);
-  }, []);
+  }, [onRevertToTurnCount]);
   const onForkAssistantMessage = useCallback(
     async (messageId: MessageId) => {
       if (!activeThread || !isServerThread) {
@@ -4756,19 +4375,6 @@ function ChatViewBody(
           paneActions={paneActions}
         />
       </header>
-      {chatFindOpen ? (
-        <FindInChatBar
-          inputId={chatFindInputId}
-          query={chatFindQuery}
-          onQueryChange={setChatFindQuery}
-          matchCount={chatFindMatches.length}
-          activeMatchIndex={activeChatFindMatchIndex >= 0 ? activeChatFindMatchIndex : 0}
-          shortcutLabel={chatFindShortcutLabel}
-          onPrevious={() => cycleChatFindMatch(-1)}
-          onNext={() => cycleChatFindMatch(1)}
-          onClose={closeChatFind}
-        />
-      ) : null}
 
       {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />
@@ -4787,40 +4393,45 @@ function ChatViewBody(
         >
           {/* Messages Wrapper */}
           <div ref={messagesViewportRef} className="relative flex min-h-0 flex-1 flex-col">
-            {/* Messages — LegendList handles virtualization and scrolling internally */}
-            <MessagesTimeline
-              key={activeThread.id}
-              rows={timelineRows}
-              isWorking={isWorking}
-              activeTurnInProgress={timelineActiveWork}
-              activeTurnId={activeLatestTurn?.turnId ?? null}
-              activeTurnStartedAt={activeWorkStartedAt}
-              listRef={legendListRef}
-              timelineEntries={timelineEntries}
-              completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-              completionSummary={completionSummary}
-              copilotResumeCommand={copilotResumeCommand}
-              turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-              responseMetaByTurnId={responseMetaByTurnId}
-              activeThreadEnvironmentId={activeThread.environmentId}
-              activeThreadId={activeThread.id}
+            <ChatTimelineSection
+              ref={chatTimelineSectionRef}
+              routeThreadRef={routeKind === "server" ? routeThreadRef : null}
               routeThreadKey={routeThreadKey}
-              onOpenTurnDiff={onOpenTurnDiff}
-              revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-              onRevertUserMessage={onRevertUserMessage}
-              onForkAssistantMessage={onForkAssistantMessage}
+              isServerThread={isServerThread}
+              {...(isLocalDraftThread && localDraftThread
+                ? { draftMessages: localDraftThread.messages }
+                : {})}
+              optimisticUserMessages={optimisticUserMessages}
+              threadId={activeThread.id}
+              threadEnvironmentId={activeThread.environmentId}
+              proposedPlans={activeThread.proposedPlans ?? []}
+              turnDiffSummaries={activeThread.turnDiffSummaries ?? []}
+              threadActivities={threadActivities}
+              latestTurn={activeLatestTurn}
+              latestTurnSettled={latestTurnSettled}
+              sessionActivelyWorking={sessionActivelyWorking}
+              isSendBusy={isSendBusy}
+              isWorking={isWorking}
+              timelineActiveWork={timelineActiveWork}
+              activeWorkStartedAt={activeWorkStartedAt}
+              copilotResumeCommand={copilotResumeCommand}
               isRevertingCheckpoint={isRevertingCheckpoint}
-              onImageExpand={onExpandTimelineImage}
-              markdownCwd={gitCwd ?? undefined}
+              reviewResultActive={activeThread.reviewResult?.status === "parsed"}
+              listRef={legendListRef}
+              messagesViewportRef={messagesViewportRef}
+              gitCwd={gitCwd ?? undefined}
               resolvedTheme={resolvedTheme}
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
-              onIsAtEndChange={onIsAtEndChange}
+              chatFindShortcutLabel={chatFindShortcutLabel}
               hasMoreOlder={hasMoreOlderActivities}
               loadingOlder={activeOlderActivityState.loading}
               onLoadOlder={loadOlderActivities}
-              activeChatFindRowId={chatFindOpen ? (activeChatFindMatch?.rowId ?? null) : null}
-              reviewResultActive={activeThread.reviewResult?.status === "parsed"}
+              onOpenTurnDiff={onOpenTurnDiff}
+              onRevertToTurnCount={onRevertToTurnCount}
+              onForkAssistantMessage={onForkAssistantMessage}
+              onImageExpand={onExpandTimelineImage}
+              onIsAtEndChange={onIsAtEndChange}
             />
             {activeThread.reviewResult ? (
               <div className="mx-auto w-full max-w-3xl px-4 pb-3">

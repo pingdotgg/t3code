@@ -389,10 +389,12 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
-export function threadHasStarted(thread: Thread | null | undefined): boolean {
-  return Boolean(
-    thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
-  );
+export function threadHasStarted(
+  thread: Thread | null | undefined,
+  options?: { hasMessages?: boolean },
+): boolean {
+  const hasMessages = options?.hasMessages ?? (thread?.messages.length ?? 0) > 0;
+  return Boolean(thread && (thread.latestTurn !== null || hasMessages || thread.session !== null));
 }
 
 export function resolveDraftCanonicalThreadRef(
@@ -426,8 +428,14 @@ export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  hasMessages?: boolean;
 }): ProviderDriverKind | null {
-  if (!threadHasStarted(input.thread)) {
+  if (
+    !threadHasStarted(
+      input.thread,
+      input.hasMessages === undefined ? undefined : { hasMessages: input.hasMessages },
+    )
+  ) {
     return null;
   }
   const sessionProvider = input.thread?.session?.provider ?? null;

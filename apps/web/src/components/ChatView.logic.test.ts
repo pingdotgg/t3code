@@ -30,10 +30,24 @@ import {
   resolveInterruptTurnId,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
+  threadHasStarted,
   waitForRoutableServerThread,
 } from "./ChatView.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("threadHasStarted", () => {
+  it("treats core server threads with persisted messages as started", () => {
+    const thread = {
+      latestTurn: null,
+      messages: [],
+      session: null,
+    } as Pick<Thread, "latestTurn" | "messages" | "session"> as Thread;
+
+    expect(threadHasStarted(thread)).toBe(false);
+    expect(threadHasStarted(thread, { hasMessages: true })).toBe(true);
+  });
+});
 
 describe("resolveDraftCanonicalThreadRef", () => {
   it("routes as soon as the server thread exists, before its first turn starts", () => {
