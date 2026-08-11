@@ -390,10 +390,8 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   if (typeof usage !== "object" || usage === null) return [];
   const usageRecord = usage as Record<string, unknown>;
 
-  const sessionId =
-    typeof paramsRecord["sessionId"] === "string" ? paramsRecord["sessionId"] : "";
-  const promptId =
-    typeof updateRecord["prompt_id"] === "string" ? updateRecord["prompt_id"] : null;
+  const sessionId = typeof paramsRecord["sessionId"] === "string" ? paramsRecord["sessionId"] : "";
+  const promptId = typeof updateRecord["prompt_id"] === "string" ? updateRecord["prompt_id"] : null;
 
   // Prefer the high-resolution agent clock; fall back to the outer unix seconds.
   const meta = paramsRecord["_meta"];
@@ -443,17 +441,34 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
     ];
   }
 
+  // When every per-model entry lacks ticks but the aggregate reports them,
+  // pro-rate the top-level ticks by each model's token share so provider cost
+  // is not discarded on multi-model turns (rate-table fallback can still miss
+  // slugs). Single-model turns simply inherit the aggregate below.
+  const anyPerModelTicks = modelEntries.some((entry) => entry.totals.costUsdTicks !== null);
+  const topLevelCostUsd = grokCostTicksToUsd(topLevel.costUsdTicks);
+  let sharedTokenDenominator = 0;
+  if (!anyPerModelTicks && topLevelCostUsd !== null && modelEntries.length > 1) {
+    for (const entry of modelEntries) {
+      sharedTokenDenominator += totalTokens(grokTotalsToUsage(entry.totals));
+    }
+  }
+
   const results: UsageRecord[] = [];
   for (const entry of modelEntries) {
     const totals = grokTotalsToUsage(entry.totals);
     if (totalTokens(totals) === 0) continue;
 
-    // Per-model ticks when present; otherwise a single-model turn may inherit
-    // the aggregate. Multi-model turns without per-model ticks stay unpriced
-    // at the provider-reported layer and fall through to the rate table.
+    // Per-model ticks when present; otherwise a single-model turn inherits the
+    // aggregate, and multi-model turns without per-model ticks take a token-
+    // share slice of the aggregate so reported cost is not dropped.
     let reportedCostUsd = grokCostTicksToUsd(entry.totals.costUsdTicks);
-    if (reportedCostUsd === null && modelEntries.length === 1) {
-      reportedCostUsd = grokCostTicksToUsd(topLevel.costUsdTicks);
+    if (reportedCostUsd === null && topLevelCostUsd !== null) {
+      if (modelEntries.length === 1) {
+        reportedCostUsd = topLevelCostUsd;
+      } else if (sharedTokenDenominator > 0) {
+        reportedCostUsd = topLevelCostUsd * (totalTokens(totals) / sharedTokenDenominator);
+      }
     }
 
     results.push({
@@ -463,8 +478,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
       sessionId,
       totals,
       reportedCostUsd,
-      dedupeKey:
-        promptId === null ? null : `${sessionId}:${promptId}:${entry.model}`,
+      dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:${entry.model}`,
     });
   }
   return results;

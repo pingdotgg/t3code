@@ -27,7 +27,7 @@ export const PROVIDER_PRESENTATION = {
   grok: {
     label: "Grok Build",
     // Mid zinc so the series stays visible on both light and dark chart surfaces.
-    color: "#a1a1aa",
+    color: "#71717a",
     mark: GrokIcon,
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
