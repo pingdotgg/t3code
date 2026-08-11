@@ -36,6 +36,7 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  PlugIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -85,6 +86,8 @@ import {
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { pluginPageContributions } from "../pluginCatalog";
+import { primaryPluginCatalogResultAtom } from "../state/plugins";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
@@ -576,6 +579,7 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const pluginCatalog = useAtomValue(primaryPluginCatalogResultAtom);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
@@ -1505,6 +1509,25 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  const pluginPages =
+    pluginCatalog._tag === "Success" ? pluginPageContributions(pluginCatalog.value) : [];
+  for (const { plugin, command } of pluginPages) {
+    actionItems.push({
+      kind: "action",
+      value: `action:plugin:${plugin.id}:${command.name}`,
+      searchTerms: ["plugin", "page", plugin.name, command.title, command.description ?? ""],
+      title: command.title,
+      description: plugin.name,
+      icon: <PlugIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({
+          to: "/plugins/$pluginId/$commandName",
+          params: { pluginId: plugin.id, commandName: command.name },
+        });
+      },
+    });
+  }
 
   // There is no projects listing page; the action targets the contextual
   // project (active thread/draft, falling back to the first sidebar group).

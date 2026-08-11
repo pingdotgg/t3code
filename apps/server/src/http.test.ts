@@ -1,7 +1,12 @@
 import { expect, it } from "@effect/vitest";
 import { describe } from "vite-plus/test";
 
-import { assetResponseHeaders, isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+import {
+  assetResponseHeaders,
+  isLoopbackHostname,
+  pluginAssetResponseHeaders,
+  resolveDevRedirectUrl,
+} from "./http.ts";
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {
@@ -43,5 +48,59 @@ describe("assetResponseHeaders", () => {
       "Cache-Control": "private, max-age=3600",
       "X-Content-Type-Options": "nosniff",
     });
+  });
+});
+
+describe("pluginAssetResponseHeaders", () => {
+  it("pins script and style sources to the asset origin so the sandboxed frame can run", () => {
+    // The plugin iframe is sandboxed without allow-same-origin, so its document has
+    // an opaque origin and 'self' would match nothing — blocking the plugin's own
+    // bundle. Regression guard: the concrete origin must be used instead.
+    const csp =
+      pluginAssetResponseHeaders(["http://localhost:5733"], ["'self'"])[
+        "Content-Security-Policy"
+      ] ?? "";
+    expect(csp).toContain("script-src http://localhost:5733");
+    expect(csp).toContain("style-src http://localhost:5733 'unsafe-inline'");
+    expect(csp).not.toContain("script-src 'self'");
+    expect(csp).not.toContain("style-src 'self'");
+  });
+
+  it("keeps CORP cross-origin so the opaque-origin plugin frame can load its assets", () => {
+    // The plugin iframe is sandboxed without allow-same-origin, so it fetches from a
+    // null origin. "same-origin" here makes the browser discard every subresource and
+    // the plugin renders blank. Verified live before this guard was added.
+    const headers = pluginAssetResponseHeaders(["http://localhost:5733"], ["'self'"]);
+    expect(headers["Cross-Origin-Resource-Policy"]).toBe("cross-origin");
+  });
+
+  it("blocks network access and credential-bearing referrers", () => {
+    const headers = pluginAssetResponseHeaders(
+      ["http://localhost:5733"],
+      ["'self'", "t3code://app"],
+    );
+    expect(headers).toMatchObject({
+      "Cross-Origin-Resource-Policy": "cross-origin",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+    });
+    expect(headers).not.toHaveProperty("Access-Control-Allow-Origin");
+    expect(headers["Content-Security-Policy"]).toContain("connect-src 'none'");
+  });
+
+  it("scopes frame-ancestors to the trusted embedder origins, not a scheme wildcard", () => {
+    const headers = pluginAssetResponseHeaders(
+      ["http://localhost:5733"],
+      ["'self'", "t3code://app", "t3code-dev://app"],
+    );
+    const csp = headers["Content-Security-Policy"] ?? "";
+    expect(csp).toContain("frame-ancestors 'self' t3code://app t3code-dev://app");
+    const frameAncestors = csp
+      .split(";")
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith("frame-ancestors"));
+    expect(frameAncestors).toBeDefined();
+    expect(frameAncestors).not.toContain(" http:");
+    expect(frameAncestors).not.toContain(" https:");
   });
 });

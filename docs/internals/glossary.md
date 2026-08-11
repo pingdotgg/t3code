@@ -11,6 +11,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
+- [Plugins](#plugins)
 
 ## Concepts
 
@@ -140,6 +141,34 @@ The patch difference between two checkpoints. Query logic lives in [CheckpointDi
 
 The file patch and changed-file summary for one turn. It is usually computed in [CheckpointDiffQuery.ts][20], represented in [the contracts][1], and recorded into thread state by [projector.ts][4].
 
+### Plugins
+
+Plugins are user-installed extensions that add custom views and backend actions to T3 Code. The contract lives in [the plugin contracts][25], discovery and execution in [PluginRegistry.ts][26], and the rendered view in [PluginPage.tsx][28].
+
+#### Plugin
+
+A user-installed extension that contributes view commands, and optionally a backend, to the app. It is described by a manifest and loaded by [PluginRegistry.ts][26]. See [the plugin contracts][25].
+
+#### Plugin manifest
+
+The `t3-plugin.json` file that declares a plugin's id, name, optional backend entry, and view commands. Its shape is `PluginManifest` in [the plugin contracts][25].
+
+#### View command
+
+A named entry a plugin exposes that renders an HTML view (its `entry` asset) inside the app. Typed as `PluginViewCommand` in [the plugin contracts][25] and surfaced by [PluginPage.tsx][28].
+
+#### Plugin backend
+
+The optional Node script (the manifest's `backend`) a plugin runs to service `invoke` actions. It is resolved and executed as a subprocess by [PluginRegistry.ts][26].
+
+#### Plugin catalog
+
+The discovered set of installed plugins with their enabled state and any load issues. Modeled as `PluginCatalog` in [the plugin contracts][25] and assembled for the UI in [pluginCatalog.ts][27].
+
+#### Signed view URL (plugin asset token)
+
+A short-lived, HMAC-signed relative URL (`PluginViewUrl`) the renderer uses to load a plugin's view asset from the environment backend. It is minted and verified in [PluginRegistry.ts][26].
+
 ## Practical Shortcuts
 
 - If you see `requested`, think "intent recorded".
@@ -179,3 +208,7 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../packages/contracts/src/plugin.ts
+[26]: ../../apps/server/src/plugins/PluginRegistry.ts
+[27]: ../../apps/web/src/pluginCatalog.ts
+[28]: ../../apps/web/src/components/plugins/PluginPage.tsx

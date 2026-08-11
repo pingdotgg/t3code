@@ -28,6 +28,7 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import { PLUGIN_ROUTE_PREFIX, resolvePluginAsset } from "./plugins/PluginRegistry.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -220,6 +221,106 @@ export const assetRouteLayer = HttpRouter.add(
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
       headers: assetResponseHeaders(asset.path),
+    }).pipe(
+      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    );
+  }),
+);
+
+// The plugin iframe is embedded by the T3 app document, which is only same-origin
+// to the environment server in packaged web. On desktop the renderer is a custom
+// origin (t3code://app) and in dev it is the Vite origin, both distinct from the
+// loopback server serving these assets. Restrict framing to that trusted set —
+// the same origins CORS/websocket already trust — rather than a scheme wildcard.
+function pluginFrameAncestors(config: ServerConfig.ServerConfig["Service"]): string[] {
+  const origins = new Set<string>([
+    "'self'",
+    ...DESKTOP_RENDERER_ORIGINS,
+    ...config.devAllowedOrigins,
+  ]);
+  const devOrigin = config.devUrl?.origin;
+  if (devOrigin) origins.add(devOrigin);
+  return [...origins];
+}
+
+/**
+ * Origins a plugin document may load its own bundle from. The request origin is
+ * what the server sees, but in browser dev Vite proxies the backend, so the origin
+ * the browser actually used is the dev URL — both must be allowed or the frame's
+ * scripts are blocked.
+ */
+function pluginAssetOrigins(
+  config: ServerConfig.ServerConfig["Service"],
+  requestOrigin: string,
+): string[] {
+  const origins = new Set<string>([requestOrigin, ...config.devAllowedOrigins]);
+  const devOrigin = config.devUrl?.origin;
+  if (devOrigin) origins.add(devOrigin);
+  return [...origins];
+}
+
+// Plugin pages render in a sandboxed iframe without `allow-same-origin`, so the
+// document has an opaque origin and `'self'` matches nothing — it would block the
+// plugin's own scripts and styles. Pin the concrete asset origin instead; granting
+// `allow-same-origin` would be the wrong fix, since these assets share the app's
+// origin and the frame would inherit its storage and DOM.
+function pluginContentSecurityPolicy(
+  assetOrigins: readonly string[],
+  frameAncestors: readonly string[],
+): string {
+  const sources = assetOrigins.join(" ");
+  return [
+    "default-src 'none'",
+    `script-src ${sources}`,
+    `style-src ${sources} 'unsafe-inline'`,
+    `img-src ${sources} data: https:`,
+    `font-src ${sources}`,
+    "connect-src 'none'",
+    "form-action 'none'",
+    "base-uri 'none'",
+    `frame-ancestors ${frameAncestors.join(" ")}`,
+  ].join("; ");
+}
+
+export function pluginAssetResponseHeaders(
+  assetOrigins: readonly string[],
+  frameAncestors: readonly string[],
+): Record<string, string> {
+  return {
+    "Cache-Control": "private, max-age=60",
+    "Content-Security-Policy": pluginContentSecurityPolicy(assetOrigins, frameAncestors),
+    // Required, not incidental: the plugin frame is sandboxed without
+    // `allow-same-origin`, so it requests these files from an opaque (null) origin.
+    // `same-origin` here silently blocks every subresource — the browser fetches
+    // them and then discards the response, leaving a blank plugin page.
+    "Cross-Origin-Resource-Policy": "cross-origin",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
+export const pluginAssetRouteLayer = HttpRouter.add(
+  "GET",
+  `${PLUGIN_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const config = yield* ServerConfig.ServerConfig;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+    const suffix = url.value.pathname.slice(`${PLUGIN_ROUTE_PREFIX}/`.length);
+    const separatorIndex = suffix.indexOf("/");
+    if (separatorIndex <= 0) return HttpServerResponse.text("Not Found", { status: 404 });
+    const assetPath = yield* resolvePluginAsset(
+      suffix.slice(0, separatorIndex),
+      suffix.slice(separatorIndex + 1),
+    );
+    if (!assetPath) return HttpServerResponse.text("Not Found", { status: 404 });
+    return yield* HttpServerResponse.file(assetPath, {
+      status: 200,
+      headers: pluginAssetResponseHeaders(
+        pluginAssetOrigins(config, url.value.origin),
+        pluginFrameAncestors(config),
+      ),
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );

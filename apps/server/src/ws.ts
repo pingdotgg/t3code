@@ -88,6 +88,17 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import {
+  addSource,
+  createPlugin,
+  deletePlugin,
+  issuePluginViewUrl,
+  invokePlugin,
+  listPluginsRpc,
+  removeSource,
+  setPluginEnabled,
+  updateSource,
+} from "./plugins/PluginRegistry.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -1893,6 +1904,42 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.pluginsList]: (_input) =>
+          observeRpcEffect(WS_METHODS.pluginsList, listPluginsRpc, {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsCreate]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsCreate, createPlugin(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsSetEnabled]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsSetEnabled, setPluginEnabled(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsDelete]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsDelete, deletePlugin(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsAddSource]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsAddSource, addSource(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsUpdateSource]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsUpdateSource, updateSource(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsRemoveSource]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsRemoveSource, removeSource(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsCreateViewUrl]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsCreateViewUrl, issuePluginViewUrl(input), {
+            "rpc.aggregate": "plugins",
+          }),
+        [WS_METHODS.pluginsInvoke]: (input) =>
+          observeRpcEffect(WS_METHODS.pluginsInvoke, invokePlugin(input), {
+            "rpc.aggregate": "plugins",
+          }),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeVcsStatus,
