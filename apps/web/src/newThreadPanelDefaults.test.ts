@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -7,8 +7,17 @@ import { selectThreadRightPanelState, useRightPanelStore } from "./rightPanelSto
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "./terminalUiStateStore";
 import { DEFAULT_THREAD_TERMINAL_ID } from "./types";
 
-const threadRef = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
+let threadCounter = 0;
+function nextThreadRef() {
+  threadCounter += 1;
+  return scopeThreadRef("env-1" as EnvironmentId, ThreadId.make(`thread-${threadCounter}`));
+}
 
+// Defaults are decided once per chat for the life of the session, so each test
+// needs a chat of its own.
+let threadRef = nextThreadRef();
+
+const FILES_ONLY = { newThreadOpenFilesPanel: true, newThreadOpenTerminal: false };
 const BOTH_ON = { newThreadOpenFilesPanel: true, newThreadOpenTerminal: true };
 
 const rightPanelState = () =>
@@ -20,6 +29,7 @@ const terminalState = () =>
   );
 
 beforeEach(() => {
+  threadRef = nextThreadRef();
   useRightPanelStore.setState({ byThreadKey: {} });
   useTerminalUiStateStore.persist.clearStorage();
   useTerminalUiStateStore.setState({
@@ -93,5 +103,33 @@ describe("applyNewThreadPanelDefaults", () => {
 
     expect(rightPanelState().isOpen).toBe(false);
     expect(terminalState().terminalOpen).toBe(false);
+  });
+
+  it("leaves the terminal closed after the user closed the only terminal", () => {
+    useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
+    useTerminalUiStateStore.getState().closeTerminal(threadRef, DEFAULT_THREAD_TERMINAL_ID);
+    // Closing the last terminal returns the thread to the default UI state, which
+    // the store drops; the suppressed id is all that records the close.
+    expect(
+      scopedThreadKey(threadRef) in useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+    ).toBe(false);
+
+    applyNewThreadPanelDefaults(threadRef, BOTH_ON);
+
+    expect(terminalState().terminalOpen).toBe(false);
+    expect(rightPanelState().isOpen).toBe(false);
+  });
+
+  it("does not re-default a chat whose layout the user emptied", () => {
+    applyNewThreadPanelDefaults(threadRef, FILES_ONLY);
+    useRightPanelStore.getState().closeSurface(threadRef, "files");
+    // The all-closed entry is dropped, so the store no longer tells this chat
+    // apart from one that was never touched.
+    expect(scopedThreadKey(threadRef) in useRightPanelStore.getState().byThreadKey).toBe(false);
+
+    // "New chat" hands back this same unused draft.
+    applyNewThreadPanelDefaults(threadRef, FILES_ONLY);
+
+    expect(rightPanelState()).toEqual({ isOpen: false, activeSurfaceId: null, surfaces: [] });
   });
 });
