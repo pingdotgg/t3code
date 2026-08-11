@@ -25,8 +25,10 @@ content foundations. The production T3 request-authority/role composition (#6) a
 
 ## Implemented issue #8 boundary
 
-- Organization schema v2 upgrades exact v1 transactionally and adds canonical heads, immutable
-  revisions, normalized source/review/decision revision edges, and idempotency receipts.
+- Organization schema v2 adds canonical heads, revisions, normalized source/review/decision edges,
+  and idempotency receipts. Schema v3 transactionally seals existing revision children and enforces
+  workspace-wide canonical-key uniqueness; exact v1 and v2 upgrade while partial schemas fail
+  closed.
 - Sources, workflow instances, plans, artifact heads/revisions, saved outputs, reviews, decisions,
   and next actions are read and written only through the resolved physical organization database.
 - Every write carries an expected version, idempotency key, canonical claim, actor reference,
@@ -34,11 +36,18 @@ content foundations. The production T3 request-authority/role composition (#6) a
   registered-renderer references. Success is the committed database read-back.
 - A separate injected content-operation authorizer composes with #5 resolution. It neither expands
   lifecycle permissions nor accepts a wire actor. Issue #6 still owns the production role adapter.
+- Public workspace resolution returns binding metadata without a database handle. A package-
+  internal capability lets only the canonical store compose over the live handle; production
+  consumers do not receive a raw canonical mutation path.
 - Schema, definition, and renderer references must be accepted by an injected registry. This store
   does not invent issue #19's catalogs or renderers.
 - The same registry derives normalized projection facts from validated payloads. Facts are
   immutable with their revision, queryable only inside the resolved organization workspace, and
   never caller-authored; issue #19 still owns their concrete keys and rollup meaning.
+- A revision seal commits the exact normalized references and facts in the write transaction.
+  SQLite rejects later child inserts, updates, or deletes, and normal reads verify the seal digest.
+  The digest detects out-of-contract inconsistency but is not an authenticity claim against trusted
+  server code or a filesystem administrator, which remain inside the local database trust boundary.
 - Registered outputs are revisioned under saved-output identities and may project an exact
   canonical revision; they cannot overwrite artifact heads or chain through another saved output.
 

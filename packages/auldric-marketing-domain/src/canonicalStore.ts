@@ -46,6 +46,12 @@ import {
   MarketingSourceLineageReference as MarketingSourceLineageReferenceSchema,
 } from "./canonical.ts";
 import {
+  canonicalRevisionChildrenSha256,
+  type CanonicalSealFact,
+  type CanonicalSealReference,
+} from "./canonicalSeal.ts";
+import { getCanonicalWorkspaceResolver } from "./canonicalWorkspaceAccess.ts";
+import {
   MarketingCanonicalAuthorizationError,
   MarketingCanonicalConflictError,
   type MarketingCanonicalDomainError,
@@ -239,6 +245,8 @@ interface CanonicalRevisionRow extends CanonicalHeadRow {
   readonly payloadSha256: string;
   readonly actorId: string;
   readonly revisionCreatedAt: string;
+  readonly childrenSha256: string | null;
+  readonly sealedAt: string | null;
 }
 
 interface CanonicalReferenceRow {
@@ -261,6 +269,8 @@ interface CanonicalFactQueryRow extends CanonicalFactRow {
   readonly objectKind: MarketingCanonicalObjectIdentity["kind"];
   readonly revisionId: string;
   readonly revisionVersion: number;
+  readonly childrenSha256: string | null;
+  readonly sealedAt: string | null;
 }
 
 interface CanonicalIdempotencyRow {
@@ -454,9 +464,12 @@ function revisionSelect(where: string): string {
     r.payload_json AS payloadJson,
     r.payload_sha256 AS payloadSha256,
     r.actor_id AS actorId,
-    r.created_at AS revisionCreatedAt
+    r.created_at AS revisionCreatedAt,
+    s.children_sha256 AS childrenSha256,
+    s.sealed_at AS sealedAt
   FROM auldric_canonical_objects o
   JOIN auldric_canonical_revisions r ON r.object_id = o.object_id
+  LEFT JOIN auldric_canonical_revision_seals s ON s.revision_id = r.revision_id
   ${where}`;
 }
 
@@ -484,12 +497,11 @@ function readHeadById(
 function readHeadByClaim(
   database: NodeSqlite.DatabaseSync,
   workspaceId: string,
-  objectKind: string,
   canonicalKey: string,
 ): CanonicalHeadRow | undefined {
   return database
-    .prepare(headSelect("WHERE o.workspace_id = ? AND o.object_kind = ? AND o.canonical_key = ?"))
-    .get(workspaceId, objectKind, canonicalKey) as unknown as CanonicalHeadRow | undefined;
+    .prepare(headSelect("WHERE o.workspace_id = ? AND o.canonical_key = ?"))
+    .get(workspaceId, canonicalKey) as unknown as CanonicalHeadRow | undefined;
 }
 
 function readReferences(
@@ -510,6 +522,70 @@ function readReferences(
        ORDER BY rr.reference_kind, rr.ordinal`,
     )
     .all(revisionId) as unknown as ReadonlyArray<CanonicalReferenceRow>;
+}
+
+function readSealReferences(
+  database: NodeSqlite.DatabaseSync,
+  revisionId: string,
+): ReadonlyArray<CanonicalSealReference> {
+  return database
+    .prepare(
+      `SELECT reference_kind AS referenceKind, ordinal,
+              target_object_id AS targetObjectId,
+              target_revision_id AS targetRevisionId,
+              target_version AS targetVersion
+       FROM auldric_canonical_revision_references
+       WHERE revision_id = ?`,
+    )
+    .all(revisionId) as unknown as ReadonlyArray<CanonicalSealReference>;
+}
+
+function readSealFacts(
+  database: NodeSqlite.DatabaseSync,
+  revisionId: string,
+): ReadonlyArray<CanonicalSealFact> {
+  return database
+    .prepare(
+      `SELECT fact_key AS factKey, value_json AS valueJson, value_sha256 AS valueSha256
+       FROM auldric_canonical_projection_facts
+       WHERE revision_id = ?`,
+    )
+    .all(revisionId) as unknown as ReadonlyArray<CanonicalSealFact>;
+}
+
+function assertRevisionSeal(
+  database: NodeSqlite.DatabaseSync,
+  row: Pick<CanonicalRevisionRow, "revisionId" | "childrenSha256" | "sealedAt">,
+): void {
+  if (row.childrenSha256 === null || row.sealedAt === null) {
+    throw validationFailure("invalid_stored_payload", row.revisionId);
+  }
+  if (
+    canonicalRevisionChildrenSha256(
+      readSealReferences(database, row.revisionId),
+      readSealFacts(database, row.revisionId),
+    ) !== row.childrenSha256
+  ) {
+    throw validationFailure("invalid_stored_payload", row.revisionId);
+  }
+}
+
+function insertRevisionSeal(
+  database: NodeSqlite.DatabaseSync,
+  revisionId: string,
+  sealedAt: string,
+): void {
+  const childrenSha256 = canonicalRevisionChildrenSha256(
+    readSealReferences(database, revisionId),
+    readSealFacts(database, revisionId),
+  );
+  database
+    .prepare(
+      `INSERT INTO auldric_canonical_revision_seals(
+         revision_id, children_sha256, sealed_at
+       ) VALUES (?, ?, ?)`,
+    )
+    .run(revisionId, childrenSha256, sealedAt);
 }
 
 function readFacts(
@@ -620,9 +696,11 @@ function projectionFromRow(
 }
 
 function inventoryFromRow(
+  database: NodeSqlite.DatabaseSync,
   selection: MarketingWorkspaceSelection,
   row: CanonicalRevisionRow,
 ): MarketingCanonicalInventoryItem {
+  assertRevisionSeal(database, row);
   assertSelection(row, selection);
   if (
     row.objectId !== row.revisionObjectId ||
@@ -658,7 +736,7 @@ function recordFromRow(
   selection: MarketingWorkspaceSelection,
   row: CanonicalRevisionRow,
 ): MarketingCanonicalRecord {
-  const inventory = inventoryFromRow(selection, row);
+  const inventory = inventoryFromRow(database, selection, row);
   const references = readReferences(database, row.revisionId);
   const sourceLineage = references
     .filter((reference) => reference.referenceKind === "source")
@@ -804,6 +882,13 @@ function assertRevisionTarget(
   if (revision === undefined) {
     throw new MarketingCanonicalConflictError({ reason: "referenced_revision_missing" });
   }
+  readRecordRevision(
+    database,
+    selection,
+    target.id,
+    target.revision.revisionId,
+    target.revision.version,
+  );
 }
 
 function assertReference(
@@ -919,6 +1004,10 @@ function encodeWriteHash(
 export function makeMarketingCanonicalStore<RequestAuthority>(
   config: MarketingCanonicalStoreConfig<RequestAuthority>,
 ): MarketingCanonicalStore<RequestAuthority> {
+  const resolveWorkspace = getCanonicalWorkspaceResolver<
+    RequestAuthority,
+    OrganizationWorkspaceStoreError
+  >(config.workspaceStore);
   const authorize = (
     requestAuthority: RequestAuthority,
     requirement: MarketingCanonicalAuthorizationRequirement,
@@ -1058,7 +1147,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
     kind: "canonical" | "output",
   ): Effect.fn.Return<MarketingCanonicalRecord, MarketingCanonicalStoreErrorType> {
     const { requestAuthority, selection } = rawInput;
-    return yield* config.workspaceStore.resolve(
+    return yield* resolveWorkspace(
       { requestAuthority, selection },
       ({ database, marketingActorId }) =>
         Effect.gen(function* () {
@@ -1150,12 +1239,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
                 }
 
                 const existing = readHeadById(database, input.object.id);
-                const claim = readHeadByClaim(
-                  database,
-                  selection.workspaceId,
-                  input.object.kind,
-                  input.canonicalKey,
-                );
+                const claim = readHeadByClaim(database, selection.workspaceId, input.canonicalKey);
                 if (claim !== undefined && claim.objectId !== input.object.id) {
                   throw new MarketingCanonicalConflictError({
                     reason: "duplicate_canonical_claim",
@@ -1332,6 +1416,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
                     )
                     .run(revisionId, fact.key, valueJson, sha256(valueJson));
                 }
+                insertRevisionSeal(database, revisionId, nowIso);
 
                 database
                   .prepare(
@@ -1365,7 +1450,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
   });
 
   const listInventory: MarketingCanonicalStore<RequestAuthority>["listInventory"] = (input) =>
-    config.workspaceStore.resolve(input, ({ database, marketingActorId }) =>
+    resolveWorkspace(input, ({ database, marketingActorId }) =>
       Effect.gen(function* () {
         yield* authorize(input.requestAuthority, {
           operation: "list-canonical-inventory",
@@ -1390,7 +1475,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
                 input.selection.projectId,
                 input.selection.workspaceId,
               ) as unknown as ReadonlyArray<CanonicalRevisionRow>;
-            return rows.map((row) => inventoryFromRow(input.selection, row));
+            return rows.map((row) => inventoryFromRow(database, input.selection, row));
           },
           catch: (cause) => mapCanonicalCause("list_inventory", cause),
         });
@@ -1402,7 +1487,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
       const object = yield* decodeInput("object", () =>
         decodeCanonicalObjectIdentity(input.object),
       );
-      return yield* config.workspaceStore.resolve(input, ({ database, marketingActorId }) =>
+      return yield* resolveWorkspace(input, ({ database, marketingActorId }) =>
         Effect.gen(function* () {
           yield* authorize(input.requestAuthority, {
             operation: "read-canonical-object",
@@ -1423,7 +1508,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
       const object = yield* decodeInput("object", () =>
         decodeCanonicalObjectIdentity(input.object),
       );
-      return yield* config.workspaceStore.resolve(input, ({ database, marketingActorId }) =>
+      return yield* resolveWorkspace(input, ({ database, marketingActorId }) =>
         Effect.gen(function* () {
           yield* authorize(input.requestAuthority, {
             operation: "list-canonical-revisions",
@@ -1455,7 +1540,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
     });
 
   const queryFacts: MarketingCanonicalStore<RequestAuthority>["queryFacts"] = (input) =>
-    config.workspaceStore.resolve(input, ({ database, marketingActorId }) =>
+    resolveWorkspace(input, ({ database, marketingActorId }) =>
       Effect.gen(function* () {
         const key =
           input.key === undefined
@@ -1474,11 +1559,14 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
                 o.object_kind AS objectKind,
                 r.revision_id AS revisionId,
                 r.version AS revisionVersion,
+                s.children_sha256 AS childrenSha256,
+                s.sealed_at AS sealedAt,
                 f.fact_key AS factKey,
                 f.value_json AS valueJson,
                 f.value_sha256 AS valueSha256
               FROM auldric_canonical_projection_facts f
               JOIN auldric_canonical_revisions r ON r.revision_id = f.revision_id
+              LEFT JOIN auldric_canonical_revision_seals s ON s.revision_id = r.revision_id
               JOIN auldric_canonical_objects o ON o.object_id = r.object_id
               WHERE o.organization_id = ?
                 AND o.project_id = ?
@@ -1495,6 +1583,13 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
                 input.selection.workspaceId,
                 ...(key === undefined ? [] : [key]),
               ) as unknown as ReadonlyArray<CanonicalFactQueryRow>;
+            const verifiedRevisions = new Set<string>();
+            for (const row of rows) {
+              if (!verifiedRevisions.has(row.revisionId)) {
+                assertRevisionSeal(database, row);
+                verifiedRevisions.add(row.revisionId);
+              }
+            }
             return rows.map((row) => ({
               object: decodeCanonicalObjectIdentity({
                 kind: row.objectKind,

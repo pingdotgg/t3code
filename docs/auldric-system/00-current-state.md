@@ -26,7 +26,8 @@ machine-verifiable baseline.
 - The issue #8 canonical Marketing persistence foundation in the same package: organization-local
   heads and immutable revisions for sources, workflow instances, plans, artifacts, saved outputs,
   reviews, decisions, and next actions, with expected-version conflicts, idempotency, typed lineage,
-  registered-view isolation, canonical read-back, and strict organization schema v2 migration.
+  registered-view isolation, sealed revision children, workspace-wide canonical claims, canonical
+  read-back, and strict organization schema v3 migration.
 - This reviewed Marketing-domain authority and requirements spine.
 
 ## Capability status

@@ -11,6 +11,16 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import {
+  canonicalRevisionChildrenSha256,
+  type CanonicalSealFact,
+  type CanonicalSealReference,
+} from "./canonicalSeal.ts";
+import {
+  type InternalCanonicalWorkspaceResolver,
+  type InternalResolvedOrganizationWorkspaceDatabase,
+  registerCanonicalWorkspaceResolver,
+} from "./canonicalWorkspaceAccess.ts";
+import {
   MarketingActorResolutionError,
   MarketingWorkspaceConflictError,
   MarketingWorkspaceCrossOrganizationError,
@@ -34,7 +44,7 @@ import {
 } from "./identity.ts";
 
 const CONTROL_SCHEMA_VERSION = 1;
-const ORGANIZATION_SCHEMA_VERSION = 2;
+const ORGANIZATION_SCHEMA_VERSION = 3;
 const CONTROL_DATABASE_FILENAME = "control.sqlite";
 const ORGANIZATION_DATABASE_FILENAME = "workspace.sqlite";
 const decodeT3ActorIssuer = Schema.decodeUnknownSync(T3ActorIssuer);
@@ -121,14 +131,6 @@ export interface OrganizationWorkspaceBinding {
   readonly origin: "managed" | "backfilled";
 }
 
-export interface ResolvedOrganizationWorkspaceDatabase {
-  readonly marketingActorId: MarketingActorId;
-  readonly selection: MarketingWorkspaceSelection;
-  readonly databaseKey: string;
-  readonly databasePath: string;
-  readonly database: NodeSqlite.DatabaseSync;
-}
-
 export interface OrganizationWorkspaceStore<RequestAuthority> {
   readonly initialize: () => Effect.Effect<void, MarketingWorkspaceStoreError>;
   readonly bootstrap: (
@@ -142,7 +144,7 @@ export interface OrganizationWorkspaceStore<RequestAuthority> {
   ) => Effect.Effect<OrganizationWorkspaceBinding, OrganizationWorkspaceStoreError>;
   readonly resolve: <A, E, R>(
     input: MarketingWorkspaceResolutionInput<RequestAuthority>,
-    use: (workspace: ResolvedOrganizationWorkspaceDatabase) => Effect.Effect<A, E, R>,
+    use: (workspace: OrganizationWorkspaceBinding) => Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E | OrganizationWorkspaceStoreError, R>;
   readonly revokeMembership: (input: {
     readonly requestAuthority: RequestAuthority;
@@ -741,6 +743,19 @@ const organizationSchemaV2Triggers = [
   "auldric_canonical_revisions_immutable_update",
 ] as const;
 
+const organizationSchemaV3Columns = {
+  ...organizationSchemaV2Columns,
+  auldric_canonical_revision_seals: ["revision_id", "children_sha256", "sealed_at"],
+} as const;
+
+const organizationSchemaV3Triggers = [
+  ...organizationSchemaV2Triggers,
+  "auldric_canonical_projection_facts_reject_sealed_insert",
+  "auldric_canonical_references_reject_sealed_insert",
+  "auldric_canonical_revision_seals_immutable_delete",
+  "auldric_canonical_revision_seals_immutable_update",
+] as const;
+
 interface SqliteSchemaDefinitionRow {
   readonly type: string;
   readonly name: string;
@@ -768,25 +783,43 @@ function canonicalSchemaDefinitions(
   ).map((row) => ({ ...row, sql: normalizeSchemaSql(row.sql) }));
 }
 
-let expectedCanonicalSchemaDefinitions: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
+let expectedCanonicalSchemaDefinitionsV2: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
+let expectedCanonicalSchemaDefinitionsV3: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
 
-function getExpectedCanonicalSchemaDefinitions(): ReadonlyArray<SqliteSchemaDefinitionRow> {
-  if (expectedCanonicalSchemaDefinitions !== undefined) {
-    return expectedCanonicalSchemaDefinitions;
+function getExpectedCanonicalSchemaDefinitions(
+  version: 2 | 3,
+): ReadonlyArray<SqliteSchemaDefinitionRow> {
+  const existing =
+    version === 2 ? expectedCanonicalSchemaDefinitionsV2 : expectedCanonicalSchemaDefinitionsV3;
+  if (existing !== undefined) {
+    return existing;
   }
   const database = new NodeSqlite.DatabaseSync(":memory:");
   try {
     createOrganizationSchemaV2Objects(database);
-    expectedCanonicalSchemaDefinitions = canonicalSchemaDefinitions(database);
-    return expectedCanonicalSchemaDefinitions;
+    if (version === 3) {
+      createOrganizationSchemaV3Objects(database);
+    }
+    const definitions = canonicalSchemaDefinitions(database);
+    if (version === 2) {
+      expectedCanonicalSchemaDefinitionsV2 = definitions;
+    } else {
+      expectedCanonicalSchemaDefinitionsV3 = definitions;
+    }
+    return definitions;
   } finally {
     database.close();
   }
 }
 
-function verifyOrganizationSchemaV2(database: NodeSqlite.DatabaseSync): void {
+function verifyOrganizationSchemaVersion(
+  database: NodeSqlite.DatabaseSync,
+  version: 2 | 3,
+  columns: Readonly<Record<string, ReadonlyArray<string>>>,
+  triggers: ReadonlyArray<string>,
+): void {
   const actualTables = userTableNames(database);
-  const expectedTables = Object.keys(organizationSchemaV2Columns).sort();
+  const expectedTables = Object.keys(columns).sort();
   if (
     actualTables.length !== expectedTables.length ||
     expectedTables.some((table, index) => actualTables[index] !== table)
@@ -795,21 +828,28 @@ function verifyOrganizationSchemaV2(database: NodeSqlite.DatabaseSync): void {
       reason: "workspace_database_schema_stale",
     });
   }
-  for (const [table, columns] of Object.entries(organizationSchemaV2Columns)) {
-    if (!actualTables.includes(table) || !hasExactRequiredColumns(database, table, columns)) {
+  for (const [table, expectedColumns] of Object.entries(columns)) {
+    if (
+      !actualTables.includes(table) ||
+      !hasExactRequiredColumns(database, table, expectedColumns)
+    ) {
       throw new MarketingWorkspaceUnavailableError({
         reason: "workspace_database_schema_stale",
       });
     }
   }
   const actualTriggers = userTriggerNames(database);
-  if (organizationSchemaV2Triggers.some((trigger) => !actualTriggers.includes(trigger))) {
+  const expectedTriggers = [...triggers].sort();
+  if (
+    actualTriggers.length !== expectedTriggers.length ||
+    expectedTriggers.some((trigger, index) => actualTriggers[index] !== trigger)
+  ) {
     throw new MarketingWorkspaceUnavailableError({
       reason: "workspace_database_schema_stale",
     });
   }
   const actualDefinitions = canonicalSchemaDefinitions(database);
-  const expectedDefinitions = getExpectedCanonicalSchemaDefinitions();
+  const expectedDefinitions = getExpectedCanonicalSchemaDefinitions(version);
   if (
     actualDefinitions.length !== expectedDefinitions.length ||
     actualDefinitions.some((definition, index) => {
@@ -827,17 +867,38 @@ function verifyOrganizationSchemaV2(database: NodeSqlite.DatabaseSync): void {
       reason: "workspace_database_schema_stale",
     });
   }
-  const versions = database
-    .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
-    .all() as unknown as ReadonlyArray<SchemaVersionRow>;
-  if (
-    versions.length !== ORGANIZATION_SCHEMA_VERSION ||
-    versions.some((row, index) => row.version !== index + 1)
-  ) {
+  const foreignKeyViolations = database.prepare("PRAGMA foreign_key_check").all();
+  if (foreignKeyViolations.length !== 0) {
     throw new MarketingWorkspaceUnavailableError({
       reason: "workspace_database_schema_stale",
     });
   }
+  const versions = database
+    .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+    .all() as unknown as ReadonlyArray<SchemaVersionRow>;
+  if (versions.length !== version || versions.some((row, index) => row.version !== index + 1)) {
+    throw new MarketingWorkspaceUnavailableError({
+      reason: "workspace_database_schema_stale",
+    });
+  }
+}
+
+function verifyOrganizationSchemaV2(database: NodeSqlite.DatabaseSync): void {
+  verifyOrganizationSchemaVersion(
+    database,
+    2,
+    organizationSchemaV2Columns,
+    organizationSchemaV2Triggers,
+  );
+}
+
+function verifyOrganizationSchemaV3(database: NodeSqlite.DatabaseSync): void {
+  verifyOrganizationSchemaVersion(
+    database,
+    ORGANIZATION_SCHEMA_VERSION,
+    organizationSchemaV3Columns,
+    organizationSchemaV3Triggers,
+  );
 }
 
 function createOrganizationSchemaV2Objects(database: NodeSqlite.DatabaseSync): void {
@@ -1038,6 +1099,110 @@ function createOrganizationSchemaV2Objects(database: NodeSqlite.DatabaseSync): v
   `);
 }
 
+function createOrganizationSchemaV3Objects(database: NodeSqlite.DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE auldric_canonical_revision_seals (
+      revision_id TEXT PRIMARY KEY REFERENCES auldric_canonical_revisions(revision_id),
+      children_sha256 TEXT NOT NULL CHECK (
+        length(children_sha256) = 64
+        AND children_sha256 NOT GLOB '*[^0-9a-f]*'
+      ),
+      sealed_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX auldric_canonical_workspace_key_unique
+      ON auldric_canonical_objects(workspace_id, canonical_key);
+
+    CREATE TRIGGER auldric_canonical_references_reject_sealed_insert
+    BEFORE INSERT ON auldric_canonical_revision_references
+    WHEN EXISTS (
+      SELECT 1 FROM auldric_canonical_revision_seals
+      WHERE revision_id = NEW.revision_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'sealed canonical revision references cannot be appended');
+    END;
+
+    CREATE TRIGGER auldric_canonical_projection_facts_reject_sealed_insert
+    BEFORE INSERT ON auldric_canonical_projection_facts
+    WHEN EXISTS (
+      SELECT 1 FROM auldric_canonical_revision_seals
+      WHERE revision_id = NEW.revision_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'sealed canonical revision facts cannot be appended');
+    END;
+
+    CREATE TRIGGER auldric_canonical_revision_seals_immutable_update
+    BEFORE UPDATE ON auldric_canonical_revision_seals
+    BEGIN
+      SELECT RAISE(ABORT, 'canonical revision seals are immutable');
+    END;
+
+    CREATE TRIGGER auldric_canonical_revision_seals_immutable_delete
+    BEFORE DELETE ON auldric_canonical_revision_seals
+    BEGIN
+      SELECT RAISE(ABORT, 'canonical revision seals are immutable');
+    END;
+  `);
+}
+
+function sealReferences(
+  database: NodeSqlite.DatabaseSync,
+  revisionId: string,
+): ReadonlyArray<CanonicalSealReference> {
+  return database
+    .prepare(
+      `SELECT reference_kind AS referenceKind, ordinal,
+              target_object_id AS targetObjectId,
+              target_revision_id AS targetRevisionId,
+              target_version AS targetVersion
+       FROM auldric_canonical_revision_references
+       WHERE revision_id = ?`,
+    )
+    .all(revisionId) as unknown as ReadonlyArray<CanonicalSealReference>;
+}
+
+function sealFacts(
+  database: NodeSqlite.DatabaseSync,
+  revisionId: string,
+): ReadonlyArray<CanonicalSealFact> {
+  const facts = database
+    .prepare(
+      `SELECT fact_key AS factKey, value_json AS valueJson, value_sha256 AS valueSha256
+       FROM auldric_canonical_projection_facts
+       WHERE revision_id = ?`,
+    )
+    .all(revisionId) as unknown as ReadonlyArray<CanonicalSealFact>;
+  for (const fact of facts) {
+    const actual = NodeCrypto.createHash("sha256").update(fact.valueJson).digest("hex");
+    if (actual !== fact.valueSha256) {
+      throw new MarketingWorkspaceUnavailableError({
+        reason: "workspace_database_schema_stale",
+      });
+    }
+  }
+  return facts;
+}
+
+function insertRevisionSeal(
+  database: NodeSqlite.DatabaseSync,
+  revisionId: string,
+  sealedAt: string,
+): void {
+  const childrenSha256 = canonicalRevisionChildrenSha256(
+    sealReferences(database, revisionId),
+    sealFacts(database, revisionId),
+  );
+  database
+    .prepare(
+      `INSERT INTO auldric_canonical_revision_seals(
+         revision_id, children_sha256, sealed_at
+       ) VALUES (?, ?, ?)`,
+    )
+    .run(revisionId, childrenSha256, sealedAt);
+}
+
 function migrateOrganizationSchemaV1ToV2(database: NodeSqlite.DatabaseSync): void {
   runTransaction(database, () => {
     verifyOrganizationSchemaV1(database);
@@ -1046,8 +1211,34 @@ function migrateOrganizationSchemaV1ToV2(database: NodeSqlite.DatabaseSync): voi
       .prepare(
         "INSERT INTO auldric_organization_schema_migrations(version, applied_at) VALUES (?, ?)",
       )
-      .run(ORGANIZATION_SCHEMA_VERSION, "schema-v2-canonical-content");
+      .run(2, "schema-v2-canonical-content");
     verifyOrganizationSchemaV2(database);
+  });
+}
+
+function migrateOrganizationSchemaV2ToV3(database: NodeSqlite.DatabaseSync): void {
+  runTransaction(database, () => {
+    verifyOrganizationSchemaV2(database);
+    createOrganizationSchemaV3Objects(database);
+    const revisions = database
+      .prepare(
+        `SELECT revision_id AS revisionId, created_at AS sealedAt
+         FROM auldric_canonical_revisions
+         ORDER BY revision_id`,
+      )
+      .all() as unknown as ReadonlyArray<{
+      readonly revisionId: string;
+      readonly sealedAt: string;
+    }>;
+    for (const revision of revisions) {
+      insertRevisionSeal(database, revision.revisionId, revision.sealedAt);
+    }
+    database
+      .prepare(
+        "INSERT INTO auldric_organization_schema_migrations(version, applied_at) VALUES (?, ?)",
+      )
+      .run(ORGANIZATION_SCHEMA_VERSION, "schema-v3-sealed-canonical-content");
+    verifyOrganizationSchemaV3(database);
   });
 }
 
@@ -1058,13 +1249,19 @@ function migrateManagedOrganizationDatabase(
   if (userTableNames(database).length === 0) {
     createManagedOrganizationSchemaV1(database, input);
   }
-  const versions = database
+  let versions = database
     .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
     .all() as unknown as ReadonlyArray<SchemaVersionRow>;
   if (versions.length === 1 && versions[0]?.version === 1) {
     migrateOrganizationSchemaV1ToV2(database);
+    versions = database
+      .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+      .all() as unknown as ReadonlyArray<SchemaVersionRow>;
+  }
+  if (versions.length === 2 && versions[0]?.version === 1 && versions[1]?.version === 2) {
+    migrateOrganizationSchemaV2ToV3(database);
   } else {
-    verifyOrganizationSchemaV2(database);
+    verifyOrganizationSchemaV3(database);
   }
   verifyOrganizationDatabaseIdentity(database, input);
 }
@@ -1912,7 +2109,11 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
   const resolveWithPermission = <A, E, R>(
     input: MarketingWorkspaceResolutionInput<RequestAuthority>,
     requirement: MarketingWorkspaceAuthorizationRequirement,
-    use: (workspace: ResolvedOrganizationWorkspaceDatabase) => Effect.Effect<A, E, R>,
+    use: (
+      workspace: InternalResolvedOrganizationWorkspaceDatabase & {
+        readonly origin: "managed" | "backfilled";
+      },
+    ) => Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E | OrganizationWorkspaceStoreError, R> =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1999,6 +2200,7 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
               return {
                 marketingActorId: actorRow.id as MarketingActorId,
                 databaseKey: workspace.databaseKey,
+                origin: workspace.origin,
               };
             },
             catch: (cause) => mapStoreCause("resolve_workspace", cause),
@@ -2034,6 +2236,7 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
                 databaseKey: resolved.databaseKey,
                 databasePath,
                 database,
+                origin: resolved.origin,
               }),
             ),
           ),
@@ -2042,6 +2245,23 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
     );
 
   const resolve: OrganizationWorkspaceStore<RequestAuthority>["resolve"] = (input, use) =>
+    resolveWithPermission(
+      input,
+      { permission: "resolve-workspace", selection: input.selection },
+      (workspace) =>
+        use({
+          marketingActorId: workspace.marketingActorId,
+          selection: workspace.selection,
+          databaseKey: workspace.databaseKey,
+          state: "active",
+          origin: workspace.origin,
+        }),
+    );
+
+  const resolveCanonicalWorkspace: InternalCanonicalWorkspaceResolver<
+    RequestAuthority,
+    OrganizationWorkspaceStoreError
+  > = (input, use) =>
     resolveWithPermission(
       input,
       { permission: "resolve-workspace", selection: input.selection },
@@ -2643,7 +2863,7 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
         }),
     );
 
-  return {
+  const store: OrganizationWorkspaceStore<RequestAuthority> = {
     initialize,
     bootstrap,
     backfill,
@@ -2656,4 +2876,6 @@ export function makeOrganizationWorkspaceStore<RequestAuthority>(
     markT3ReferenceStale,
     deleteT3Reference,
   };
+  registerCanonicalWorkspaceResolver(store, resolveCanonicalWorkspace);
+  return store;
 }

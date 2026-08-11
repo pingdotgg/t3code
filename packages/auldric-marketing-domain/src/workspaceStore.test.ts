@@ -13,6 +13,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
+import { getCanonicalWorkspaceResolver } from "./canonicalWorkspaceAccess.ts";
 import {
   MarketingArtifactId,
   MarketingIdempotencyKey,
@@ -32,6 +33,7 @@ import {
   type MarketingAuthorizedActorIdentity,
   type MarketingWorkspaceAuthorizationRequirement,
   type MarketingWorkspacePermission,
+  type OrganizationWorkspaceStoreError,
 } from "./workspaceStore.ts";
 
 const testRoots: string[] = [];
@@ -125,6 +127,12 @@ function makeStore(root: string, observed: Array<MarketingWorkspaceAuthorization
   });
 }
 
+function databaseResolver(store: ReturnType<typeof makeStore>) {
+  return getCanonicalWorkspaceResolver<TestRequestAuthority, OrganizationWorkspaceStoreError>(
+    store,
+  );
+}
+
 function bootstrapInput(seed: number, authority = requestAuthority(seed)) {
   return {
     requestAuthority: authority,
@@ -202,12 +210,14 @@ describe("organization Marketing workspace store", () => {
       const second = yield* store.bootstrap(input);
       assert.deepEqual(second, first);
 
-      const resolvedPath = yield* store.resolve(
+      const resolvedPath = yield* databaseResolver(store)(
         { requestAuthority: input.requestAuthority, selection: input.selection },
         ({ database, databasePath }) =>
           Effect.sync(() => {
-            database.exec("CREATE TABLE canonical_probe(value TEXT NOT NULL);");
-            database.prepare("INSERT INTO canonical_probe(value) VALUES (?)").run("organization-1");
+            const migrations = database
+              .prepare("SELECT COUNT(*) AS count FROM auldric_organization_schema_migrations")
+              .get() as unknown as { readonly count: number };
+            assert.equal(migrations.count, 3);
             return databasePath;
           }),
       );
@@ -219,6 +229,13 @@ describe("organization Marketing workspace store", () => {
       assert.isTrue(NodeFS.existsSync(resolvedPath));
       assert.isTrue(NodeFS.existsSync(NodePath.join(root, "control.sqlite")));
       assert.match(first.marketingActorId, /^mact_[0-9a-f-]{36}$/u);
+      const publicResolution = yield* store.resolve(
+        { requestAuthority: input.requestAuthority, selection: input.selection },
+        (workspace) => Effect.succeed(workspace),
+      );
+      assert.notProperty(publicResolution, "database");
+      assert.notProperty(publicResolution, "databasePath");
+      assert.deepEqual(Object.getOwnPropertySymbols(store), []);
     }),
   );
 
@@ -486,7 +503,7 @@ describe("organization Marketing workspace store", () => {
           const handleFinished = yield* Deferred.make<void>();
 
           const resolveFiber = yield* Effect.forkChild(
-            store.resolve(
+            databaseResolver(store)(
               { requestAuthority: owner.requestAuthority, selection: owner.selection },
               ({ database }) =>
                 Effect.gen(function* () {
@@ -572,7 +589,7 @@ describe("organization Marketing workspace store", () => {
           const deletionFinished = yield* Deferred.make<boolean>();
 
           const resolveFiber = yield* Effect.forkChild(
-            storeA.resolve(
+            databaseResolver(storeA)(
               { requestAuthority: owner.requestAuthority, selection: owner.selection },
               ({ database }) =>
                 Effect.gen(function* () {
@@ -667,7 +684,7 @@ describe("organization Marketing workspace store", () => {
           const handleFinished = yield* Deferred.make<void>();
 
           const resolveFiber = yield* Effect.forkChild(
-            store.resolve(
+            databaseResolver(store)(
               { requestAuthority: owner.requestAuthority, selection: owner.selection },
               ({ database }) =>
                 Effect.gen(function* () {
@@ -1035,7 +1052,7 @@ describe("organization Marketing workspace store", () => {
       }),
   );
 
-  it.effect("treats an empty organization database as v0 and repeats exact v2 safely", () =>
+  it.effect("treats an empty organization database as v0 and repeats exact v3 safely", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now.epochMilliseconds);
       const root = makeRoot();
@@ -1063,7 +1080,7 @@ describe("organization Marketing workspace store", () => {
         .get() as unknown as { readonly count: number };
       organization.close();
       assert.equal(controlMigrations.count, 1);
-      assert.equal(organizationMigrations.count, 2);
+      assert.equal(organizationMigrations.count, 3);
     }),
   );
 
@@ -1147,7 +1164,7 @@ describe("organization Marketing workspace store", () => {
       const binding = yield* store.backfill(input);
       assert.equal(binding.origin, "backfilled");
       assert.equal(
-        yield* store.resolve(
+        yield* databaseResolver(store)(
           { requestAuthority: input.requestAuthority, selection: input.selection },
           ({ databasePath: resolvedPath }) => Effect.succeed(resolvedPath),
         ),

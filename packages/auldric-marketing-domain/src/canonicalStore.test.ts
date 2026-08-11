@@ -155,6 +155,7 @@ function requestAuthority(
 
 const Payload = Schema.Struct({ value: Schema.String });
 const decodePayload = Schema.decodeUnknownEffect(Payload);
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const registeredSchemas = new Map<string, MarketingCanonicalObjectIdentity["kind"]>([
   ["source/basic@1", "source"],
   ["workflow/instance@1", "workflow-instance"],
@@ -313,6 +314,18 @@ function makeStores(
     },
   });
   return { workspaceStore, canonicalStore };
+}
+
+function restoreExactV2Schema(database: NodeSqlite.DatabaseSync): void {
+  database.exec(`
+    DROP TRIGGER auldric_canonical_projection_facts_reject_sealed_insert;
+    DROP TRIGGER auldric_canonical_references_reject_sealed_insert;
+    DROP TRIGGER auldric_canonical_revision_seals_immutable_delete;
+    DROP TRIGGER auldric_canonical_revision_seals_immutable_update;
+    DROP INDEX auldric_canonical_workspace_key_unique;
+    DROP TABLE auldric_canonical_revision_seals;
+    DELETE FROM auldric_organization_schema_migrations WHERE version = 3;
+  `);
 }
 
 function bootstrapInput(seed: number, authority: TestRequestAuthority) {
@@ -717,6 +730,227 @@ describe("canonical Marketing organization store", () => {
       }),
   );
 
+  it.effect("seals normalized revision children across migration and reopen", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now.epochMilliseconds);
+      const root = makeRoot();
+      const ownerAuthority = requestAuthority(70);
+      const owner = bootstrapInput(70, ownerAuthority);
+      const stores = makeStores(root);
+      yield* stores.workspaceStore.bootstrap(owner);
+      const sourceObject = {
+        kind: "source" as const,
+        id: MarketingSourceId.make(`msrc_${uuid(70)}`),
+      };
+      const decisionObject = {
+        kind: "decision" as const,
+        id: MarketingDecisionId.make(`mdec_${uuid(71)}`),
+      };
+      const reviewObject = {
+        kind: "review" as const,
+        id: MarketingReviewId.make(`mrev_${uuid(72)}`),
+      };
+      const artifactObject = {
+        kind: "artifact" as const,
+        id: MarketingArtifactId.make(`mart_${uuid(73)}`),
+      };
+      const source = yield* stores.canonicalStore.write({
+        ...baseWrite(ownerAuthority, owner.selection, 70),
+        object: sourceObject,
+        canonicalKey: MarketingCanonicalKey.make("sources/seal-proof"),
+        schema: ref("source/basic"),
+      });
+      const decision = yield* stores.canonicalStore.write({
+        ...baseWrite(ownerAuthority, owner.selection, 71),
+        object: decisionObject,
+        canonicalKey: MarketingCanonicalKey.make("decisions/seal-proof"),
+        schema: ref("decision/basic"),
+        sourceLineage: [
+          {
+            sourceId: sourceObject.id,
+            revision: { revisionId: source.revisionId, version: source.version },
+          },
+        ],
+      });
+      const review = yield* stores.canonicalStore.write({
+        ...baseWrite(ownerAuthority, owner.selection, 72),
+        object: reviewObject,
+        canonicalKey: MarketingCanonicalKey.make("reviews/seal-proof"),
+        schema: ref("review/basic"),
+        decisionReferences: [
+          {
+            decisionId: decisionObject.id,
+            revision: { revisionId: decision.revisionId, version: decision.version },
+          },
+        ],
+      });
+      const artifact = yield* stores.canonicalStore.write({
+        ...baseWrite(ownerAuthority, owner.selection, 73),
+        object: artifactObject,
+        canonicalKey: MarketingCanonicalKey.make("artifacts/seal-proof"),
+        schema: ref("artifact/basic"),
+        sourceLineage: [
+          {
+            sourceId: sourceObject.id,
+            revision: { revisionId: source.revisionId, version: source.version },
+          },
+        ],
+        reviewReferences: [
+          {
+            reviewId: reviewObject.id,
+            revision: { revisionId: review.revisionId, version: review.version },
+          },
+        ],
+        decisionReferences: [
+          {
+            decisionId: decisionObject.id,
+            revision: { revisionId: decision.revisionId, version: decision.version },
+          },
+        ],
+      });
+      const databasePath = organizationWorkspaceDatabasePath(root, owner.selection.organizationId);
+
+      const v2 = new NodeSqlite.DatabaseSync(databasePath);
+      restoreExactV2Schema(v2);
+      v2.close();
+      assert.deepEqual(
+        yield* makeStores(root).canonicalStore.read({
+          requestAuthority: ownerAuthority,
+          selection: owner.selection,
+          object: artifact.object,
+        }),
+        artifact,
+      );
+
+      const sealed = new NodeSqlite.DatabaseSync(databasePath);
+      const migrations = sealed
+        .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+        .all() as unknown as ReadonlyArray<{ readonly version: number }>;
+      const sealCount = sealed
+        .prepare("SELECT COUNT(*) AS count FROM auldric_canonical_revision_seals")
+        .get() as unknown as { readonly count: number };
+      assert.deepEqual(migrations, [{ version: 1 }, { version: 2 }, { version: 3 }]);
+      assert.equal(sealCount.count, 4);
+
+      const unapprovedJson = encodeJsonText({ value: "not registry approved" });
+      const unapprovedSha256 = NodeCrypto.createHash("sha256").update(unapprovedJson).digest("hex");
+      assert.throws(() =>
+        sealed
+          .prepare(
+            `INSERT INTO auldric_canonical_projection_facts(
+               revision_id, fact_key, value_json, value_sha256
+             ) VALUES (?, ?, ?, ?)`,
+          )
+          .run(artifact.revisionId, "unapproved/fact", unapprovedJson, unapprovedSha256),
+      );
+      assert.throws(() =>
+        sealed
+          .prepare(
+            `UPDATE auldric_canonical_projection_facts
+             SET value_json = ? WHERE revision_id = ? AND fact_key = ?`,
+          )
+          .run(unapprovedJson, artifact.revisionId, "source/coverage"),
+      );
+      assert.throws(() =>
+        sealed
+          .prepare(
+            `DELETE FROM auldric_canonical_projection_facts
+             WHERE revision_id = ? AND fact_key = ?`,
+          )
+          .run(artifact.revisionId, "source/coverage"),
+      );
+      assert.throws(() =>
+        sealed
+          .prepare(
+            `INSERT INTO auldric_canonical_revision_references(
+               revision_id, reference_kind, ordinal,
+               target_object_id, target_revision_id, target_version
+             ) VALUES (?, 'source', 99, ?, ?, ?)`,
+          )
+          .run(artifact.revisionId, source.object.id, source.revisionId, source.version),
+      );
+      assert.throws(() =>
+        sealed
+          .prepare(
+            `UPDATE auldric_canonical_revision_references
+             SET ordinal = 99 WHERE revision_id = ? AND reference_kind = 'source'`,
+          )
+          .run(artifact.revisionId),
+      );
+      assert.throws(() =>
+        sealed
+          .prepare(
+            `DELETE FROM auldric_canonical_revision_references
+             WHERE revision_id = ? AND reference_kind = 'source'`,
+          )
+          .run(artifact.revisionId),
+      );
+      assert.throws(() =>
+        sealed
+          .prepare(
+            "UPDATE auldric_canonical_revision_seals SET sealed_at = ? WHERE revision_id = ?",
+          )
+          .run("changed", artifact.revisionId),
+      );
+      assert.throws(() =>
+        sealed
+          .prepare("DELETE FROM auldric_canonical_revision_seals WHERE revision_id = ?")
+          .run(artifact.revisionId),
+      );
+      sealed.close();
+
+      assert.deepEqual(
+        yield* makeStores(root).canonicalStore.read({
+          requestAuthority: ownerAuthority,
+          selection: owner.selection,
+          object: artifact.object,
+        }),
+        artifact,
+      );
+
+      const bypass = new NodeSqlite.DatabaseSync(databasePath);
+      bypass.exec("DROP TRIGGER auldric_canonical_projection_facts_reject_sealed_insert;");
+      bypass
+        .prepare(
+          `INSERT INTO auldric_canonical_projection_facts(
+             revision_id, fact_key, value_json, value_sha256
+           ) VALUES (?, ?, ?, ?)`,
+        )
+        .run(artifact.revisionId, "unapproved/fact", unapprovedJson, unapprovedSha256);
+      bypass.exec(`
+        CREATE TRIGGER auldric_canonical_projection_facts_reject_sealed_insert
+        BEFORE INSERT ON auldric_canonical_projection_facts
+        WHEN EXISTS (
+          SELECT 1 FROM auldric_canonical_revision_seals
+          WHERE revision_id = NEW.revision_id
+        )
+        BEGIN
+          SELECT RAISE(ABORT, 'sealed canonical revision facts cannot be appended');
+        END;
+      `);
+      bypass.close();
+
+      const appendedRead = yield* makeStores(root)
+        .canonicalStore.read({
+          requestAuthority: ownerAuthority,
+          selection: owner.selection,
+          object: artifact.object,
+        })
+        .pipe(Effect.flip);
+      assert.equal(appendedRead._tag, "MarketingCanonicalValidationError");
+      if (appendedRead._tag === "MarketingCanonicalValidationError") {
+        assert.equal(appendedRead.reason, "invalid_stored_payload");
+      }
+      const appendedQuery = yield* makeStores(root)
+        .canonicalStore.queryFacts({
+          requestAuthority: ownerAuthority,
+          selection: owner.selection,
+        })
+        .pipe(Effect.flip);
+      assert.equal(appendedQuery._tag, "MarketingCanonicalValidationError");
+    }),
+  );
+
   it.effect("returns exact stale, duplicate-claim, identity, and idempotency conflicts", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now.epochMilliseconds);
@@ -767,6 +1001,54 @@ describe("canonical Marketing organization store", () => {
       if (duplicateClaim._tag === "MarketingCanonicalConflictError") {
         assert.equal(duplicateClaim.reason, "duplicate_canonical_claim");
       }
+
+      const crossKindClaim = yield* stores.canonicalStore
+        .write({
+          ...baseWrite(ownerAuthority, owner.selection, 12),
+          object: { kind: "review", id: MarketingReviewId.make(`mrev_${uuid(12)}`) },
+          canonicalKey: original.canonicalKey,
+          schema: ref("review/basic"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(crossKindClaim._tag, "MarketingCanonicalConflictError");
+      if (crossKindClaim._tag === "MarketingCanonicalConflictError") {
+        assert.equal(crossKindClaim.reason, "duplicate_canonical_claim");
+      }
+
+      const claimsDatabase = new NodeSqlite.DatabaseSync(
+        organizationWorkspaceDatabasePath(root, owner.selection.organizationId),
+      );
+      assert.throws(() =>
+        claimsDatabase
+          .prepare(
+            `INSERT INTO auldric_canonical_objects(
+               object_id, object_kind, organization_id, project_id, workspace_id,
+               canonical_key, current_version, head_revision_id, created_at, updated_at
+             ) VALUES (?, 'review', ?, ?, ?, ?, 1, ?, ?, ?)`,
+          )
+          .run(
+            MarketingReviewId.make(`mrev_${uuid(13)}`),
+            owner.selection.organizationId,
+            owner.selection.projectId,
+            owner.selection.workspaceId,
+            original.canonicalKey,
+            MarketingCanonicalRevisionId.make(`mcrv_${uuid(13)}`),
+            DateTime.formatIso(now),
+            DateTime.formatIso(now),
+          ),
+      );
+      const uniqueIndexes = claimsDatabase
+        .prepare("PRAGMA index_list(auldric_canonical_objects)")
+        .all() as unknown as ReadonlyArray<{
+        readonly name: string;
+        readonly unique: 0 | 1;
+      }>;
+      claimsDatabase.close();
+      assert.isTrue(
+        uniqueIndexes.some(
+          (index) => index.name === "auldric_canonical_workspace_key_unique" && index.unique === 1,
+        ),
+      );
 
       const identityConflict = yield* stores.canonicalStore
         .write({
@@ -1202,7 +1484,7 @@ describe("canonical Marketing organization store", () => {
     }),
   );
 
-  it.effect("rejects an interrupted v1-to-v2 migration without partial activation", () =>
+  it.effect("rejects an interrupted v1-to-v3 migration without partial activation", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now.epochMilliseconds);
       const root = makeRoot();
@@ -1212,6 +1494,7 @@ describe("canonical Marketing organization store", () => {
       yield* first.workspaceStore.bootstrap(owner);
       const databasePath = organizationWorkspaceDatabasePath(root, owner.selection.organizationId);
       const database = new NodeSqlite.DatabaseSync(databasePath);
+      restoreExactV2Schema(database);
       database.exec(`
         PRAGMA foreign_keys = OFF;
         DROP TABLE auldric_canonical_idempotency;
@@ -1248,7 +1531,113 @@ describe("canonical Marketing organization store", () => {
     }),
   );
 
-  it.effect("rejects a v2 schema whose immutability trigger was replaced by name", () =>
+  it.effect("rolls back v2 migration when cross-kind canonical claims already collide", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now.epochMilliseconds);
+      const root = makeRoot();
+      const ownerAuthority = requestAuthority(52);
+      const owner = bootstrapInput(52, ownerAuthority);
+      const stores = makeStores(root);
+      const binding = yield* stores.workspaceStore.bootstrap(owner);
+      const databasePath = organizationWorkspaceDatabasePath(root, owner.selection.organizationId);
+      const database = new NodeSqlite.DatabaseSync(databasePath);
+      restoreExactV2Schema(database);
+      database.exec("BEGIN IMMEDIATE; PRAGMA defer_foreign_keys = ON;");
+      const sourceId = MarketingSourceId.make(`msrc_${uuid(52)}`);
+      const reviewId = MarketingReviewId.make(`mrev_${uuid(53)}`);
+      const sourceRevisionId = MarketingCanonicalRevisionId.make(`mcrv_${uuid(52)}`);
+      const reviewRevisionId = MarketingCanonicalRevisionId.make(`mcrv_${uuid(53)}`);
+      const timestamp = DateTime.formatIso(now);
+      const payloadJson = encodeJsonText({ value: "v2 collision" });
+      const payloadSha256 = NodeCrypto.createHash("sha256").update(payloadJson).digest("hex");
+      const insertObject = database.prepare(
+        `INSERT INTO auldric_canonical_objects(
+           object_id, object_kind, organization_id, project_id, workspace_id,
+           canonical_key, current_version, head_revision_id, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      );
+      insertObject.run(
+        sourceId,
+        "source",
+        owner.selection.organizationId,
+        owner.selection.projectId,
+        owner.selection.workspaceId,
+        "shared/v2-cross-kind",
+        sourceRevisionId,
+        timestamp,
+        timestamp,
+      );
+      insertObject.run(
+        reviewId,
+        "review",
+        owner.selection.organizationId,
+        owner.selection.projectId,
+        owner.selection.workspaceId,
+        "shared/v2-cross-kind",
+        reviewRevisionId,
+        timestamp,
+        timestamp,
+      );
+      const insertRevision = database.prepare(
+        `INSERT INTO auldric_canonical_revisions(
+           revision_id, object_id, object_kind, version,
+           schema_key, schema_version, payload_json, payload_sha256,
+           actor_id, idempotency_key, created_at
+         ) VALUES (?, ?, ?, 1, ?, 1, ?, ?, ?, ?, ?)`,
+      );
+      insertRevision.run(
+        sourceRevisionId,
+        sourceId,
+        "source",
+        "source/basic",
+        payloadJson,
+        payloadSha256,
+        binding.marketingActorId,
+        "v2-source-collision",
+        timestamp,
+      );
+      insertRevision.run(
+        reviewRevisionId,
+        reviewId,
+        "review",
+        "review/basic",
+        payloadJson,
+        payloadSha256,
+        binding.marketingActorId,
+        "v2-review-collision",
+        timestamp,
+      );
+      database.exec("COMMIT;");
+      database.close();
+
+      const failure = yield* makeStores(root)
+        .canonicalStore.listInventory({
+          requestAuthority: ownerAuthority,
+          selection: owner.selection,
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "MarketingWorkspaceStoreError");
+
+      const inspection = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+      const versions = inspection
+        .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+        .all() as unknown as ReadonlyArray<{ readonly version: number }>;
+      const v3Objects = inspection
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sqlite_master
+           WHERE name IN (
+             'auldric_canonical_revision_seals',
+             'auldric_canonical_workspace_key_unique'
+           )`,
+        )
+        .get() as unknown as { readonly count: number };
+      inspection.close();
+      assert.deepEqual(versions, [{ version: 1 }, { version: 2 }]);
+      assert.equal(v3Objects.count, 0);
+    }),
+  );
+
+  it.effect("rejects v3 seal or workspace-claim definitions replaced by name", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now.epochMilliseconds);
       const root = makeRoot();
@@ -1260,9 +1649,9 @@ describe("canonical Marketing organization store", () => {
         organizationWorkspaceDatabasePath(root, owner.selection.organizationId),
       );
       database.exec(`
-        DROP TRIGGER auldric_canonical_revisions_immutable_update;
-        CREATE TRIGGER auldric_canonical_revisions_immutable_update
-        BEFORE UPDATE ON auldric_canonical_revisions
+        DROP TRIGGER auldric_canonical_projection_facts_reject_sealed_insert;
+        CREATE TRIGGER auldric_canonical_projection_facts_reject_sealed_insert
+        BEFORE INSERT ON auldric_canonical_projection_facts
         BEGIN
           SELECT 1;
         END;
@@ -1278,6 +1667,31 @@ describe("canonical Marketing organization store", () => {
       assert.equal(failure._tag, "MarketingWorkspaceUnavailableError");
       if (failure._tag === "MarketingWorkspaceUnavailableError") {
         assert.equal(failure.reason, "workspace_database_schema_stale");
+      }
+
+      const indexRoot = makeRoot();
+      const indexAuthority = requestAuthority(54);
+      const indexOwner = bootstrapInput(54, indexAuthority);
+      const indexStores = makeStores(indexRoot);
+      yield* indexStores.workspaceStore.bootstrap(indexOwner);
+      const indexDatabase = new NodeSqlite.DatabaseSync(
+        organizationWorkspaceDatabasePath(indexRoot, indexOwner.selection.organizationId),
+      );
+      indexDatabase.exec(`
+        DROP INDEX auldric_canonical_workspace_key_unique;
+        CREATE UNIQUE INDEX auldric_canonical_workspace_key_unique
+          ON auldric_canonical_objects(workspace_id, object_kind, canonical_key);
+      `);
+      indexDatabase.close();
+      const indexFailure = yield* makeStores(indexRoot)
+        .canonicalStore.listInventory({
+          requestAuthority: indexAuthority,
+          selection: indexOwner.selection,
+        })
+        .pipe(Effect.flip);
+      assert.equal(indexFailure._tag, "MarketingWorkspaceUnavailableError");
+      if (indexFailure._tag === "MarketingWorkspaceUnavailableError") {
+        assert.equal(indexFailure.reason, "workspace_database_schema_stale");
       }
     }),
   );

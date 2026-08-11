@@ -12,6 +12,12 @@ organizations, and insufficient roles, then return the canonical issuer and subj
 contracts DTO, pairing subject, session ID, thread ID, device ID, or caller-supplied Marketing actor
 ID as this authority.
 
+The public workspace `resolve` callback returns identity and routing metadata only. Its live SQLite
+handle is carried in a module-private capability registry that is absent from the store object and
+package exports, and consumed only by `makeMarketingCanonicalStore`. Production consumers mutate
+canonical tables only through that canonical API; they must never reopen the organization database
+and issue SQL themselves.
+
 The store asks for one explicit permission per lifecycle operation:
 
 - `bootstrap-new-organization`
@@ -38,12 +44,19 @@ Marketing actor and typed schema/definition references, normalizes source/review
 edges, and returns a database read-back. Registered outputs use their own identity and a registry-
 accepted renderer reference; they cannot target or overwrite an artifact head. The schema and
 renderer registry is injected so issue #8 does not invent issue #19's definition catalog.
+Canonical keys are unique across every object kind in a workspace.
 
 The injected registry also derives a narrow set of typed projection facts from each validated
 payload. Those facts are stored with, and made immutable by, the exact revision that produced them.
 Authorized queries read only facts on current canonical heads from the resolved organization
 database; revision history retains older facts. Callers cannot submit arbitrary fact keys or use
 facts to mutate canonical heads. Issue #19 owns the concrete fact keys and rollup semantics.
+Each committed revision has an immutable child seal. SQLite rejects reference or fact inserts after
+that seal and rejects every update or deletion; reads independently verify the sealed child digest.
+The digest is a consistency seal, not a MAC or authorization credential. Arbitrary code running in
+the trusted server process—or an operator with direct filesystem write access—can rewrite SQLite
+and is outside this boundary. Remote callers, plugins, and ordinary domain consumers never receive
+that authority.
 
 Bootstrap is public only for a genuinely new organization. It generates or resolves the Marketing
 actor ID inside the transaction and atomically rejects an existing organization before inserting
@@ -51,9 +64,9 @@ an actor or membership. Joining an existing organization is a separate operation
 server to authorize an invitation or equivalent role capability.
 
 Each organization database has a hashed physical path and self-identifying schema. Migration is
-strict: an empty database is v0, v0 advances through v1 to v2, exact v1 upgrades transactionally,
-exact v2 is repeatable, and forward, partial, or unidentified schemas fail closed. Resolution holds
-a scoped lease around the open
+strict: an empty database is v0, v0 advances through v1, v2, and v3; exact v1 and v2 upgrade
+transactionally; exact v3 is repeatable; and forward, partial, or unidentified schemas fail closed.
+Resolution holds a scoped lease around the open
 SQLite handle. All store factories for the same resolved state root share one process-local
 coordinator, so initialization, leases, and deletion locks cannot diverge when the composition root
 creates multiple adapters. Deletion first records `deleting`, blocks new leases, drains existing
