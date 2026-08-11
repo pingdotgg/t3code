@@ -16,7 +16,7 @@ struct DebugBuildMetadataTests {
         ])
 
         #expect(metadata.identityLabel == "456 · abc123-dirty")
-        #expect(metadata.distanceLabel == "2↑ 3↓ rebuild-mobile-app-swift")
+        #expect(metadata.distanceLabel == "2↑ 3↓ t3code/rebuild-mobile-app-swift")
         #expect(
             metadata.accessibilityLabel
                 == "Development build 456 · abc123-dirty, compared with upstream/t3code/rebuild-mobile-app-swift: 2 commits ahead and 3 commits behind"
@@ -71,5 +71,24 @@ struct DebugBuildMetadataTests {
             metadata.commitURL?.absoluteString
                 == "https://github.com/pingdotgg/t3code/commit/abc123"
         )
+    }
+
+    @Test
+    func ignoresUnexpandedGitSettingsAndPreservesNestedBaseNames() {
+        let placeholders = DebugBuildMetadata(info: [
+            "T3GitCommit": "$(T3_GIT_COMMIT)",
+            "T3GitRepoURL": "$(T3_GIT_REPO_URL)",
+            "T3GitBaseRef": "$(T3_GIT_BASE_REF)",
+        ])
+        let nestedBase = DebugBuildMetadata(info: [
+            "T3GitBaseRef": "upstream/feature/swift-ui",
+            "T3GitAheadCount": "0",
+            "T3GitBehindCount": "0",
+        ])
+
+        #expect(placeholders.identityLabel == "? · unknown")
+        #expect(placeholders.commitURL == nil)
+        #expect(placeholders.distanceLabel == nil)
+        #expect(nestedBase.distanceLabel == "0↑ 0↓ feature/swift-ui")
     }
 }

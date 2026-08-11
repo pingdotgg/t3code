@@ -26,7 +26,8 @@ struct DebugBuildMetadata: Equatable {
 
     var distanceLabel: String? {
         guard let baseRef, let ahead, let behind else { return nil }
-        let displayBaseRef = baseRef.split(separator: "/").last.map(String.init) ?? baseRef
+        let displayBaseRef = baseRef.split(separator: "/", maxSplits: 1).last.map(String.init)
+            ?? baseRef
         return "\(ahead)↑ \(behind)↓ \(displayBaseRef)"
     }
 

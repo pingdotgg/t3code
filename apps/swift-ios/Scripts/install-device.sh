@@ -77,17 +77,17 @@ build_settings=(
 )
 
 if [[ "${CONFIGURATION}" == "Debug" ]]; then
-  require_cmd git
-
   GIT_COMMIT="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   if [[ "${GIT_COMMIT}" != "unknown" ]] && \
      [[ -n "$(git -C "${APP_DIR}" status --porcelain -- . 2>/dev/null)" ]]; then
     GIT_COMMIT="${GIT_COMMIT}-dirty"
   fi
 
-  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url upstream 2>/dev/null || true)"
+  GIT_REPO_REMOTE="upstream"
+  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" 2>/dev/null || true)"
   if [[ -z "${GIT_REPO_URL}" ]]; then
-    GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url origin 2>/dev/null || true)"
+    GIT_REPO_REMOTE="origin"
+    GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" 2>/dev/null || true)"
   fi
   GIT_REPO_URL="${GIT_REPO_URL%.git}"
   case "${GIT_REPO_URL}" in
@@ -98,9 +98,18 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
   if [[ "${GIT_REPO_URL}" != https://github.com/* ]]; then
     GIT_REPO_URL=""
   fi
+  if [[ "${GIT_COMMIT}" == *-dirty ]] || ! git -C "${APP_DIR}" branch -r --contains HEAD \
+      --format='%(refname:short)' 2>/dev/null | grep -Eq "^${GIT_REPO_REMOTE}/"; then
+    GIT_REPO_URL=""
+  fi
 
   # Prefer an explicit comparison line, then the public repository's default.
+  git -C "${APP_DIR}" fetch --quiet upstream 2>/dev/null || true
   GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
+  if [[ -n "${GIT_BASE_REF}" ]] && \
+     ! git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    die "T3_SWIFT_BASE_REF does not resolve to a commit: ${GIT_BASE_REF}"
+  fi
   if [[ -z "${GIT_BASE_REF}" ]]; then
     GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/upstream/HEAD 2>/dev/null || true)"
   fi
@@ -115,6 +124,7 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
   GIT_AHEAD_COUNT=""
   GIT_BEHIND_COUNT=""
   if [[ -n "${GIT_BASE_REF}" ]] && git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    # --left-right emits the base-only (behind) count before the HEAD-only (ahead) count.
     read -r GIT_BEHIND_COUNT GIT_AHEAD_COUNT < <(
       git -C "${APP_DIR}" rev-list --left-right --count "${GIT_BASE_REF}...HEAD"
     ) || true

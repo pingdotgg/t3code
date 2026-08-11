@@ -298,9 +298,6 @@ public struct WorkspaceView: View {
 
 #if DEBUG
             devBuildBadge
-                .frame(maxWidth: 120, alignment: .trailing)
-                .layoutPriority(-1)
-                .padding(.trailing, 4)
 #endif
 
             Button {
@@ -351,13 +348,20 @@ public struct WorkspaceView: View {
             EmptyView()
         } else if let url = Self.devBuildMetadata.commitURL {
             Link(destination: url) { devBuildBadgeLabel.underline() }
+                .buttonStyle(.plain)
                 .foregroundStyle(T3Colors.textSecondary)
                 .accessibilityLabel("\(Self.devBuildMetadata.accessibilityLabel). Opens the commit on GitHub.")
+                .accessibilityIdentifier("sidebar-development-build-badge")
+                .frame(maxWidth: 120, minHeight: T3Metrics.minimumTapTarget, alignment: .trailing)
+                .padding(.trailing, 4)
         } else {
             devBuildBadgeLabel
                 .foregroundStyle(T3Colors.textSecondary)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(Self.devBuildMetadata.accessibilityLabel)
+                .accessibilityIdentifier("sidebar-development-build-badge")
+                .frame(maxWidth: 120, minHeight: T3Metrics.minimumTapTarget, alignment: .trailing)
+                .padding(.trailing, 4)
         }
     }
 
