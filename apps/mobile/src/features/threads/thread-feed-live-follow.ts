@@ -33,3 +33,10 @@ export function resolveThreadFeedLiveFollow(
       return current;
   }
 }
+
+export function shouldShowThreadFeedScrollToEnd(input: {
+  readonly endFollowEnabled: boolean;
+  readonly isAtEnd: boolean;
+}): boolean {
+  return !input.endFollowEnabled && !input.isAtEnd;
+}

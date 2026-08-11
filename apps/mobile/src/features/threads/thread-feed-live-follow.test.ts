@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadFeedLiveFollow } from "./thread-feed-live-follow";
+import {
+  resolveThreadFeedLiveFollow,
+  shouldShowThreadFeedScrollToEnd,
+} from "./thread-feed-live-follow";
 
 describe("resolveThreadFeedLiveFollow", () => {
   it("pauses immediately when the user starts scrolling", () => {
@@ -66,5 +69,34 @@ describe("resolveThreadFeedLiveFollow", () => {
 
   it("re-arms after an explicit reset", () => {
     expect(resolveThreadFeedLiveFollow(false, { type: "reset" })).toBe(true);
+  });
+});
+
+describe("shouldShowThreadFeedScrollToEnd", () => {
+  it("stays hidden when a drag starts at the actual end", () => {
+    expect(
+      shouldShowThreadFeedScrollToEnd({
+        endFollowEnabled: false,
+        isAtEnd: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("appears only after the feed moves away from the actual end", () => {
+    expect(
+      shouldShowThreadFeedScrollToEnd({
+        endFollowEnabled: false,
+        isAtEnd: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("stays hidden while live follow is enabled", () => {
+    expect(
+      shouldShowThreadFeedScrollToEnd({
+        endFollowEnabled: true,
+        isAtEnd: false,
+      }),
+    ).toBe(false);
   });
 });
