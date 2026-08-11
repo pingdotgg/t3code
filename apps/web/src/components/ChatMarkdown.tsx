@@ -2735,7 +2735,12 @@ function ChatMarkdown({
         );
         if (!isStreaming && language.toLowerCase() === "mermaid") {
           return (
-            <MermaidDiagram code={codeBlock.code} theme={resolvedTheme} fallback={codeFallback} />
+            <MermaidDiagram
+              code={codeBlock.code}
+              theme={resolvedTheme}
+              fenceTitle={fenceTitle}
+              fallback={codeFallback}
+            />
           );
         }
         return codeFallback;
