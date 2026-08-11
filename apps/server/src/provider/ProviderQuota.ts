@@ -15,11 +15,18 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import type { ProviderInstance } from "./ProviderDriver.ts";
 
-const DEFAULT_UNAVAILABLE_MESSAGE = "Quota information is unavailable for this provider.";
+export const ProviderQuotaPublicMessage = {
+  unavailable: "Quota information is unavailable for this provider.",
+  authRequired: "Sign in to the provider to view quota information.",
+  refreshFailed: "Quota information could not be refreshed.",
+} as const;
+export type ProviderQuotaPublicMessage =
+  (typeof ProviderQuotaPublicMessage)[keyof typeof ProviderQuotaPublicMessage];
 
 type ProviderQuotaInstance = Pick<ProviderInstance, "instanceId" | "driverKind">;
 
@@ -45,14 +52,18 @@ export interface ProviderQuotaCapability {
 const publicMessageForReason = (reason: ProviderQuotaAdapterError["reason"]): string => {
   switch (reason) {
     case "authRequired":
-      return "Sign in to the provider to view quota information.";
+      return ProviderQuotaPublicMessage.authRequired;
     case "unsupported":
-      return DEFAULT_UNAVAILABLE_MESSAGE;
+      return ProviderQuotaPublicMessage.unavailable;
     case "timeout":
     case "providerFailed":
-      return "Quota information could not be refreshed.";
+      return ProviderQuotaPublicMessage.refreshFailed;
   }
 };
+
+const isProviderQuotaPublicMessage = (message: unknown): message is ProviderQuotaPublicMessage =>
+  Predicate.isString(message) &&
+  Object.values(ProviderQuotaPublicMessage).includes(message as ProviderQuotaPublicMessage);
 
 /** Convert provider-reported usage into remaining capacity without rounding it. */
 export const remainingPercentFromUsed = (usedPercent: number): number =>
@@ -82,6 +93,7 @@ export const resolveHeadlineMetricKey = (
 export const unknownProviderQuotaSnapshot = (
   instance: ProviderQuotaInstance,
   readAt: string,
+  message?: ProviderQuotaPublicMessage,
 ): ProviderQuotaSnapshot => ({
   instanceId: instance.instanceId,
   driver: instance.driverKind,
@@ -94,7 +106,7 @@ export const unknownProviderQuotaSnapshot = (
   credits: null,
   bankedResets: null,
   detail: {},
-  message: DEFAULT_UNAVAILABLE_MESSAGE,
+  message: isProviderQuotaPublicMessage(message) ? message : ProviderQuotaPublicMessage.unavailable,
 });
 
 const hasSuccessfulQuotaData = (

@@ -65,29 +65,27 @@ describe("resolveHeadlineMetricKey", () => {
 });
 
 describe("unknownProviderQuotaSnapshot", () => {
-  it("uses fixed unsupported copy instead of caller-provided detail", () => {
-    // @ts-expect-error callers cannot supply arbitrary public copy
+  it("allows a fixed public-message override", () => {
+    expect(
+      unknownProviderQuotaSnapshot(
+        instance,
+        "2026-08-11T09:00:00.000Z",
+        "Quota information could not be refreshed.",
+      ).message,
+    ).toBe("Quota information could not be refreshed.");
+  });
+
+  it("falls back when an untrusted override crosses the type boundary", () => {
     const snapshot = unknownProviderQuotaSnapshot(
       instance,
       "2026-08-11T09:00:00.000Z",
-      "API_TOKEN=sk-live-secret C:\\Users\\lucas\\.codex\\config.json",
+      "API_TOKEN=sk-live-secret C:\\Users\\lucas\\.codex\\config.json HOME=/private/home" as never,
     );
 
-    expect(snapshot).toEqual({
-      instanceId: ProviderInstanceId.make("codexPersonal"),
-      driver: ProviderDriverKind.make("codex"),
-      status: "unknown",
-      source: "unsupported",
-      readAt: "2026-08-11T09:00:00.000Z",
-      lastSuccessfulReadAt: null,
-      headlineMetricKey: null,
-      metrics: [],
-      credits: null,
-      bankedResets: null,
-      detail: {},
-      message: "Quota information is unavailable for this provider.",
-    });
+    expect(snapshot.message).toBe("Quota information is unavailable for this provider.");
     expect(JSON.stringify(snapshot)).not.toContain("sk-live-secret");
+    expect(JSON.stringify(snapshot)).not.toContain("C:\\Users\\lucas");
+    expect(JSON.stringify(snapshot)).not.toContain("/private/home");
   });
 });
 
