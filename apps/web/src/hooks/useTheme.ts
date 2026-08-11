@@ -5,6 +5,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
+  DEFAULT_THEME_PREFERENCE,
   invalidateCustomThemes,
   canonicalThemePreference,
   isKnownThemePreference,
@@ -36,10 +37,10 @@ type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
-  theme: "system",
+  theme: DEFAULT_THEME_PREFERENCE,
   systemDark: false,
-  followSystem: true,
-  appearanceMode: "system",
+  followSystem: false,
+  appearanceMode: "dark",
   themeHalves: null,
 };
 

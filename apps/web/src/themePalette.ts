@@ -2,6 +2,9 @@ import * as Schema from "effect/Schema";
 
 export const T3_CHAT_THEME_ID = "t3-chat" as const;
 export const T3_CHAT_THEME_LABEL = "T3 Chat";
+export const VERCEL_DARK_THEME_ID = "vercel-dark" as const;
+export const VERCEL_DARK_THEME_LABEL = "Vercel Dark";
+export const DEFAULT_THEME_PREFERENCE = VERCEL_DARK_THEME_ID;
 export const GROVE_THEME_ID = "grove" as const;
 export const GROVE_THEME_LABEL = "Grove";
 export const OCEAN_THEME_ID = "ocean" as const;
@@ -118,6 +121,7 @@ const RESERVED_THEME_IDS = new Set([
   "light",
   "dark",
   T3_CHAT_THEME_ID,
+  VERCEL_DARK_THEME_ID,
   GROVE_THEME_ID,
   OCEAN_THEME_ID,
   EMBER_THEME_ID,
@@ -465,6 +469,71 @@ const T3_CHAT_DARK_COLORS: ThemeColors = {
   terminalSelection: "#362d3d",
   terminalScrollbar: "#302029",
   terminalScrollbarHover: "#423a45",
+};
+
+/**
+ * Vercel's dark palette, mapped directly from the equivalent OpenCode roles.
+ * Every value is one of the source palette's fixed colors so the theme does
+ * not drift through generated tints or opacity blends.
+ */
+const VERCEL_DARK_COLORS: ThemeColors = {
+  canvas: "#000000",
+  chrome: "#000000",
+  toolbar: "#000000",
+  toolbarForeground: "#ededed",
+  toolbarBorder: "#1f1f1f",
+  toolbarControl: "#101010",
+  toolbarControlForeground: "#ededed",
+  toolbarControlHover: "#1f1f1f",
+  surface: "#101010",
+  surfaceRaised: "#1f1f1f",
+  surfaceOverlay: "#1f1f1f",
+  text: "#ededed",
+  textMuted: "#a1a1a1",
+  border: "#1f1f1f",
+  input: "#1f1f1f",
+  focus: "#676767",
+  accent: "#62c073",
+  accentForeground: "#000000",
+  secondary: "#1f1f1f",
+  secondaryForeground: "#c472fb",
+  muted: "#1f1f1f",
+  mutedForeground: "#a1a1a1",
+  placeholder: "#a1a1a1",
+  secondaryLabel: "#a1a1a1",
+  iconMuted: "#a1a1a1",
+  error: "#f75f8f",
+  errorForeground: "#f75f8f",
+  errorSurface: "#1e0b11",
+  warning: "#ff9907",
+  warningForeground: "#ff9907",
+  warningSurface: "#101010",
+  update: "#52a8ff",
+  updateForeground: "#52a8ff",
+  updateSurface: "#101010",
+  accentSurface: "#1f1f1f",
+  accentSurfaceForeground: "#62c073",
+  messageSurface: "#101010",
+  messageForeground: "#ededed",
+  messageAction: "#52a8ff",
+  messageActionForeground: "#000000",
+  messageActionHover: "#52a8ff",
+  codeBackground: "#101010",
+  codeForeground: "#ededed",
+  sidebar: "#000000",
+  sidebarForeground: "#ededed",
+  sidebarMutedForeground: "#a1a1a1",
+  sidebarControlSurface: "#101010",
+  sidebarRowHover: "#101010",
+  sidebarRowActive: "#1f1f1f",
+  sidebarRowSelected: "#1f1f1f",
+  sidebarBorder: "#1f1f1f",
+  terminalBackground: "#000000",
+  terminalForeground: "#ededed",
+  terminalCursor: "#52a8ff",
+  terminalSelection: "#1f1f1f",
+  terminalScrollbar: "#676767",
+  terminalScrollbarHover: "#a1a1a1",
 };
 
 /**
@@ -1301,6 +1370,13 @@ export const T3_CHAT_THEME: ThemeDefinition = {
   },
 };
 
+export const VERCEL_DARK_THEME: ThemeDefinition = {
+  id: VERCEL_DARK_THEME_ID,
+  label: VERCEL_DARK_THEME_LABEL,
+  appearance: "dark",
+  colors: VERCEL_DARK_COLORS,
+};
+
 /** Theme-file defaults follow the flagship palette for the requested mode. */
 export function getDefaultThemeColors(appearance: ThemeAppearance): ThemeColors {
   return appearance === "dark" ? T3_CHAT_DARK_COLORS : T3_CHAT_LIGHT_COLORS;
@@ -1392,6 +1468,7 @@ export const IRIS_THEME: ThemeDefinition = {
 };
 
 const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = [
+  VERCEL_DARK_THEME,
   T3_CHAT_THEME,
   GROVE_THEME,
   OCEAN_THEME,
