@@ -464,7 +464,7 @@ function normalizeShellCommand(
   if (trimmed.length === 0) return null;
 
   if (platform === "win32") {
-    return trimmed;
+    return trimmed.replace(/^(["'])(.*)\1$/u, "$2");
   }
 
   const firstToken = trimmed.split(/\s+/g)[0]?.trim();

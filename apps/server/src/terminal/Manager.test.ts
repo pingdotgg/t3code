@@ -1533,6 +1533,35 @@ it.layer(
     }),
   );
 
+  it.effect("resolves a quoted configured Windows shell path", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code quoted terminal shell ",
+      });
+      const shellPath = path.join(binDir, "bash.EXE");
+      yield* fileSystem.writeFileString(shellPath, "MZ");
+
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => `"${shellPath}"`,
+        env: {
+          PATH: "",
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(
+        expect.objectContaining({
+          shell: shellPath,
+        }),
+      );
+    }),
+  );
+
   it.effect("resolves a configured Windows shell against the terminal runtime PATH", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
