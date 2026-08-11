@@ -11,7 +11,7 @@ import {
   ProviderQuotaResetConfirmationContent,
 } from "./ProviderQuotaDetails";
 import { AlertDialog } from "../ui/alert-dialog";
-import type { ProviderUsageStripItem } from "./ProviderUsageStrip.logic";
+import type { ProviderUsageStripItem } from "../sidebar/ProviderUsageStrip.logic";
 
 const reset = {
   id: "reset-august",
@@ -74,6 +74,8 @@ describe("ProviderQuotaDetails", () => {
     expect(markup).toContain("Weekly limit");
     expect(markup).toContain("64.2% remaining");
     expect(markup).toContain("35.8% used");
+    expect(markup).toContain('role="progressbar"');
+    expect(markup).toContain('aria-valuenow="64.2"');
     expect(markup).toContain("7 days");
     expect(markup).toContain("$12.50");
     expect(markup).toContain("1 available");

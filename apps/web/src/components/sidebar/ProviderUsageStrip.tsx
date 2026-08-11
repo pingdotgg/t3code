@@ -10,7 +10,7 @@ import { DRIVER_OPTIONS } from "../settings/providerDriverMeta";
 import { deriveVisibleOrderedProviderSettingsRows } from "../settings/ProviderSettingsPanel.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarMenuItem } from "../ui/sidebar";
-import { formatDate } from "./ProviderQuotaDetails";
+import { formatDate } from "../usage/ProviderQuotaDetails";
 import {
   buildProviderUsageStripItems,
   providerUsageAriaLabel,

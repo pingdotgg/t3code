@@ -14,7 +14,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
-import type { ProviderUsageStripItem } from "./ProviderUsageStrip.logic";
+import type { ProviderUsageStripItem } from "../sidebar/ProviderUsageStrip.logic";
 
 function formatPercentage(value: number): string {
   return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
@@ -44,17 +44,34 @@ function detailLabel(value: string): string {
 }
 
 function ProviderQuotaMetricDetails({ metric }: { readonly metric: ProviderQuotaMetric }) {
+  const remainingPercent =
+    metric.remainingPercent === null ? null : Math.min(100, Math.max(0, metric.remainingPercent));
   return (
-    <section className="rounded-lg border border-border/60 bg-muted/20 p-3">
+    <section className="border-t border-border/70 py-4 first:border-t-0 first:pt-0 last:pb-0">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="font-medium text-sm">{metric.label}</h3>
+        <h3 className="text-sm font-medium">{metric.label}</h3>
         {metric.blocking ? (
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          <span className="rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             Blocking
           </span>
         ) : null}
       </div>
-      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+      {remainingPercent === null ? null : (
+        <div
+          aria-label={`${metric.label}: ${formatPercentage(metric.remainingPercent ?? 0)} remaining`}
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={remainingPercent}
+          className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+        >
+          <div
+            className="h-full rounded-full bg-foreground/75"
+            style={{ width: `${remainingPercent}%` }}
+          />
+        </div>
+      )}
+      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
         {metric.remainingPercent === null ? null : (
           <>
             <dt className="text-muted-foreground">Remaining</dt>
