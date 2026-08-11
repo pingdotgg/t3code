@@ -104,10 +104,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
-    id: "time-format",
-    title: "Time format",
+    id: "windows-terminal-shell",
+    title: "Terminal shell",
     to: "/settings/general",
   },
+  { id: "time-format", title: "Time format", to: "/settings/general" },
   {
     id: "hide-whitespace-changes",
     title: "Hide whitespace changes",
@@ -231,5 +232,7 @@ export function searchSettings(
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
 
-  return items.filter((item) => normalizeSearchText(item.title).includes(normalizedQuery));
+  return items.filter((item) =>
+    normalizeSearchText(item.title).includes(normalizedQuery),
+  );
 }
