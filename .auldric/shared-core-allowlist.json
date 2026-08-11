@@ -5,7 +5,7 @@
       "path": "apps/web/src/routeTree.gen.ts",
       "owner": "#4",
       "reason": "Register the isolated Marketing route while preserving generated T3 routes and lazy-loading its payload.",
-      "contentSha256": "852c8516b955515669c2cf4eada3aee05e6013d58e71327203883b746595d43e",
+      "contentSha256": "b58359503050dcd04eb316237b9d9b62d1f57a558eaf21171e08271e5c67a9dc",
       "expiresOn": "2026-09-10",
       "upstream": {
         "status": "related",
@@ -17,7 +17,7 @@
       "path": "apps/web/src/routes/__root.tsx",
       "owner": "#4",
       "reason": "Select the isolated Marketing outlet only from matched route identity while leaving the native Dev layout branch unchanged.",
-      "contentSha256": "9c7e0a84b160b2a4348ee369ba35897cf9127ca78f80f67249702d19781c12c7",
+      "contentSha256": "b98565bfc4c2839c604527a201944ad732acafac56261f7387bff9ab84935b6e",
       "expiresOn": "2026-09-10",
       "upstream": {
         "status": "related",

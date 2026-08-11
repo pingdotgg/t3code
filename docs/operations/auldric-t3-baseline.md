@@ -18,13 +18,18 @@ upstream  https://github.com/pingdotgg/t3code.git
 ```
 
 The machine-readable pin and update proof live in [`.auldric/t3-baseline.json`](../../.auldric/t3-baseline.json).
-The selected T3 baseline is `9a1472d9558ec74b5ed419bd7b87b2aa0e6be1e6`.
+The selected T3 baseline is `78f462c4e18c8ea5e5037dc916389a3b72246025`.
 
-This intake fast-forwarded Auldrics from
-`1a003e383ac6b10258b8100c2617d938c4f06c69` to the selected baseline. Before intake the fork was
-0 commits ahead and 12 behind T3; immediately after the fast-forward it was 0 ahead and 0 behind.
-The 20 changed paths are recorded in the baseline file. There were no conflicts and no legacy
-Auldric commits were introduced.
+This intake advanced Auldrics from release
+`55fce4edd50deaec6ca5756c8b27eecace4af7be`, whose selected T3 baseline was
+`9a1472d9558ec74b5ed419bd7b87b2aa0e6be1e6`. Before intake that release was 20 commits ahead and
+16 behind T3. Replaying its 20 downstream commits from the selected upstream commit left the
+candidate 20 ahead and 0 behind before recording this intake review. The 59 upstream-changed paths
+are recorded in the baseline file. The generated route tree was refreshed so upstream's contextual
+project route and removal of the old project-settings routes coexist with the isolated Marketing
+index and splat routes. The root composition keeps upstream's global confirmation-dialog host while
+selecting the Marketing shell only from matched route identity. No legacy Auldric commits were
+introduced.
 
 Configure and verify the remotes without rewriting an existing remote:
 
