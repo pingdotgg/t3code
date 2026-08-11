@@ -53,14 +53,6 @@ describe("buildAetherPreviewUrl", () => {
         previewToken: TOKEN,
       }),
     ).toBe(`http://3000-abcdefgh-${TOKEN}.preview.aether.internal`);
-    expect(
-      buildAetherPreviewUrl({
-        apiBaseUrl: "http://127.0.0.1:8080",
-        workspaceId: "abcdefgh1234",
-        port: 3000,
-        previewToken: TOKEN,
-      }),
-    ).toBe(`http://3000-abcdefgh-${TOKEN}.127.0.0.1:8080`);
     // An unparseable base pairs with the production preview domain: https.
     expect(
       buildAetherPreviewUrl({
@@ -70,6 +62,30 @@ describe("buildAetherPreviewUrl", () => {
         previewToken: TOKEN,
       }),
     ).toBe(`https://3000-abcdefgh-${TOKEN}.preview.runaether.dev`);
+  });
+
+  it("skips the preview for an IP-literal host, which cannot carry a subdomain", () => {
+    // Prefixing the token label yields a name that resolves nowhere for IPv4
+    // and an invalid URL for IPv6 — offering no link beats offering a dead one.
+    for (const apiBaseUrl of ["http://127.0.0.1:8080", "http://[::1]:8080"]) {
+      expect(
+        buildAetherPreviewUrl({
+          apiBaseUrl,
+          workspaceId: "abcdefgh1234",
+          port: 3000,
+          previewToken: TOKEN,
+        }),
+      ).toBeUndefined();
+    }
+    // …but `*.localhost` resolves to loopback in every browser, so it stays.
+    expect(
+      buildAetherPreviewUrl({
+        apiBaseUrl: "http://localhost:8080",
+        workspaceId: "abcdefgh1234",
+        port: 3000,
+        previewToken: TOKEN,
+      }),
+    ).toBe(`http://3000-abcdefgh-${TOKEN}.localhost:8080`);
   });
 
   it("returns undefined for a malformed token (best-effort, never throws)", () => {

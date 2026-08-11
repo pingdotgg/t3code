@@ -707,7 +707,6 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                   taskId: options.taskId,
                 }),
               );
-              reconnectAttempt = 0;
               consecutiveFailures = 0;
               everConnected = true;
 
@@ -870,6 +869,15 @@ export const runAetherAgentStream = Effect.fn("runAetherAgentStream")(function* 
                 previewToken: attached.previewToken,
                 workspaceId: attached.workspaceId,
               });
+              // The backoff ladder resets only once the connection PROVED
+              // usable. Resetting it at `open` meant a server that accepts the
+              // upgrade and then immediately closes (a persistent subscribe or
+              // protocol rejection) rearmed the minimum delay on every
+              // iteration, so the exponential ladder never advanced and the
+              // loop hot-reconnected at reconnectInitialMs forever.
+              if (detached === undefined) {
+                reconnectAttempt = 0;
+              }
 
               while (true) {
                 const item = yield* Queue.take(routed);

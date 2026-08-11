@@ -501,7 +501,18 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       return () => {
         target.listeners.delete(listener);
       };
-    });
+    }).pipe(
+      // `onError` above covers a failed delivery, but not an interrupt landing
+      // AFTER the lock block succeeded and BEFORE the caller receives the
+      // unsubscribe — the listener would then be registered with no one able to
+      // remove it. Deleting is idempotent, so covering the whole attach is
+      // free (the same guard `subscribeMetadata` already carries).
+      Effect.onInterrupt(() =>
+        Effect.sync(() => {
+          sessions.get(sessionKey(input.threadId, input.terminalId))?.listeners.delete(listener);
+        }),
+      ),
+    );
 
   const write: AetherTerminalManager["Service"]["write"] = (input) =>
     Effect.gen(function* () {
@@ -623,6 +634,10 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
         session.cols = input.cols;
         session.rows = input.rows;
         yield* establishConnection(session);
+        // Every other event path bumps the sequence before building its event;
+        // without it a restart with no intervening output carries the previous
+        // event's number and sequence-deduping clients drop the notification.
+        session.sequence += 1;
         yield* deliver(session, {
           type: "restarted",
           threadId: session.threadId,
@@ -648,10 +663,16 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       const cached = routingCache.get(threadId);
       if (cached !== undefined) return cached;
       const bindingOption = yield* directory.getBinding(ThreadId.make(threadId)).pipe(Effect.orDie);
-      const isAether = Option.match(bindingOption, {
-        onNone: () => false,
-        onSome: (binding) => binding.provider === AETHER_DRIVER_KIND,
-      });
+      // Cache only a REAL answer. The binding is installed by the first turn,
+      // so a terminal opened before then has none yet — caching that absence
+      // as "not Aether" would pin the thread to the local PTY for the rest of
+      // its life, and shell writes there would dirty the driver-owned mirror.
+      // Provider binding is immutable once written, so a present binding is
+      // safe to cache forever.
+      if (Option.isNone(bindingOption)) {
+        return false;
+      }
+      const isAether = bindingOption.value.provider === AETHER_DRIVER_KIND;
       routingCache.set(threadId, isAether);
       return isAether;
     });

@@ -398,30 +398,51 @@ export function makeAetherMirrorSync(options: AetherMirrorSyncOptions): AetherMi
 
   /**
    * The mirror-local fingerprint record: `git config --local`, written in
-   * the SAME breath as every successful sync and keyed by task id. The
-   * resume cursor is snapshotted only at t3's own persistence beats
-   * (startSession return / sendTurn return / stopAll), so after a crash it
-   * can lag the tree by whole turns — a fingerprint that travels with the
-   * tree it describes is the only record that is never stale.
+   * the SAME breath as every successful sync. The resume cursor is
+   * snapshotted only at t3's own persistence beats (startSession return /
+   * sendTurn return / stopAll), so after a crash it can lag the tree by whole
+   * turns — a fingerprint that travels with the tree it describes is the only
+   * record that is never stale.
+   *
+   * The KEY carries the task id because `--local` is repository-scoped, NOT
+   * worktree-scoped: every Aether thread gets its own worktree of the same
+   * repo, so a single shared key would have each thread's settle overwrite
+   * the others' record — the keyed lookup would then miss on every resume and
+   * fall back to the cursor, defeating the whole point of the record.
    */
-  const FINGERPRINT_CONFIG_KEY = "t3.aetherMirrorFingerprint";
+  const fingerprintConfigKey = (taskId: string) => `t3.${taskId}.aetherMirrorFingerprint`;
+
+  /**
+   * Task ids reach us from the Aether API and end up in a git config key, whose
+   * grammar accepts far less than an arbitrary string. Anything outside the
+   * shape ids actually have is refused loudly rather than handed to git.
+   */
+  const TASK_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 
   const requireTaskId: Effect.Effect<string, PauseSync> = Effect.suspend(() => {
     const taskId = options.getTaskId();
-    return taskId === undefined
-      ? Effect.fail(
-          new PauseSync(
-            "The session has no Aether task id at settle time; refusing to sync the mirror without one.",
-          ),
-        )
-      : Effect.succeed(taskId);
+    if (taskId === undefined) {
+      return Effect.fail(
+        new PauseSync(
+          "The session has no Aether task id at settle time; refusing to sync the mirror without one.",
+        ),
+      );
+    }
+    if (!TASK_ID_PATTERN.test(taskId)) {
+      return Effect.fail(
+        new PauseSync(
+          `The Aether task id '${taskId}' is not a valid mirror fingerprint record key; refusing to sync.`,
+        ),
+      );
+    }
+    return Effect.succeed(taskId);
   });
 
   const persistFingerprint = (taskId: string, fingerprint: string) =>
     git("aether.mirror.fingerprint-store", [
       "config",
       "--local",
-      FINGERPRINT_CONFIG_KEY,
+      fingerprintConfigKey(taskId),
       `${taskId} ${fingerprint}`,
     ]).pipe(
       Effect.mapError(
@@ -435,7 +456,7 @@ export function makeAetherMirrorSync(options: AetherMirrorSyncOptions): AetherMi
     Effect.gen(function* () {
       const result = yield* git(
         "aether.mirror.fingerprint-store",
-        ["config", "--local", "--get", FINGERPRINT_CONFIG_KEY],
+        ["config", "--local", "--get", fingerprintConfigKey(taskId)],
         { allowNonZeroExit: true },
       ).pipe(
         Effect.mapError(
@@ -464,7 +485,7 @@ export function makeAetherMirrorSync(options: AetherMirrorSyncOptions): AetherMi
         return yield* Effect.fail(
           new PauseSync(
             `The mirror fingerprint record '${value}' is corrupt (expected '<taskId> <fingerprint>'). ` +
-              `Remove it (git config --local --unset ${FINGERPRINT_CONFIG_KEY}) to recover.`,
+              `Remove it (git config --local --unset ${fingerprintConfigKey(taskId)}) to recover.`,
           ),
         );
       }

@@ -45,9 +45,25 @@ export function deriveAetherPreviewProtocol(apiBaseUrl: string): "http" | "https
 }
 
 /**
+ * An IP-literal host (`127.0.0.1:8080`, `[::1]`) cannot carry the preview
+ * subdomain: prefixing a label yields a name that resolves nowhere for IPv4
+ * and an outright invalid URL for IPv6. `localhost` is exempt — browsers
+ * resolve every `*.localhost` label to loopback.
+ */
+function isIpLiteralHost(host: string): boolean {
+  if (host.startsWith("[")) {
+    return true;
+  }
+  const hostname = host.split(":", 1)[0] ?? "";
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+}
+
+/**
  * Build a workspace port-preview URL, or `undefined` when the preview token is
- * malformed or absent. Port previews are best-effort — the caller skips
- * surfacing the port rather than failing a turn.
+ * malformed or absent, or when the instance's host cannot carry a preview
+ * subdomain. Port previews are best-effort — the caller skips surfacing the
+ * port rather than failing a turn, and skipping beats handing the user a link
+ * that cannot connect.
  */
 export function buildAetherPreviewUrl(input: {
   readonly apiBaseUrl: string;
@@ -59,6 +75,9 @@ export function buildAetherPreviewUrl(input: {
     return undefined;
   }
   const domain = deriveAetherPreviewDomain(input.apiBaseUrl);
+  if (isIpLiteralHost(domain)) {
+    return undefined;
+  }
   const subdomain = `${input.port}-${input.workspaceId.slice(0, 8)}-${input.previewToken}`;
   return `${deriveAetherPreviewProtocol(input.apiBaseUrl)}://${subdomain}.${domain}`;
 }
