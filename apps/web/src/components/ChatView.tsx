@@ -19,6 +19,7 @@ import {
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   ProviderDriverKind,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
@@ -4138,16 +4139,54 @@ function ChatViewContent(props: ChatViewProps) {
           ? `${existingPrompt}${existingText.length > 0 ? "\n\n" : ""}${pending.draft.prompt}`
           : existingPrompt || pending.draft.prompt;
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-      if (pending.draft.images.length > 0) {
-        addComposerDraftImages(composerDraftTarget, pending.draft.images);
+      const existingImages = currentDraft?.images ?? [];
+      const existingIds = new Set(existingImages.map((image) => image.id));
+      const existingDedupKeys = new Set(
+        existingImages.map((image) => `${image.mimeType}\0${image.sizeBytes}\0${image.name}`),
+      );
+      const imagesToAdd: ComposerImageAttachment[] = [];
+      const skippedImages: ComposerImageAttachment[] = [];
+      const overflowImageNames: string[] = [];
+      const capacity = Math.max(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS - existingImages.length);
+      for (const image of pending.draft.images) {
+        const dedupKey = `${image.mimeType}\0${image.sizeBytes}\0${image.name}`;
+        if (existingIds.has(image.id) || existingDedupKeys.has(dedupKey)) {
+          skippedImages.push(image);
+          continue;
+        }
+        existingIds.add(image.id);
+        existingDedupKeys.add(dedupKey);
+        if (imagesToAdd.length < capacity) {
+          imagesToAdd.push(image);
+        } else {
+          skippedImages.push(image);
+          overflowImageNames.push(image.name);
+        }
+      }
+      if (imagesToAdd.length > 0) {
+        addComposerDraftImages(composerDraftTarget, imagesToAdd);
+      }
+      for (const image of skippedImages) {
+        if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
       }
       composerRef.current?.resetCursorState({ cursor: nextPrompt.length, prompt: nextPrompt });
       window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
+      const missingImageReasons: string[] = [];
       if (pending.draft.unavailableImageNames.length > 0) {
+        missingImageReasons.push(
+          `${pending.draft.unavailableImageNames.join(", ")} could not be loaded.`,
+        );
+      }
+      if (overflowImageNames.length > 0) {
+        missingImageReasons.push(
+          `${overflowImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-image limit.`,
+        );
+      }
+      if (missingImageReasons.length > 0) {
         toastManager.add({
           type: "warning",
           title: "Some images could not be restored",
-          description: pending.draft.unavailableImageNames.join(", "),
+          description: missingImageReasons.join(" "),
         });
       }
     };
@@ -5071,14 +5110,14 @@ function ChatViewContent(props: ChatViewProps) {
         return next;
       });
       setThreadError(threadId, null);
-      const resultPromise = revertThreadCheckpoint({
+      const draft = await draftPromise;
+      const result = await revertThreadCheckpoint({
         environmentId,
         input: {
           threadId,
           turnCount,
         },
       });
-      const [draft, result] = await Promise.all([draftPromise, resultPromise]);
       const finishRevert = () => {
         setRevertingCheckpointThreadKeys((current) => {
           const next = new Set(current);
