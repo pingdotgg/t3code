@@ -1,4 +1,5 @@
 import { ChevronDownIcon, GitPullRequestIcon, InfoIcon, RefreshCwIcon } from "lucide-react";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useMemo, useState, type ReactNode } from "react";
@@ -18,10 +19,17 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 
+import { isElectron } from "../../env";
+import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  type EnvironmentPresentation,
+} from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentSessionState } from "../../state/session";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -56,10 +64,20 @@ import {
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import { SettingsEnvironmentSelector } from "./SettingsEnvironmentSelector";
-import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   buildProviderEnvironmentOptions,
+  classifyProviderEnvironmentAccess,
+  type ProviderEnvironmentAccess,
+  type ProviderOperateAccess,
+  resolvePrimaryOperateAccess,
+  resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
 
@@ -354,8 +372,10 @@ function DiscoveryItemRow({
 
 export function GitFetchIntervalSettings({
   environmentId,
+  readOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -372,7 +392,11 @@ export function GitFetchIntervalSettings({
     automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
 
   return (
-    <div className="grid gap-3">
+    <div
+      inert={readOnly}
+      aria-disabled={readOnly || undefined}
+      className={cn("grid gap-3", readOnly && "opacity-50 select-none")}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-1">
@@ -532,6 +556,8 @@ export function SourceControlSettingsPanel() {
     selectedEnvironmentId,
     primaryEnvironmentId,
   );
+  const selectedEnvironment =
+    options.find((environment) => environment.environmentId === effectiveEnvironmentId) ?? null;
 
   return (
     <SettingsPageContainer>
@@ -542,20 +568,123 @@ export function SourceControlSettingsPanel() {
         emptyDescription="Connect an execution environment before configuring source control."
         onSelect={setSelectedEnvironmentId}
       />
-      {effectiveEnvironmentId !== null ? (
-        <EnvironmentSourceControlSettings
-          key={effectiveEnvironmentId}
-          environmentId={effectiveEnvironmentId}
+      {selectedEnvironment ? (
+        <SelectedEnvironmentSourceControlSettings
+          key={selectedEnvironment.environmentId}
+          environment={selectedEnvironment}
         />
       ) : null}
     </SettingsPageContainer>
   );
 }
 
+function SourceControlEnvironmentUnavailableRow({
+  environment,
+  access,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly access: Exclude<ProviderEnvironmentAccess, { kind: "editable" | "read-only" }>;
+}) {
+  const isLoading = access.kind === "loading";
+  const title = isLoading
+    ? "Loading source control settings"
+    : access.kind === "error"
+      ? "Could not connect to this device"
+      : "Source control settings are unavailable";
+  const description = isLoading
+    ? access.reason === "permissions"
+      ? "Checking what this session is allowed to change."
+      : `Waiting for ${environment.label}'s configuration.`
+    : connectionStatusText(environment.connection);
+
+  return (
+    <SettingsSection title="Source Control">
+      <SettingsRow title={title} description={description} />
+    </SettingsSection>
+  );
+}
+
+function SelectedEnvironmentSourceControlSettings({
+  environment,
+}: {
+  readonly environment: EnvironmentPresentation;
+}) {
+  const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
+  if (isPrimary) {
+    if (isElectron) {
+      return <AccessGatedSourceControlSettings environment={environment} operateAccess="granted" />;
+    }
+    return <PrimarySessionGatedSourceControlSettings environment={environment} />;
+  }
+  return <RemoteSessionGatedSourceControlSettings environment={environment} />;
+}
+
+function PrimarySessionGatedSourceControlSettings({
+  environment,
+}: {
+  readonly environment: EnvironmentPresentation;
+}) {
+  const primarySessionState = usePrimarySessionState();
+  const operateAccess = resolvePrimaryOperateAccess({
+    isPrimary: true,
+    hasDesktopBridge: false,
+    session: primarySessionState.data,
+    isPending: primarySessionState.isPending,
+    hasError: primarySessionState.error !== null,
+  });
+  return (
+    <AccessGatedSourceControlSettings environment={environment} operateAccess={operateAccess} />
+  );
+}
+
+function RemoteSessionGatedSourceControlSettings({
+  environment,
+}: {
+  readonly environment: EnvironmentPresentation;
+}) {
+  const sessionState = useEnvironmentSessionState(environment.environmentId);
+  const operateAccess = resolveRemoteOperateAccess({
+    session: sessionState.data,
+    isPending: sessionState.isPending,
+    hasError: sessionState.hasError,
+  });
+  return (
+    <AccessGatedSourceControlSettings environment={environment} operateAccess={operateAccess} />
+  );
+}
+
+function AccessGatedSourceControlSettings({
+  environment,
+  operateAccess,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly operateAccess: ProviderOperateAccess;
+}) {
+  const access = classifyProviderEnvironmentAccess({
+    connectionPhase: environment.connection.phase,
+    hasServerConfig: environment.serverConfig !== null,
+    operateAccess,
+  });
+  if (access.kind !== "editable" && access.kind !== "read-only") {
+    return <SourceControlEnvironmentUnavailableRow environment={environment} access={access} />;
+  }
+  return (
+    <EnvironmentSourceControlSettings
+      environmentId={environment.environmentId}
+      environmentLabel={environment.label}
+      readOnly={access.kind === "read-only"}
+    />
+  );
+}
+
 export function EnvironmentSourceControlSettings({
   environmentId,
+  environmentLabel,
+  readOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly readOnly?: boolean;
 }) {
   const discovery = useEnvironmentQuery(
     sourceControlEnvironment.discovery({
@@ -592,6 +721,14 @@ export function EnvironmentSourceControlSettings({
 
   return (
     <>
+      {readOnly ? (
+        <SettingsSection title="Source Control">
+          <SettingsRow
+            title="Limited permissions"
+            description={`This session can view ${environmentLabel}'s source control configuration, but its credential does not allow changing it.`}
+          />
+        </SettingsSection>
+      ) : null}
       {isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
@@ -608,7 +745,7 @@ export function EnvironmentSourceControlSettings({
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
                   {item.kind === "git" ? (
-                    <GitFetchIntervalSettings environmentId={environmentId} />
+                    <GitFetchIntervalSettings environmentId={environmentId} readOnly={readOnly} />
                   ) : undefined}
                 </DiscoveryItemRow>
               ))}
@@ -635,7 +772,7 @@ export function EnvironmentSourceControlSettings({
         />
       )}
 
-      <SourceControlWritingSettingsSection environmentId={environmentId} />
+      <SourceControlWritingSettingsSection environmentId={environmentId} readOnly={readOnly} />
     </>
   );
 }

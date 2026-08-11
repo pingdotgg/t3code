@@ -75,9 +75,10 @@ vi.mock("../../state/sourceControl", () => ({
 }));
 
 vi.mock("./SourceControlWritingSettings", () => ({
-  SourceControlWritingSettingsSection: (props: { readonly environmentId: EnvironmentId }) => (
-    <div data-writing-environment={props.environmentId} />
-  ),
+  SourceControlWritingSettingsSection: (props: {
+    readonly environmentId: EnvironmentId;
+    readonly readOnly?: boolean;
+  }) => <div data-writing-environment={props.environmentId} data-read-only={props.readOnly} />,
 }));
 
 import {
@@ -115,18 +116,43 @@ describe("Source Control environment routing", () => {
     hooks.beginRender();
     panel = SourceControlSettingsPanel() as ReactElement<Record<string, unknown>>;
     expect(
-      visitElements(panel, (element) => element.props.environmentId === environmentId),
+      visitElements(
+        panel,
+        (element) =>
+          (element.props.environment as { readonly environmentId?: EnvironmentId } | undefined)
+            ?.environmentId === environmentId,
+      ),
     ).not.toBeNull();
   });
 
   it("routes discovery and writing settings to the selected environment", () => {
-    const panel = EnvironmentSourceControlSettings({ environmentId }) as ReactElement<
-      Record<string, unknown>
-    >;
+    const panel = EnvironmentSourceControlSettings({
+      environmentId,
+      environmentLabel: "Remote device",
+    }) as ReactElement<Record<string, unknown>>;
 
     expect(routing.discoveryTargets).toEqual([{ environmentId, input: {} }]);
     expect(
       visitElements(panel, (element) => element.props.environmentId === environmentId),
+    ).not.toBeNull();
+  });
+
+  it("renders environment-owned write controls read only when access is limited", () => {
+    const panel = EnvironmentSourceControlSettings({
+      environmentId,
+      environmentLabel: "Remote device",
+      readOnly: true,
+    }) as ReactElement<Record<string, unknown>>;
+
+    expect(
+      visitElements(panel, (element) => element.props.title === "Limited permissions"),
+    ).not.toBeNull();
+    expect(
+      visitElements(
+        panel,
+        (element) =>
+          element.props.environmentId === environmentId && element.props.readOnly === true,
+      ),
     ).not.toBeNull();
   });
 

@@ -42,8 +42,10 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
 
 export function SourceControlWritingSettingsSection({
   environmentId,
+  readOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -76,7 +78,12 @@ export function SourceControlWritingSettingsSection({
   );
 
   return (
-    <SettingsSection title="Text generation">
+    <SettingsSection
+      title="Text generation"
+      inert={readOnly}
+      aria-disabled={readOnly || undefined}
+      className={readOnly ? "opacity-50 select-none" : undefined}
+    >
       <SettingsRow
         title="Source control writing style"
         description={MODE_OPTIONS[style.mode].description}
