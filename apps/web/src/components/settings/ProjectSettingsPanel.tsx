@@ -47,7 +47,11 @@ import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
-import { projectDeleteCommandInput, projectThreadCount } from "../../lib/projectRemoval";
+import {
+  hasArchivedThreadSnapshotFailure,
+  projectDeleteCommandInput,
+  projectThreadCount,
+} from "../../lib/projectRemoval";
 import { readLocalApi } from "../../localApi";
 import {
   buildProjectScript,
@@ -317,6 +321,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const {
     snapshots: archivedThreadSnapshots,
     error: archivedThreadsError,
+    failedEnvironmentIds: archivedThreadsFailedEnvironmentIds,
     isLoading: archivedThreadsLoading,
   } = useArchivedThreadSnapshots(groupEnvironmentIds);
   const archivedThreads = useMemo(
@@ -690,7 +695,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       const api = readLocalApi();
       if (!api) return;
 
-      if (archivedThreadsError) {
+      if (
+        archivedThreadsError &&
+        hasArchivedThreadSnapshotFailure(members, archivedThreadsFailedEnvironmentIds)
+      ) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -766,6 +774,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     },
     [
       archivedThreadsError,
+      archivedThreadsFailedEnvironmentIds,
       deleteProject,
       group.displayName,
       group.memberProjects.length,

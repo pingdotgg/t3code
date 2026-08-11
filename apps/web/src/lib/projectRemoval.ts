@@ -10,6 +10,13 @@ interface ProjectRemovalThread {
   readonly projectId: ProjectId;
 }
 
+export function hasArchivedThreadSnapshotFailure(
+  projects: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+  failedEnvironmentIds: ReadonlyArray<EnvironmentId>,
+): boolean {
+  return projects.some((project) => failedEnvironmentIds.includes(project.environmentId));
+}
+
 export function projectThreadCount(
   project: ProjectRemovalTarget,
   threads: ReadonlyArray<ProjectRemovalThread>,

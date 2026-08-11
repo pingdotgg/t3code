@@ -1,7 +1,24 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { projectDeleteCommandInput, projectThreadCount } from "./projectRemoval";
+import {
+  hasArchivedThreadSnapshotFailure,
+  projectDeleteCommandInput,
+  projectThreadCount,
+} from "./projectRemoval";
+
+describe("hasArchivedThreadSnapshotFailure", () => {
+  it("only reports failures for environments being removed", () => {
+    const environmentOne = EnvironmentId.make("environment-1");
+    const environmentTwo = EnvironmentId.make("environment-2");
+    const failedEnvironmentIds = [environmentTwo];
+
+    expect([
+      hasArchivedThreadSnapshotFailure([{ environmentId: environmentOne }], failedEnvironmentIds),
+      hasArchivedThreadSnapshotFailure([{ environmentId: environmentTwo }], failedEnvironmentIds),
+    ]).toEqual([false, true]);
+  });
+});
 
 describe("projectDeleteCommandInput", () => {
   it("force-deletes threads even when only archived threads exist", () => {
