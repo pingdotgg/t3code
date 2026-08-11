@@ -147,6 +147,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
           T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
           T3CODE_DESKTOP_MOCK_UPDATES: "true",
           T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+          // Auto-updates default to disabled in this fork, so the suite that
+          // exercises the updater has to opt back in explicitly.
+          T3CODE_DISABLE_AUTO_UPDATE: "false",
           ...options.env,
         }),
       ),
@@ -181,6 +184,8 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
         T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
         T3CODE_DESKTOP_MOCK_UPDATES: "true",
         T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+        // See above: this fork disables auto-updates by default.
+        T3CODE_DISABLE_AUTO_UPDATE: "false",
         ...options.env,
       }),
     ),

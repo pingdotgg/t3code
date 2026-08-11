@@ -34,6 +34,7 @@ function makeThread(
   overrides: {
     readonly threadId?: ThreadId;
     readonly archivedAt?: string | null;
+    readonly backgroundLiveness?: "working" | "monitoring" | null;
   } = {},
 ): EnvironmentThreadShell {
   const base = {
@@ -44,6 +45,7 @@ function makeThread(
     modelSelection: { provider: "codex", model: "gpt-5" },
     updatedAt: "2026-08-11T10:00:00.000Z",
     archivedAt: overrides.archivedAt ?? null,
+    backgroundLiveness: overrides.backgroundLiveness ?? null,
     hasPendingApprovals: phase === "approval",
     hasPendingUserInput: phase === "input",
     latestTurn: null as unknown,
@@ -91,6 +93,7 @@ function reconcile(
     settings: ThreadNotificationSettings;
     windowFocused: boolean;
     activeThreadRef: { environmentId: EnvironmentId; threadId: ThreadId } | null;
+    readResponseText: () => string | null;
   }> = {},
 ) {
   return reconcileThreadNotifications({
@@ -100,6 +103,7 @@ function reconcile(
     settings: overrides.settings ?? ALL_ENABLED,
     windowFocused: overrides.windowFocused ?? false,
     activeThreadRef: overrides.activeThreadRef ?? null,
+    ...(overrides.readResponseText ? { readResponseText: overrides.readResponseText } : {}),
   });
 }
 
@@ -148,12 +152,59 @@ describe("reconcileThreadNotifications", () => {
 
     expect(result.notifications).toHaveLength(1);
     expect(result.notifications[0]?.kind).toBe("task-completed");
-    expect(result.notifications[0]?.title).toBe("Fix flaky auth test");
-    expect(result.notifications[0]?.body).toContain("t3code");
+    expect(result.notifications[0]?.title).toBe("Completed");
+    // The project name is deliberately absent from the banner.
+    expect(result.notifications[0]?.body).not.toContain("t3code");
     expect(result.notifications[0]?.threadRef).toEqual({
       environmentId: ENVIRONMENT_ID,
       threadId: THREAD_ID,
     });
+  });
+
+  it("uses the agent's response as the body, flattened to plain text", () => {
+    const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [makeThread("running")]).next;
+    const result = reconcile(seeded, [makeThread("completed")], {
+      readResponseText: () =>
+        "## Done\n\nFixed the **flaky** `auth` test in [the suite](http://x).",
+    });
+
+    expect(result.notifications[0]?.body).toBe("Done Fixed the flaky auth test in the suite.");
+  });
+
+  it("falls back to the thread title when no response text is loaded", () => {
+    const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [makeThread("running")]).next;
+    const result = reconcile(seeded, [makeThread("completed")], {
+      readResponseText: () => null,
+    });
+
+    expect(result.notifications[0]?.body).toBe("Fix flaky auth test");
+  });
+
+  it("titles each kind by what happened", () => {
+    const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [makeThread("running")]).next;
+
+    expect(reconcile(seeded, [makeThread("failed")]).notifications[0]?.title).toBe("Failed");
+    expect(reconcile(seeded, [makeThread("approval")]).notifications[0]?.title).toBe(
+      "Approval Required",
+    );
+  });
+
+  it("does not announce completion while background work is still live", () => {
+    const seeded = reconcile(EMPTY_THREAD_PHASE_SNAPSHOT, [makeThread("running")]).next;
+    const working = reconcile(seeded, [makeThread("completed", { backgroundLiveness: "working" })]);
+
+    expect(working.notifications).toEqual([]);
+    // Held at running, so the real completion still reads as a transition.
+    expect(working.next.get(KEY)).toBe("running");
+
+    const monitoring = reconcile(working.next, [
+      makeThread("completed", { backgroundLiveness: "monitoring" }),
+    ]);
+    expect(monitoring.notifications).toEqual([]);
+
+    const settled = reconcile(monitoring.next, [makeThread("completed")]);
+    expect(settled.notifications).toHaveLength(1);
+    expect(settled.notifications[0]?.kind).toBe("task-completed");
   });
 
   it("does not re-fire while the thread sits in completed", () => {
@@ -183,7 +234,8 @@ describe("reconcileThreadNotifications", () => {
     const result = reconcile(seeded, [makeThread("failed")]);
 
     expect(result.notifications[0]?.kind).toBe("task-failed");
-    expect(result.notifications[0]?.body).toContain("Provider crashed");
+    expect(result.notifications[0]?.title).toBe("Failed");
+    expect(result.notifications[0]?.body).toBe("Provider crashed");
   });
 
   it("reports an approval prompt", () => {

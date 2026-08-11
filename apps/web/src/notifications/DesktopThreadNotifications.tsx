@@ -1,13 +1,17 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { ClientSettings } from "@t3tools/contracts/settings";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentThread,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 
 import { isElectron } from "~/env";
 import { getClientSettings } from "~/hooks/useSettings";
 import { useActiveThreadRefFromRoute } from "~/hooks/useActiveThreadRef";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { environmentThreadShells } from "~/state/threads";
+import { environmentThreadDetails, environmentThreadShells } from "~/state/threads";
 import { readProjects, readThreadShells } from "~/state/entities";
 import {
   buildProjectTitleMap,
@@ -16,6 +20,38 @@ import {
   type ThreadNotificationSettings,
   type ThreadPhaseSnapshot,
 } from "./desktopNotifications.logic";
+
+/**
+ * Latest assistant text for a thread, but only when that thread's detail atom
+ * is already live in the registry.
+ *
+ * Reading `detailAtom` through `registry.get` would *mount* it, and a thread
+ * detail atom is stream-backed: doing that for every thread in the sidebar
+ * would open a websocket subscription per thread purely to caption a
+ * notification. Peeking at existing nodes keeps this free, and the body falls
+ * back to the thread title whenever nothing is loaded.
+ */
+function readLoadedResponseText(ref: ScopedThreadRef): string | null {
+  const atom = environmentThreadDetails.detailAtom(ref);
+  const node = appAtomRegistry.getNodes().get(atom);
+  if (node === undefined || node.currentState() !== "valid") {
+    return null;
+  }
+
+  const detail = node.value() as EnvironmentThread | null;
+  const messages = detail?.messages;
+  if (messages === undefined) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant" && message.text.trim().length > 0) {
+      return message.text;
+    }
+  }
+  return null;
+}
 
 export function selectThreadNotificationSettings(
   settings: ClientSettings,
@@ -53,6 +89,7 @@ function DesktopThreadNotifications() {
         settings: selectThreadNotificationSettings(settings),
         windowFocused: document.visibilityState === "visible" && document.hasFocus(),
         activeThreadRef: activeThreadRefMirror.current,
+        readResponseText: readLoadedResponseText,
       });
       phases = next;
 

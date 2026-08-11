@@ -5,6 +5,8 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { projectThreadAwareness, type AgentAwarenessPhase } from "@t3tools/shared/agentAwareness";
 
+import { notificationBody, notificationTitle } from "./notificationCopy";
+
 /**
  * Phases a thread must be leaving for its next phase to be worth announcing.
  * Requiring an active predecessor is what makes a thread that is merely
@@ -24,9 +26,6 @@ const PRE_APPROVAL_PHASES: ReadonlySet<AgentAwarenessPhase> = new Set([
   "running",
   "waiting_for_input",
 ]);
-
-/** macOS truncates long bodies anyway, and this rides a hot IPC path. */
-const MAX_BODY_LENGTH = 180;
 
 export interface ThreadNotificationSettings {
   readonly enabled: boolean;
@@ -59,6 +58,12 @@ export interface ReconcileThreadNotificationsInput {
   readonly settings: ThreadNotificationSettings;
   readonly windowFocused: boolean;
   readonly activeThreadRef: ScopedThreadRef | null;
+  /**
+   * The agent's latest assistant text for a thread, when it is already in
+   * memory. Optional and allowed to return null: resolving it must never
+   * force a thread subscription just to build a notification body.
+   */
+  readonly readResponseText?: (ref: ScopedThreadRef) => string | null;
 }
 
 export interface ReconcileThreadNotificationsResult {
@@ -123,16 +128,31 @@ function isNotificationKindEnabled(
   }
 }
 
-function truncateBody(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length <= MAX_BODY_LENGTH) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, MAX_BODY_LENGTH - 3).trimEnd()}...`;
-}
-
 function sameThread(left: ScopedThreadRef, right: ScopedThreadRef): boolean {
   return left.environmentId === right.environmentId && left.threadId === right.threadId;
+}
+
+/**
+ * Holds a thread at "running" while native background work is still alive.
+ *
+ * `projectThreadAwareness` reads a session sitting at `ready`/`idle` with
+ * nothing pending as finished, which is right for a thread that has genuinely
+ * stopped. But a provider also parks the session at `ready` *between* turns
+ * while subagents, workflows, or watch loops keep going, so a long task
+ * momentarily looks complete and would fire a "Completed" notification while
+ * it is still working. The sidebar already resolves this the same way
+ * (`resolveSidebarThreadStatus` prefers `backgroundLiveness` over `ready`);
+ * this keeps the notification view consistent with what the user sees there.
+ */
+export function resolveNotifiablePhase(
+  thread: Pick<EnvironmentThreadShell, "backgroundLiveness">,
+  phase: AgentAwarenessPhase | null,
+): AgentAwarenessPhase | null {
+  if (phase !== "completed") {
+    return phase;
+  }
+  const liveness = thread.backgroundLiveness ?? null;
+  return liveness === "working" || liveness === "monitoring" ? "running" : phase;
 }
 
 /**
@@ -177,7 +197,7 @@ export function reconcileThreadNotifications(
       project: { title: projectTitle },
       thread,
     });
-    const phase = awareness?.phase ?? null;
+    const phase = resolveNotifiablePhase(thread, awareness?.phase ?? null);
 
     const seen = input.previous.has(key);
     const previousPhase = seen ? (input.previous.get(key) ?? null) : null;
@@ -207,17 +227,21 @@ export function reconcileThreadNotifications(
       continue;
     }
 
-    const detail = kind === "task-failed" ? awareness.detail : undefined;
-    const bodyParts = [detail ?? awareness.headline];
-    if (projectTitle.length > 0) {
-      bodyParts.push(projectTitle);
-    }
+    // A failure's error text is more useful than its last assistant message.
+    const responseText =
+      kind === "task-failed"
+        ? (awareness.detail ?? input.readResponseText?.(threadRef) ?? null)
+        : (input.readResponseText?.(threadRef) ?? null);
 
     notifications.push({
       kind,
       threadRef,
-      title: awareness.threadTitle,
-      body: truncateBody(bodyParts.join(" · ")),
+      title: notificationTitle(kind),
+      body: notificationBody({
+        responseText,
+        threadTitle: awareness.threadTitle,
+        fallbackHeadline: awareness.headline,
+      }),
     });
   }
 

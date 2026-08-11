@@ -558,7 +558,12 @@ export const ServerSettings = Schema.Struct({
   enableLegacyTokenStreaming: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
-  enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Off by default alongside the desktop auto-updater: the provider update
+  // banners are the other source of "update available" prompts, and leaving
+  // them on would keep nagging after auto-updates were turned off.
+  enableProviderUpdateChecks: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.

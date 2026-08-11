@@ -49,7 +49,16 @@ export const DesktopConfig = Config.all({
     Config.withDefault(10_000),
   ),
   appImagePath: trimmedString("APPIMAGE"),
-  disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
+  // Auto-updates are off in this fork. It is built locally and has no update
+  // feed of its own, so every prompt would point at an upstream release that
+  // lacks these changes and would overwrite them on install. Inverted from
+  // upstream's opt-in: absent env means disabled, and only an explicit
+  // T3CODE_DISABLE_AUTO_UPDATE=false turns the updater back on (which the
+  // updater's own tests rely on to exercise the real flow).
+  disableAutoUpdate: Config.boolean("T3CODE_DISABLE_AUTO_UPDATE").pipe(
+    Config.option,
+    Config.map(Option.getOrElse(() => true)),
+  ),
   mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),
   mockUpdateServerPort: Config.port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(
     Config.withDefault(3000),
