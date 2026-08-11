@@ -293,6 +293,15 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    case "worktreeCleanupUpdated":
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          worktreeCleanupNotices: event.payload.notices,
+        },
+        latestEvent: event,
+        source: "live",
+      }));
   }
 }
 

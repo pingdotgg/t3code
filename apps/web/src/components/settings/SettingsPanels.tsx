@@ -522,6 +522,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.worktreeCleanupAfterDays !== DEFAULT_UNIFIED_SETTINGS.worktreeCleanupAfterDays
+        ? ["Inactive worktree cleanup"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -541,6 +544,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
+      settings.worktreeCleanupAfterDays,
       settings.diffIgnoreWhitespace,
       settings.environmentIdentificationMode,
       settings.fontFamilyCode,
@@ -644,6 +648,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      worktreeCleanupAfterDays: DEFAULT_UNIFIED_SETTINGS.worktreeCleanupAfterDays,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -2075,6 +2080,57 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          {...searchableSetting("inactive-worktree-cleanup")}
+          description="Removes generated dependencies after inactivity. Safe worktrees are removed after 7 days; chats and branches stay."
+          resetAction={
+            settings.worktreeCleanupAfterDays !==
+            DEFAULT_UNIFIED_SETTINGS.worktreeCleanupAfterDays ? (
+              <SettingResetButton
+                label="inactive worktree cleanup"
+                onClick={() =>
+                  updateSettings({
+                    worktreeCleanupAfterDays: DEFAULT_UNIFIED_SETTINGS.worktreeCleanupAfterDays,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.worktreeCleanupAfterDays?.toString() ?? "never"}
+              onValueChange={(value) => {
+                if (value === "never") {
+                  updateSettings({ worktreeCleanupAfterDays: null });
+                  return;
+                }
+                const days = Number(value);
+                if (Number.isInteger(days) && days >= 1 && days <= 7) {
+                  updateSettings({ worktreeCleanupAfterDays: days });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Inactive worktree cleanup">
+                <SelectValue>
+                  {settings.worktreeCleanupAfterDays === null
+                    ? "Never"
+                    : `After ${settings.worktreeCleanupAfterDays} ${settings.worktreeCleanupAfterDays === 1 ? "day" : "days"}`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Array.from({ length: 7 }, (_, index) => index + 1).map((days) => (
+                  <SelectItem hideIndicator key={days} value={days.toString()}>
+                    After {days} {days === 1 ? "day" : "days"}
+                  </SelectItem>
+                ))}
+                <SelectItem hideIndicator value="never">
+                  Never
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("add-project-starts-in")}

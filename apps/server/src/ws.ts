@@ -123,6 +123,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import * as WorktreeCleanup from "./worktreeCleanup.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -416,6 +417,7 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const worktreeCleanup = yield* Effect.serviceOption(WorktreeCleanup.WorktreeCleanup);
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -1021,6 +1023,10 @@ const makeWsRpcLayer = (
             otlpMetricsEnabled: config.otlpMetricsUrl !== undefined,
           },
           settings,
+          worktreeCleanupNotices: yield* Option.match(worktreeCleanup, {
+            onNone: () => Effect.succeed([]),
+            onSome: (cleanup) => cleanup.notices,
+          }),
           shellResumeCompletionMarker: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
@@ -2167,6 +2173,17 @@ const makeWsRpcLayer = (
                   payload: { settings },
                 })),
               );
+              const worktreeCleanupUpdates = Option.match(worktreeCleanup, {
+                onNone: () => Stream.empty,
+                onSome: (cleanup) =>
+                  cleanup.noticeChanges.pipe(
+                    Stream.map((notices) => ({
+                      version: 1 as const,
+                      type: "worktreeCleanupUpdated" as const,
+                      payload: { notices },
+                    })),
+                  ),
+              });
 
               yield* providerRegistry
                 .refresh()
@@ -2174,7 +2191,10 @@ const makeWsRpcLayer = (
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,
-                Stream.merge(providerStatuses, settingsUpdates),
+                Stream.merge(
+                  providerStatuses,
+                  Stream.merge(settingsUpdates, worktreeCleanupUpdates),
+                ),
               );
 
               return Stream.concat(

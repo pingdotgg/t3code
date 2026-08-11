@@ -100,6 +100,17 @@ export const TerminalFontSize = Schema.Int.check(
 export type TerminalFontSize = typeof TerminalFontSize.Type;
 export const DEFAULT_TERMINAL_FONT_SIZE: TerminalFontSize = 12;
 
+export const MIN_WORKTREE_CLEANUP_AFTER_DAYS = 1;
+export const MAX_WORKTREE_CLEANUP_AFTER_DAYS = 7;
+export const WorktreeCleanupAfterDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_WORKTREE_CLEANUP_AFTER_DAYS,
+    maximum: MAX_WORKTREE_CLEANUP_AFTER_DAYS,
+  }),
+);
+export type WorktreeCleanupAfterDays = typeof WorktreeCleanupAfterDays.Type;
+export const DEFAULT_WORKTREE_CLEANUP_AFTER_DAYS: WorktreeCleanupAfterDays = 2;
+
 export const EnvironmentIdentificationMode = Schema.Literals(["artwork", "pill", "none"]);
 export type EnvironmentIdentificationMode = typeof EnvironmentIdentificationMode.Type;
 export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationMode = "artwork";
@@ -586,6 +597,9 @@ export const ServerSettings = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  worktreeCleanupAfterDays: Schema.NullOr(WorktreeCleanupAfterDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKTREE_CLEANUP_AFTER_DAYS)),
+  ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -740,6 +754,7 @@ export const ServerSettingsPatch = Schema.Struct({
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  worktreeCleanupAfterDays: Schema.optionalKey(Schema.NullOr(WorktreeCleanupAfterDays)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(

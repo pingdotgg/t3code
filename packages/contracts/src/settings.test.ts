@@ -167,6 +167,23 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
+describe("ServerSettings worktree cleanup", () => {
+  it("defaults artifact cleanup to two days", () => {
+    expect(decodeServerSettings({}).worktreeCleanupAfterDays).toBe(2);
+  });
+
+  it("allows automatic cleanup to be disabled", () => {
+    expect(decodeServerSettings({ worktreeCleanupAfterDays: null }).worktreeCleanupAfterDays).toBe(
+      null,
+    );
+  });
+
+  it.each([0, 8, 2.5])("rejects a cleanup threshold outside whole days 1..7: %s", (value) => {
+    expect(() => decodeServerSettings({ worktreeCleanupAfterDays: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ worktreeCleanupAfterDays: value })).toThrow();
+  });
+});
+
 describe("ServerSettings worktree defaults", () => {
   it("defaults start-from-origin on for legacy configs", () => {
     expect(decodeServerSettings({}).newWorktreesStartFromOrigin).toBe(true);

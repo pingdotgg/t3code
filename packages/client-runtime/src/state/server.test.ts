@@ -282,6 +282,29 @@ describe("server state projection", () => {
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
+  it("projects worktree cleanup notices from the live config stream", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), snapshotEvent(CONFIG));
+    const notices = [
+      {
+        id: "unpushed-commits:/worktrees/feature",
+        worktreePath: "/worktrees/feature",
+        projectTitle: "T3 Code",
+        branch: "feat/storage-cleanup",
+        reason: "unpushed-commits" as const,
+        createdAt: "2026-08-11T00:00:00.000Z",
+      },
+    ];
+    const projected = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "worktreeCleanupUpdated",
+      payload: { notices },
+    });
+
+    const result = Option.getOrThrow(projected);
+    expect(result.config.worktreeCleanupNotices).toEqual(notices);
+    expect(result.latestEvent.type).toBe("worktreeCleanupUpdated");
+  });
+
   it("retains welcome when a ready event follows in the same stream chunk", () => {
     const welcome = {
       environment: {} as ServerLifecycleWelcomePayload["environment"],

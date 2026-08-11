@@ -331,6 +331,7 @@ function EventRouter() {
   const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
+  const shownWorktreeCleanupNoticeIdsRef = useRef(new Set<string>());
   const handledConfigEventRef = useRef(serverConfigEvent);
   const [keybindingsToastController] = useState<KeybindingsUpdateToastController>(() =>
     createKeybindingsUpdateToastController({}),
@@ -443,6 +444,42 @@ function EventRouter() {
 
     setActiveEnvironmentId(serverConfig.environment.environmentId);
   }, [serverConfig]);
+
+  useEffect(() => {
+    const notices = serverConfig?.worktreeCleanupNotices ?? [];
+    const currentIds = new Set(notices.map((notice) => notice.id));
+    shownWorktreeCleanupNoticeIdsRef.current = new Set(
+      [...shownWorktreeCleanupNoticeIdsRef.current].filter((id) => currentIds.has(id)),
+    );
+    for (const notice of notices) {
+      if (shownWorktreeCleanupNoticeIdsRef.current.has(notice.id)) continue;
+      shownWorktreeCleanupNoticeIdsRef.current.add(notice.id);
+      const description = (() => {
+        switch (notice.reason) {
+          case "unpushed-commits":
+            return "This branch has commits that are not pushed. Push them before automatic cleanup can remove the worktree.";
+          case "no-upstream":
+            return "This branch has no upstream. Push it before automatic cleanup can remove the worktree.";
+          case "local-changes":
+            return "This worktree has uncommitted or untracked changes, so automatic cleanup left it untouched.";
+          case "local-files":
+            return "This worktree still has ignored local files, so automatic cleanup left it untouched.";
+          case "inspection-failed":
+            return "T3 Code could not verify that this worktree was safe to remove.";
+          case "removal-failed":
+            return "T3 Code verified this worktree but could not remove it.";
+        }
+      })();
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: `Worktree kept: ${notice.branch ?? notice.projectTitle}`,
+          description,
+          actionVariant: "outline",
+        }),
+      );
+    }
+  }, [serverConfig?.worktreeCleanupNotices]);
 
   useEffect(() => {
     handleWelcome(serverWelcome);
