@@ -1,4 +1,4 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { ProviderInstanceId, UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -25,6 +25,7 @@ import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadc
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
+import { ProviderQuotaSection } from "./ProviderQuotaSection";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -33,7 +34,13 @@ const WINDOW_OPTIONS = [
   { days: 90, label: "90 days" },
 ] as const;
 
-export function UsagePage() {
+export function UsagePage({
+  onProviderSelect,
+  requestedProviderId,
+}: {
+  readonly onProviderSelect: (instanceId: ProviderInstanceId) => void;
+  readonly requestedProviderId: ProviderInstanceId | null;
+}) {
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -131,6 +138,10 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-6">
+            <ProviderQuotaSection
+              onSelect={onProviderSelect}
+              requestedInstanceId={requestedProviderId}
+            />
             <div className="flex flex-wrap items-center justify-between gap-4">
               <p className="text-sm text-muted-foreground">
                 {isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
