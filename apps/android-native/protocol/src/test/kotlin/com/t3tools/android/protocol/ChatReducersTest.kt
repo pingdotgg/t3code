@@ -11,6 +11,31 @@ import kotlin.test.assertTrue
 
 class ChatReducersTest {
   @Test
+  fun `provider model parsing preserves legacy metadata`() {
+    val models = parseProviderModels(
+      json(
+        """
+        {
+          "providers":[{
+            "instanceId":"codex",
+            "label":"Codex",
+            "enabled":true,
+            "installed":true,
+            "models":[
+              {"slug":"gpt-5.6-sol","name":"GPT-5.6 Sol","isCustom":false},
+              {"slug":"gpt-5.4","name":"GPT-5.4","isCustom":false,"isLegacy":true}
+            ]
+          }]
+        }
+        """,
+      ),
+    )
+
+    assertFalse(models.first { it.model == "gpt-5.6-sol" }.isLegacy)
+    assertTrue(models.first { it.model == "gpt-5.4" }.isLegacy)
+  }
+
+  @Test
   fun `generated domain fixtures reduce into chat state`() {
     val fixtures = requireNotNull(javaClass.getResource("/effect-rpc.json"))
       .readText()

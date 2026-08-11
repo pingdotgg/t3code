@@ -181,6 +181,7 @@ import com.t3tools.android.protocol.ProviderOptionDescriptor
 import com.t3tools.android.protocol.ThreadDetail
 import com.t3tools.android.protocol.ThreadPage
 import com.t3tools.android.protocol.ThreadSummary
+import com.t3tools.android.protocol.VcsRef
 import com.t3tools.android.protocol.ChatImageAttachment
 import com.t3tools.android.protocol.ChatMessage
 import com.t3tools.android.protocol.DEFAULT_TERMINAL_ID
@@ -229,6 +230,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
   var newTaskDrawer by remember { mutableStateOf<NewTaskDrawerState?>(null) }
   var gitDrawerThreadId by remember { mutableStateOf<String?>(null) }
   var reopenGitDrawerThreadId by remember { mutableStateOf<String?>(null) }
+  var homeListTopRequest by remember { mutableIntStateOf(0) }
 
   LaunchedEffect(viewModel) {
     viewModel.events.collectLatest { event ->
@@ -267,6 +269,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
           launchSingleTop = true
         }
         is AppEvent.OpenThread -> {
+          if (!event.clearEntryRoute) homeListTopRequest += 1
           newTaskDrawer = null
           gitDrawerThreadId = null
           reopenGitDrawerThreadId = null
@@ -335,6 +338,7 @@ fun T3NativeApp(viewModel: AppViewModel) {
         runtime = runtime,
         dispatchState = dispatchState,
         viewModel = viewModel,
+        homeListTopRequest = homeListTopRequest,
         onNewTask = {
           reopenGitDrawerThreadId = null
           newTaskDrawer = NewTaskDrawerState(null)
@@ -854,13 +858,26 @@ private fun OAuthButton(
 @Composable
 private fun DraftThreadRow(
   draft: ComposerDraft,
+  projectTitle: String?,
+  providerLabel: String?,
+  branch: String?,
+  faviconUrl: String?,
   onResume: () -> Unit,
   onDiscard: () -> Unit,
 ) {
+  val project = projectTitle?.takeIf(String::isNotBlank) ?: "Choose project"
+  val metadata = buildList {
+    providerLabel?.takeIf(String::isNotBlank)?.let(::add)
+    branch?.takeIf(String::isNotBlank)?.let { add(if (draft.isWorktree) "Worktree · $it" else it) }
+    if (draft.attachments.isNotEmpty()) {
+      add("${draft.attachments.size} image${if (draft.attachments.size == 1) "" else "s"}")
+    }
+  }.joinToString("  ·  ")
+
   Surface(
     shape = RoundedCornerShape(16.dp),
-    color = Color(0xFF1C1C1F),
-    border = BorderStroke(1.dp, Color(0xFF3F3F46)),
+    color = Color(0xFF1C1912),
+    border = BorderStroke(1.dp, Color(0xFF5A4318)),
     modifier = Modifier
       .fillMaxWidth()
       .clickable(onClick = onResume),
@@ -878,7 +895,12 @@ private fun DraftThreadRow(
           .background(Color(0xFF27272A), CircleShape),
         contentAlignment = Alignment.Center,
       ) {
-        Text("✏️", fontSize = 14.sp)
+        Icon(
+          imageVector = Icons.Rounded.EditNote,
+          contentDescription = null,
+          tint = Color(0xFFFBBF24),
+          modifier = Modifier.size(17.dp),
+        )
       }
 
       Column(modifier = Modifier.weight(1f)) {
@@ -886,27 +908,39 @@ private fun DraftThreadRow(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+          ProjectFaviconMark(title = project, dimmed = false, faviconUrl = faviconUrl)
           Text(
-            text = "Draft",
+            text = project,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF38BDF8),
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
           )
-          if (draft.attachments.isNotEmpty()) {
-            Text(
-              text = "• ${draft.attachments.size} image${if (draft.attachments.size == 1) "" else "s"}",
-              style = MaterialTheme.typography.labelSmall,
-              color = Color(0xFFA1A1AA),
-            )
-          }
+          Text(
+            text = "Draft",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFFFBBF24),
+          )
         }
         Text(
           text = draft.text.ifBlank { "Untitled draft" },
-          style = MaterialTheme.typography.bodyMedium,
+          style = MaterialTheme.typography.bodyLarge,
           color = Color.White,
-          maxLines = 1,
+          maxLines = 2,
           overflow = TextOverflow.Ellipsis,
         )
+        if (metadata.isNotBlank()) {
+          Text(
+            text = metadata,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFA1A1AA),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
       }
 
       IconButton(
@@ -929,6 +963,7 @@ private fun HomeScreen(
   runtime: OnlineChatState,
   dispatchState: DispatchState,
   viewModel: AppViewModel,
+  homeListTopRequest: Int,
   onNewTask: () -> Unit,
   onOpenThread: (String) -> Unit,
   pendingShares: List<IncomingShare>,
@@ -942,6 +977,18 @@ private fun HomeScreen(
   val activeDraft = newTaskDraftKey?.let { allDrafts[it] }?.takeIf {
     it.text.isNotBlank() || it.attachments.isNotEmpty()
   }
+  val activeDraftProject = activeDraft?.projectId?.let { runtime.shell.projects[it] }
+  val activeDraftProviderInstanceId = activeDraft?.modelInstanceId
+    ?: activeDraftProject?.defaultModelSelection?.instanceId
+    ?: runtime.providerModels.firstOrNull { it.isDefault }?.instanceId
+  val activeDraftProvider = runtime.providerModels
+    .firstOrNull { it.instanceId == activeDraftProviderInstanceId }
+    ?.providerLabel
+    ?: activeDraftProviderInstanceId
+  val activeDraftBranch = activeDraft?.let {
+    it.branch?.takeIf(String::isNotBlank)
+      ?: if (it.isWorktree) "Choose base branch" else "Current checkout"
+  }
 
   var search by remember { mutableStateOf("") }
   var filterStatus by remember { mutableStateOf(ThreadFilterStatus.All) }
@@ -950,7 +997,19 @@ private fun HomeScreen(
   var snoozedExpanded by remember { mutableStateOf(false) }
   var settledExpanded by remember { mutableStateOf(true) }
   var settledLimit by remember { mutableIntStateOf(THREAD_LIST_V2_SETTLED_INITIAL) }
+  val threadListState = rememberLazyListState()
+  var previousRevealSignal by remember { mutableStateOf(HomeListRevealSignal()) }
   val caps = runtime.threadCapabilities
+
+  val revealSignal = HomeListRevealSignal(
+    draftVisible = activeDraft != null,
+    createdThreadRequest = homeListTopRequest,
+  )
+  LaunchedEffect(revealSignal) {
+    val revealTop = shouldRevealHomeListTop(previousRevealSignal, revealSignal)
+    previousRevealSignal = revealSignal
+    if (revealTop) threadListState.scrollToItem(0)
+  }
 
   val rawThreads = remember(runtime.shell.threads, filterProjectId) {
     if (filterProjectId == null) {
@@ -1093,6 +1152,7 @@ private fun HomeScreen(
         OutlinedButton(onClick = viewModel::retryConnection) { Text("Retry connection") }
       }
       LazyColumn(
+        state = threadListState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1123,8 +1183,12 @@ private fun HomeScreen(
           item(key = "active-new-task-draft") {
             DraftThreadRow(
               draft = draft,
+              projectTitle = activeDraftProject?.title,
+              providerLabel = activeDraftProvider ?: "Default harness",
+              branch = activeDraftBranch,
+              faviconUrl = activeDraftProject?.let { runtime.projectFavicons[it.id] },
               onResume = onNewTask,
-              onDiscard = { newTaskDraftKey?.let { viewModel.discardDraft(it) } },
+              onDiscard = { viewModel.discardDraft(newTaskDraftKey) },
             )
           }
         }
@@ -1258,6 +1322,7 @@ private fun LazyListScope.threadListRows(
       capabilities = capabilities,
       compact = compact,
       projectTitle = project?.title,
+      projectPath = project?.workspaceRoot,
       providerDriver = resolveProviderDriver(
         item.thread.modelSelection.instanceId,
         runtime.providerModels,
@@ -1270,6 +1335,9 @@ private fun LazyListScope.threadListRows(
       onAction = { command, value ->
         viewModel.threadAction(command, item.thread.id, value)
       },
+      onRenameThread = { title -> viewModel.renameThread(item.thread.id, title) },
+      onRegenerateTitle = { viewModel.regenerateThreadTitle(item.thread.id) },
+      onDeleteThread = { viewModel.deleteThread(item.thread.id) },
       onMovePinned = { direction ->
         viewModel.reorderPinned(planPinnedMove(orderedPinned, item.thread.id, direction))
       },
@@ -2009,10 +2077,13 @@ private fun NewTaskDrawer(
   val branchesState by viewModel.newTaskBranchesState.collectAsState()
   val draftKey = remember(environmentId) { DraftStore.newTaskKey(environmentId) }
   var draft by remember(draftKey) { mutableStateOf(viewModel.loadDraft(draftKey)) }
-  LaunchedEffect(draftRevision, draftKey) { draft = viewModel.loadDraft(draftKey) }
+  LaunchedEffect(draftRevision, draftKey) {
+    val loaded = viewModel.loadDraft(draftKey)
+    draft = loaded
+  }
   val projects = runtime.shell.projects.values.sortedBy(Project::title)
   var projectId by remember(environmentId, initialProjectId) {
-    mutableStateOf(initialProjectId ?: projects.firstOrNull()?.id.orEmpty())
+    mutableStateOf(initialProjectId ?: draft.projectId ?: projects.firstOrNull()?.id.orEmpty())
   }
   LaunchedEffect(projects, initialProjectId) {
     val requested = projects.firstOrNull { it.id == initialProjectId }?.id
@@ -2020,8 +2091,15 @@ private fun NewTaskDrawer(
     else if (projects.none { it.id == projectId }) projectId = projects.firstOrNull()?.id.orEmpty()
   }
   val project = projects.firstOrNull { it.id == projectId }
-  var worktree by remember(environmentId, projectId) { mutableStateOf(false) }
-  var baseBranch by remember(environmentId, projectId) { mutableStateOf("") }
+  var worktree by remember(environmentId, projectId) {
+    mutableStateOf(draft.isWorktree && draft.projectId == projectId)
+  }
+  var existingWorktreePath by remember(environmentId, projectId) {
+    mutableStateOf(draft.worktreePath.takeIf { draft.projectId == projectId })
+  }
+  var baseBranch by remember(environmentId, projectId) {
+    mutableStateOf(if (draft.isWorktree && draft.projectId == projectId) draft.branch.orEmpty() else "")
+  }
   var startFromOrigin by remember(environmentId, projectId) { mutableStateOf(true) }
   var runSetup by remember(environmentId, projectId) { mutableStateOf(false) }
 
@@ -2031,12 +2109,44 @@ private fun NewTaskDrawer(
   val projectBranchesState = branchesState.takeIf {
     it.environmentId == environmentId && it.projectId == projectId
   } ?: NewTaskBranchesUiState(environmentId = environmentId, projectId = projectId, loading = true)
+  val currentBranch = projectBranchesState.refs.firstOrNull { it.current }?.name
+  val selectedExistingBranch = projectBranchesState.refs
+    .firstOrNull { it.worktreePath == existingWorktreePath }
+  val canStartFromOrigin = canStartWorktreeFromOrigin(baseBranch, projectBranchesState.refs)
   LaunchedEffect(worktree, projectBranchesState.refs, projectId) {
     if (worktree && baseBranch.isBlank()) {
       baseBranch = projectBranchesState.refs.firstOrNull { it.isDefault }?.name
         ?: projectBranchesState.refs.firstOrNull { it.current }?.name
         ?: ""
     }
+  }
+  LaunchedEffect(
+    environmentId,
+    projectId,
+    worktree,
+    baseBranch,
+    currentBranch,
+    existingWorktreePath,
+    selectedExistingBranch,
+  ) {
+    val current = viewModel.loadDraft(draftKey)
+    val next = current.copy(
+      projectId = projectId.takeIf { it.isNotBlank() },
+      branch = when {
+        worktree -> baseBranch
+        selectedExistingBranch != null -> selectedExistingBranch.name
+        else -> currentBranch
+      }?.takeIf { it.isNotBlank() },
+      worktreePath = existingWorktreePath,
+      isWorktree = worktree,
+    )
+    if (next != current) {
+      draft = next
+      viewModel.saveDraft(draftKey, next)
+    }
+  }
+  LaunchedEffect(worktree, baseBranch, canStartFromOrigin) {
+    if (worktree && !canStartFromOrigin) startFromOrigin = false
   }
   val fallbackModelSelection = project?.defaultModelSelection
     ?: runtime.providerModels.firstOrNull { it.isDefault }?.let {
@@ -2072,16 +2182,35 @@ private fun NewTaskDrawer(
         selectedProjectId = projectId,
         onSelectProject = { projectId = it },
         onAddProject = onAddProject,
+        projectRoot = project?.workspaceRoot,
         worktree = worktree,
-        onWorktreeChange = { worktree = it },
+        selectedWorktreePath = existingWorktreePath,
+        onUseCurrentCheckout = {
+          worktree = false
+          existingWorktreePath = null
+        },
+        onCreateNewWorktree = {
+          worktree = true
+          existingWorktreePath = null
+        },
+        onCreateNewWorktreeFrom = { ref ->
+          worktree = true
+          existingWorktreePath = null
+          baseBranch = ref.name
+        },
+        onUseExistingWorktree = { ref ->
+          worktree = false
+          existingWorktreePath = ref.worktreePath
+        },
         branchesState = projectBranchesState,
         baseBranch = baseBranch,
-        onBaseBranchChange = { baseBranch = it },
         startFromOrigin = startFromOrigin,
+        canStartFromOrigin = canStartFromOrigin,
         onStartFromOriginChange = { startFromOrigin = it },
         runSetup = runSetup,
         onRunSetupChange = { runSetup = it },
         onRefreshBranches = { viewModel.loadNewTaskBranches(projectId, force = true) },
+        onLoadMoreBranches = { viewModel.loadMoreNewTaskBranches(projectId) },
       )
       ChatComposerArea(
         defaultModelSelection = fallbackModelSelection,
@@ -2108,7 +2237,12 @@ private fun NewTaskDrawer(
             worktree = WorktreeChoice(
               enabled = worktree,
               baseBranch = baseBranch,
-              branch = "",
+              branch = if (existingWorktreePath != null) {
+                selectedExistingBranch?.name ?: draft.branch
+              } else {
+                currentBranch
+              },
+              existingPath = existingWorktreePath,
               startFromOrigin = startFromOrigin,
               runSetupScript = runSetup,
             ),
@@ -2130,24 +2264,38 @@ private fun NewTaskContextStrip(
   selectedProjectId: String,
   onSelectProject: (String) -> Unit,
   onAddProject: () -> Unit,
+  projectRoot: String?,
   worktree: Boolean,
-  onWorktreeChange: (Boolean) -> Unit,
+  selectedWorktreePath: String?,
+  onUseCurrentCheckout: () -> Unit,
+  onCreateNewWorktree: () -> Unit,
+  onCreateNewWorktreeFrom: (VcsRef) -> Unit,
+  onUseExistingWorktree: (VcsRef) -> Unit,
   branchesState: NewTaskBranchesUiState,
   baseBranch: String,
-  onBaseBranchChange: (String) -> Unit,
   startFromOrigin: Boolean,
+  canStartFromOrigin: Boolean,
   onStartFromOriginChange: (Boolean) -> Unit,
   runSetup: Boolean,
   onRunSetupChange: (Boolean) -> Unit,
   onRefreshBranches: () -> Unit,
+  onLoadMoreBranches: () -> Unit,
 ) {
   var showProjects by remember { mutableStateOf(false) }
   var showEnvironments by remember { mutableStateOf(false) }
   var showWorkspace by remember { mutableStateOf(false) }
-  var showBranches by remember { mutableStateOf(false) }
   val currentBranch = branchesState.refs.firstOrNull { it.current }?.name
-  val workspaceLabel = if (worktree) "New worktree" else {
-    currentBranch?.let { "Current · $it" } ?: "Current checkout"
+  val refGroups = projectRoot?.let { groupNewTaskRefs(it, branchesState.refs) }
+    ?: NewTaskRefGroups(emptyList(), emptyList(), emptyList())
+  val existingWorktrees = refGroups.worktrees
+  val selectedExistingWorktree = existingWorktrees.firstOrNull {
+    it.worktreePath == selectedWorktreePath
+  }
+  val workspaceLabel = when {
+    worktree && baseBranch.isNotBlank() -> "New · $baseBranch"
+    worktree -> "New worktree"
+    selectedExistingWorktree != null -> "Worktree · ${selectedExistingWorktree.name}"
+    else -> currentBranch?.let { "Current · $it" } ?: "Current checkout"
   }
 
   Surface(
@@ -2224,10 +2372,10 @@ private fun NewTaskContextStrip(
           ComposerMenuSection("Workspace")
           ComposerMenuChoice(
             label = "Current checkout",
-            selected = !worktree,
+            selected = !worktree && selectedWorktreePath == null,
             onClick = {
               showWorkspace = false
-              onWorktreeChange(false)
+              onUseCurrentCheckout()
             },
           )
           ComposerMenuChoice(
@@ -2235,15 +2383,87 @@ private fun NewTaskContextStrip(
             selected = worktree,
             onClick = {
               showWorkspace = false
-              onWorktreeChange(true)
+              onCreateNewWorktree()
             },
           )
+          existingWorktrees.forEach { ref ->
+            ComposerMenuChoice(
+              label = ref.name,
+              description = ref.worktreePath,
+              selected = ref.worktreePath == selectedWorktreePath,
+              onClick = {
+                showWorkspace = false
+                onUseExistingWorktree(ref)
+              },
+            )
+          }
+          if (refGroups.localBranches.isNotEmpty()) {
+            HorizontalDivider(color = Color(0xFF3F3F46))
+            ComposerMenuSection("Local branches")
+            refGroups.localBranches.forEach { ref ->
+              ComposerMenuChoice(
+                label = ref.name,
+                description = if (ref.isDefault) "Default" else null,
+                selected = worktree && ref.name == baseBranch,
+                onClick = {
+                  showWorkspace = false
+                  onCreateNewWorktreeFrom(ref)
+                },
+              )
+            }
+          }
+          if (refGroups.remoteBranches.isNotEmpty()) {
+            HorizontalDivider(color = Color(0xFF3F3F46))
+            ComposerMenuSection("Remote branches")
+            refGroups.remoteBranches.forEach { ref ->
+              ComposerMenuChoice(
+                label = ref.name,
+                description = ref.remoteName?.let { "Remote · $it" } ?: "Remote",
+                selected = worktree && ref.name == baseBranch,
+                onClick = {
+                  showWorkspace = false
+                  onCreateNewWorktreeFrom(ref)
+                },
+              )
+            }
+          }
+          if (branchesState.loading && branchesState.refs.isEmpty()) {
+            DropdownMenuItem(
+              text = { Text("Loading branches…") },
+              enabled = false,
+              onClick = {},
+            )
+          } else if (branchesState.refs.isEmpty()) {
+            DropdownMenuItem(
+              text = { Text(branchesState.error ?: "No branches available") },
+              enabled = false,
+              onClick = {},
+            )
+          }
+          if (branchesState.nextCursor != null) {
+            HorizontalDivider(color = Color(0xFF3F3F46))
+            DropdownMenuItem(
+              text = {
+                Text(
+                  if (branchesState.loadingMore) "Loading more…"
+                  else "Load more (${branchesState.refs.size}/${branchesState.totalCount})",
+                )
+              },
+              enabled = !branchesState.loadingMore,
+              onClick = onLoadMoreBranches,
+            )
+          }
           if (worktree) {
             HorizontalDivider(color = Color(0xFF3F3F46))
             ComposerMenuChoice(
               label = "Start from origin",
-              description = "Base the worktree on the latest origin branch",
+              description = if (canStartFromOrigin) {
+                "Base the worktree on the latest origin branch"
+              } else {
+                "No matching origin branch"
+              },
               selected = startFromOrigin,
+              enabled = canStartFromOrigin,
               onClick = {
                 showWorkspace = false
                 onStartFromOriginChange(!startFromOrigin)
@@ -2258,57 +2478,15 @@ private fun NewTaskContextStrip(
               },
             )
           }
-        }
-      }
-
-      if (worktree) {
-        Box {
-          NewTaskContextPill(
-            icon = Icons.Rounded.AccountTree,
-            label = when {
-              branchesState.loading -> "Loading branches…"
-              baseBranch.isNotBlank() -> baseBranch
-              !branchesState.isRepo -> "Not a Git project"
-              else -> "Choose branch"
+          HorizontalDivider(color = Color(0xFF3F3F46))
+          DropdownMenuItem(
+            text = { Text("Refresh branches") },
+            leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
+            onClick = {
+              showWorkspace = false
+              onRefreshBranches()
             },
-            onClick = { showBranches = true },
           )
-          ComposerOptionsMenu(showBranches, { showBranches = false }) {
-            ComposerMenuSection("Base branch")
-            branchesState.refs.distinctBy { it.name }.forEach { branch ->
-              ComposerMenuChoice(
-                label = branch.name,
-                description = when {
-                  branch.isDefault -> "Default"
-                  branch.current -> "Current"
-                  branch.isRemote -> "Remote"
-                  branch.worktreePath != null -> "Worktree"
-                  else -> null
-                },
-                selected = branch.name == baseBranch,
-                onClick = {
-                  showBranches = false
-                  onBaseBranchChange(branch.name)
-                },
-              )
-            }
-            if (!branchesState.loading && branchesState.refs.isEmpty()) {
-              DropdownMenuItem(
-                text = { Text(branchesState.error ?: "No branches available") },
-                enabled = false,
-                onClick = {},
-              )
-            }
-            HorizontalDivider(color = Color(0xFF3F3F46))
-            DropdownMenuItem(
-              text = { Text("Refresh branches") },
-              leadingIcon = { Icon(Icons.Rounded.Refresh, contentDescription = null) },
-              onClick = {
-                showBranches = false
-                onRefreshBranches()
-              },
-            )
-          }
         }
       }
     }
@@ -3352,6 +3530,7 @@ private fun ComposerMenuChoice(
   description: String? = null,
   selected: Boolean,
   icon: ImageVector? = null,
+  enabled: Boolean = true,
   onClick: () -> Unit,
 ) {
   DropdownMenuItem(
@@ -3368,6 +3547,7 @@ private fun ComposerMenuChoice(
       }
     },
     onClick = onClick,
+    enabled = enabled,
     leadingIcon = icon?.let { imageVector ->
       {
         Icon(
@@ -3417,6 +3597,64 @@ private fun ComposerModelChoice(
 }
 
 @Composable
+private fun ComposerModelChoices(
+  models: List<ProviderModel>,
+  legacyExpanded: Boolean,
+  selectedInstanceId: String?,
+  selectedModelId: String?,
+  selectedOptions: JsonElement?,
+  draft: ComposerDraft,
+  onToggleLegacy: () -> Unit,
+  onSelect: (ComposerDraft) -> Unit,
+) {
+  val sections = remember(models) { providerModelSections(models) }
+  sections.current.forEach { model ->
+    ComposerModelChoice(
+      model = model,
+      selectedInstanceId = selectedInstanceId,
+      selectedModelId = selectedModelId,
+      selectedOptions = selectedOptions,
+      draft = draft,
+      onSelect = onSelect,
+    )
+  }
+  if (sections.legacy.isNotEmpty()) {
+    DropdownMenuItem(
+      text = {
+        Column {
+          Text("Legacy models", fontWeight = FontWeight.SemiBold)
+          Text(
+            "${sections.legacy.size} model${if (sections.legacy.size == 1) "" else "s"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      },
+      onClick = onToggleLegacy,
+      trailingIcon = {
+        Icon(
+          Icons.Rounded.ChevronRight,
+          contentDescription = null,
+          modifier = Modifier.graphicsLayer { rotationZ = if (legacyExpanded) 90f else 0f },
+        )
+      },
+    )
+    if (legacyExpanded) {
+      sections.legacy.forEach { model ->
+        ComposerModelChoice(
+          model = model,
+          selectedInstanceId = selectedInstanceId,
+          selectedModelId = selectedModelId,
+          selectedOptions = selectedOptions,
+          draft = draft,
+          onSelect = onSelect,
+        )
+      }
+    }
+  }
+}
+
+@Composable
 private fun ChatComposerArea(
   defaultModelSelection: ModelSelection?,
   contextWindowUsage: ContextWindowUsage? = null,
@@ -3457,6 +3695,12 @@ private fun ChatComposerArea(
   val selectedModel = availableModels.firstOrNull {
     it.instanceId == selectedInstanceId && it.model == selectedModelId
   } ?: availableModels.firstOrNull { it.isDefault } ?: availableModels.firstOrNull()
+  var expandedLegacyProviderIds by remember { mutableStateOf(emptySet<String>()) }
+  LaunchedEffect(selectedModel?.instanceId, selectedModel?.model) {
+    selectedLegacyModelInstance(selectedModel)?.let { instanceId ->
+      expandedLegacyProviderIds += instanceId
+    }
+  }
   val providerGroups = remember(availableModels, selectedModel?.instanceId) {
     availableModels.groupBy(ProviderModel::instanceId).values.sortedBy { group ->
       if (group.firstOrNull()?.instanceId == selectedModel?.instanceId) 0 else 1
@@ -3659,19 +3903,28 @@ private fun ChatComposerArea(
                 ) {
                   if (lockProvider) {
                     ComposerMenuSection("Models")
-                    availableModels.forEach { model ->
-                      ComposerModelChoice(
-                        model = model,
-                        selectedInstanceId = selectedInstanceId,
-                        selectedModelId = selectedModelId,
-                        selectedOptions = selectedOptions,
-                        onSelect = { next ->
-                          showModelMenu = false
-                          onDraftUpdate(next)
-                        },
-                        draft = draft,
-                      )
-                    }
+                    val instanceId = selectedModel?.instanceId ?: availableModels.firstOrNull()?.instanceId
+                    ComposerModelChoices(
+                      models = availableModels,
+                      legacyExpanded = instanceId in expandedLegacyProviderIds,
+                      selectedInstanceId = selectedInstanceId,
+                      selectedModelId = selectedModelId,
+                      selectedOptions = selectedOptions,
+                      draft = draft,
+                      onToggleLegacy = {
+                        if (instanceId != null) {
+                          expandedLegacyProviderIds = if (instanceId in expandedLegacyProviderIds) {
+                            expandedLegacyProviderIds - instanceId
+                          } else {
+                            expandedLegacyProviderIds + instanceId
+                          }
+                        }
+                      },
+                      onSelect = { next ->
+                        showModelMenu = false
+                        onDraftUpdate(next)
+                      },
+                    )
                   } else {
                     ComposerMenuSection("Providers")
                     providerGroups.forEach { group ->
@@ -3703,19 +3956,26 @@ private fun ChatComposerArea(
                         },
                       )
                       if (expanded) {
-                        group.forEach { model ->
-                          ComposerModelChoice(
-                            model = model,
-                            selectedInstanceId = selectedInstanceId,
-                            selectedModelId = selectedModelId,
-                            selectedOptions = selectedOptions,
-                            onSelect = { next ->
-                              showModelMenu = false
-                              onDraftUpdate(next)
-                            },
-                            draft = draft,
-                          )
-                        }
+                        ComposerModelChoices(
+                          models = group,
+                          legacyExpanded = provider.instanceId in expandedLegacyProviderIds,
+                          selectedInstanceId = selectedInstanceId,
+                          selectedModelId = selectedModelId,
+                          selectedOptions = selectedOptions,
+                          draft = draft,
+                          onToggleLegacy = {
+                            expandedLegacyProviderIds =
+                              if (provider.instanceId in expandedLegacyProviderIds) {
+                                expandedLegacyProviderIds - provider.instanceId
+                              } else {
+                                expandedLegacyProviderIds + provider.instanceId
+                              }
+                          },
+                          onSelect = { next ->
+                            showModelMenu = false
+                            onDraftUpdate(next)
+                          },
+                        )
                       }
                     }
                   }
@@ -3992,7 +4252,7 @@ private fun ChatComposerArea(
           if (item != null) {
             onDraftUpdate(
               draft.copy(
-                text = item.text,
+                text = appendStashedText(draft.text, item.text),
                 attachments = draft.attachments + item.attachments,
               ),
             )

@@ -74,6 +74,7 @@ class EffectRpcSessionTest {
       )
       val failure = assertFailsWith<RpcFailure> { session.unary("test.failure") }
       assertEquals("ExpectedError", failure.causes[0].jsonObject["error"]!!.jsonObject["_tag"]!!.toString().trim('"'))
+      assertEquals("rejected", failure.message)
       session.close()
     } finally {
       server.shutdown()

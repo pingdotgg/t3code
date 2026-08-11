@@ -161,6 +161,7 @@ fun ThreadListV2Row(
   capabilities: ThreadCapabilities,
   compact: Boolean,
   projectTitle: String?,
+  projectPath: String?,
   providerDriver: String?,
   faviconUrl: String? = null,
   newPinOrderKey: String? = null,
@@ -168,6 +169,9 @@ fun ThreadListV2Row(
   canMovePinnedDown: Boolean = false,
   onOpen: () -> Unit,
   onAction: (command: String, value: String?) -> Unit,
+  onRenameThread: (String) -> Unit,
+  onRegenerateTitle: () -> Unit,
+  onDeleteThread: () -> Unit,
   onMovePinned: (direction: Int) -> Unit = {},
 ) {
   val thread = item.thread
@@ -244,8 +248,10 @@ fun ThreadListV2Row(
         item = item,
         capabilities = capabilities,
         projectTitle = projectTitle,
+        projectPath = projectPath,
         onDismiss = { menuOpen = false },
         onAction = onAction,
+        onRegenerateTitle = onRegenerateTitle,
         newPinOrderKey = newPinOrderKey,
         canMovePinnedUp = canMovePinnedUp,
         canMovePinnedDown = canMovePinnedDown,
@@ -331,7 +337,7 @@ fun ThreadListV2Row(
           onClick = {
             val title = renameText.trim()
             if (title.isNotEmpty()) {
-              onAction("thread.set-title", title)
+              onRenameThread(title)
             }
             renameDialog = false
           },
@@ -391,7 +397,7 @@ fun ThreadListV2Row(
       confirmButton = {
         Button(
           onClick = {
-            onAction("thread.delete", null)
+            onDeleteThread()
             confirmDelete = false
           },
           shape = RoundedCornerShape(16.dp),
@@ -583,7 +589,7 @@ private fun ThreadListV2RowContent(
 }
 
 @Composable
-private fun ProjectFaviconMark(
+fun ProjectFaviconMark(
   title: String,
   dimmed: Boolean,
   faviconUrl: String?,
@@ -1051,8 +1057,10 @@ private fun ThreadContextMenuBottomSheet(
   item: ThreadListV2Item,
   capabilities: ThreadCapabilities,
   projectTitle: String?,
+  projectPath: String?,
   onDismiss: () -> Unit,
   onAction: (command: String, value: String?) -> Unit,
+  onRegenerateTitle: () -> Unit,
   newPinOrderKey: String?,
   canMovePinnedUp: Boolean,
   canMovePinnedDown: Boolean,
@@ -1106,7 +1114,32 @@ private fun ThreadContextMenuBottomSheet(
       HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp)
       Spacer(Modifier.height(8.dp))
 
-      // 1. Settle / Unsettle / Wake
+      // 1. Settle / Unsettle
+      if (capabilities.settlement) {
+        if (item.variant == ThreadListV2Variant.Slim) {
+          ContextMenuItemRow(
+            icon = Icons.AutoMirrored.Rounded.Undo,
+            iconColor = SettleColor,
+            label = "Unsettle thread",
+            onClick = {
+              onDismiss()
+              onAction("thread.unsettle", null)
+            },
+          )
+        } else {
+          ContextMenuItemRow(
+            icon = Icons.Rounded.Check,
+            iconColor = SettleColor,
+            label = "Settle thread",
+            enabled = canSettleThread(thread),
+            onClick = {
+              onDismiss()
+              onAction("thread.settle", null)
+            },
+          )
+        }
+      }
+
       if (item.snoozed && capabilities.snooze) {
         ContextMenuItemRow(
           icon = Icons.Rounded.WbSunny,
@@ -1117,32 +1150,10 @@ private fun ThreadContextMenuBottomSheet(
             onAction("thread.unsnooze", null)
           },
         )
-      } else if (capabilities.settlement) {
-        if (item.variant == ThreadListV2Variant.Slim && !item.snoozed) {
-          ContextMenuItemRow(
-            icon = Icons.AutoMirrored.Rounded.Undo,
-            iconColor = SettleColor,
-            label = "Unsettle thread",
-            onClick = {
-              onDismiss()
-              onAction("thread.unsettle", null)
-            },
-          )
-        } else if (!item.snoozed) {
-          ContextMenuItemRow(
-            icon = Icons.Rounded.Check,
-            iconColor = SettleColor,
-            label = "Settle thread",
-            onClick = {
-              onDismiss()
-              onAction("thread.settle", null)
-            },
-          )
-        }
       }
 
       // 2. Pin / Unpin
-      if (capabilities.pinning && !item.snoozed) {
+      if (capabilities.pinning) {
         val isPinned = thread.pinnedAt != null
         ContextMenuItemRow(
           icon = Icons.Rounded.PushPin,
@@ -1185,11 +1196,12 @@ private fun ThreadContextMenuBottomSheet(
       }
 
       // 3. Snooze
-      if (capabilities.snooze && !item.snoozed && canSnoozeThread(thread)) {
+      if (capabilities.snooze && !item.snoozed) {
         ContextMenuItemRow(
           icon = Icons.Rounded.Schedule,
           iconColor = SnoozeColor,
           label = "Snooze thread…",
+          enabled = canSnoozeThread(thread),
           onClick = {
             onDismiss()
             onSnoozePicker()
@@ -1209,18 +1221,23 @@ private fun ThreadContextMenuBottomSheet(
         },
       )
 
-      ContextMenuItemRow(
-        icon = Icons.Rounded.AutoAwesome,
-        iconColor = Color(0xFFFBBF24),
-        label = "Regenerate title",
-        onClick = {
-          onDismiss()
-          onAction("thread.regenerate-title", null)
-        },
-      )
+      if (capabilities.titleRegeneration) {
+        val regenerating = thread.titleRegeneration != null
+        ContextMenuItemRow(
+          icon = Icons.Rounded.AutoAwesome,
+          iconColor = Color(0xFFFBBF24),
+          label = if (regenerating) "Regenerating…" else "Regenerate title",
+          enabled = !regenerating,
+          onClick = {
+            onDismiss()
+            onRegenerateTitle()
+          },
+        )
+      }
 
       // 5. Branch & Path Copy
-      if (thread.branch != null || thread.worktreePath != null) {
+      val workspacePath = thread.worktreePath ?: projectPath
+      if (thread.branch != null || workspacePath != null) {
         HorizontalDivider(color = Color(0xFF27272A), thickness = 1.dp, modifier = Modifier.padding(vertical = 4.dp))
 
         thread.branch?.let { branch ->
@@ -1234,7 +1251,7 @@ private fun ThreadContextMenuBottomSheet(
           )
         }
 
-        thread.worktreePath?.let { path ->
+        workspacePath?.let { path ->
           ContextMenuItemRow(
             icon = Icons.Rounded.FolderOpen,
             label = "Copy workspace path",
@@ -1272,12 +1289,13 @@ private fun ContextMenuItemRow(
   onClick: () -> Unit,
   iconColor: Color = Color.White,
   labelColor: Color = Color.White,
+  enabled: Boolean = true,
 ) {
   Row(
     modifier = Modifier
       .fillMaxWidth()
       .clip(RoundedCornerShape(10.dp))
-      .clickable(onClick = onClick)
+      .clickable(enabled = enabled, onClick = onClick)
       .padding(horizontal = 12.dp, vertical = 12.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -1286,13 +1304,13 @@ private fun ContextMenuItemRow(
       imageVector = icon,
       contentDescription = label,
       modifier = Modifier.size(20.dp),
-      tint = iconColor,
+      tint = iconColor.copy(alpha = if (enabled) 1f else 0.45f),
     )
     Text(
       text = label,
       style = MaterialTheme.typography.bodyLarge,
       fontWeight = FontWeight.Medium,
-      color = labelColor,
+      color = labelColor.copy(alpha = if (enabled) 1f else 0.45f),
     )
   }
 }

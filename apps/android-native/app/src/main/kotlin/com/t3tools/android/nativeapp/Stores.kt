@@ -72,6 +72,10 @@ class EnvironmentStore(
 data class ComposerDraft(
   val text: String = "",
   val attachments: List<DraftImageAttachment> = emptyList(),
+  val projectId: String? = null,
+  val branch: String? = null,
+  val worktreePath: String? = null,
+  val isWorktree: Boolean = false,
   val modelInstanceId: String? = null,
   val model: String? = null,
   val modelOptions: JsonElement? = null,

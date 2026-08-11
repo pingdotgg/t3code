@@ -31,6 +31,7 @@ import com.t3tools.android.protocol.awaitingSynchronization
 import com.t3tools.android.protocol.editStartCommand
 import com.t3tools.android.protocol.parseProviderModels
 import com.t3tools.android.protocol.reduce
+import com.t3tools.android.protocol.rekeyAtomicStartCommand
 import com.t3tools.android.protocol.startCommand
 import com.t3tools.android.protocol.withStartCommandAttachments
 import java.net.URI
@@ -86,6 +87,7 @@ data class ThreadCapabilities(
   val pinning: Boolean = false,
   val pinReorder: Boolean = false,
   val snapshotPagination: Boolean = false,
+  val titleRegeneration: Boolean = false,
 )
 
 data class CloudAuthState(
@@ -1002,11 +1004,25 @@ class OnlineChatRepository(
     val updated = outboxMutex.withLock {
       val updated = synchronized(lock) {
         val task = requireNotNull(pending[messageId]) { "Pending task no longer exists." }
-        task.copy(status = PendingTaskStatus.Queued, nextAttemptAt = 0, error = null)
+        if (task.createsThread) {
+          val start = rekeyAtomicStartCommand(task.command)
+          task.copy(
+            messageId = start.messageId,
+            threadId = start.threadId,
+            command = start.command,
+            status = PendingTaskStatus.Queued,
+            nextAttemptAt = 0,
+            error = null,
+          )
+        } else {
+          task.copy(status = PendingTaskStatus.Queued, nextAttemptAt = 0, error = null)
+        }
       }
+      if (updated.messageId != messageId) database.removePending(messageId)
       database.savePending(updated)
       synchronized(lock) {
-        pending[messageId] = updated
+        pending.remove(messageId)
+        pending[updated.messageId] = updated
         publishLocked()
       }
       updated
@@ -1646,7 +1662,6 @@ class OnlineChatRepository(
   }
 }
 
-private fun Throwable.safeMessage() = message?.take(240) ?: "Unexpected connection failure."
 
 private fun ClerkResult.Failure<*>.clerkMessage(fallback: String): String {
   val response = error as? ClerkErrorResponse
@@ -1672,4 +1687,5 @@ private fun JsonObject.toThreadCapabilities(config: JsonObject) = ThreadCapabili
   pinning = this["threadPinning"]?.toString() == "true",
   pinReorder = this["threadPinReorder"]?.toString() == "true",
   snapshotPagination = config["threadSnapshotPagination"]?.jsonPrimitive?.booleanOrNull == true,
+  titleRegeneration = this["threadTitleRegeneration"]?.toString() == "true",
 )

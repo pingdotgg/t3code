@@ -82,6 +82,11 @@ private fun ThreadState.reduceThreadEvent(event: JsonObject): ThreadState {
           ?: current.summary.modelSelection,
         branch = payload.nullableText("branch", current.summary.branch),
         worktreePath = payload.nullableText("worktreePath", current.summary.worktreePath),
+        titleRegeneration = if ("titleRegeneration" in payload) {
+          payload.obj("titleRegeneration")?.toThreadTitleRegeneration()
+        } else {
+          current.summary.titleRegeneration
+        },
       ),
     )
     "thread.runtime-mode-set" -> current.copy(
@@ -196,6 +201,7 @@ fun parseProviderModels(config: JsonObject): List<ProviderModel> =
         model = slug,
         modelLabel = model.text("name") ?: model.text("label") ?: slug,
         isDefault = model.bool("isDefault") == true,
+        isLegacy = model.bool("isLegacy") == true,
         rawSelection = selection,
         optionDescriptors = optionDescriptors,
         slashCommands = slashCommands,
@@ -265,9 +271,16 @@ private fun JsonObject.toThreadSummary(): ThreadSummary? {
     snoozedAt = nullableText("snoozedAt"),
     pinnedAt = nullableText("pinnedAt"),
     pinOrderKey = nullableText("pinOrderKey"),
+    titleRegeneration = obj("titleRegeneration")?.toThreadTitleRegeneration(),
     hasPendingApprovals = bool("hasPendingApprovals") == true,
     hasPendingUserInput = bool("hasPendingUserInput") == true,
   )
+}
+
+private fun JsonObject.toThreadTitleRegeneration(): ThreadTitleRegeneration? {
+  val requestId = text("requestId") ?: return null
+  val startedAt = text("startedAt") ?: return null
+  return ThreadTitleRegeneration(requestId, startedAt)
 }
 
 private fun JsonObject.toThreadDetail(): ThreadDetail? {

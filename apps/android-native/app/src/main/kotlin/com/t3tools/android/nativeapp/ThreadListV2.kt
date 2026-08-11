@@ -142,7 +142,13 @@ fun isEffectivelySettled(
 
 fun canSnoozeThread(thread: ThreadSummary): Boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false
+  if (thread.session?.status == "running" || thread.session?.status == "starting") return false
   return true
+}
+
+fun canSettleThread(thread: ThreadSummary): Boolean {
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false
+  return thread.session?.status != "running" && thread.session?.status != "starting"
 }
 
 fun sortThreadsForListV2(threads: List<ThreadSummary>): List<ThreadSummary> =

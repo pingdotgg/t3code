@@ -50,6 +50,12 @@ data class ThreadSession(
 )
 
 @Serializable
+data class ThreadTitleRegeneration(
+  val requestId: String,
+  val startedAt: String,
+)
+
+@Serializable
 data class ThreadSummary(
   val id: String,
   val projectId: String,
@@ -70,6 +76,7 @@ data class ThreadSummary(
   val snoozedAt: String? = null,
   val pinnedAt: String? = null,
   val pinOrderKey: String? = null,
+  val titleRegeneration: ThreadTitleRegeneration? = null,
   val hasPendingApprovals: Boolean,
   val hasPendingUserInput: Boolean,
 )
@@ -217,6 +224,7 @@ data class ProviderModel(
   val model: String,
   val modelLabel: String,
   val isDefault: Boolean,
+  val isLegacy: Boolean = false,
   val rawSelection: JsonObject,
   val optionDescriptors: List<ProviderOptionDescriptor> = emptyList(),
   val slashCommands: List<ProviderSlashCommand> = emptyList(),

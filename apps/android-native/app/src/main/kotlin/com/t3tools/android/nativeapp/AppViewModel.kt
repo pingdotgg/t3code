@@ -29,6 +29,7 @@ import com.t3tools.android.protocol.interactionModeCommand
 import com.t3tools.android.protocol.runtimeModeCommand
 import com.t3tools.android.protocol.stopSessionCommand
 import com.t3tools.android.protocol.threadActionCommand
+import com.t3tools.android.protocol.temporaryWorktreeBranchName
 import com.t3tools.android.protocol.toJsonObject
 import com.t3tools.android.protocol.turnStartCommand
 import com.t3tools.android.protocol.userInputResponseCommand
@@ -36,6 +37,7 @@ import com.t3tools.android.protocol.reduceVcsStatus
 import com.t3tools.android.protocol.reduceTerminalBuffer
 import com.t3tools.android.protocol.reduceTerminalMetadata
 import com.t3tools.android.protocol.updateThreadGitContextCommand
+import com.t3tools.android.protocol.updateThreadTitleCommand
 import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -112,7 +114,8 @@ data class WorkspaceFilesUiState(
 data class WorktreeChoice(
   val enabled: Boolean,
   val baseBranch: String,
-  val branch: String,
+  val branch: String?,
+  val existingPath: String?,
   val startFromOrigin: Boolean,
   val runSetupScript: Boolean,
 )
@@ -123,6 +126,9 @@ data class NewTaskBranchesUiState(
   val refs: List<VcsRef> = emptyList(),
   val isRepo: Boolean = true,
   val loading: Boolean = false,
+  val loadingMore: Boolean = false,
+  val nextCursor: Int? = null,
+  val totalCount: Int = 0,
   val error: String? = null,
 )
 
@@ -771,23 +777,64 @@ class AppViewModel(
     val environmentId = state.environment?.environmentId ?: return
     val project = state.shell.projects[projectId] ?: return
     val current = mutableNewTaskBranchesState.value
-    if (!force && current.environmentId == environmentId && current.projectId == projectId) return
+    if (!shouldLoadNewTaskBranches(force, current, environmentId, projectId)) return
 
+    loadNewTaskBranchPage(environmentId, project.id, project.workspaceRoot, force, null, false)
+  }
+
+  fun loadMoreNewTaskBranches(projectId: String) {
+    val state = runtime.value
+    val environmentId = state.environment?.environmentId ?: return
+    val project = state.shell.projects[projectId] ?: return
+    val current = mutableNewTaskBranchesState.value
+    if (
+      current.environmentId != environmentId || current.projectId != projectId ||
+      current.loading || current.loadingMore
+    ) return
+    val cursor = current.nextCursor ?: return
+    loadNewTaskBranchPage(environmentId, project.id, project.workspaceRoot, false, cursor, true)
+  }
+
+  private fun loadNewTaskBranchPage(
+    environmentId: String,
+    projectId: String,
+    workspaceRoot: String,
+    force: Boolean,
+    cursor: Int?,
+    append: Boolean,
+  ) {
     newTaskBranchesJob?.cancel()
-    mutableNewTaskBranchesState.value = NewTaskBranchesUiState(
-      environmentId = environmentId,
-      projectId = projectId,
-      loading = true,
-    )
+    mutableNewTaskBranchesState.update { current ->
+      if (append) current.copy(loadingMore = true, error = null)
+      else NewTaskBranchesUiState(
+        environmentId = environmentId,
+        projectId = projectId,
+        loading = true,
+      )
+    }
     newTaskBranchesJob = viewModelScope.launch {
-      runCatching { repository.listVcsRefs(environmentId, project.workspaceRoot) }
+      runCatching {
+        repository.listVcsRefs(
+          environmentId = environmentId,
+          cwd = workspaceRoot,
+          cursor = cursor,
+          refresh = force,
+        )
+      }
         .onSuccess { result ->
           mutableNewTaskBranchesState.update { latest ->
             if (latest.environmentId != environmentId || latest.projectId != projectId) latest
             else latest.copy(
-              refs = result.refs,
+              refs = if (append) {
+                mergeNewTaskRefs(latest.refs, result.refs)
+              } else {
+                result.refs
+              },
               isRepo = result.isRepo,
               loading = false,
+              loadingMore = false,
+              nextCursor = result.nextCursor,
+              totalCount = result.totalCount,
               error = null,
             )
           }
@@ -796,7 +843,11 @@ class AppViewModel(
           if (error !is CancellationException) {
             mutableNewTaskBranchesState.update { latest ->
               if (latest.environmentId != environmentId || latest.projectId != projectId) latest
-              else latest.copy(loading = false, error = error.safeMessage())
+              else latest.copy(
+                loading = false,
+                loadingMore = false,
+                error = error.safeMessage(),
+              )
             }
           }
         }
@@ -1780,11 +1831,13 @@ class AppViewModel(
       pendingAttachmentNames = draft.attachments.map(DraftImageAttachment::name),
       runtimeMode = draft.runtimeMode,
       interactionMode = draft.interactionMode,
+      branch = worktree.branch.takeUnless { worktree.enabled },
+      worktreePath = worktree.existingPath.takeUnless { worktree.enabled },
       worktree = if (worktree.enabled) {
         WorktreeBootstrap(
           projectCwd = project.workspaceRoot,
           baseBranch = worktree.baseBranch.trim(),
-          branch = worktree.branch.ifBlank { null },
+          branch = temporaryWorktreeBranchName(),
           startFromOrigin = worktree.startFromOrigin,
           runSetupScript = worktree.runSetupScript,
         )
@@ -1823,6 +1876,45 @@ class AppViewModel(
 
   fun threadAction(type: String, threadId: String, value: String? = null) =
     dispatchAction(threadActionCommand(type, threadId, value))
+
+  fun renameThread(threadId: String, title: String) =
+    dispatchAction(updateThreadTitleCommand(threadId = threadId, title = title))
+
+  fun regenerateThreadTitle(threadId: String) =
+    dispatchAction(updateThreadTitleCommand(threadId = threadId, regenerate = true))
+
+  fun deleteThread(threadId: String) {
+    val state = runtime.value
+    val environmentId = state.environment?.environmentId ?: return
+    val thread = state.shell.threads[threadId] ?: return
+    viewModelScope.launch {
+      mutableDispatchState.value = DispatchState.Sending
+      runCatching {
+        val session = thread.session
+        if (session != null && session.status != "stopped") {
+          repository.dispatch(environmentId, stopSessionCommand(threadId))
+        }
+        terminalMetadata.filter { it.threadId == threadId }.forEach { terminal ->
+          repository.closeTerminal(
+            environmentId,
+            threadId,
+            terminal.terminalId,
+            deleteHistory = true,
+          )
+        }
+        repository.dispatch(environmentId, threadActionCommand("thread.delete", threadId))
+      }.onSuccess {
+        draftStore.clear(DraftStore.threadKey(environmentId, threadId))
+        mutableAllDrafts.value = draftStore.loadAll()
+        if (mutableTerminalState.value.target?.threadId == threadId) {
+          stopTerminalJobs()
+          mutableTerminalState.value = TerminalUiState()
+          terminalBuffer = TerminalBufferState()
+        }
+        mutableDispatchState.value = DispatchState.Idle
+      }.onFailure { mutableDispatchState.value = DispatchState.Failed(it.safeMessage()) }
+    }
+  }
 
   fun threadAction(
     environmentId: String,
@@ -2165,5 +2257,3 @@ private fun WorkspaceFilesUiState.workspaceKey(): Triple<String, String, String>
 
 internal fun isImageWorkspacePath(path: String): Boolean = path.substringAfterLast('.', "")
   .lowercase() in setOf("avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp")
-
-private fun Throwable.safeMessage() = message?.take(240) ?: "Unexpected failure."

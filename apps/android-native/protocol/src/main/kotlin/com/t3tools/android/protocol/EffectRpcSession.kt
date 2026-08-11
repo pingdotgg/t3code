@@ -24,6 +24,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.long
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -31,10 +32,19 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
-class RpcFailure(val causes: JsonArray) : RuntimeException("RPC failed: $causes")
-class RpcDefect(defect: JsonElement) : RuntimeException("RPC defect: $defect")
+class RpcFailure(val causes: JsonArray) : RuntimeException(causes.failureMessage())
+class RpcDefect(val defect: JsonElement) : RuntimeException("The server rejected this request.")
 class RpcProtocolException(message: String) : RuntimeException(message)
 class RpcTransportException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+private fun JsonArray.failureMessage(): String = firstNotNullOfOrNull { cause ->
+  val value = cause as? JsonObject ?: return@firstNotNullOfOrNull null
+  val error = value["error"] as? JsonObject
+  error?.get("message")?.jsonPrimitive?.contentOrNull
+    ?: value["defect"]?.let { defect ->
+      (defect as? JsonObject)?.get("message")?.jsonPrimitive?.contentOrNull
+    }
+} ?: "The server rejected this request."
 
 class EffectRpcSession private constructor(
   private val http: OkHttpClient,

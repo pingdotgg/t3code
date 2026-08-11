@@ -142,7 +142,7 @@ class ThreadListV2Test {
     assertFalse(resolveThreadListV2SwipeSecondary(snoozed = true, snoozeSupported = true, snoozable = true))
     assertFalse(resolveThreadListV2SwipeSecondary(snoozed = false, snoozeSupported = false, snoozable = true))
     assertFalse(canSnoozeThread(summary("a", hasPendingApprovals = true)))
-    assertTrue(canSnoozeThread(summary("running", session = ThreadSession("running", null, null))))
+    assertFalse(canSnoozeThread(summary("running", session = ThreadSession("running", null, null))))
   }
 
   @Test
@@ -195,6 +195,20 @@ class ThreadListV2Test {
     )
 
     assertFalse(isEffectivelySettled(active, now, settlementSupported = true, autoSettleAfterDays = 3))
+  }
+
+  @Test
+  fun lifecycle_actions_are_blocked_while_thread_needs_attention() {
+    val running = summary("running", session = ThreadSession("running", "turn-1", null))
+    val approval = summary("approval", hasPendingApprovals = true)
+    val ready = summary("ready")
+
+    assertFalse(canSettleThread(running))
+    assertFalse(canSnoozeThread(running))
+    assertFalse(canSettleThread(approval))
+    assertFalse(canSnoozeThread(approval))
+    assertTrue(canSettleThread(ready))
+    assertTrue(canSnoozeThread(ready))
   }
 
   @Test

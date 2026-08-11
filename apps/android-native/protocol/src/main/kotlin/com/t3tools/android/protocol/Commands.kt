@@ -28,6 +28,23 @@ fun startCommand(command: JsonObject): StartCommand {
   )
 }
 
+fun rekeyAtomicStartCommand(
+  command: JsonObject,
+  commandId: String = UUID.randomUUID().toString(),
+  messageId: String = UUID.randomUUID().toString(),
+  threadId: String = UUID.randomUUID().toString(),
+): StartCommand {
+  val message = command.required("message").jsonObject
+  val updated = JsonObject(
+    command + mapOf(
+      "commandId" to JsonPrimitive(commandId),
+      "threadId" to JsonPrimitive(threadId),
+      "message" to JsonObject(message + ("messageId" to JsonPrimitive(messageId))),
+    ),
+  )
+  return StartCommand(threadId, commandId, messageId, updated)
+}
+
 fun editStartCommand(command: JsonObject, prompt: String, hasAttachments: Boolean = false): JsonObject {
   val message = command.required("message").jsonObject
   val commandHasAttachments = (message["attachments"] as? JsonArray)?.isNotEmpty() == true
@@ -77,6 +94,8 @@ fun atomicStartCommand(
   pendingAttachmentNames: List<String> = emptyList(),
   runtimeMode: String = "full-access",
   interactionMode: String = "default",
+  branch: String? = null,
+  worktreePath: String? = null,
   worktree: WorktreeBootstrap? = null,
   commandId: String = UUID.randomUUID().toString(),
   messageId: String = UUID.randomUUID().toString(),
@@ -118,8 +137,8 @@ fun atomicStartCommand(
           "modelSelection" to modelSelection,
           "runtimeMode" to JsonPrimitive(runtimeMode),
           "interactionMode" to JsonPrimitive(interactionMode),
-          "branch" to JsonNull,
-          "worktreePath" to JsonNull,
+          "branch" to (branch?.let(::JsonPrimitive) ?: JsonNull),
+          "worktreePath" to (worktreePath?.let(::JsonPrimitive) ?: JsonNull),
           "createdAt" to JsonPrimitive(timestamp),
         ),
         "prepareWorktree" to worktree?.let {
@@ -135,6 +154,12 @@ fun atomicStartCommand(
       "createdAt" to JsonPrimitive(timestamp),
     ),
   )
+}
+
+fun temporaryWorktreeBranchName(randomToken: String = UUID.randomUUID().toString()): String {
+  val token = randomToken.lowercase().filter { it in "0123456789abcdef" }.take(8)
+  require(token.length == 8) { "Temporary worktree branch token must contain 8 hex characters." }
+  return "t3code/$token"
 }
 
 fun turnStartCommand(
@@ -215,6 +240,22 @@ fun updateThreadGitContextCommand(
   "worktreePath" to (worktreePath?.let(::JsonPrimitive) ?: JsonNull),
 )
 
+fun updateThreadTitleCommand(
+  threadId: String,
+  title: String? = null,
+  regenerate: Boolean = false,
+  commandId: String = UUID.randomUUID().toString(),
+): JsonObject {
+  require((title != null) xor regenerate) { "Specify either a title or regeneration." }
+  return buildJsonObject(
+    "type" to JsonPrimitive("thread.meta.update"),
+    "commandId" to JsonPrimitive(commandId),
+    "threadId" to JsonPrimitive(threadId),
+    *(title?.let { arrayOf("title" to JsonPrimitive(it.trim())) }
+      ?: arrayOf("regenerateTitle" to JsonPrimitive(true))),
+  )
+}
+
 fun stopSessionCommand(threadId: String, now: Instant = Instant.now()) = timestampedThreadCommand(
   type = "thread.session.stop",
   threadId = threadId,
@@ -267,8 +308,6 @@ fun threadActionCommand(
       "thread.pin",
       "thread.unpin",
       "thread.pin.reorder",
-      "thread.set-title",
-      "thread.regenerate-title",
     ),
   ) { "Unsupported thread action: $type" }
   val fields = when (type) {
@@ -276,8 +315,6 @@ fun threadActionCommand(
     "thread.snooze" -> arrayOf("snoozedUntil" to JsonPrimitive(requireNotNull(value)))
     "thread.pin", "thread.pin.reorder" -> value?.let { arrayOf("orderKey" to JsonPrimitive(it)) }
       ?: emptyArray()
-    "thread.set-title" -> arrayOf("title" to JsonPrimitive(requireNotNull(value)))
-    "thread.regenerate-title" -> emptyArray()
     else -> emptyArray()
   }
   return timestampedThreadCommand(type, threadId, now, *fields)

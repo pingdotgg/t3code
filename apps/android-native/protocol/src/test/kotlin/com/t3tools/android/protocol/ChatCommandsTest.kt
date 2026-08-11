@@ -60,6 +60,55 @@ class ChatCommandsTest {
   }
 
   @Test
+  fun `atomic start can reuse an existing worktree without preparing another`() {
+    val start = atomicStartCommand(
+      project = ProjectChoice("project-1", "T3", "/repo", model),
+      modelSelection = model,
+      prompt = "Continue here",
+      branch = "feat/native",
+      worktreePath = "/repo-native",
+      now = now,
+    )
+
+    val bootstrap = start.command.required("bootstrap").jsonObject
+    val createThread = bootstrap.required("createThread").jsonObject
+    assertEquals("feat/native", createThread.required("branch").jsonPrimitive.content)
+    assertEquals("/repo-native", createThread.required("worktreePath").jsonPrimitive.content)
+    assertEquals(null, bootstrap["prepareWorktree"])
+  }
+
+  @Test
+  fun `temporary worktree branches match the web format`() {
+    assertEquals("t3code/deadbeef", temporaryWorktreeBranchName("DEADBEEF-0000"))
+  }
+
+  @Test
+  fun `failed atomic start can be retried with fresh ids`() {
+    val original = atomicStartCommand(
+      project = ProjectChoice("project-1", "T3", "/repo", model),
+      modelSelection = model,
+      prompt = "Implement it",
+      commandId = "command-1",
+      messageId = "message-1",
+      threadId = "thread-1",
+      now = now,
+    )
+    val retried = rekeyAtomicStartCommand(
+      original.command,
+      commandId = "command-2",
+      messageId = "message-2",
+      threadId = "thread-2",
+    )
+
+    assertEquals("command-2", retried.command.required("commandId").jsonPrimitive.content)
+    assertEquals("thread-2", retried.command.required("threadId").jsonPrimitive.content)
+    assertEquals(
+      "message-2",
+      retried.command.required("message").jsonObject.required("messageId").jsonPrimitive.content,
+    )
+  }
+
+  @Test
   fun `attachment-only turn emits upload without requiring text`() {
     val start = turnStartCommand(
       threadId = "thread-1",
@@ -109,6 +158,17 @@ class ChatCommandsTest {
     assertFailsWith<IllegalArgumentException> {
       approvalResponseCommand("thread-1", "request-1", "always", now)
     }
+  }
+
+  @Test
+  fun `rename and regenerate use thread metadata updates`() {
+    val rename = updateThreadTitleCommand("thread-1", title = "Renamed", commandId = "rename-1")
+    val regenerate = updateThreadTitleCommand("thread-1", regenerate = true, commandId = "regen-1")
+
+    assertEquals("thread.meta.update", rename.required("type").jsonPrimitive.content)
+    assertEquals("Renamed", rename.required("title").jsonPrimitive.content)
+    assertEquals("thread.meta.update", regenerate.required("type").jsonPrimitive.content)
+    assertEquals(true, regenerate.required("regenerateTitle").jsonPrimitive.content.toBoolean())
   }
 
   @Test
