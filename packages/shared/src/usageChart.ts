@@ -207,14 +207,15 @@ export function buildUsageChartGeometry({
   const toY = (value: number) => (max === 0 ? height : height - (value / max) * (height - plotTop));
 
   const paths = providers.map((provider, providerIndex) => {
-    const line = curvePath(
-      smoothCurve(
-        columns.map((column, dayIndex) => ({
-          x: dayIndex * stepX,
-          y: toY(column.bands[providerIndex]?.value ?? 0),
-        })),
-      ),
-    );
+    const points = columns.map((column, dayIndex) => ({
+      x: dayIndex * stepX,
+      y: toY(column.bands[providerIndex]?.value ?? 0),
+    }));
+    const onlyPoint = points[0];
+    const line =
+      points.length === 1 && onlyPoint !== undefined
+        ? `M0.00,${onlyPoint.y.toFixed(2)} L${width.toFixed(2)},${onlyPoint.y.toFixed(2)}`
+        : curvePath(smoothCurve(points));
     return {
       provider,
       total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),

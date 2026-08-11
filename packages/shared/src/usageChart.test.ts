@@ -144,6 +144,26 @@ describe("buildUsageChartGeometry", () => {
     ]);
   });
 
+  it("renders a single period across the plot", () => {
+    const singlePeriod = buildUsageChartGeometry({
+      days: [DAYS[0] ?? ""],
+      daily: DAILY.slice(0, 1),
+      metric: "cost",
+      providers: PROVIDERS,
+      width: 200,
+      height: 100,
+      plotTop: 0,
+      tickCount: 4,
+    });
+    const strokes = singlePeriod.layers.filter((layer) => layer.kind === "stroke");
+
+    expect(strokes).toHaveLength(2);
+    expect(strokes.map((stroke) => stroke.path)).toEqual([
+      "M0.00,0.00 L200.00,0.00",
+      "M0.00,16.67 L200.00,16.67",
+    ]);
+  });
+
   it("keeps crossing series independent through a missing day", () => {
     const strokes = geometry().layers.filter((layer) => layer.kind === "stroke");
     const codex = strokes.find((layer) => layer.provider === "codex");
