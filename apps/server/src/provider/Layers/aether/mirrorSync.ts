@@ -68,6 +68,10 @@ export interface AetherMirrorFs {
   readonly writeFile: (path: string, bytes: Uint8Array) => Promise<void>;
   readonly mkdir: (dir: string) => Promise<void>;
   readonly remove: (path: string) => Promise<void>;
+  /** Canonical, symlink-free path; rejects when `path` does not exist. */
+  readonly realpath: (path: string) => Promise<string>;
+  /** Is `path` ITSELF a symlink? `false` when it does not exist. */
+  readonly isSymlink: (path: string) => Promise<boolean>;
 }
 
 const defaultMirrorFs: AetherMirrorFs = {
@@ -76,6 +80,19 @@ const defaultMirrorFs: AetherMirrorFs = {
     await NodeFSP.mkdir(dir, { recursive: true });
   },
   remove: (path) => NodeFSP.rm(path, { force: true }),
+  realpath: (path) => NodeFSP.realpath(path),
+  isSymlink: async (path) => {
+    try {
+      return (await NodeFSP.lstat(path)).isSymbolicLink();
+    } catch (cause) {
+      // "It is not there" is an answer; every other errno is a real failure
+      // and must not be swallowed into a false "not a symlink".
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
+        return false;
+      }
+      throw cause;
+    }
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -175,11 +192,55 @@ const LINE_PREFIX: Record<string, string> = {
   context: " ",
 };
 
+/** The named C escapes git writes; every other control byte becomes `\NNN`. */
+const C_STYLE_ESCAPES: Record<string, string> = {
+  '"': '\\"',
+  "\\": "\\\\",
+  "\u0007": "\\a",
+  "\b": "\\b",
+  "\t": "\\t",
+  "\n": "\\n",
+  "\v": "\\v",
+  "\f": "\\f",
+  "\r": "\\r",
+};
+
+/**
+ * Git's C-style quoting for a diff header path token (`a/…`, `b/…`, or the
+ * bare path of a rename line). Interpolating a raw path that contains a
+ * quote, a backslash or a control character yields a header `git apply`
+ * REJECTS — which pauses the mirror permanently — so those three classes are
+ * escaped and the token wrapped in quotes, exactly as git writes them.
+ * Non-ASCII bytes are left raw: git quotes them for DISPLAY (core.quotePath)
+ * but `git apply` reads raw UTF-8, and inside a quoted token they pass
+ * through git's unquoting verbatim.
+ */
+function quoteGitDiffPath(token: string): string {
+  let escaped = "";
+  let quotingRequired = false;
+  for (const character of token) {
+    const literal = C_STYLE_ESCAPES[character];
+    if (literal !== undefined) {
+      escaped += literal;
+      quotingRequired = true;
+      continue;
+    }
+    const code = character.codePointAt(0)!;
+    if (code < 0x20 || code === 0x7f) {
+      escaped += `\\${code.toString(8).padStart(3, "0")}`;
+      quotingRequired = true;
+      continue;
+    }
+    escaped += character;
+  }
+  return quotingRequired ? `"${escaped}"` : token;
+}
+
 function renderTextFilePatch(file: AetherWsGitDiffFile): string {
   const parts: Array<string> = [];
   const oldPath = file.status === "added" ? file.newPath : file.oldPath;
   const newPath = file.status === "deleted" ? file.oldPath : file.newPath;
-  parts.push(`diff --git a/${oldPath} b/${newPath}`);
+  parts.push(`diff --git ${quoteGitDiffPath(`a/${oldPath}`)} ${quoteGitDiffPath(`b/${newPath}`)}`);
   switch (file.status) {
     case "added":
       parts.push("new file mode 100644");
@@ -188,8 +249,8 @@ function renderTextFilePatch(file: AetherWsGitDiffFile): string {
       parts.push("deleted file mode 100644");
       break;
     case "renamed":
-      parts.push(`rename from ${file.oldPath}`);
-      parts.push(`rename to ${file.newPath}`);
+      parts.push(`rename from ${quoteGitDiffPath(file.oldPath)}`);
+      parts.push(`rename to ${quoteGitDiffPath(file.newPath)}`);
       break;
     case "modified":
       break;
@@ -199,8 +260,12 @@ function renderTextFilePatch(file: AetherWsGitDiffFile): string {
       );
   }
   if (file.hunks.length > 0) {
-    parts.push(file.status === "added" ? "--- /dev/null" : `--- a/${oldPath}`);
-    parts.push(file.status === "deleted" ? "+++ /dev/null" : `+++ b/${newPath}`);
+    parts.push(
+      file.status === "added" ? "--- /dev/null" : `--- ${quoteGitDiffPath(`a/${oldPath}`)}`,
+    );
+    parts.push(
+      file.status === "deleted" ? "+++ /dev/null" : `+++ ${quoteGitDiffPath(`b/${newPath}`)}`,
+    );
     for (const hunk of file.hunks) {
       // Regenerate the @@ line from the numeric fields (authoritative);
       // the stored header text is display-oriented.
@@ -461,38 +526,63 @@ export function makeAetherMirrorSync(options: AetherMirrorSyncOptions): AetherMi
    * walks straight out.
    */
   const resolveInMirror = (relative: string): Effect.Effect<string, PauseSync> =>
-    Effect.suspend(() => {
+    Effect.gen(function* () {
       const refuse = (why: string) =>
-        Effect.fail(
-          new PauseSync(
-            `The workspace diff names a binary path that escapes the mirror checkout (${why}): '${relative}'.`,
-          ),
+        new PauseSync(
+          `The workspace diff names a binary path that escapes the mirror checkout (${why}): '${relative}'.`,
         );
       if (relative.length === 0) {
-        return refuse("empty path");
+        return yield* Effect.fail(refuse("empty path"));
       }
       if (NodePath.isAbsolute(relative)) {
-        return refuse("absolute path");
+        return yield* Effect.fail(refuse("absolute path"));
       }
       // Both separators: a Windows-style '..\\x' is a traversal too, and a
       // backslash in a POSIX name is not worth the ambiguity.
-      const segments = relative.split(/[/\\]/);
+      const segments = relative.split(/[/\\]/).filter((segment) => segment !== "");
       if (segments.includes("..")) {
-        return refuse("'..' segment");
+        return yield* Effect.fail(refuse("'..' segment"));
       }
       // Direct writes bypass git's own refusal to track files under .git —
       // a write to .git/config or .git/hooks/* corrupts the mirror's
       // metadata (hooks = code execution on the next git invocation). Git
       // never tracks such paths, so a legitimate diff cannot name them.
       if (segments.some((segment) => segment.toLowerCase() === ".git")) {
-        return refuse("'.git' segment");
+        return yield* Effect.fail(refuse("'.git' segment"));
       }
-      const root = NodePath.resolve(cwd);
-      const resolved = NodePath.resolve(root, relative);
-      if (!resolved.startsWith(root + NodePath.sep)) {
-        return refuse("resolves outside the checkout");
+      if (segments.every((segment) => segment === ".")) {
+        return yield* Effect.fail(refuse("empty path"));
       }
-      return Effect.succeed(resolved);
+      // LEXICAL validation is not enough: `writeFile` and `mkdir` FOLLOW
+      // symlinks, so a diff naming an existing symlink inside the checkout
+      // (or any path underneath one) writes wherever it points — outside the
+      // checkout, or into .git. Walk the segments down from the checkout's
+      // REAL root and refuse the first component that is itself a symlink;
+      // what comes back is then a real path inside the real root by
+      // construction, with no containment check left to get wrong.
+      const root = yield* Effect.tryPromise({
+        try: () => fs.realpath(cwd),
+        catch: (cause) =>
+          new PauseSync(`Could not resolve the mirror checkout '${cwd}': ${String(cause)}`),
+      });
+      let resolved = root;
+      for (const segment of segments) {
+        if (segment === ".") {
+          continue;
+        }
+        resolved = NodePath.join(resolved, segment);
+        const symlink = yield* Effect.tryPromise({
+          try: () => fs.isSymlink(resolved),
+          catch: (cause) =>
+            new PauseSync(
+              `Could not inspect '${relative}' inside the mirror checkout: ${String(cause)}`,
+            ),
+        });
+        if (symlink) {
+          return yield* Effect.fail(refuse(`'${segment}' is a symlink`));
+        }
+      }
+      return resolved;
     });
 
   const applyBinaries = (
@@ -500,8 +590,8 @@ export function makeAetherMirrorSync(options: AetherMirrorSyncOptions): AetherMi
     binaries: ReadonlyArray<AetherWsGitDiffFile>,
   ) =>
     Effect.gen(function* () {
-      // TWO-PHASE: resolve/validate EVERY path in the batch before touching
-      // the filesystem. A rename with a safe oldPath and an escaping newPath
+      // PASS 1: resolve/validate EVERY path in the batch before touching the
+      // filesystem. A rename with a safe oldPath and an escaping newPath
       // must refuse before the removal — a failed sync may never leave the
       // mirror partially mutated by its own validation error.
       const resolvedTargets = new Map<string, string>();
@@ -513,6 +603,12 @@ export function makeAetherMirrorSync(options: AetherMirrorSyncOptions): AetherMi
           resolvedTargets.set(`new:${file.newPath}`, yield* resolveInMirror(file.newPath));
         }
       }
+      // PASS 2 then PASS 3 — every removal strictly before every write. One
+      // cumulative diff can name the same path as one entry's new target and
+      // another entry's old path (a delete of `a` alongside a rename of
+      // `b`→`a`); interleaving lets the later removal clobber the earlier
+      // write, and the sync then fingerprints and REPORTS a tree that is
+      // missing a file the diff says exists.
       for (const file of binaries) {
         if (file.status === "deleted" || file.status === "renamed") {
           const stale = resolvedTargets.get(`old:${file.oldPath}`)!;
@@ -521,9 +617,11 @@ export function makeAetherMirrorSync(options: AetherMirrorSyncOptions): AetherMi
             catch: (cause) =>
               new PauseSync(`Failed to remove binary file '${file.oldPath}': ${String(cause)}`),
           });
-          if (file.status === "deleted") {
-            continue;
-          }
+        }
+      }
+      for (const file of binaries) {
+        if (file.status === "deleted") {
+          continue;
         }
         const target = resolvedTargets.get(`new:${file.newPath}`)!;
         const read = yield* connection.readWorkspaceFile(file.newPath).pipe(

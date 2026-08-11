@@ -724,6 +724,148 @@ it.layer(TestLayer)("mirror sync engine (real git fixtures)", (it) => {
   );
 
   it.effect(
+    "refuses a binary path that reaches outside the checkout THROUGH a symlink",
+    () =>
+      Effect.gen(function* () {
+        // The lexical check passes — `escape-link/payload.bin` has no '..',
+        // no leading '/', no '.git'. `writeFile`/`mkdir` FOLLOW the symlink,
+        // so before the real-path walk this wrote outside the checkout.
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repos = yield* setupRepos;
+        const outside = path.dirname(repos.mirror);
+        const outsideDir = path.join(outside, "outside-dir");
+        yield* fileSystem.makeDirectory(outsideDir, { recursive: true });
+        // Planted under the gitignored `build/`, so the link is invisible to
+        // the content fingerprint and survives `clean -fd` — exactly how a
+        // hostile artifact would sit in a real checkout.
+        yield* repos.makeMirrorDirectory("build");
+        yield* fileSystem.symlink(outsideDir, path.join(repos.mirror, "build", "escape-link"));
+
+        const engine = makeEngine(repos);
+        const outcome = yield* engine.syncAtSettle(
+          scriptedConnection([
+            diffResult(repos.baseSha, [
+              {
+                oldPath: "/dev/null",
+                newPath: "build/escape-link/payload.bin",
+                displayPath: "build/escape-link/payload.bin",
+                status: "added",
+                isBinary: true,
+                hunks: [],
+              },
+            ]),
+          ]),
+        );
+        expect(outcome).toMatchObject({ _tag: "paused", firstPause: true });
+        if (outcome._tag === "paused") {
+          expect(outcome.reason).toContain("escapes the mirror checkout");
+          expect(outcome.reason).toContain("symlink");
+        }
+        expect(yield* fileSystem.exists(path.join(outsideDir, "payload.bin"))).toBe(false);
+      }).pipe(Effect.scoped),
+    { timeout: 60_000 },
+  );
+
+  it.effect(
+    "refuses a binary path whose LEAF is a symlink into the checkout's own .git",
+    () =>
+      Effect.gen(function* () {
+        // Containment alone would let this through: the link's target is
+        // inside the checkout. Following it corrupts git metadata, which the
+        // lexical '.git' refusal exists to prevent.
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repos = yield* setupRepos;
+        yield* repos.makeMirrorDirectory("build");
+        yield* fileSystem.symlink(
+          path.join(repos.mirror, ".git", "config"),
+          path.join(repos.mirror, "build", "innocent.bin"),
+        );
+
+        const engine = makeEngine(repos);
+        const outcome = yield* engine.syncAtSettle(
+          scriptedConnection([
+            diffResult(repos.baseSha, [
+              {
+                oldPath: "/dev/null",
+                newPath: "build/innocent.bin",
+                displayPath: "build/innocent.bin",
+                status: "added",
+                isBinary: true,
+                hunks: [],
+              },
+            ]),
+          ]),
+        );
+        expect(outcome).toMatchObject({ _tag: "paused", firstPause: true });
+        if (outcome._tag === "paused") {
+          expect(outcome.reason).toContain("escapes the mirror checkout");
+          expect(outcome.reason).toContain("symlink");
+        }
+        expect(yield* repos.readMirrorFile(".git/config")).toContain("[core]");
+      }).pipe(Effect.scoped),
+    { timeout: 60_000 },
+  );
+
+  it.effect(
+    "removes every old binary path BEFORE writing any new one, so overlapping entries do not clobber",
+    () =>
+      Effect.gen(function* () {
+        // `lib.txt` is BOTH the delete's old path and the rename's new path.
+        // Applied entry-by-entry the rename's write landed first and the
+        // later delete removed it — and the sync still reported success.
+        const repos = yield* setupRepos;
+        const engine = makeEngine(repos);
+        const outcome = yield* engine.syncAtSettle(
+          scriptedConnection([
+            diffResult(repos.baseSha, [
+              {
+                oldPath: "app.txt",
+                newPath: "lib.txt",
+                displayPath: "lib.txt",
+                status: "renamed",
+                isBinary: true,
+                hunks: [],
+              },
+              {
+                oldPath: "lib.txt",
+                newPath: "/dev/null",
+                displayPath: "lib.txt",
+                status: "deleted",
+                isBinary: true,
+                hunks: [],
+              },
+            ]),
+          ]),
+        );
+        expect(outcome._tag).toBe("synced");
+        // The rename's target survives: it is written after every removal.
+        expect(yield* repos.readMirrorFile("lib.txt")).toBe("binary:lib.txt");
+        expect(yield* repos.mirrorFileExists("app.txt")).toBe(false);
+      }).pipe(Effect.scoped),
+    { timeout: 60_000 },
+  );
+
+  it.effect(
+    "git-quotes header paths so a name with a quote or backslash still applies",
+    () =>
+      Effect.gen(function* () {
+        // Raw interpolation produced a header `git apply` rejects, which
+        // pauses the mirror permanently for the rest of the thread.
+        const repos = yield* setupRepos;
+        const engine = makeEngine(repos);
+        const weird = 'we"ird\\name.txt';
+        const outcome = yield* engine.syncAtSettle(
+          scriptedConnection([diffResult(repos.baseSha, [addedFile(weird, "quoted\n")])]),
+        );
+        expect(outcome).toMatchObject({ _tag: "synced" });
+        expect(yield* repos.readMirrorFile(weird)).toBe("quoted\n");
+      }).pipe(Effect.scoped),
+    { timeout: 60_000 },
+  );
+
+  it.effect(
     "deleted, renamed and dropped entries settle to the EXACT tree each turn",
     () =>
       Effect.gen(function* () {
