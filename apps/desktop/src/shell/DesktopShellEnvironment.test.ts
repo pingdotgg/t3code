@@ -195,6 +195,29 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("does not mix login-shell locale categories into an inherited locale", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        LANG: "en_US.UTF-8",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LC_ALL: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "en_US.UTF-8");
+      assert.equal(env.LC_ALL, undefined);
+    }),
+  );
+
   it.effect("falls back to a UTF-8 LC_CTYPE when no locale is available on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {

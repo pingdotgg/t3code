@@ -467,9 +467,6 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "HOMEBREW_PREFIX",
       "HOMEBREW_CELLAR",
       "HOMEBREW_REPOSITORY",
-      "LANG",
-      "LC_ALL",
-      "LC_CTYPE",
       "XDG_CONFIG_HOME",
       "XDG_DATA_HOME",
       "XDG_RUNTIME_DIR",
@@ -480,16 +477,27 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       }
     }
 
-    // GUI launches inherit no locale from launchd, so spawned agents land in the C
-    // locale and pbcopy decodes their UTF-8 output as MacRoman. Older supported
-    // macOS releases do not provide C.UTF-8, so set only LC_CTYPE to a UTF-8 locale
-    // available on those releases. Leaving LANG unset keeps C-stable collation and
-    // formatting, so output parsing is unaffected.
+    // Locale variables form one precedence group: LC_ALL can override an inherited
+    // LANG or LC_CTYPE, so only hydrate the group when the process has none of them.
     if (
       config.platform === "darwin" &&
       LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))
     ) {
-      config.env.LC_CTYPE = FALLBACK_LC_CTYPE;
+      for (const name of LOCALE_ENV_NAMES) {
+        const value = trimNonEmpty(shellEnvironment[name]);
+        if (Option.isSome(value)) {
+          config.env[name] = value.value;
+        }
+      }
+
+      // GUI launches inherit no locale from launchd, so spawned agents land in the C
+      // locale and pbcopy decodes their UTF-8 output as MacRoman. Older supported
+      // macOS releases do not provide C.UTF-8, so set only LC_CTYPE to a UTF-8 locale
+      // available on those releases. Leaving LANG unset keeps C-stable collation and
+      // formatting, so output parsing is unaffected.
+      if (LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
+        config.env.LC_CTYPE = FALLBACK_LC_CTYPE;
+      }
     }
 
     if (
