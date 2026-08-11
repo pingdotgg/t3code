@@ -27,7 +27,7 @@
 - Create: `apps/web/src/components/usage/ProviderQuotaSection.logic.ts`
 - Create: `apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts`
 - Modify: `apps/web/src/routes/usage.tsx`
-- Create: `apps/web/src/routes/usage.test.ts`
+- Create: `apps/web/src/routes/-usage.test.ts`
 - Modify: `apps/web/src/components/sidebar/ProviderUsageStrip.logic.ts`
 - Modify: `apps/web/src/components/sidebar/ProviderUsageStrip.logic.test.ts`
 
@@ -55,7 +55,7 @@ it("falls back to the first settings-ordered item", () => {
 
 - [ ] **Step 2: Run the tests and verify RED**
 
-Run: `vp test run apps/web/src/routes/usage.test.ts apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts`
+Run: `vp test run apps/web/src/routes/-usage.test.ts apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts`
 
 Expected: FAIL because the parser and selection helper do not exist.
 
@@ -84,14 +84,14 @@ Configure `createFileRoute("/usage")` with `validateSearch: parseUsageSearch` an
 
 - [ ] **Step 4: Run selection and existing projection tests GREEN**
 
-Run: `vp test run apps/web/src/routes/usage.test.ts apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts apps/web/src/components/sidebar/ProviderUsageStrip.logic.test.ts`
+Run: `vp test run apps/web/src/routes/-usage.test.ts apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts apps/web/src/components/sidebar/ProviderUsageStrip.logic.test.ts`
 
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/web/src/routes/usage.tsx apps/web/src/routes/usage.test.ts apps/web/src/components/usage/ProviderQuotaSection.logic.ts apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts apps/web/src/components/sidebar/ProviderUsageStrip.logic.ts apps/web/src/components/sidebar/ProviderUsageStrip.logic.test.ts
+git add apps/web/src/routes/usage.tsx apps/web/src/routes/-usage.test.ts apps/web/src/components/usage/ProviderQuotaSection.logic.ts apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts apps/web/src/components/sidebar/ProviderUsageStrip.logic.ts apps/web/src/components/sidebar/ProviderUsageStrip.logic.test.ts
 git commit -m "refactor(web): share provider quota view state"
 ```
 
@@ -263,7 +263,7 @@ Add a route interaction test asserting selector changes update only `search.prov
 
 - [ ] **Step 2: Run the Usage page tests and verify RED**
 
-Run: `vp test run apps/web/src/components/usage/UsagePage.test.tsx apps/web/src/routes/usage.test.ts`
+Run: `vp test run apps/web/src/components/usage/UsagePage.test.tsx apps/web/src/routes/-usage.test.ts`
 
 Expected: FAIL because live limits are not part of the page.
 
@@ -284,14 +284,14 @@ When a requested instance disappears, normalize the URL to the first visible pro
 
 - [ ] **Step 4: Run integrated Usage and sidebar tests GREEN**
 
-Run: `vp test run apps/web/src/components/usage/UsagePage.test.tsx apps/web/src/components/usage/ProviderQuotaSection.test.tsx apps/web/src/components/sidebar/ProviderUsageStrip.test.tsx apps/web/src/routes/usage.test.ts`
+Run: `vp test run apps/web/src/components/usage/UsagePage.test.tsx apps/web/src/components/usage/ProviderQuotaSection.test.tsx apps/web/src/components/sidebar/ProviderUsageStrip.test.tsx apps/web/src/routes/-usage.test.ts`
 
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/web/src/components/usage/UsagePage.tsx apps/web/src/components/usage/UsagePage.test.tsx apps/web/src/routes/usage.tsx apps/web/src/routes/usage.test.ts
+git add apps/web/src/components/usage/UsagePage.tsx apps/web/src/components/usage/UsagePage.test.tsx apps/web/src/routes/usage.tsx apps/web/src/routes/-usage.test.ts
 git commit -m "feat(web): integrate provider limits with usage"
 ```
 
@@ -310,7 +310,7 @@ git commit -m "feat(web): integrate provider limits with usage"
 Run:
 
 ```bash
-vp test run apps/web/src/routes/usage.test.ts apps/web/src/components/usage/UsagePage.test.tsx apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts apps/web/src/components/usage/ProviderQuotaSection.test.tsx apps/web/src/components/usage/ProviderQuotaDetails.test.tsx apps/web/src/components/sidebar/ProviderUsageStrip.logic.test.ts apps/web/src/components/sidebar/ProviderUsageStrip.test.tsx apps/web/src/state/providerQuota.test.ts
+vp test run apps/web/src/routes/-usage.test.ts apps/web/src/components/usage/UsagePage.test.tsx apps/web/src/components/usage/ProviderQuotaSection.logic.test.ts apps/web/src/components/usage/ProviderQuotaSection.test.tsx apps/web/src/components/usage/ProviderQuotaDetails.test.tsx apps/web/src/components/sidebar/ProviderUsageStrip.logic.test.ts apps/web/src/components/sidebar/ProviderUsageStrip.test.tsx apps/web/src/state/providerQuota.test.ts
 ```
 
 Expected: all pass.
