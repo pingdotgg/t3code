@@ -188,18 +188,40 @@ struct TranscriptViewportGeometryTests {
 
     @Test
     @MainActor
-    func textInteractionSurfacesKeepHorizontalDrags() {
+    func activeTextInteractionsKeepHorizontalDrags() {
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 240, height: 240))
         let textField = UITextField(frame: .zero)
         let textView = UITextView(frame: .zero)
+        textView.text = "Selectable transcript text"
         let textViewContent = UIView(frame: .zero)
         textView.addSubview(textViewContent)
         host.addSubview(textField)
         host.addSubview(textView)
 
         #expect(!ThreadBackSwipeGesture.shouldReceiveTouch(in: textField, host: host))
+        textView.isEditable = false
+        #expect(ThreadBackSwipeGesture.shouldReceiveTouch(in: textView, host: host))
+        #expect(ThreadBackSwipeGesture.shouldReceiveTouch(in: textViewContent, host: host))
+
+        textView.selectedRange = NSRange(location: 0, length: 1)
+        #expect(ThreadBackSwipeGesture.shouldReceiveTouch(in: textView, host: host))
+        #expect(ThreadBackSwipeGesture.shouldReceiveTouch(in: textViewContent, host: host))
+
+        textView.selectedRange = NSRange(location: 0, length: 0)
+        textView.isEditable = true
         #expect(!ThreadBackSwipeGesture.shouldReceiveTouch(in: textView, host: host))
+
+        let window = UIWindow(frame: host.bounds)
+        let rootViewController = UIViewController()
+        window.rootViewController = rootViewController
+        rootViewController.view.addSubview(host)
+        window.makeKeyAndVisible()
+        textView.isEditable = false
+        #expect(textView.becomeFirstResponder())
         #expect(!ThreadBackSwipeGesture.shouldReceiveTouch(in: textViewContent, host: host))
+        textView.resignFirstResponder()
+        window.isHidden = true
+
         #expect(ThreadBackSwipeGesture.shouldReceiveTouch(in: host, host: host))
     }
 }
