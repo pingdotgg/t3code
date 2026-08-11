@@ -203,6 +203,38 @@ self-hosted.example.test
   }),
 );
 
+it.effect("refines the caller-selected remote instead of choosing another configured remote", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github.com:fork/project.git" }],
+      process: {
+        run: () =>
+          Effect.succeed(
+            processOutput(`self-hosted.example.test
+  ✓ Logged in to self-hosted.example.test as gitlab-user
+`),
+          ),
+      },
+    });
+
+    const handle = yield* registry.resolveHandle({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "unknown",
+          name: "self-hosted.example.test",
+          baseUrl: "https://self-hosted.example.test",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://self-hosted.example.test/group/project.git",
+      },
+    });
+
+    assert.strictEqual(handle.context?.provider.kind, "gitlab");
+    assert.strictEqual(handle.context?.remoteName, "upstream");
+  }),
+);
+
 it.effect("routes authenticated self-hosted GitLab remotes on non-standard ports", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({
