@@ -21,7 +21,11 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import {
+  deleteSwipeAction,
+  SWIPE_ACTION_LIFECYCLE_COLOR,
+  ThreadSwipeable,
+} from "../home/thread-swipe-actions";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
@@ -471,14 +475,20 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
-  const primaryAction = useMemo(
-    () => ({
-      accessibilityLabel: `Archive ${thread.title}`,
-      icon: "archivebox" as const,
-      label: "Archive",
-      onPress: handleArchive,
-    }),
-    [handleArchive, thread.title],
+  // Archive innermost, Delete at the screen edge. A full swipe commits Delete,
+  // which is what the tray did when it built that action implicitly.
+  const swipeActionList = useMemo(
+    () => [
+      {
+        accessibilityLabel: `Archive ${thread.title}`,
+        backgroundColor: SWIPE_ACTION_LIFECYCLE_COLOR,
+        icon: "archivebox" as const,
+        label: "Archive",
+        onPress: handleArchive,
+      },
+      deleteSwipeAction({ onDelete: handleDelete, threadTitle: thread.title }),
+    ],
+    [handleArchive, handleDelete, thread.title],
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -654,15 +664,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       containerStyle={
         compact ? undefined : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
       }
+      actions={swipeActionList}
       enableTrackpadSwipe
+      fullSwipeIndex={1}
       fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
-      onDelete={handleDelete}
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
-      primaryAction={primaryAction}
       resetKey={`${thread.environmentId}:${thread.id}`}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
-      threadTitle={thread.title}
     >
       {(close) => (
         // Messages-style row actions on long-press. iOS: a real

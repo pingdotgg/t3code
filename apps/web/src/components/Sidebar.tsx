@@ -699,6 +699,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: SnoozePreset) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
+  onPin: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
@@ -718,6 +719,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     onThreadClick,
     onUnsettle,
     onUnsnooze,
+    onPin,
     onUnpin,
     openPullRequestsInRightPanel,
     renamingTitle,
@@ -975,6 +977,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [onUnsnooze, threadRef],
   );
+  const handlePinClick = useCallback(
+    (event: ReactMouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onPin(threadRef);
+    },
+    [onPin, threadRef],
+  );
   const handleUnpinClick = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
@@ -996,6 +1006,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // on blocked-on-you work or queued turns (the server rejects both).
   const showSnoozeButton =
     props.snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
+  // Pin is a quick action only where it would change something: an already
+  // pinned card carries its own unpin glyph beside the project label, so a
+  // second control there would be two ways to say the same thing.
+  const showPinButton = props.pinningSupported && !props.isPinned;
   // If the thread becomes blocked while the popover is open, the button
   // unmounts without firing onOpenChange(false). Deriving the flag keeps a
   // stale true from permanently hiding the status label / pinning the
@@ -1381,7 +1395,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     threadTimeLabel(thread)
                   )}
                 </span>
-                {props.settlementSupported || showSnoozeButton ? (
+                {props.settlementSupported || showSnoozeButton || showPinButton ? (
                   <span
                     className={cn(
                       // focus-visible, not focus-within: a mouse click leaves
@@ -1393,6 +1407,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       snoozeMenuOpen && "pointer-events-auto static opacity-100",
                     )}
                   >
+                    {showPinButton ? (
+                      // Leftmost on purpose: Settle keeps the right edge it
+                      // has always had, and snooze keeps its slot beside it.
+                      <button
+                        type="button"
+                        aria-label="Pin thread"
+                        title="Pin thread"
+                        onClick={handlePinClick}
+                        className="inline-flex cursor-pointer items-center gap-0.5 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        <PinIcon className="size-3.5" />
+                      </button>
+                    ) : null}
                     {showSnoozeButton ? (
                       <SnoozePopoverButton
                         open={snoozeMenuOpen}
@@ -3580,6 +3607,7 @@ export default function Sidebar() {
                         onUnsettle={attemptUnsettle}
                         onSnooze={attemptSnooze}
                         onUnsnooze={attemptUnsnooze}
+                        onPin={attemptPin}
                         onUnpin={attemptUnpin}
                         onAcknowledgeWoke={acknowledgeWoke}
                         onChangeRequestState={handleChangeRequestState}

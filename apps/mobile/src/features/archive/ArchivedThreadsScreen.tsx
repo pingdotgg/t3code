@@ -28,7 +28,11 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import {
+  deleteSwipeAction,
+  SWIPE_ACTION_LIFECYCLE_COLOR,
+  ThreadSwipeable,
+} from "../home/thread-swipe-actions";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
@@ -421,18 +425,23 @@ function ArchivedThreadRow(props: {
         borderBottomRightRadius: props.isLast ? 20 : 0,
         overflow: "hidden",
       }}
+      actions={[
+        {
+          accessibilityLabel: `Unarchive ${props.thread.title}`,
+          backgroundColor: SWIPE_ACTION_LIFECYCLE_COLOR,
+          icon: "arrow.uturn.backward",
+          label: "Unarchive",
+          onPress: props.onUnarchive,
+        },
+        deleteSwipeAction({ onDelete: props.onDelete, threadTitle: props.thread.title }),
+      ]}
+      // Delete sits at the screen edge and is what a full swipe commits, as
+      // it did when the tray built that action implicitly.
+      fullSwipeIndex={1}
       fullSwipeWidth={windowWidth - 32}
-      onDelete={props.onDelete}
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
-      primaryAction={{
-        accessibilityLabel: `Unarchive ${props.thread.title}`,
-        icon: "arrow.uturn.backward",
-        label: "Unarchive",
-        onPress: props.onUnarchive,
-      }}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
-      threadTitle={props.thread.title}
     >
       {() => (
         <View

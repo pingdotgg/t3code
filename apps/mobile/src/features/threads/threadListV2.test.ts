@@ -161,7 +161,7 @@ describe("resolveThreadListV2SwipeActions", () => {
         snoozeSupported: true,
         snoozable: true,
       }),
-    ).toEqual({ primary: "settle", secondary: "snooze" });
+    ).toEqual({ actions: ["settle", "snooze"], fullSwipeIndex: 0, secondary: "snooze" });
   });
 
   it("offers un-settle and snooze for settled history", () => {
@@ -172,7 +172,7 @@ describe("resolveThreadListV2SwipeActions", () => {
         snoozeSupported: true,
         snoozable: true,
       }),
-    ).toEqual({ primary: "unsettle", secondary: "snooze" });
+    ).toEqual({ actions: ["unsettle", "snooze"], fullSwipeIndex: 0, secondary: "snooze" });
   });
 
   it("omits snooze when the server or thread does not allow it", () => {
@@ -183,7 +183,7 @@ describe("resolveThreadListV2SwipeActions", () => {
         snoozeSupported: false,
         snoozable: true,
       }),
-    ).toEqual({ primary: "settle", secondary: null });
+    ).toEqual({ actions: ["settle"], fullSwipeIndex: 0, secondary: null });
     expect(
       resolveThreadListV2SwipeActions({
         variant: "card",
@@ -191,7 +191,7 @@ describe("resolveThreadListV2SwipeActions", () => {
         snoozeSupported: true,
         snoozable: false,
       }),
-    ).toEqual({ primary: "settle", secondary: null });
+    ).toEqual({ actions: ["settle"], fullSwipeIndex: 0, secondary: null });
   });
 
   it("falls back to archive only for a pre-lifecycle server", () => {
@@ -202,7 +202,7 @@ describe("resolveThreadListV2SwipeActions", () => {
         snoozeSupported: false,
         snoozable: true,
       }),
-    ).toEqual({ primary: "archive", secondary: null });
+    ).toEqual({ actions: ["archive"], fullSwipeIndex: 0, secondary: null });
   });
 
   it("offers wake and no snooze on a snoozed row", () => {
@@ -214,7 +214,70 @@ describe("resolveThreadListV2SwipeActions", () => {
         snoozable: true,
         snoozed: true,
       }),
-    ).toEqual({ primary: "unsnooze", secondary: null });
+    ).toEqual({ actions: ["unsnooze"], fullSwipeIndex: 0, secondary: null });
+  });
+
+  it("puts pin innermost so settle and snooze keep their slots", () => {
+    const resolved = resolveThreadListV2SwipeActions({
+      variant: "card",
+      settlementSupported: true,
+      snoozeSupported: true,
+      snoozable: true,
+      pinningSupported: true,
+    });
+    expect(resolved.actions).toEqual(["pin", "settle", "snooze"]);
+    // Snooze stays at the screen edge, settle one slot in. Only pin is new.
+    expect(resolved.actions.at(-1)).toBe("snooze");
+    // A full swipe still settles. It must never pin.
+    expect(resolved.fullSwipeIndex).toBe(1);
+    expect(resolved.actions[resolved.fullSwipeIndex]).toBe("settle");
+  });
+
+  it("drops pin on a row that is already pinned", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+        pinningSupported: true,
+        pinned: true,
+      }).actions,
+    ).toEqual(["settle", "snooze"]);
+  });
+
+  it("drops pin on slim rows and on servers without pinning", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "slim",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+        pinningSupported: true,
+      }).actions,
+    ).toEqual(["unsettle", "snooze"]);
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+        pinningSupported: false,
+      }).actions,
+    ).toEqual(["settle", "snooze"]);
+  });
+
+  it("keeps pin off a snoozed row even when the server allows pinning", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+        snoozed: true,
+        pinningSupported: true,
+      }).actions,
+    ).toEqual(["unsnooze"]);
   });
 });
 

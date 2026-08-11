@@ -25,7 +25,13 @@ export { snoozeWakeLabel };
  * unlabeled resting state.
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
-export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+export type ThreadListV2SwipeAction =
+  | "archive"
+  | "settle"
+  | "unsettle"
+  | "snooze"
+  | "unsnooze"
+  | "pin";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -58,22 +64,37 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly snoozable: boolean;
   /** Row is on the snoozed shelf. */
   readonly snoozed?: boolean;
+  /** Environment's server understands thread.pin/unpin. */
+  readonly pinningSupported?: boolean;
+  /** Row is already in the pinned block. */
+  readonly pinned?: boolean;
 }): {
-  readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
+  /** Tray order, innermost slot first. The last entry sits at the screen edge. */
+  readonly actions: ReadonlyArray<ThreadListV2SwipeAction>;
+  /** Index of the lifecycle action, which is what a full swipe commits. */
+  readonly fullSwipeIndex: number;
+  /** Whether the snooze preset menu is reachable from this row. */
   readonly secondary: "snooze" | null;
 } {
   if (input.snoozed === true) {
-    return { primary: "unsnooze", secondary: null };
+    return { actions: ["unsnooze"], fullSwipeIndex: 0, secondary: null };
   }
   const primary = input.settlementSupported
     ? input.variant === "slim"
       ? "unsettle"
       : "settle"
     : "archive";
-  return {
-    primary,
-    secondary: input.snoozeSupported && input.snoozable ? "snooze" : null,
-  };
+  const secondary = input.snoozeSupported && input.snoozable ? "snooze" : null;
+  // Pin rides the card only. Slim rows are settled or snoozed, and pinning one
+  // clears that state server-side, which is too big a jump for a swipe.
+  const canPin =
+    input.pinningSupported === true && input.variant === "card" && input.pinned !== true;
+  // Appending Pin on the INSIDE keeps Settle and Snooze at their existing
+  // distance from the screen edge, so neither learned gesture moves.
+  const actions: ThreadListV2SwipeAction[] = canPin ? ["pin"] : [];
+  actions.push(primary);
+  if (secondary !== null) actions.push(secondary);
+  return { actions, fullSwipeIndex: actions.indexOf(primary), secondary };
 }
 
 /**
