@@ -15,6 +15,7 @@ import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -355,6 +356,36 @@ describe("environment shell synchronization", () => {
       }
       expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20]);
       expect(yield* Ref.get(loaderCalls)).toBe(2);
+
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: {
+          ...LIVE_SHELL_SNAPSHOT,
+          snapshotSequence: 50,
+          threads: LIVE_SHELL_SNAPSHOT.threads.map((thread) => ({
+            ...thread,
+            pendingBackgroundTasks: [{ taskId: "stale-task" }],
+          })),
+        },
+      });
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter(
+          (value) => Option.isSome(value.snapshot) && value.snapshot.value.snapshotSequence === 50,
+        ),
+        Stream.runHead,
+      );
+
+      yield* TestClock.adjust("5 minutes");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(capturedAfterSequences)).length >= 5) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20, 30]);
+      expect(yield* Ref.get(loaderCalls)).toBe(3);
+      const refreshed = Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot);
+      expect(
+        refreshed.threads.every((thread) => (thread.pendingBackgroundTasks?.length ?? 0) === 0),
+      ).toBe(true);
     }),
   );
 
