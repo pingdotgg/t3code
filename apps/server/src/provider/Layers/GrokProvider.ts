@@ -4,6 +4,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import type * as EffectAcpSchema from "effect-acp/schema";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -20,6 +21,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -88,19 +90,44 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
+export function grokModelsFromSessionModelState(
+  modelState: EffectAcpSchema.SessionModelState | null | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  if (!modelState || modelState.availableModels.length === 0) return [];
+
+  const seen = new Set<string>();
+  return modelState.availableModels.flatMap((model) => {
+    const slug = resolveGrokAcpBaseModelId(model.modelId);
+    if (!slug || seen.has(slug)) return [];
+    seen.add(slug);
+    return [
+      {
+        slug,
+        name: model.name?.trim() || slug,
+        isCustom: false,
+        capabilities: EMPTY_CAPABILITIES,
+      },
+    ];
+  });
+}
+
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  discoveredModels: ReadonlyArray<ServerProviderModel> = [],
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
+  const models = grokModelsFromSettings(
+    grokSettings.customModels,
+    discoveredModels.length > 0 ? discoveredModels : GROK_BUILT_IN_MODELS,
+  );
 
   if (!grokSettings.enabled) {
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: false,
       checkedAt,
-      models: fallbackModels,
+      models,
       probe: {
         installed: false,
         version: null,
@@ -121,7 +148,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
-      models: fallbackModels,
+      models,
       probe: {
         installed: false,
         version: null,
@@ -136,7 +163,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     presentation: GROK_PRESENTATION,
     enabled: grokSettings.enabled,
     checkedAt,
-    models: fallbackModels,
+    models,
     probe: {
       installed: true,
       version: null,

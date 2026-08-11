@@ -84,6 +84,9 @@ export interface GrokAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly instanceId?: ProviderInstanceId;
+  readonly onModelStateDiscovered?: (
+    modelState: EffectAcpSchema.SessionModelState,
+  ) => Effect.Effect<void>;
 }
 
 interface PendingApproval {
@@ -734,6 +737,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error),
             ),
           );
+          if (started.sessionSetupResult.models && options?.onModelStateDiscovered) {
+            yield* options.onModelStateDiscovered(started.sessionSetupResult.models);
+          }
 
           const requestedStartModelId = grokModelSelection?.model
             ? resolveGrokAcpBaseModelId(grokModelSelection.model)

@@ -127,7 +127,13 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");
       const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
-      const adapter = yield* makeTestAdapter(wrapperPath);
+      const discoveredModelIds: string[][] = [];
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        onModelStateDiscovered: (modelState) =>
+          Effect.sync(() => {
+            discoveredModelIds.push(modelState.availableModels.map((model) => model.modelId));
+          }),
+      });
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const turnCompleted = yield* Deferred.make<void>();
@@ -157,6 +163,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         schemaVersion: 1,
         sessionId: "mock-session-1",
       });
+      assert.deepStrictEqual(discoveredModelIds, [["grok-build", "grok-mock-alt"]]);
 
       yield* adapter.sendTurn({
         threadId,

@@ -1,7 +1,15 @@
-import { GrokSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  GrokSettings,
+  ProviderDriverKind,
+  type ServerProvider,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
+import type * as EffectAcpSchema from "effect-acp/schema";
+import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Ref from "effect/Ref";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
@@ -16,6 +24,7 @@ import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
 import {
   buildInitialGrokProviderSnapshot,
   checkGrokProviderStatus,
+  grokModelsFromSessionModelState,
   enrichGrokSnapshot,
 } from "../Layers/GrokProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -25,6 +34,7 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
+import type { ServerProviderShape } from "../Services/ServerProvider.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -46,6 +56,21 @@ const UPDATE = makeStaticProviderMaintenanceResolver(
     packageName: null,
   }),
 );
+
+function sameModelCatalog(
+  left: ReadonlyArray<ServerProviderModel>,
+  right: ReadonlyArray<ServerProviderModel>,
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every(
+      (model, index) =>
+        model.slug === right[index]?.slug &&
+        model.name === right[index]?.name &&
+        model.isCustom === right[index]?.isCustom,
+    )
+  );
+}
 
 export type GrokDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
@@ -106,15 +131,33 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
+      const discoveredModelsRef = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
+      const snapshotReady = yield* Deferred.make<ServerProviderShape>();
+      const publishDiscoveredModels = Effect.fn("GrokDriver.publishDiscoveredModels")(function* (
+        modelState: EffectAcpSchema.SessionModelState,
+      ) {
+        const discoveredModels = grokModelsFromSessionModelState(modelState);
+        if (discoveredModels.length === 0) return;
+        const changed = yield* Ref.modify(discoveredModelsRef, (current) =>
+          sameModelCatalog(current, discoveredModels) ? [false, current] : [true, discoveredModels],
+        );
+        if (!changed) return;
+        const provider = yield* Deferred.await(snapshotReady);
+        yield* provider.refresh;
+      });
 
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        onModelStateDiscovered: publishDiscoveredModels,
       });
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv).pipe(
+      const checkProvider = Ref.get(discoveredModelsRef).pipe(
+        Effect.flatMap((discoveredModels) =>
+          checkGrokProviderStatus(effectiveConfig, processEnv, discoveredModels),
+        ),
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -149,6 +192,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
             }),
         ),
       );
+      yield* Deferred.succeed(snapshotReady, snapshot);
 
       return {
         instanceId,

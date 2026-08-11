@@ -6,7 +6,11 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildInitialGrokProviderSnapshot,
+  checkGrokProviderStatus,
+  grokModelsFromSessionModelState,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -68,13 +72,22 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
         const snapshot = yield* checkGrokProviderStatus(
           decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+          process.env,
+          grokModelsFromSessionModelState({
+            currentModelId: "grok-build",
+            availableModels: [
+              { modelId: "grok-build", name: "Grok Build" },
+              { modelId: "grok-next", name: "Grok Next" },
+              { modelId: "grok-next", name: "Duplicate" },
+            ],
+          }),
         );
 
         expect(snapshot.enabled).toBe(true);
         expect(snapshot.installed).toBe(true);
         expect(snapshot.status).toBe("ready");
         expect(snapshot.version).toBeNull();
-        expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
+        expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build", "grok-next"]);
         expect(snapshot.message).toContain("checked when a Grok thread starts");
         expect(yield* fs.exists(executionMarker)).toBe(false);
       }),
