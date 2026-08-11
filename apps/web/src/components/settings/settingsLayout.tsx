@@ -160,7 +160,7 @@ export function SettingsRow({
   ...rowProps
 }: Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   title: ReactNode;
-  description: ReactNode;
+  description?: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;
@@ -183,9 +183,11 @@ export function SettingsRow({
               {resetAction}
             </span>
           </div>
-          <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
-            {description}
-          </p>
+          {description ? (
+            <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
+              {description}
+            </p>
+          ) : null}
           {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
         </div>
         {control ? (
