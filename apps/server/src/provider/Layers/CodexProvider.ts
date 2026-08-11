@@ -25,6 +25,7 @@ import type {
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { normalizeProviderSkillWorkspacePath } from "@t3tools/shared/providerSkills";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
@@ -258,47 +259,102 @@ function appendCustomCodexModels(
   return customEntries.length === 0 ? models : [...models, ...customEntries];
 }
 
+function isCodexUserScopedSkill(scope: string | undefined): boolean {
+  // Repo skills are project-local. Everything else (user/system/admin, or
+  // unknown) is treated as available for every chat.
+  return scope !== "repo";
+}
+
+/**
+ * Normalize Codex wire cwds with the same pure helper clients use.
+ * Requests already come from path-resolved skill workspace lists; this
+ * collapses trailing separators / `.` segments without a node:path import
+ * (forbidden by the Effect path lint rule in pure helpers).
+ */
+function resolveCodexSkillSourceCwd(cwd: string): string {
+  return normalizeProviderSkillWorkspacePath(cwd);
+}
+
+function parseCodexSkillEntry(
+  skill: CodexSchema.V2SkillsListResponse["data"][number]["skills"][number],
+  sourceCwd: string | undefined,
+): ServerProviderSkill {
+  const shortDescription = skill.shortDescription ?? skill.interface?.shortDescription ?? undefined;
+
+  const parsedSkill: Types.Mutable<ServerProviderSkill> = {
+    name: skill.name,
+    path: skill.path,
+    enabled: skill.enabled,
+  };
+
+  if (skill.description) {
+    parsedSkill.description = skill.description;
+  }
+  if (skill.scope) {
+    parsedSkill.scope = skill.scope;
+  }
+  if (skill.interface?.displayName) {
+    parsedSkill.displayName = skill.interface.displayName;
+  }
+  if (shortDescription) {
+    parsedSkill.shortDescription = shortDescription;
+  }
+  if (sourceCwd) {
+    parsedSkill.sourceCwd = sourceCwd;
+  }
+
+  return parsedSkill;
+}
+
+/**
+ * Flatten Codex `skills/list` into picker inventory.
+ *
+ * User/system/admin skills are global (no `sourceCwd`). Repo skills are
+ * tagged with the workspace cwd they were listed under so clients can show
+ * only the active project/worktree. Later entries still win within the same
+ * inventory key. Entry cwds are resolved+normalized like filesystem discovery.
+ */
 export function parseCodexSkillsListResponse(
   response: CodexSchema.V2SkillsListResponse,
   cwd: string | ReadonlyArray<string>,
 ): ReadonlyArray<ServerProviderSkill> {
   const cwdList = typeof cwd === "string" ? [cwd] : [...cwd];
-  let rawSkills = cwdList.flatMap(
-    (entryCwd) => response.data.find((entry) => entry.cwd === entryCwd)?.skills ?? [],
+  const requestedCwds = new Set(
+    cwdList
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .map((entry) => resolveCodexSkillSourceCwd(entry)),
   );
-  if (rawSkills.length === 0) {
-    rawSkills = response.data.flatMap((entry) => entry.skills);
+
+  const cwdEntries =
+    requestedCwds.size === 0
+      ? response.data
+      : response.data.filter((entry) => {
+          const trimmed = entry.cwd.trim();
+          return trimmed.length > 0 && requestedCwds.has(resolveCodexSkillSourceCwd(trimmed));
+        });
+  const entries = cwdEntries.length > 0 ? cwdEntries : response.data;
+
+  const skillsByKey = new Map<string, ServerProviderSkill>();
+  for (const entry of entries) {
+    const entryCwd = entry.cwd.trim();
+    const resolvedEntryCwd = entryCwd.length > 0 ? resolveCodexSkillSourceCwd(entryCwd) : undefined;
+    for (const skill of entry.skills) {
+      const projectScoped = !isCodexUserScopedSkill(skill.scope ?? undefined);
+      const sourceCwd = projectScoped ? resolvedEntryCwd : undefined;
+      const key =
+        sourceCwd === undefined ? `user:${skill.name}` : `cwd:${sourceCwd}\0${skill.name}`;
+      skillsByKey.set(key, parseCodexSkillEntry(skill, sourceCwd));
+    }
   }
 
-  // Later entries win on name collision (later workspace paths override earlier).
-  const skillsByName = new Map<string, ServerProviderSkill>();
-  for (const skill of rawSkills) {
-    const shortDescription =
-      skill.shortDescription ?? skill.interface?.shortDescription ?? undefined;
-
-    const parsedSkill: Types.Mutable<ServerProviderSkill> = {
-      name: skill.name,
-      path: skill.path,
-      enabled: skill.enabled,
-    };
-
-    if (skill.description) {
-      parsedSkill.description = skill.description;
+  return [...skillsByKey.values()].sort((left, right) => {
+    const byName = left.name.localeCompare(right.name);
+    if (byName !== 0) {
+      return byName;
     }
-    if (skill.scope) {
-      parsedSkill.scope = skill.scope;
-    }
-    if (skill.interface?.displayName) {
-      parsedSkill.displayName = skill.interface.displayName;
-    }
-    if (shortDescription) {
-      parsedSkill.shortDescription = shortDescription;
-    }
-
-    skillsByName.set(skill.name, parsedSkill);
-  }
-
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+    return (left.sourceCwd ?? "").localeCompare(right.sourceCwd ?? "");
+  });
 }
 
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (

@@ -1,9 +1,10 @@
 /**
- * Resolve workspace directories used for project-scoped skill discovery.
+ * Resolve workspace directories used for skill discovery on provider probes.
  *
- * Prefer registered project roots and active thread worktrees so the `$`
- * picker sees skills for projects the user opened in T3, not only the
- * process directory where the server was started.
+ * Discovers across registered project roots and active thread worktrees so
+ * project skills are available in the provider snapshot. Each project skill
+ * is tagged with its `sourceCwd`; clients filter the `$` picker to the
+ * active chat's worktree or project root (see filterProviderSkillsForWorkspace).
  *
  * @module provider/Drivers/SkillWorkspaceCwds
  */

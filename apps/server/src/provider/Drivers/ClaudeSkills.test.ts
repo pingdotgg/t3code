@@ -60,6 +60,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
           enabled: true,
           scope: "project",
+          sourceCwd: path.resolve(workspace),
           description: "Deploy the app.",
         },
       ]);
@@ -88,13 +89,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           path: path.join(workspace, ".agents", "skills", "review", "SKILL.md"),
           enabled: true,
           scope: "project",
+          sourceCwd: path.resolve(workspace),
           description: "Review the changes.",
         },
       ]);
     }),
   );
 
-  it.effect("prefers workspace .claude skills on three-way name collisions", () =>
+  it.effect("prefers workspace .claude skills over .agents within one workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -120,52 +122,60 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
 
-      assert.deepEqual(skills, [
-        {
-          name: "deploy",
-          path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
-          enabled: true,
-          scope: "project",
-          description: "Claude deploy.",
-        },
-      ]);
+      // The project bag collapses to `.claude`; the user entry stays alongside
+      // it, and the client-side filter picks project over user.
+      assert.deepEqual(
+        skills.map((entry) => [entry.scope, entry.sourceCwd, entry.path]),
+        [
+          ["user", undefined, path.join(configDir, "skills", "deploy", "SKILL.md")],
+          [
+            "project",
+            path.resolve(workspace),
+            path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
+          ],
+        ],
+      );
     }),
   );
 
-  it.effect("prefers workspace .agents skills over user skills on name collisions", () =>
+  it.effect("tags multi-workspace project skills without leaking names across bags", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
       const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
+      const workspaceA = path.join(tempDir, "workspace-a");
+      const workspaceB = path.join(tempDir, "workspace-b");
 
       yield* writeSkill(
         path.join(configDir, "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
+        "user-tool",
+        ["---", "name: user-tool", "description: User tool.", "---"].join("\n"),
       );
       yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
+        path.join(workspaceA, ".claude", "skills"),
         "deploy",
-        ["---", "name: deploy", "description: Agents deploy.", "---"].join("\n"),
+        ["---", "name: deploy", "description: Deploy A.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspaceB, ".claude", "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: Deploy B.", "---"].join("\n"),
       );
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
-
-      assert.deepEqual(skills, [
-        {
-          name: "deploy",
-          path: path.join(workspace, ".agents", "skills", "deploy", "SKILL.md"),
-          enabled: true,
-          scope: "project",
-          description: "Agents deploy.",
-        },
-      ]);
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, [workspaceA, workspaceB]);
+      assert.deepEqual(
+        skills.map((entry) => [entry.name, entry.sourceCwd, entry.description]),
+        [
+          ["deploy", path.resolve(workspaceA), "Deploy A."],
+          ["deploy", path.resolve(workspaceB), "Deploy B."],
+          ["user-tool", undefined, "User tool."],
+        ],
+      );
     }),
   );
 
-  it.effect("prefers project skills over user skills on name collisions", () =>
+  it.effect("keeps user and project skills with the same name as separate inventory entries", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -186,9 +196,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
 
-      assert.equal(skills.length, 1);
-      assert.equal(skills[0]?.scope, "project");
-      assert.equal(skills[0]?.description, "Project deploy.");
+      // Client-side filterProviderSkillsForWorkspace lets project win by name.
+      assert.deepEqual(
+        skills.map((entry) => [entry.scope, entry.sourceCwd, entry.description]),
+        [
+          ["user", undefined, "User deploy."],
+          ["project", path.resolve(workspace), "Project deploy."],
+        ],
+      );
     }),
   );
 

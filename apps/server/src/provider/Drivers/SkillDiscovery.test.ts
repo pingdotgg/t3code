@@ -65,6 +65,42 @@ it.layer(NodeServices.layer)("discoverSkillsFromRoots", (it) => {
       assert.equal(skills[0]?.description, "Project deploy.");
     }),
   );
+
+  it.effect("keeps same-named project skills from different sourceCwds", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-skill-discovery-" });
+      const projectA = path.join(tempDir, "a", "skills");
+      const projectB = path.join(tempDir, "b", "skills");
+
+      for (const [dir, description] of [
+        [projectA, "Deploy A."],
+        [projectB, "Deploy B."],
+      ] as const) {
+        const skillDir = path.join(dir, "deploy");
+        yield* fs.makeDirectory(skillDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(skillDir, "SKILL.md"),
+          `---\nname: deploy\ndescription: ${description}\n---\n`,
+        );
+      }
+
+      const skills = yield* discoverSkillsFromRoots([
+        { directory: projectA, scope: "project", sourceCwd: "/workspace/a" },
+        { directory: projectB, scope: "project", sourceCwd: "/workspace/b" },
+      ]);
+
+      assert.equal(skills.length, 2);
+      assert.deepEqual(
+        skills.map((entry) => [entry.name, entry.sourceCwd, entry.description]),
+        [
+          ["deploy", path.resolve("/workspace/a"), "Deploy A."],
+          ["deploy", path.resolve("/workspace/b"), "Deploy B."],
+        ],
+      );
+    }),
+  );
 });
 
 it.layer(NodeServices.layer)("resolveGitRootPath", (it) => {

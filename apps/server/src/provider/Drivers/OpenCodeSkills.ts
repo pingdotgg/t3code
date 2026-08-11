@@ -8,6 +8,7 @@
  *   `.claude/skills`, `.agents/skills`, `.opencode/skills` (native last)
  *
  * `cwd` may be one path or many (registered project roots + worktrees).
+ * Project skills are tagged with that workspace's `sourceCwd`.
  *
  * @module provider/Drivers/OpenCodeSkills
  */
@@ -26,12 +27,16 @@ import {
   type SkillDiscoveryRoot,
 } from "./SkillDiscovery.ts";
 
-function projectSkillRootsForDir(pathApi: Path.Path, dir: string): SkillDiscoveryRoot[] {
+function projectSkillRootsForDir(
+  pathApi: Path.Path,
+  dir: string,
+  sourceCwd: string,
+): SkillDiscoveryRoot[] {
   return [
-    { directory: pathApi.join(dir, ".claude", "skills"), scope: "project" },
-    { directory: pathApi.join(dir, ".agents", "skills"), scope: "project" },
-    { directory: pathApi.join(dir, ".opencode", "skill"), scope: "project" },
-    { directory: pathApi.join(dir, ".opencode", "skills"), scope: "project" },
+    { directory: pathApi.join(dir, ".claude", "skills"), scope: "project", sourceCwd },
+    { directory: pathApi.join(dir, ".agents", "skills"), scope: "project", sourceCwd },
+    { directory: pathApi.join(dir, ".opencode", "skill"), scope: "project", sourceCwd },
+    { directory: pathApi.join(dir, ".opencode", "skills"), scope: "project", sourceCwd },
   ];
 }
 
@@ -55,7 +60,7 @@ export const discoverOpenCodeSkills = Effect.fn("discoverOpenCodeSkills")(functi
     const gitRoot = yield* resolveGitRootPath(projectCwd);
     roots.push(
       ...listAncestorPaths(path, projectCwd, gitRoot).flatMap((dir) =>
-        projectSkillRootsForDir(path, dir),
+        projectSkillRootsForDir(path, dir, projectCwd),
       ),
     );
   }

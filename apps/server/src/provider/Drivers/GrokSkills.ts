@@ -7,6 +7,7 @@
  * `.grok/skills` is listed last so it wins name collisions.
  *
  * `cwd` may be one path or many (registered project roots + worktrees).
+ * Project skills are tagged with that workspace's `sourceCwd`.
  *
  * @module provider/Drivers/GrokSkills
  */
@@ -32,11 +33,13 @@ function skillRootsForDir(
   pathApi: Path.Path,
   dir: string,
   scope: SkillDiscoveryRoot["scope"],
+  sourceCwd?: string,
 ): SkillDiscoveryRoot[] {
   const names = scope === "user" ? GROK_USER_SKILL_DIR_NAMES : GROK_PROJECT_SKILL_DIR_NAMES;
   return names.map((name) => ({
     directory: pathApi.join(dir, name, "skills"),
     scope,
+    ...(sourceCwd ? { sourceCwd } : {}),
   }));
 }
 
@@ -54,7 +57,7 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
     const gitRoot = yield* resolveGitRootPath(projectCwd);
     roots.push(
       ...listAncestorPaths(path, projectCwd, gitRoot).flatMap((dir) =>
-        skillRootsForDir(path, dir, "project"),
+        skillRootsForDir(path, dir, "project", projectCwd),
       ),
     );
   }

@@ -93,6 +93,13 @@ export const ServerProviderSkill = Schema.Struct({
   enabled: Schema.Boolean,
   displayName: Schema.optional(TrimmedNonEmptyString),
   shortDescription: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Absolute workspace cwd this project skill was discovered under.
+   * Omitted for user/global skills that are in scope for every chat.
+   * Clients filter the `$` picker to user skills plus skills whose
+   * `sourceCwd` matches the active thread's worktree or project root.
+   */
+  sourceCwd: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

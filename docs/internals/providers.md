@@ -39,6 +39,28 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Provider skills (`$` picker)
+
+Provider status probes discover skills for every registered project root and active worktree so
+project skills are not limited to the server process cwd. Each project skill is tagged with
+`sourceCwd` on `ServerProviderSkill` in `packages/contracts`; user/global skills omit it.
+Stamps are absolute and passed through `normalizeProviderSkillWorkspacePath` so they match client
+path forms (trailing separators, `.` / `..`, mixed slashes).
+
+Clients must not show the raw union in the `$` picker. They filter with
+`filterProviderSkillsForWorkspace` (`@t3tools/shared/providerSkills`) using the active chat's
+`worktreePath ?? project.workspaceRoot`, and may pass `projectRoot` so worktree chats still see
+project-root-tagged skills before a re-probe re-tags under the worktree path. Timeline skill chips
+may keep the full inventory so historical mentions still label correctly when the user switches
+projects.
+
+**Payload cost (accepted interim):** multi-workspace inventories grow with the number of open
+project/worktree bags and ride provider snapshots over the websocket. Prefer a later scoped
+`listSkills(cwd)` RPC if multi-project environments show measurable bloat; do not re-flatten by
+name across workspaces.
+
+See [project-scoped-skills.html](./project-scoped-skills.html).
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method

@@ -6,6 +6,7 @@
  * @module provider/Drivers/SkillDiscovery
  */
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { normalizeProviderSkillWorkspacePath } from "@t3tools/shared/providerSkills";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -51,6 +52,12 @@ export interface SkillDiscoveryRoot {
   readonly scope: SkillDiscoveryScope;
   /** Cursor permits organizational directories below a skills root. */
   readonly recursive?: boolean;
+  /**
+   * Workspace cwd this project root belongs to. Stamped onto discovered
+   * skills so clients can scope the `$` picker to one project/worktree.
+   * Omit for user/global roots.
+   */
+  readonly sourceCwd?: string;
 }
 
 /**
@@ -127,18 +134,34 @@ export function normalizeSkillWorkspaceCwds(
 }
 
 /**
- * Collect skills from ordered roots. Later roots override earlier ones on name
- * collision (callers should list user roots first, then project roots, so
- * project wins — matching Claude/OpenCode "most specific wins").
+ * Collision key: user/global skills collide by name only; project skills
+ * collide by (sourceCwd, name) so the same skill name can exist in two
+ * workspaces without one wiping the other from the inventory.
+ */
+function skillInventoryKey(name: string, sourceCwd: string | undefined): string {
+  return sourceCwd === undefined ? `user:${name}` : `cwd:${sourceCwd}\0${name}`;
+}
+
+/**
+ * Collect skills from ordered roots. Later roots override earlier ones on
+ * name collision within the same inventory key (callers should list user
+ * roots first, then project roots for a given workspace, so project wins —
+ * matching Claude/OpenCode "most specific wins"). Skills from different
+ * `sourceCwd` values are kept side by side.
  */
 export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(function* (
   roots: ReadonlyArray<SkillDiscoveryRoot>,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  const skillsByKey = new Map<string, ServerProviderSkill>();
 
   for (const root of roots) {
+    // path.resolve first (absolute), then shared normalizer so server stamps
+    // match client filterProviderSkillsForWorkspace comparison.
+    const sourceCwd = root.sourceCwd?.trim()
+      ? normalizeProviderSkillWorkspacePath(path.resolve(root.sourceCwd.trim()))
+      : undefined;
     const entries = yield* fileSystem
       .readDirectory(root.directory, { recursive: root.recursive ?? false })
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -168,11 +191,12 @@ export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(func
         continue;
       }
 
-      skillsByName.set(name, {
+      skillsByKey.set(skillInventoryKey(name, sourceCwd), {
         name,
         path: skillPath,
         enabled: true,
         scope: root.scope,
+        ...(sourceCwd ? { sourceCwd } : {}),
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }
           : {}),
@@ -180,5 +204,11 @@ export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(func
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...skillsByKey.values()].sort((left, right) => {
+    const byName = left.name.localeCompare(right.name);
+    if (byName !== 0) {
+      return byName;
+    }
+    return (left.sourceCwd ?? "").localeCompare(right.sourceCwd ?? "");
+  });
 });

@@ -226,6 +226,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./providerSkills": {
+      "types": "./src/providerSkills.ts",
+      "import": "./src/providerSkills.ts"
     }
   },
   "scripts": {

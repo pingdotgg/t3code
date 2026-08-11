@@ -17,6 +17,7 @@ import {
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
+import { filterProviderSkillsForWorkspace } from "@t3tools/shared/providerSkills";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import {
   isDefaultThreadEnvModeSettled,
@@ -444,13 +445,22 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderSkills = useMemo(
-    () =>
+  const skillProjectRoot = selectedProject?.workspaceRoot ?? null;
+  const skillWorkspaceCwd = selectedWorktreePath ?? skillProjectRoot;
+  const selectedProviderSkills = useMemo(() => {
+    const skills =
       selectedEnvironmentServerConfig?.providers.find(
         (provider) => provider.instanceId === selectedModel?.instanceId,
-      )?.skills ?? [],
-    [selectedEnvironmentServerConfig, selectedModel?.instanceId],
-  );
+      )?.skills ?? [];
+    return filterProviderSkillsForWorkspace(skills, skillWorkspaceCwd, {
+      projectRoot: skillProjectRoot,
+    });
+  }, [
+    selectedEnvironmentServerConfig,
+    selectedModel?.instanceId,
+    skillWorkspaceCwd,
+    skillProjectRoot,
+  ]);
   const setSelectedModelKey = useCallback(
     // Options ride along in the same write: a follow-up setSelectedModelOptions
     // call would rebuild the selection from the stale pre-switch model.

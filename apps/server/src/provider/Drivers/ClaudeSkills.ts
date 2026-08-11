@@ -11,7 +11,8 @@
  * directly, mirroring how the Codex app-server reports its skills.
  *
  * `cwd` may be one path or many (registered project roots + worktrees). User
- * skills are loaded once; project roots from every workspace are scanned.
+ * skills are loaded once; project roots from every workspace are scanned and
+ * tagged with that workspace's `sourceCwd` so clients can scope the picker.
  *
  * @module provider/Drivers/ClaudeSkills
  */
@@ -89,8 +90,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     const gitRoot = yield* resolveGitRootPath(projectCwd);
     for (const dir of listAncestorPaths(path, projectCwd, gitRoot)) {
       roots.push(
-        { directory: path.join(dir, ".agents", "skills"), scope: "project" },
-        { directory: path.join(dir, ".claude", "skills"), scope: "project" },
+        { directory: path.join(dir, ".agents", "skills"), scope: "project", sourceCwd: projectCwd },
+        { directory: path.join(dir, ".claude", "skills"), scope: "project", sourceCwd: projectCwd },
       );
     }
   }

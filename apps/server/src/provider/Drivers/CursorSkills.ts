@@ -31,11 +31,13 @@ function skillRootsForDir(
   path: Path.Path,
   dir: string,
   scope: SkillDiscoveryRoot["scope"],
+  sourceCwd?: string,
 ): SkillDiscoveryRoot[] {
   return CURSOR_SKILL_DIR_NAMES.map((name) => ({
     directory: path.join(dir, name, "skills"),
     scope,
     recursive: true,
+    ...(sourceCwd ? { sourceCwd } : {}),
   }));
 }
 
@@ -48,7 +50,7 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
   for (const projectCwd of normalizeSkillWorkspaceCwds(path, cwd)) {
     const gitRoot = yield* resolveGitRootPath(projectCwd);
     for (const dir of listAncestorPaths(path, projectCwd, gitRoot)) {
-      roots.push(...skillRootsForDir(path, dir, "project"));
+      roots.push(...skillRootsForDir(path, dir, "project", projectCwd));
     }
   }
 
