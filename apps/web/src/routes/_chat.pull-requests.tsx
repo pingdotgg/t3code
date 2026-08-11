@@ -1397,7 +1397,9 @@ function PullRequestsColumn({
   return (
     // Painted flat like the chat column: the inset underneath carries the chrome grain, and a
     // content surface that lets it show reads as a different background than every thread.
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+    // Marked as the canvas so a wallpaper clears it; the chat column is a direct child of the
+    // inset and matches structurally, this one sits a wrapper deeper.
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-workspace-canvas>
       <header
         className={cn(
           "workspace-topbar drag-region gap-1.5 px-3 sm:px-5",

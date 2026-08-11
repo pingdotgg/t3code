@@ -1512,10 +1512,13 @@ html[data-wallpaper] body {
    color the layer above already carries, so they would bury it under an
    opaque copy. Clearing them lets the wallpaper *be* the canvas — everything
    that sits on top (cards, bubbles, the composer, popovers) keeps its own
-   paint and stays readable with no further changes. The chat header is the
-   one such surface that is not a direct child of the inset. */
+   paint and stays readable with no further changes. The chat header and the
+   pull-request column are the surfaces that are not direct children of the
+   inset; the column carries a marker rather than being matched structurally,
+   since a descendant `.bg-background` selector would also strip every card. */
 html[data-wallpaper] main[data-slot="sidebar-inset"],
 html[data-wallpaper] main[data-slot="sidebar-inset"] > .bg-background,
+html[data-wallpaper] [data-workspace-canvas],
 html[data-wallpaper] [data-chat-header].bg-background {
   background-color: transparent;
 }

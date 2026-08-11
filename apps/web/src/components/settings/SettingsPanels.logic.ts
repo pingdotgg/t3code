@@ -23,7 +23,6 @@ import * as Equal from "effect/Equal";
 import {
   compressImageForStash,
   type ImageCompressionFailureReason,
-  isDecodableImage,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
 } from "../../lib/imageCompression";
 
@@ -264,6 +263,24 @@ export type PreparedWallpaperImage =
   | { readonly ok: false; readonly reason: ImageCompressionFailureReason };
 
 /**
+ * Whether the browser will paint `dataUrl`. The wallpaper is a CSS
+ * `background-image` and previews in an `<img>`, so an element decode is the
+ * test that matches where it ends up: `createImageBitmap` answers a stricter
+ * question — it refuses SVG sources outright, and those paint perfectly well
+ * as a background.
+ */
+async function paintsAsImage(dataUrl: string): Promise<boolean> {
+  const probe = new Image();
+  probe.src = dataUrl;
+  try {
+    await probe.decode();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The data URL to persist for a picked wallpaper file.
  *
  * Two things the compressor does not do on its own. The source ceiling is
@@ -283,7 +300,7 @@ export async function prepareWallpaperImage(file: File): Promise<PreparedWallpap
     return compressed;
   }
   // Re-encoding already decoded the file, so only the verbatim path is unproven.
-  if (!compressed.image.recompressed && !(await isDecodableImage(file))) {
+  if (!compressed.image.recompressed && !(await paintsAsImage(compressed.image.dataUrl))) {
     return { ok: false, reason: "unreadable" };
   }
   return { ok: true, dataUrl: compressed.image.dataUrl };

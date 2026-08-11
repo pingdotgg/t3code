@@ -231,11 +231,30 @@ describe("buildProviderInstanceUpdatePatch", () => {
   });
 });
 
-/**
- * The decoder is stubbed rather than exercised: jsdom has no image codec, so
- * `createImageBitmap` stands in for the browser accepting or refusing a file.
- */
 describe("prepareWallpaperImage", () => {
+  /**
+   * Stands in for the browser, settling `decode()` the way a real one would for
+   * the fixture at hand. Returns the sources it was asked about. Note there is
+   * no `createImageBitmap` here: jsdom has none, so probing through it instead
+   * would fail every one of these.
+   */
+  function stubImageDecoder(decodes: (source: string) => boolean): string[] {
+    const probed: string[] = [];
+    vi.stubGlobal(
+      "Image",
+      class {
+        src = "";
+        decode() {
+          probed.push(this.src);
+          return decodes(this.src)
+            ? Promise.resolve()
+            : Promise.reject(new Error("The image cannot be decoded."));
+        }
+      },
+    );
+    return probed;
+  }
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -244,20 +263,16 @@ describe("prepareWallpaperImage", () => {
     const file = new File([new Uint8Array(8)], "huge.png", { type: "image/png" });
     Object.defineProperty(file, "size", { value: MAX_COMPRESSIBLE_SOURCE_BYTES + 1 });
     const read = vi.spyOn(file, "arrayBuffer");
-    const decode = vi.fn();
-    vi.stubGlobal("createImageBitmap", decode);
+    const probed = stubImageDecoder(() => true);
 
     expect(await prepareWallpaperImage(file)).toEqual({ ok: false, reason: "too-large" });
     // Reading it into a base64 string is the part that could take the tab down.
     expect(read).not.toHaveBeenCalled();
-    expect(decode).not.toHaveBeenCalled();
+    expect(probed).toEqual([]);
   });
 
-  it("rejects an under-budget file the browser cannot decode as an image", async () => {
-    vi.stubGlobal(
-      "createImageBitmap",
-      vi.fn(() => Promise.reject(new Error("unsupported source image"))),
-    );
+  it("rejects an under-budget file the browser cannot paint as an image", async () => {
+    stubImageDecoder(() => false);
 
     expect(
       await prepareWallpaperImage(new File(["plain text"], "notes.png", { type: "image/png" })),
@@ -265,11 +280,7 @@ describe("prepareWallpaperImage", () => {
   });
 
   it("stores an under-budget image verbatim once it decodes", async () => {
-    const close = vi.fn();
-    vi.stubGlobal(
-      "createImageBitmap",
-      vi.fn(() => Promise.resolve({ width: 16, height: 16, close })),
-    );
+    const probed = stubImageDecoder(() => true);
 
     const result = await prepareWallpaperImage(
       new File([new Uint8Array([1, 2, 3, 4])], "shot.png", { type: "image/png" }),
@@ -277,6 +288,19 @@ describe("prepareWallpaperImage", () => {
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.dataUrl).toBe("data:image/png;base64,AQIDBA==");
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(probed).toEqual(["data:image/png;base64,AQIDBA=="]);
+  });
+
+  it("accepts an SVG, which a background paints and a bitmap decoder would refuse", async () => {
+    stubImageDecoder((source) => source.startsWith("data:image/svg+xml;"));
+
+    const result = await prepareWallpaperImage(
+      new File(['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4" />'], "art.svg", {
+        type: "image/svg+xml",
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.dataUrl.startsWith("data:image/svg+xml;base64,")).toBe(true);
   });
 });
