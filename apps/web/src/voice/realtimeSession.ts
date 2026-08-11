@@ -1,11 +1,21 @@
 import type { VoiceRealtimeClientSecret } from "@t3tools/contracts";
-
 import {
-  decodeRealtimeServerEventMessage,
-  extractRealtimeFunctionCalls,
-  type RealtimeFunctionCall,
-  type RealtimeServerEvent,
-} from "./realtimeEvents";
+  RealtimeSessionError,
+  serializeRealtimeSessionUpdate,
+  serializeRealtimeToolOutputBatch,
+  type RealtimeFunctionCallEnvelope,
+  type RealtimeServerEventEnvelope,
+  type RealtimeSessionAttempt,
+  type RealtimeSessionErrorReason,
+  type RealtimeSessionUpdate,
+  type RealtimeToolOutputBatch,
+  type RealtimeTransportState,
+  type RealtimeTransportStateEnvelope,
+} from "@t3tools/client-runtime/voice/realtime-transport";
+
+import { decodeRealtimeServerEventMessage, extractRealtimeFunctionCalls } from "./realtimeEvents";
+
+export * from "@t3tools/client-runtime/voice/realtime-transport";
 
 export const OPENAI_REALTIME_CALLS_URL = "https://api.openai.com/v1/realtime/calls";
 
@@ -19,95 +29,9 @@ export const REALTIME_MEDIA_CONSTRAINTS = {
 } as const satisfies MediaStreamConstraints;
 
 const MAX_REALTIME_SDP_CHARS = 1_000_000;
-export const MAX_REALTIME_CLIENT_EVENT_ID_CHARS = 160;
 export const REALTIME_NEGOTIATION_TIMEOUT_MS = 20_000;
 
 type RealtimeSessionTimer = ReturnType<typeof setTimeout>;
-
-export type RealtimeSessionErrorReason =
-  | "insecure_context"
-  | "media_devices_unavailable"
-  | "microphone_access_failed"
-  | "client_secret_failed"
-  | "voice_not_configured"
-  | "voice_credential_rejected"
-  | "voice_model_unavailable"
-  | "voice_rate_limited"
-  | "voice_environment_timeout"
-  | "voice_upstream_failed"
-  | "client_secret_expired"
-  | "negotiation_timeout"
-  | "negotiation_failed"
-  | "upstream_rejected"
-  | "data_channel_failed"
-  | "connection_failed"
-  | "audio_playback_failed"
-  | "not_ready"
-  | "serialization_failed"
-  | "aborted";
-
-const ERROR_MESSAGES = {
-  insecure_context: "Voice requires a secure connection.",
-  media_devices_unavailable: "Microphone access is unavailable in this browser.",
-  microphone_access_failed: "T3 Code could not access the microphone.",
-  client_secret_failed: "T3 Code could not start a voice session.",
-  voice_not_configured: "Configure an OpenAI API key for this environment before starting voice.",
-  voice_credential_rejected: "OpenAI rejected this environment's API key.",
-  voice_model_unavailable: "The OpenAI Realtime model is unavailable for this API key.",
-  voice_rate_limited: "Voice is temporarily rate limited. Try again shortly.",
-  voice_environment_timeout: "The voice host environment timed out while starting the session.",
-  voice_upstream_failed: "OpenAI could not start the Realtime voice session.",
-  client_secret_expired: "The voice session credential expired before it could be used.",
-  negotiation_timeout: "The voice connection timed out while starting.",
-  negotiation_failed: "T3 Code could not establish the voice connection.",
-  upstream_rejected: "The voice provider rejected the connection.",
-  data_channel_failed: "The voice control channel failed.",
-  connection_failed: "The voice connection failed.",
-  audio_playback_failed: "T3 Code could not play voice audio.",
-  not_ready: "The voice session is not ready.",
-  serialization_failed: "The voice message could not be prepared.",
-  aborted: "The voice connection was cancelled.",
-} as const satisfies Record<RealtimeSessionErrorReason, string>;
-
-/** A deliberately redacted transport error safe to project into UI state. */
-export class RealtimeSessionError extends Error {
-  override readonly name = "RealtimeSessionError";
-
-  constructor(
-    readonly reason: RealtimeSessionErrorReason,
-    readonly status?: number,
-  ) {
-    super(ERROR_MESSAGES[reason]);
-  }
-}
-
-export type RealtimeTransportState =
-  | "connecting"
-  | "connected"
-  | "disconnected"
-  | "failed"
-  | "closed";
-
-export interface RealtimeSessionUpdate {
-  readonly type: "realtime";
-  readonly [key: string]: unknown;
-}
-
-export interface RealtimeServerEventEnvelope {
-  readonly generation: number;
-  readonly event: RealtimeServerEvent;
-}
-
-export interface RealtimeFunctionCallEnvelope {
-  readonly generation: number;
-  readonly calls: ReadonlyArray<RealtimeFunctionCall>;
-}
-
-export interface RealtimeTransportStateEnvelope {
-  readonly generation: number;
-  readonly state: RealtimeTransportState;
-  readonly error?: RealtimeSessionError;
-}
 
 export interface RealtimeSessionConnectInput {
   readonly audioElement: HTMLAudioElement;
@@ -115,22 +39,6 @@ export interface RealtimeSessionConnectInput {
   readonly onServerEvent?: (envelope: RealtimeServerEventEnvelope) => void;
   readonly onFunctionCalls?: (envelope: RealtimeFunctionCallEnvelope) => void;
   readonly onTransportState?: (envelope: RealtimeTransportStateEnvelope) => void;
-}
-
-export interface RealtimeSessionAttempt {
-  readonly generation: number;
-  readonly ready: Promise<void>;
-}
-
-export interface RealtimeToolOutput {
-  readonly eventId: string;
-  readonly callId: string;
-  readonly output: unknown;
-}
-
-export interface RealtimeToolOutputBatch {
-  readonly outputs: ReadonlyArray<RealtimeToolOutput>;
-  readonly responseCreateEventId: string;
 }
 
 export interface RealtimeSessionController {
@@ -714,16 +622,6 @@ export function createRealtimeSessionController(
     return attempt.dataChannel;
   };
 
-  const encodeEvent = (event: unknown): string => {
-    try {
-      const encoded = JSON.stringify(event);
-      if (encoded === undefined) throw new RealtimeSessionError("serialization_failed");
-      return encoded;
-    } catch {
-      throw new RealtimeSessionError("serialization_failed");
-    }
-  };
-
   const sendEncodedEvent = (channel: RTCDataChannel, encoded: string) => {
     try {
       channel.send(encoded);
@@ -732,48 +630,9 @@ export function createRealtimeSessionController(
     }
   };
 
-  const sendEvent = (event: unknown) => {
-    sendEncodedEvent(requireReadyChannel(), encodeEvent(event));
-  };
-
-  const sendToolOutputs = ({ outputs, responseCreateEventId }: RealtimeToolOutputBatch) => {
-    if (outputs.length === 0) return;
-    const validEventId = (value: string) =>
-      value.length > 0 &&
-      value.length <= MAX_REALTIME_CLIENT_EVENT_ID_CHARS &&
-      value.trim() === value;
-    if (
-      !validEventId(responseCreateEventId) ||
-      outputs.some((output) => !validEventId(output.eventId))
-    ) {
-      throw new RealtimeSessionError("serialization_failed");
-    }
-    const serialized = outputs.map(({ eventId, callId, output }) => {
-      try {
-        return {
-          eventId,
-          callId,
-          output: typeof output === "string" ? output : (JSON.stringify(output) ?? "null"),
-        };
-      } catch {
-        throw new RealtimeSessionError("serialization_failed");
-      }
-    });
-
-    const encoded = [
-      ...serialized.map((output) =>
-        encodeEvent({
-          event_id: output.eventId,
-          type: "conversation.item.create",
-          item: {
-            type: "function_call_output",
-            call_id: output.callId,
-            output: output.output,
-          },
-        }),
-      ),
-      encodeEvent({ event_id: responseCreateEventId, type: "response.create" }),
-    ];
+  const sendToolOutputs = (batch: RealtimeToolOutputBatch) => {
+    const encoded = serializeRealtimeToolOutputBatch(batch);
+    if (encoded.length === 0) return;
     const channel = requireReadyChannel();
     for (const event of encoded) {
       sendEncodedEvent(channel, event);
@@ -790,7 +649,10 @@ export function createRealtimeSessionController(
         track.enabled = !muted;
       }
     },
-    sendSessionUpdate: (session) => sendEvent({ type: "session.update", session }),
+    sendSessionUpdate: (session) => {
+      const channel = requireReadyChannel();
+      sendEncodedEvent(channel, serializeRealtimeSessionUpdate(session));
+    },
     sendToolOutputs,
     dispose: () => {
       const attempt = current;
