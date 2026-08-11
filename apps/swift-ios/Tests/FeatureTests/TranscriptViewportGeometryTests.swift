@@ -185,4 +185,21 @@ struct TranscriptViewportGeometryTests {
         detachedHost.addSubview(detachedCodeBlock)
         #expect(!ThreadBackSwipeGesture.shouldReceiveTouch(in: detachedLabel, host: host))
     }
+
+    @Test
+    @MainActor
+    func textInteractionSurfacesKeepHorizontalDrags() {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 240, height: 240))
+        let textField = UITextField(frame: .zero)
+        let textView = UITextView(frame: .zero)
+        let textViewContent = UIView(frame: .zero)
+        textView.addSubview(textViewContent)
+        host.addSubview(textField)
+        host.addSubview(textView)
+
+        #expect(!ThreadBackSwipeGesture.shouldReceiveTouch(in: textField, host: host))
+        #expect(!ThreadBackSwipeGesture.shouldReceiveTouch(in: textView, host: host))
+        #expect(!ThreadBackSwipeGesture.shouldReceiveTouch(in: textViewContent, host: host))
+        #expect(ThreadBackSwipeGesture.shouldReceiveTouch(in: host, host: host))
+    }
 }

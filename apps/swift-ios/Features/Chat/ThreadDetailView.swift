@@ -1318,6 +1318,12 @@ enum ThreadBackSwipeGesture {
     static func shouldReceiveTouch(in view: UIView?, host: UIView) -> Bool {
         var currentView = view
         while let current = currentView {
+            // Text fields and selectable transcript text need to own horizontal
+            // drags for caret movement and selection. The back pan can still
+            // begin from the surrounding thread surface.
+            if current is UITextField || current is UITextView {
+                return false
+            }
             if let scrollView = current as? UIScrollView,
                scrollView.alwaysBounceHorizontal
                 || scrollView.contentSize.width
