@@ -2,12 +2,17 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+const stageMock = vi.hoisted(() => ({
+  artworkEnabled: false,
+  variant: null as "dev" | "nightly" | null,
+}));
+
 vi.mock("~/hooks/useSettings", () => ({
-  useEnvironmentIdentificationMode: () => "none",
+  useDefaultEnvironmentArtworkEnabled: () => stageMock.artworkEnabled,
 }));
 vi.mock("../SidebarStageBackdrop", () => ({
-  StageBackdropButtonArt: () => null,
-  useSidebarStageBackdropVariant: () => null,
+  StageBackdropButtonArt: ({ variant }: { variant: "dev" | "nightly" }) => `stage-${variant}`,
+  useSidebarStageBackdropVariant: (enabled: boolean) => (enabled ? stageMock.variant : null),
 }));
 
 import { ComposerPrimaryActions, formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
@@ -53,6 +58,35 @@ function renderStandaloneStop() {
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
       hasSendableContent: false,
+      onPreviousPendingQuestion: () => {},
+      onInterrupt: () => {},
+      onImplementPlanInNewThread: () => {},
+    }),
+  );
+}
+
+function renderSendAction(
+  input: Partial<{
+    hasSendableContent: boolean;
+    isConnecting: boolean;
+    isSendBusy: boolean;
+    isEnvironmentUnavailable: boolean;
+    sendDisabledReason: string | null;
+  }> = {},
+) {
+  return renderToStaticMarkup(
+    createElement(ComposerPrimaryActions, {
+      compact: true,
+      pendingAction: null,
+      isRunning: false,
+      showPlanFollowUpPrompt: false,
+      promptHasText: false,
+      isSendBusy: input.isSendBusy ?? false,
+      sendDisabledReason: input.sendDisabledReason ?? null,
+      isConnecting: input.isConnecting ?? false,
+      isEnvironmentUnavailable: input.isEnvironmentUnavailable ?? false,
+      isPreparingWorktree: false,
+      hasSendableContent: input.hasSendableContent ?? true,
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
       onImplementPlanInNewThread: () => {},
@@ -163,5 +197,42 @@ describe("ComposerPrimaryActions", () => {
     expect(renderPendingActions(true)).toContain("size-8 sm:size-7");
     expect(renderStandaloneStop()).toContain("size-8 sm:h-8 sm:w-8");
     expect(renderStandaloneStop()).not.toContain("sm:size-7");
+  });
+
+  it.each(["dev", "nightly"] as const)(
+    "uses %s artwork on the send action in artwork mode",
+    (variant) => {
+      stageMock.artworkEnabled = true;
+      stageMock.variant = variant;
+
+      const markup = renderSendAction();
+
+      expect(markup).toContain(`stage-${variant}`);
+      expect(markup).toContain("bg-transparent");
+      expect(markup).toContain('aria-label="Send message"');
+    },
+  );
+
+  it("keeps the standard send action when default-theme artwork is disabled", () => {
+    stageMock.artworkEnabled = false;
+    stageMock.variant = "dev";
+
+    const markup = renderSendAction();
+
+    expect(markup).not.toContain("stage-dev");
+    expect(markup).toContain("bg-message-action");
+  });
+
+  it("preserves busy and disabled labels with artwork", () => {
+    stageMock.artworkEnabled = true;
+    stageMock.variant = "nightly";
+
+    expect(renderSendAction({ isSendBusy: true })).toContain('aria-label="Sending"');
+    expect(renderSendAction({ isEnvironmentUnavailable: true })).toContain(
+      'aria-label="Environment disconnected"',
+    );
+    expect(renderSendAction({ sendDisabledReason: "Choose a provider" })).toContain(
+      'aria-label="Choose a provider"',
+    );
   });
 });

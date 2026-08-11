@@ -243,9 +243,10 @@ export function resolveEnvironmentIdentificationMode(input: {
     : input.mode;
 }
 
-export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMode {
-  const settingsHydrated = useClientSettingsHydrated();
-  const mode = useClientSettingsValue().environmentIdentificationMode;
+function useEnvironmentIdentificationThemeState(): {
+  paletteThemeActive: boolean;
+  paletteThemeAllowsArtwork: boolean;
+} {
   const { resolvedTheme, theme, themeHalves } = useTheme();
   const previewSidebarArtwork = useSyncExternalStore(
     subscribeToThemePreview,
@@ -254,13 +255,29 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
   );
   const activeTheme = resolveThemeHalf(theme, themeHalves, resolvedTheme);
   const activeThemeDefinition = getThemeDefinition(activeTheme);
-  return resolveEnvironmentIdentificationMode({
-    mode,
-    settingsHydrated,
+  return {
     paletteThemeActive: previewSidebarArtwork !== null || activeThemeDefinition !== null,
     paletteThemeAllowsArtwork:
       previewSidebarArtwork ?? activeThemeDefinition?.sidebarArtwork === true,
+  };
+}
+
+export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMode {
+  const settingsHydrated = useClientSettingsHydrated();
+  const mode = useClientSettingsValue().environmentIdentificationMode;
+  return resolveEnvironmentIdentificationMode({
+    mode,
+    settingsHydrated,
+    ...useEnvironmentIdentificationThemeState(),
   });
+}
+
+/** Whether fixed-color artwork is safe to use outside the theme-aware sidebar. */
+export function useDefaultEnvironmentArtworkEnabled(): boolean {
+  const settingsHydrated = useClientSettingsHydrated();
+  const mode = useClientSettingsValue().environmentIdentificationMode;
+  const { paletteThemeActive } = useEnvironmentIdentificationThemeState();
+  return settingsHydrated && mode === "artwork" && !paletteThemeActive;
 }
 
 /**
