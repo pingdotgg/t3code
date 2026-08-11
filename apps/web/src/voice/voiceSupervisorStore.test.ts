@@ -7,8 +7,11 @@ import {
   MAX_VOICE_TRANSCRIPT_ENTRIES as SHARED_MAX_VOICE_TRANSCRIPT_ENTRIES,
   reduceVoiceSupervisorState as sharedReduceVoiceSupervisorState,
 } from "@t3tools/client-runtime/voice/voice-supervisor-state";
+import {
+  decodeRealtimeServerEvent,
+  type RealtimeServerEvent,
+} from "@t3tools/client-runtime/voice/realtime-events";
 
-import { decodeRealtimeServerEvent, type RealtimeServerEvent } from "./realtimeEvents";
 import {
   initialVoiceSupervisorData,
   MAX_VOICE_ACTIVITY_ENTRIES,
@@ -145,6 +148,21 @@ describe("voiceSupervisorStore adapter", () => {
     state.endSession(8);
 
     expect(useVoiceSupervisorStore.getState()).toBe(state);
+    expect(now).not.toHaveBeenCalled();
+    expect(subscriber).not.toHaveBeenCalled();
+
+    state.endSession(9, 10);
+    const ended = useVoiceSupervisorStore.getState();
+    subscriber.mockClear();
+    ended.ingestEvent(
+      9,
+      event({
+        event_id: "late-session",
+        type: "session.created",
+        session: { id: "late-session" },
+      }),
+    );
+    expect(useVoiceSupervisorStore.getState()).toBe(ended);
     expect(now).not.toHaveBeenCalled();
     expect(subscriber).not.toHaveBeenCalled();
     now.mockRestore();

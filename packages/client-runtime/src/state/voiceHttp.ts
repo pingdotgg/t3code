@@ -2,19 +2,14 @@ import {
   EnvironmentVoiceHttpError as EnvironmentVoiceHttpErrorSchema,
   type EnvironmentVoiceHttpError,
   VoiceCredentialMutation,
-  VoiceCredentialStatus,
-  VoiceRealtimeClientSecret,
   VoiceRealtimeClientSecretRequest,
 } from "@t3tools/contracts";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/unstable/http";
 
 import type { PreparedConnection } from "../connection/model.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequestWithDeclaredError,
   makeEnvironmentHttpApiClient,
@@ -140,47 +135,4 @@ export const mintVoiceClientSecret = Effect.fn("clientRuntime.state.mintVoiceCli
       isEnvironmentVoiceHttpError,
     ).pipe(Effect.mapError(redactVoiceRequestError));
   },
-);
-
-export class VoiceEnvironmentClient extends Context.Service<
-  VoiceEnvironmentClient,
-  {
-    readonly credentialStatus: (
-      prepared: PreparedConnection,
-    ) => Effect.Effect<VoiceCredentialStatus, RemoteEnvironmentVoiceRequestError>;
-    readonly updateCredential: (
-      prepared: PreparedConnection,
-      mutation: VoiceCredentialMutation,
-    ) => Effect.Effect<VoiceCredentialStatus, RemoteEnvironmentVoiceRequestError>;
-    readonly mintClientSecret: (
-      prepared: PreparedConnection,
-      request: VoiceRealtimeClientSecretRequest,
-    ) => Effect.Effect<VoiceRealtimeClientSecret, RemoteEnvironmentVoiceRequestError>;
-  }
->()("@t3tools/client-runtime/state/voiceHttp/VoiceEnvironmentClient") {}
-
-export const voiceEnvironmentClientLayer: Layer.Layer<
-  VoiceEnvironmentClient,
-  never,
-  HttpClient.HttpClient
-> = Layer.effect(
-  VoiceEnvironmentClient,
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    return VoiceEnvironmentClient.of({
-      credentialStatus: (prepared) =>
-        fetchVoiceCredentialStatus({ prepared, signer }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-        ),
-      updateCredential: (prepared, mutation) =>
-        updateVoiceCredential({ prepared, mutation, signer }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-        ),
-      mintClientSecret: (prepared, request) =>
-        mintVoiceClientSecret({ prepared, request, signer }).pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-        ),
-    });
-  }),
 );

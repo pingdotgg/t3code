@@ -1,3 +1,4 @@
+import type { VoiceStartThreadPreparation } from "@t3tools/client-runtime/operations/voice-supervisor-tools";
 import type {
   VoiceSupervisorEnvironment,
   VoiceSupervisorStartThreadDefaults,
@@ -15,7 +16,6 @@ import type { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/con
 import { truncate } from "@t3tools/shared/String";
 
 import { newCommandId, newMessageId, newThreadId, randomHex } from "../lib/utils";
-import type { VoiceStartThreadPreparation } from "./voiceTools";
 
 type MaybePromise<T> = T | Promise<T>;
 

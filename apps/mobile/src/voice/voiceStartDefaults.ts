@@ -92,8 +92,8 @@ function resolveModelSelection(
         )?.selection ?? null);
   const selection =
     realProjectDefault ??
-    configuredOptions.find((option) => option.isDefault)?.selection ??
-    configuredOptions[0]?.selection ??
+    configuredOptions.find((option) => option.isDefault && !option.isLegacy)?.selection ??
+    configuredOptions.find((option) => !option.isLegacy)?.selection ??
     null;
   if (selection === null) {
     throw new VoiceMobileStartDefaultsUnavailableError("model-unavailable");

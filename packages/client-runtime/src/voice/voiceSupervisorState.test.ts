@@ -149,6 +149,47 @@ describe("reduceVoiceSupervisorState", () => {
     expect(reduceVoiceSupervisorState(state, { type: "reset" })).toBe(initialVoiceSupervisorData);
   });
 
+  it("ignores same-generation realtime events after a session ends or fails", () => {
+    const lateSessionCreated = event({
+      event_id: "late-session-created",
+      type: "session.created",
+      session: { id: "late-session" },
+    });
+    const ended = reduceVoiceSupervisorState(beginSession(7, 1), {
+      type: "end-session",
+      generation: 7,
+      at: 2,
+    });
+
+    expect(
+      reduceVoiceSupervisorState(ended, {
+        type: "ingest-event",
+        generation: 7,
+        event: lateSessionCreated,
+        at: 3,
+      }),
+    ).toBe(ended);
+    expect(ended).toMatchObject({ phase: "idle", sessionId: null });
+    expect(ended.activity.at(-1)?.label).toBe("Voice session ended");
+
+    const failed = reduceVoiceSupervisorState(beginSession(8, 4), {
+      type: "fail-session",
+      generation: 8,
+      message: "Voice session failed",
+      at: 5,
+    });
+    expect(
+      reduceVoiceSupervisorState(failed, {
+        type: "ingest-event",
+        generation: 8,
+        event: lateSessionCreated,
+        at: 6,
+      }),
+    ).toBe(failed);
+    expect(failed).toMatchObject({ phase: "failed", sessionId: null });
+    expect(failed.activity.at(-1)?.label).toBe("Voice session failed");
+  });
+
   it("coalesces both speakers' transcript deltas and replaces them with final text", () => {
     let state = beginSession(3, 1);
     state = reduceVoiceSupervisorState(state, {

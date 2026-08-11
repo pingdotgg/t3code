@@ -102,9 +102,10 @@ export const voiceHttpApiLayer = HttpApiBuilder.group(
           yield* appendEnvironmentNoStoreResponseHeaders;
           yield* requireEnvironmentScope(AuthAccessWriteScope);
           return yield* credential.status.pipe(
-            Effect.catchTag("OpenAiRealtimeCredentialError", (error) =>
-              failEnvironmentInternal("voice_credential_load_failed", error),
-            ),
+            Effect.catchTags({
+              OpenAiRealtimeCredentialError: (error) =>
+                failEnvironmentInternal("voice_credential_load_failed", error),
+            }),
           );
         }),
       )
@@ -119,14 +120,16 @@ export const voiceHttpApiLayer = HttpApiBuilder.group(
               ? credential.set(Redacted.make(args.payload.apiKey))
               : credential.remove
           ).pipe(
-            Effect.catchTag("OpenAiRealtimeCredentialError", (error) =>
-              failEnvironmentInternal("voice_credential_update_failed", error),
-            ),
+            Effect.catchTags({
+              OpenAiRealtimeCredentialError: (error) =>
+                failEnvironmentInternal("voice_credential_update_failed", error),
+            }),
           );
           return yield* credential.status.pipe(
-            Effect.catchTag("OpenAiRealtimeCredentialError", (error) =>
-              failEnvironmentInternal("voice_credential_load_failed", error),
-            ),
+            Effect.catchTags({
+              OpenAiRealtimeCredentialError: (error) =>
+                failEnvironmentInternal("voice_credential_load_failed", error),
+            }),
           );
         }),
       )

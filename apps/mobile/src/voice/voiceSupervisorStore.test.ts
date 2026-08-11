@@ -42,6 +42,16 @@ describe("mobile voice supervisor Effect Atom store", () => {
     expect(registry.get(store.dataAtom)).toBe(current);
     expect(subscriber).not.toHaveBeenCalled();
 
+    store.projector.endSession(4, 5);
+    const ended = registry.get(store.dataAtom);
+    subscriber.mockClear();
+    const now = vi.spyOn(Date, "now");
+    store.projector.ingestEvent(4, completedTranscript(2));
+    expect(registry.get(store.dataAtom)).toBe(ended);
+    expect(now).not.toHaveBeenCalled();
+    expect(subscriber).not.toHaveBeenCalled();
+    now.mockRestore();
+
     store.projector.reset();
     expect(registry.get(store.dataAtom)).toBe(initialVoiceSupervisorData);
     unsubscribe();

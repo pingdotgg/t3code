@@ -330,6 +330,10 @@ export function createSupervisorJsonSnapshot(
     addBytes(2 + Math.max(0, stringKeys.length - 1), path);
     const output: Record<string, Schema.Json> = Object.create(null);
     for (const key of stringKeys) {
+      if (key.length > maxBytes) {
+        reject("byte-limit", `${path}.<oversized-key>`);
+        break;
+      }
       const propertyPath = `${path}.${key}`;
       if (UNSAFE_JSON_KEYS.has(key)) {
         reject("unsafe-key", propertyPath);

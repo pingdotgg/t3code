@@ -267,6 +267,33 @@ describe("createVoiceMobileStartDefaultsResolver", () => {
     });
   });
 
+  it("never selects a legacy model as an implicit default", async () => {
+    const fallback = harness({
+      serverConfig: config({
+        providers: [
+          provider({
+            models: [
+              { slug: "legacy-default", isDefault: true, isLegacy: true },
+              { slug: "current-model" },
+            ],
+          }),
+        ],
+      }),
+    });
+    await expect(fallback.resolver({ project: project() })).resolves.toMatchObject({
+      modelSelection: model("current-model"),
+    });
+
+    const legacyOnly = harness({
+      serverConfig: config({
+        providers: [provider({ models: [{ slug: "legacy-only", isLegacy: true }] })],
+      }),
+    });
+    await expect(legacyOnly.resolver({ project: project() })).rejects.toEqual(
+      new VoiceMobileStartDefaultsUnavailableError("model-unavailable"),
+    );
+  });
+
   it("fails closed when the target environment or real model is unavailable", async () => {
     const unavailable = harness({ serverConfig: null });
     await expect(unavailable.resolver({ project: project() })).rejects.toMatchObject({

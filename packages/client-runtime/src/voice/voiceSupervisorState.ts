@@ -334,7 +334,12 @@ export function reduceVoiceSupervisorState(
       if (state.generation !== action.generation) return state;
       return { ...state, muted: action.muted };
     case "ingest-event":
-      if (state.generation !== action.generation) return state;
+      if (
+        state.generation !== action.generation ||
+        (state.phase !== "connecting" && state.phase !== "connected")
+      ) {
+        return state;
+      }
       return { ...state, ...reduceRealtimeEvent(state, action.event, action.at) };
     case "fail-session": {
       if (state.generation !== action.generation) return state;

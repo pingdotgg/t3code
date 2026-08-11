@@ -5,8 +5,7 @@ import {
   reduceVoiceSupervisorState,
   type VoiceSupervisorData,
 } from "@t3tools/client-runtime/voice/voice-supervisor-state";
-
-import type { RealtimeServerEvent } from "./realtimeEvents";
+import type { RealtimeServerEvent } from "@t3tools/client-runtime/voice/realtime-events";
 
 export * from "@t3tools/client-runtime/voice/voice-supervisor-state";
 
@@ -46,7 +45,12 @@ export const useVoiceSupervisorStore = create<VoiceSupervisorStoreState>()((set)
     set((state) => reduceVoiceSupervisorState(state, { type: "set-muted", generation, muted })),
   ingestEvent: (generation, event, at) =>
     set((state) => {
-      if (state.generation !== generation) return state;
+      if (
+        state.generation !== generation ||
+        (state.phase !== "connecting" && state.phase !== "connected")
+      ) {
+        return state;
+      }
       return reduceVoiceSupervisorState(state, {
         type: "ingest-event",
         generation,

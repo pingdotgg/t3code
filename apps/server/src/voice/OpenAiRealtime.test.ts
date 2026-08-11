@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import { AuthSessionId, EnvironmentId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -222,6 +223,32 @@ it.effect("preserves a bounded upstream retry delay", () => {
   );
 
   return Effect.gen(function* () {
+    const realtime = yield* OpenAiRealtime.OpenAiRealtime;
+    const error = yield* Effect.flip(realtime.mint({ authSessionId, voice: "marin" }));
+
+    assert.instanceOf(error, OpenAiRealtime.OpenAiRealtimeRateLimitedError);
+    assert.strictEqual(error.reason, "upstream_rate_limit");
+    assert.strictEqual(error.retryAfterSeconds, 5);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("honors an upstream HTTP-date retry delay", () => {
+  const layer = makeLayer((request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(null, {
+          status: 429,
+          headers: { "retry-after": "Tue, 11 Aug 2026 12:00:05 GMT" },
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(
+      DateTime.toEpochMillis(DateTime.makeUnsafe("2026-08-11T12:00:00.000Z")),
+    );
     const realtime = yield* OpenAiRealtime.OpenAiRealtime;
     const error = yield* Effect.flip(realtime.mint({ authSessionId, voice: "marin" }));
 

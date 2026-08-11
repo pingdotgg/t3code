@@ -250,6 +250,8 @@ export function createVoiceStartDefaultsResolver(
       projectModelSelection: project.defaultModelSelection,
       draft,
     });
+    // Match useHandleNewThread: global thread defaults belong to the primary
+    // client environment even when the selected project is remote.
     const primaryDefaults = dependencies.readPrimaryThreadDefaults();
     const projectFileMode =
       project.defaultThreadEnvMode == null

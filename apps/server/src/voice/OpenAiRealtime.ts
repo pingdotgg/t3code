@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -104,10 +105,17 @@ export class OpenAiRealtime extends Context.Service<
 const retryAfterSeconds = (duration: Duration.Duration): number =>
   Math.max(1, Math.ceil(Duration.toMillis(duration) / 1_000));
 
-const upstreamRetryAfterSeconds = (value: string | undefined): number => {
+const upstreamRetryAfterSeconds = (value: string | undefined, nowMillis: number): number => {
   if (value === undefined) return 1;
   const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.min(120, Math.ceil(parsed)) : 1;
+  if (Number.isFinite(parsed) && parsed > 0) return Math.min(120, Math.ceil(parsed));
+  return Option.match(DateTime.make(value), {
+    onNone: () => 1,
+    onSome: (retryAt) => {
+      const delta = Math.ceil((DateTime.toEpochMillis(retryAt) - nowMillis) / 1_000);
+      return delta > 0 ? Math.min(120, delta) : 1;
+    },
+  });
 };
 
 const failRateLimiter = (
@@ -243,11 +251,16 @@ const decodeResponse = (response: HttpClientResponse.HttpClientResponse) =>
     403: () => Effect.fail(new OpenAiRealtimeUnavailableError({ reason: "credential_rejected" })),
     404: () => Effect.fail(new OpenAiRealtimeUnavailableError({ reason: "model_unavailable" })),
     429: (limited) =>
-      Effect.fail(
-        new OpenAiRealtimeRateLimitedError({
-          reason: "upstream_rate_limit",
-          retryAfterSeconds: upstreamRetryAfterSeconds(limited.headers["retry-after"]),
-        }),
+      Effect.clockWith((clock) =>
+        Effect.fail(
+          new OpenAiRealtimeRateLimitedError({
+            reason: "upstream_rate_limit",
+            retryAfterSeconds: upstreamRetryAfterSeconds(
+              limited.headers["retry-after"],
+              clock.currentTimeMillisUnsafe(),
+            ),
+          }),
+        ),
       ),
     "5xx": () => Effect.fail(new OpenAiRealtimeUpstreamError({ reason: "upstream_unavailable" })),
     orElse: () => Effect.fail(new OpenAiRealtimeUpstreamError({ reason: "request_failed" })),
@@ -280,7 +293,7 @@ export const make = Effect.gen(function* () {
         onExceeded: "fail",
         window: "1 minute",
       })
-      .pipe(Effect.catchTag("RateLimiterError", failRateLimiter));
+      .pipe(Effect.catchTags({ RateLimiterError: failRateLimiter }));
 
   const mint: OpenAiRealtime["Service"]["mint"] = Effect.fn("voice.openAiRealtime.mint")(
     function* (input) {

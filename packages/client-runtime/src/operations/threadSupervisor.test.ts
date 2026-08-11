@@ -221,6 +221,25 @@ describe("supervisor JSON snapshots", () => {
     expect(getter).not.toHaveBeenCalled();
   });
 
+  it("rejects oversized keys before copying paths or reading descriptors", () => {
+    const oversizedKey = "x".repeat(SNAPSHOT_BOUNDS.maxBytes + 1);
+    const getOwnPropertyDescriptor = vi.fn();
+    const value = new Proxy(
+      {},
+      {
+        ownKeys: () => [oversizedKey],
+        getOwnPropertyDescriptor,
+      },
+    );
+
+    expect(createSupervisorJsonSnapshot(value, SNAPSHOT_BOUNDS)).toEqual({
+      status: "rejected",
+      reason: "byte-limit",
+      path: "$json.<oversized-key>",
+    });
+    expect(getOwnPropertyDescriptor).not.toHaveBeenCalled();
+  });
+
   it("rejects cycles and non-finite numbers", () => {
     const cycle: Record<string, unknown> = {};
     cycle.self = cycle;

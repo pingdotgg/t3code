@@ -60,6 +60,7 @@ describe("mobile Voice Supervisor presentation", () => {
       activity(index, index === MAX_MOBILE_VOICE_ACTIVITY_ROWS + 6 ? long : undefined),
     );
     const selected = selectMobileVoiceHistory({
+      generation: 1,
       transcript: transcriptEntries,
       activity: activityEntries,
     });
@@ -72,7 +73,30 @@ describe("mobile Voice Supervisor presentation", () => {
     expect(activityItems[0]?.entry.id).toBe("activity-7");
     expect(transcriptItems.at(-1)?.entry.text).toHaveLength(MAX_MOBILE_VOICE_ROW_TEXT_CHARS);
     expect(activityItems.at(-1)?.entry.label).toHaveLength(MAX_MOBILE_VOICE_ROW_TEXT_CHARS);
-    expect(selected.completedAnnouncement).toHaveLength(MAX_MOBILE_VOICE_ANNOUNCEMENT_CHARS);
+    expect(selected.completedAnnouncement?.text).toHaveLength(MAX_MOBILE_VOICE_ANNOUNCEMENT_CHARS);
+  });
+
+  it("gives identical completed transcript text distinct announcement identities", () => {
+    const first = selectMobileVoiceHistory({
+      generation: 1,
+      transcript: [transcript(1, "Done")],
+      activity: [],
+    });
+    const second = selectMobileVoiceHistory({
+      generation: 1,
+      transcript: [transcript(1, "Done"), transcript(2, "Done")],
+      activity: [],
+    });
+    const nextSession = selectMobileVoiceHistory({
+      generation: 2,
+      transcript: [transcript(2, "Done")],
+      activity: [],
+    });
+
+    expect(first.completedAnnouncement?.text).toBe("Done");
+    expect(second.completedAnnouncement?.text).toBe("Done");
+    expect(second.completedAnnouncement?.key).not.toBe(first.completedAnnouncement?.key);
+    expect(nextSession.completedAnnouncement?.key).not.toBe(second.completedAnnouncement?.key);
   });
 
   it("announces hidden confirmations only and clips hostile summaries", () => {

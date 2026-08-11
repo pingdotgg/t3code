@@ -144,15 +144,22 @@ export function VoiceSupervisorRouteScreen() {
       Option.isSome(selectedPrepared) &&
       selectedPrepared.value.environmentId === selection.selectedEnvironmentId,
   });
-  const history = useMemo(() => selectMobileVoiceHistory(data), [data.activity, data.transcript]);
+  const history = useMemo(
+    () => selectMobileVoiceHistory(data),
+    [data.activity, data.generation, data.transcript],
+  );
   const lastTranscriptAnnouncementRef = useRef<string | null>(null);
+  const completedAnnouncementKey = history.completedAnnouncement?.key ?? null;
+  const completedAnnouncementText = history.completedAnnouncement?.text ?? null;
 
   useEffect(() => {
-    if (!isFocused || history.completedAnnouncement === null) return;
-    if (lastTranscriptAnnouncementRef.current === history.completedAnnouncement) return;
-    lastTranscriptAnnouncementRef.current = history.completedAnnouncement;
-    AccessibilityInfo.announceForAccessibility(history.completedAnnouncement);
-  }, [history.completedAnnouncement, isFocused]);
+    if (!isFocused || completedAnnouncementKey === null || completedAnnouncementText === null) {
+      return;
+    }
+    if (lastTranscriptAnnouncementRef.current === completedAnnouncementKey) return;
+    lastTranscriptAnnouncementRef.current = completedAnnouncementKey;
+    AccessibilityInfo.announceForAccessibility(completedAnnouncementText);
+  }, [completedAnnouncementKey, completedAnnouncementText, isFocused]);
 
   const environmentActions = environments.map((environment) => ({
     id: `environment:${environment.environmentId}`,

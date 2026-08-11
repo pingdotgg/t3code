@@ -57,11 +57,15 @@ function clipText(value: string, maxChars: number): string {
 }
 
 export function selectMobileVoiceHistory(input: {
+  readonly generation: number;
   readonly transcript: ReadonlyArray<VoiceTranscriptEntry>;
   readonly activity: ReadonlyArray<VoiceActivityEntry>;
 }): {
   readonly items: ReadonlyArray<MobileVoiceHistoryItem>;
-  readonly completedAnnouncement: string | null;
+  readonly completedAnnouncement: {
+    readonly key: string;
+    readonly text: string;
+  } | null;
 } {
   const transcript = input.transcript.slice(-MAX_MOBILE_VOICE_TRANSCRIPT_ROWS);
   const activity = input.activity.slice(-MAX_MOBILE_VOICE_ACTIVITY_ROWS);
@@ -92,7 +96,10 @@ export function selectMobileVoiceHistory(input: {
     completedAnnouncement:
       completed === undefined
         ? null
-        : clipText(completed.text, MAX_MOBILE_VOICE_ANNOUNCEMENT_CHARS),
+        : {
+            key: `transcript:${input.generation}:${completed.speaker}:${completed.id}:${completed.updatedAt}`,
+            text: clipText(completed.text, MAX_MOBILE_VOICE_ANNOUNCEMENT_CHARS),
+          },
   };
 }
 

@@ -35,8 +35,16 @@ export function createMobileVoiceSupervisorStore(
     markConnected: (generation, at) =>
       dispatch({ type: "mark-connected", generation, at: eventTime(at) }),
     setMuted: (generation, muted) => dispatch({ type: "set-muted", generation, muted }),
-    ingestEvent: (generation, event: RealtimeServerEvent, at) =>
-      dispatch({ type: "ingest-event", generation, event, at: eventTime(at) }),
+    ingestEvent: (generation, event: RealtimeServerEvent, at) => {
+      const current = registry.get(dataAtom);
+      if (
+        current.generation !== generation ||
+        (current.phase !== "connecting" && current.phase !== "connected")
+      ) {
+        return;
+      }
+      dispatch({ type: "ingest-event", generation, event, at: eventTime(at) });
+    },
     failSession: (generation, message, at) =>
       dispatch({ type: "fail-session", generation, message, at: eventTime(at) }),
     endSession: (generation, at) =>

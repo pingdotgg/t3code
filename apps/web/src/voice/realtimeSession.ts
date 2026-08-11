@@ -1,5 +1,9 @@
 import type { VoiceRealtimeClientSecret } from "@t3tools/contracts";
 import {
+  decodeRealtimeServerEventMessage,
+  extractRealtimeFunctionCalls,
+} from "@t3tools/client-runtime/voice/realtime-events";
+import {
   RealtimeSessionError,
   serializeRealtimeSessionUpdate,
   serializeRealtimeToolOutputBatch,
@@ -10,8 +14,6 @@ import {
   type RealtimeTransportController,
   type RealtimeTransportState,
 } from "@t3tools/client-runtime/voice/realtime-transport";
-
-import { decodeRealtimeServerEventMessage, extractRealtimeFunctionCalls } from "./realtimeEvents";
 
 export * from "@t3tools/client-runtime/voice/realtime-transport";
 
