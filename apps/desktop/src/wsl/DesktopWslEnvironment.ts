@@ -688,13 +688,19 @@ const getDistroIpImpl = (
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // `hostname -I` prints a space-separated list of all non-loopback
-      // IPs the distro has bound. The first entry on the WSL2 default
-      // network is always the eth0 vEthernet address Windows can reach
-      // directly (no wslhost forwarding required).
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
+        // `hostname -I` orders by interface, so a Docker bridge can mask the
+        // eth0 address NAT mode needs and the host address mirrored mode maps
+        // to loopback. The default route's source is printed first and wins;
+        // the `hostname -I` tail is the fallback without iproute2.
+        [
+          ...buildDistroArgs(distro),
+          "--",
+          "sh",
+          "-c",
+          "ip -4 route get 192.0.2.1 2>/dev/null | sed -n 's/.* src \\([0-9.]*\\).*/\\1/p'; hostname -I",
+        ],
         {
           stdin: "ignore",
           stdout: "pipe",
