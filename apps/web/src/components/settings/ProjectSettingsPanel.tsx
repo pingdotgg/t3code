@@ -45,8 +45,9 @@ import {
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
-import { projectDeleteCommandInput } from "../../lib/projectRemoval";
+import { projectDeleteCommandInput, projectThreadCount } from "../../lib/projectRemoval";
 import { readLocalApi } from "../../localApi";
 import {
   buildProjectScript,
@@ -309,6 +310,23 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const threads = useThreadShells();
+  const groupEnvironmentIds = useMemo(
+    () => [...new Set(group.memberProjects.map((member) => member.environmentId))],
+    [group.memberProjects],
+  );
+  const {
+    snapshots: archivedThreadSnapshots,
+    error: archivedThreadsError,
+    isLoading: archivedThreadsLoading,
+  } = useArchivedThreadSnapshots(groupEnvironmentIds);
+  const archivedThreads = useMemo(
+    () =>
+      archivedThreadSnapshots.flatMap(({ environmentId, snapshot }) =>
+        snapshot.threads.map((thread) => ({ ...thread, environmentId })),
+      ),
+    [archivedThreadSnapshots],
+  );
+  const knownThreads = useMemo(() => [...threads, ...archivedThreads], [archivedThreads, threads]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
@@ -340,12 +358,12 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
 
   const threadCountByMember = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const thread of threads) {
+    for (const thread of knownThreads) {
       const key = `${thread.environmentId}:${thread.projectId}`;
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return counts;
-  }, [threads]);
+  }, [knownThreads]);
   const reportFailure = useCallback((title: string, result: AtomCommandResult<void, unknown>) => {
     if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
@@ -672,8 +690,19 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       const api = readLocalApi();
       if (!api) return;
 
+      if (archivedThreadsError) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not check archived threads",
+            description: archivedThreadsError,
+          }),
+        );
+        return;
+      }
+
       const memberKeys = new Set(members.map(memberKey));
-      const projectThreads = threads.filter((thread) =>
+      const projectThreads = knownThreads.filter((thread) =>
         memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
       const isWholeGroup = members.length === group.memberProjects.length;
@@ -693,7 +722,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               : [`This removes ${members.length} grouped project entries.`]),
             ...(projectThreads.length > 0
               ? [
-                  `This includes ${projectThreads.length} unarchived thread${projectThreads.length === 1 ? "" : "s"}.`,
+                  `This includes ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}.`,
                 ]
               : []),
             "This permanently clears all associated conversation history.",
@@ -709,10 +738,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
 
       const draftStore = useComposerDraftStore.getState();
       for (const member of members) {
+        const memberThreadCount = projectThreadCount(member, projectThreads);
         const result = mapAtomCommandResult(
           await deleteProject({
             environmentId: member.environmentId,
-            input: projectDeleteCommandInput(member.id),
+            input: projectDeleteCommandInput(member.id, memberThreadCount),
           }),
           () => undefined,
         );
@@ -735,12 +765,13 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       }
     },
     [
+      archivedThreadsError,
       deleteProject,
       group.displayName,
       group.memberProjects.length,
+      knownThreads,
       navigate,
       reportFailure,
-      threads,
     ],
   );
 
@@ -950,8 +981,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </button>
               <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
                 {selectedCheckoutThreadCount === 1
-                  ? "1 unarchived thread"
-                  : `${selectedCheckoutThreadCount} unarchived threads`}
+                  ? "1 thread"
+                  : `${selectedCheckoutThreadCount} threads`}
               </div>
             </div>
           </div>
@@ -1004,6 +1035,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                 <Button
                   size="xs"
                   variant="destructive-outline"
+                  disabled={archivedThreadsLoading}
                   onClick={() => void removeMembers([selectedCheckout])}
                 >
                   <Trash2Icon className="size-3.5" />
@@ -1149,6 +1181,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             control={
               <Button
                 variant="destructive-outline"
+                disabled={archivedThreadsLoading}
                 onClick={() => void removeMembers(group.memberProjects)}
               >
                 <Trash2Icon />

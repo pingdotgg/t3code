@@ -1,9 +1,37 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
-/** Archived threads are absent from the live shell snapshot, so confirmed project removal must force deletion. */
-export function projectDeleteCommandInput(projectId: ProjectId): {
+interface ProjectRemovalTarget {
+  readonly environmentId: EnvironmentId;
+  readonly id: ProjectId;
+}
+
+interface ProjectRemovalThread {
+  readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
-  readonly force: true;
+}
+
+export function projectThreadCount(
+  project: ProjectRemovalTarget,
+  threads: ReadonlyArray<ProjectRemovalThread>,
+): number {
+  let count = 0;
+  for (const thread of threads) {
+    if (thread.environmentId === project.environmentId && thread.projectId === project.id) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+export function projectDeleteCommandInput(
+  projectId: ProjectId,
+  threadCount: number,
+): {
+  readonly projectId: ProjectId;
+  readonly force?: true;
 } {
-  return { projectId, force: true };
+  return {
+    projectId,
+    ...(threadCount > 0 ? { force: true as const } : {}),
+  };
 }
