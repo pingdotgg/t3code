@@ -265,7 +265,9 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import {
+  dismissThreadErrorBannerForSession,
   getThreadErrorBannerKey,
+  isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
@@ -1502,18 +1504,10 @@ function ChatViewContent(props: ChatViewProps) {
   // just fall through to the persisted one. Mask the current error until a
   // different error arrives, mirroring the provider status banner.
   const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
-  const [dismissedThreadErrorBannerKey, setDismissedThreadErrorBannerKey] = useState<string | null>(
-    null,
-  );
-  useEffect(() => {
-    if (threadError === null && dismissedThreadErrorBannerKey !== null) {
-      setDismissedThreadErrorBannerKey(null);
-    }
-  }, [dismissedThreadErrorBannerKey, threadError]);
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,
     threadError,
-    dismissedThreadErrorBannerKey,
+    isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
   )
     ? threadError
     : null;
@@ -6173,7 +6167,7 @@ function ChatViewContent(props: ChatViewProps) {
           error={visibleThreadError}
           onDismiss={() => {
             setThreadError(activeThread.id, null);
-            setDismissedThreadErrorBannerKey(threadErrorBannerKey);
+            dismissThreadErrorBannerForSession(threadErrorBannerKey);
           }}
         />
         {/* Main content area with optional plan sidebar */}
