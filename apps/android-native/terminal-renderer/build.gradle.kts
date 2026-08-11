@@ -7,6 +7,7 @@ val sharedTerminal = file("../../mobile/modules/t3-terminal/android")
 android {
   namespace = "expo.modules.t3terminal"
   compileSdk = 37
+  ndkVersion = "27.0.12077973"
 
   defaultConfig {
     minSdk = 26

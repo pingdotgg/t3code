@@ -138,6 +138,38 @@ jobs:
       - name: Lint mobile native sources
         run: vp run lint:mobile
 
+  native_android:
+    name: Native Android
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android
+        uses: android-actions/setup-android@v4
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Android toolchain
+        run: sdkmanager --channel=3 "platforms;android-37.0" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.0.12077973"
+
+      - name: Test, lint, and build
+        working-directory: apps/android-native
+        run: ./gradlew --no-daemon :protocol:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+
   release_smoke:
     name: Release Smoke
     runs-on: blacksmith-8vcpu-ubuntu-2404

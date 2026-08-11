@@ -33,7 +33,7 @@ class UsageModelTest {
     assertEquals(7L, merged.reasoningTokens)
     assertEquals(2.0, merged.costUsd, 0.0)
     assertEquals(3L, merged.sessions)
-    assertEquals(listOf("Worktree: /home/a/.codex"), merged.duplicateSources)
+    assertEquals(listOf("Worktree: /workspace/codex-home"), merged.duplicateSources)
     assertEquals(listOf("c"), merged.staleEnvironments)
   }
 
@@ -82,7 +82,7 @@ private fun usageSummary(contractVersion: Int = 3, hostId: String = "host-1") = 
       fingerprint = UsageSourceFingerprint(
         hostId = hostId,
         provider = UsageProvider.Codex,
-        resolvedHomePath = "/home/a/.codex",
+        resolvedHomePath = "/workspace/codex-home",
         volumeId = "1:2",
       ),
       status = UsageSourceStatus.Ok,

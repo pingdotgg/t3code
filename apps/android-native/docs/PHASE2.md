@@ -23,7 +23,7 @@ Performance benchmarking is **out of scope** until after Phase 3.
 
 - **environments** — id, label, http base URL, kind (`Bearer` \| `Relay`), desired, updated_at
 - **settings** — key/value (selected environment, app settings JSON)
-- **snapshots** — (environment_id, kind, item_id) → schema_version, sequence, payload JSON  
+- **snapshots** — (environment_id, kind, item_id) → schema_version, sequence, payload JSON
   kinds: `shell` / `thread` / `server-config`
 - **outbox** — durable pending text turns (message_id PK, ordered by created_at per env+thread)
 

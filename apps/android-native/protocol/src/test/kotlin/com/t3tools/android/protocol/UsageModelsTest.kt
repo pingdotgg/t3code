@@ -37,7 +37,7 @@ class UsageModelsTest {
           "fingerprint": {
             "hostId": "host-1",
             "provider": "codex",
-            "resolvedHomePath": "/home/a/.codex",
+            "resolvedHomePath": "/workspace/codex-home",
             "volumeId": "1:2"
           },
           "status": "ok",
@@ -61,6 +61,6 @@ class UsageModelsTest {
     assertEquals(USAGE_CONTRACT_VERSION, summary.contractVersion)
     assertEquals(UsageProvider.Codex, summary.buckets.single().provider)
     assertEquals(200L, summary.buckets.single().totals.cachedInputTokens)
-    assertEquals("/home/a/.codex", summary.sources.single().fingerprint.resolvedHomePath)
+    assertEquals("/workspace/codex-home", summary.sources.single().fingerprint.resolvedHomePath)
   }
 }

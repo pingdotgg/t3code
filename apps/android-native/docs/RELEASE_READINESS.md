@@ -17,6 +17,8 @@ Run from `apps/android-native`:
 ./gradlew :protocol:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
+The monorepo CI runs this gate in the `Native Android` job with Java 17, Android SDK 37.0, CMake 3.22.1, and NDK 27.0.12077973.
+
 This covers protocol fixtures and reducers, native app behavior, adaptive layout rules, debug APK assembly, and Android Lint. `git diff --check` and local Markdown-link validation complete the closeout gate. The build uses AGP built-in Kotlin with its Kotlin toolchain aligned to 2.2.10; lint completes with no errors. Remaining warnings are dependency-update, target-SDK, KTX, and launcher compatibility recommendations.
 
 The tracked native source and its history were also scanned for private keys, high-risk credential patterns, email addresses, personal filesystem paths, and inappropriate fixture text. No secrets or personal content remain in the application source. The Clerk publishable key is intentionally public configuration; commit author metadata is outside the application artifact.
