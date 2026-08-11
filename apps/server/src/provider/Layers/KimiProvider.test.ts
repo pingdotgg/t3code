@@ -18,6 +18,7 @@ import {
   buildInitialKimiProviderSnapshot,
   checkKimiProviderStatus,
   kimiModelCapabilitiesFromConfigOptions,
+  kimiModelStateFromSessionSetup,
 } from "./KimiProvider.ts";
 
 const runNode = <A, E>(
@@ -48,16 +49,16 @@ async function makeKimiFixture(mode: KimiFixtureMode): Promise<string> {
     `import * as readline from "node:readline";
 
 const mode = process.env.T3_KIMI_FIXTURE_MODE;
-let currentModel = "kimi-k2";
+let currentModel = "kimi-code/kimi-for-coding";
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
 const fail = (id, code, message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\\n");
 const notify = (method, params) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\\n");
 const configOptions = () => [
-  { id: "model", name: "Model", category: "model", type: "select", currentValue: currentModel, options: [{ value: "kimi-k2", name: "Kimi K2" }, { value: "kimi-k2-thinking", name: "Kimi K2 Thinking" }] },
+  { id: "model", name: "Model", category: "model", type: "select", currentValue: currentModel, options: [{ value: "kimi-code/kimi-for-coding", name: "K2.7 Coding" }, { value: "kimi-code/kimi-for-coding-highspeed", name: "K2.7 Coding Highspeed" }, { value: "kimi-code/k3", name: "K3" }, { value: "kimi-code/k3-256k", name: "K3-256k" }] },
   { id: "mode", name: "Mode", category: "mode", type: "select", currentValue: "default", options: [{ value: "default", name: "Default" }, { value: "plan", name: "Plan" }] },
-  ...(currentModel === "kimi-k2-thinking"
-    ? [{ id: "reasoning", name: "Reasoning", category: "model_config", type: "select", currentValue: "high", options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }] }]
-    : [{ id: "thinking", name: "Thinking", category: "model_config", type: "boolean", currentValue: true }])
+  ...(currentModel === "kimi-code/k3" || currentModel === "kimi-code/k3-256k"
+    ? [{ id: "thinking", name: "Thinking", category: "thought_level", type: "select", currentValue: "high", options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }, { value: "max", name: "Max" }] }]
+    : [{ id: "thinking", name: "Thinking", category: "thought_level", type: "select", currentValue: "on", options: [{ value: "on", name: "On" }] }])
 ];
 
 for await (const line of readline.createInterface({ input: process.stdin })) {
@@ -81,13 +82,6 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
         availableModes: [
           { id: "default", name: "Default" },
           { id: "plan", name: "Plan" }
-        ]
-      },
-      models: {
-        currentModelId: currentModel,
-        availableModels: [
-          { modelId: "kimi-k2", name: "Kimi K2" },
-          { modelId: "kimi-k2-thinking", name: "Kimi K2 Thinking" }
         ]
       },
       configOptions: configOptions()
@@ -180,6 +174,73 @@ describe("kimiModelCapabilitiesFromConfigOptions", () => {
   });
 });
 
+describe("kimiModelStateFromSessionSetup", () => {
+  it("uses the generic ACP model option and ignores blank and duplicate entries", () => {
+    expect(
+      kimiModelStateFromSessionSetup({
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "kimi-code/k3",
+            options: [
+              { value: "", name: "Blank" },
+              { value: "kimi-code/k3", name: "K3" },
+              { value: "kimi-code/k3", name: "Duplicate" },
+            ],
+          },
+        ],
+      }),
+    ).toEqual({
+      currentModelId: "kimi-code/k3",
+      availableModels: [{ modelId: "kimi-code/k3", name: "K3" }],
+    });
+  });
+
+  it("falls back to legacy ACP model state when no model option is advertised", () => {
+    const models = {
+      currentModelId: "kimi-k2",
+      availableModels: [
+        { modelId: "kimi-k2", name: "Kimi K2" },
+        { modelId: "kimi-k2-thinking", name: "Kimi K2 Thinking" },
+      ],
+    } satisfies EffectAcpSchema.SessionModelState;
+
+    expect(kimiModelStateFromSessionSetup({ models })).toEqual({
+      currentModelId: "kimi-k2",
+      availableModels: models.availableModels,
+    });
+  });
+
+  it("falls back to legacy ACP model state when the model option has no usable values", () => {
+    const models = {
+      currentModelId: "kimi-k2",
+      availableModels: [{ modelId: "kimi-k2", name: "Kimi K2" }],
+    } satisfies EffectAcpSchema.SessionModelState;
+
+    expect(
+      kimiModelStateFromSessionSetup({
+        models,
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "",
+            options: [{ value: " ", name: "Blank" }],
+          },
+        ],
+      }),
+    ).toEqual({
+      currentModelId: "kimi-k2",
+      availableModels: models.availableModels,
+    });
+  });
+});
+
 describe("checkKimiProviderStatus", () => {
   it("reports a missing Kimi binary", async () => {
     const snapshot = await runNode(
@@ -236,7 +297,7 @@ describe("checkKimiProviderStatus", () => {
       checkKimiProviderStatus(
         kimiSettings({
           binaryPath,
-          customModels: ["custom-kimi", "custom-kimi", "kimi-k2"],
+          customModels: ["custom-kimi", "custom-kimi", "kimi-code/k3"],
         }),
         { ...process.env, T3_KIMI_FIXTURE_MODE: "ready" },
       ),
@@ -245,26 +306,40 @@ describe("checkKimiProviderStatus", () => {
     expect(snapshot.status).toBe("ready");
     expect(snapshot.badgeLabel).toBe("Early Access");
     expect(snapshot.models.map((model) => model.slug)).toEqual([
-      "kimi-k2",
-      "kimi-k2-thinking",
+      "kimi-code/kimi-for-coding",
+      "kimi-code/kimi-for-coding-highspeed",
+      "kimi-code/k3",
+      "kimi-code/k3-256k",
       "custom-kimi",
     ]);
     expect(snapshot.models[0]).toMatchObject({ isDefault: true, isCustom: false });
     expect(snapshot.models[0]?.capabilities).toEqual({
       optionDescriptors: [
-        { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+        {
+          id: "thinking",
+          label: "Thinking",
+          type: "select",
+          currentValue: "on",
+          options: [{ id: "on", label: "On", isDefault: true }],
+        },
       ],
     });
-    expect(snapshot.models[1]?.capabilities).toEqual({
+    expect(snapshot.models[1]).toMatchObject({
+      slug: "kimi-code/kimi-for-coding-highspeed",
+      name: "K2.7 Coding Highspeed",
+      isCustom: false,
+    });
+    expect(snapshot.models[2]?.capabilities).toEqual({
       optionDescriptors: [
         {
-          id: "reasoning",
-          label: "Reasoning",
+          id: "thinking",
+          label: "Thinking",
           type: "select",
           currentValue: "high",
           options: [
             { id: "low", label: "Low" },
             { id: "high", label: "High", isDefault: true },
+            { id: "max", label: "Max" },
           ],
         },
       ],

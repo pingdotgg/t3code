@@ -148,6 +148,44 @@ export function kimiModelCapabilitiesFromConfigOptions(
   return createModelCapabilities({ optionDescriptors });
 }
 
+export function kimiModelStateFromSessionSetup(input: {
+  readonly models?: EffectAcpSchema.SessionModelState | null | undefined;
+  readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined;
+}): {
+  readonly currentModelId: string | undefined;
+  readonly availableModels: ReadonlyArray<EffectAcpSchema.ModelInfo>;
+} {
+  const modelOption = input.configOptions?.find(
+    (option) => option.category === "model" && option.type === "select",
+  );
+  if (modelOption?.type === "select") {
+    const seen = new Set<string>();
+    const availableModels: Array<EffectAcpSchema.ModelInfo> = [];
+    for (const entry of modelOption.options) {
+      const valueOptions = "value" in entry ? [entry] : entry.options;
+      for (const valueOption of valueOptions) {
+        const modelId = valueOption.value.trim();
+        if (!modelId || seen.has(modelId)) continue;
+        seen.add(modelId);
+        availableModels.push({
+          modelId,
+          name: valueOption.name.trim() || modelId,
+        });
+      }
+    }
+    if (availableModels.length > 0) {
+      return {
+        currentModelId: modelOption.currentValue?.trim() || undefined,
+        availableModels,
+      };
+    }
+  }
+  return {
+    currentModelId: input.models?.currentModelId.trim() || undefined,
+    availableModels: input.models?.availableModels ?? [],
+  };
+}
+
 function getKimiFallbackModels(
   kimiSettings: Pick<KimiSettings, "customModels">,
 ): ReadonlyArray<ServerProviderModel> {
@@ -247,9 +285,11 @@ const discoverKimiViaAcp = (
     );
     const started = yield* runtime.start();
     yield* runtime.drainEvents;
-    const currentModelId = started.sessionSetupResult.models?.currentModelId?.trim() || undefined;
-    const availableModels = started.sessionSetupResult.models?.availableModels ?? [];
     const initialConfigOptions = yield* runtime.getConfigOptions;
+    const { currentModelId, availableModels } = kimiModelStateFromSessionSetup({
+      models: started.sessionSetupResult.models,
+      configOptions: initialConfigOptions,
+    });
     const capabilitiesByModel = new Map<string, ModelCapabilities>();
     for (const model of availableModels) {
       const modelId = model.modelId.trim();
