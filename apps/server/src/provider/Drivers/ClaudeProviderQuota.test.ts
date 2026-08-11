@@ -43,7 +43,7 @@ it.effect("returns honest unknown quota before Claude reports a rate-limit event
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect("normalizes finite Claude utilization, reset time, and safe SDK metadata", () =>
+it.effect("normalizes Claude utilization ratios, reset time, and safe SDK metadata", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(initialTimeMs);
     const tracker = yield* makeClaudeProviderQuota(instanceId);
@@ -51,7 +51,7 @@ it.effect("normalizes finite Claude utilization, reset time, and safe SDK metada
     yield* tracker.recordRateLimitEvent(
       rateLimitEvent({
         status: "allowed_warning",
-        utilization: 37.5,
+        utilization: 0.82,
         resetsAt: 1_700_003_600,
         rateLimitType: "five_hour",
         overageStatus: "rejected",
@@ -71,8 +71,8 @@ it.effect("normalizes finite Claude utilization, reset time, and safe SDK metada
         {
           key: "claude",
           label: "Claude usage",
-          remainingPercent: 62.5,
-          usedPercent: 37.5,
+          remainingPercent: 18,
+          usedPercent: 82,
           resetsAt: "2023-11-14T23:13:20.000Z",
           windowMinutes: null,
           blocking: true,
@@ -92,11 +92,29 @@ it.effect("normalizes finite Claude utilization, reset time, and safe SDK metada
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect("omits quota headlines for absent or non-finite Claude utilization", () =>
+it.effect("normalizes the valid Claude utilization ratio boundaries", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(initialTimeMs);
 
-    for (const utilization of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (const [utilization, usedPercent, remainingPercent] of [
+      [0, 0, 100],
+      [1, 100, 0],
+    ] as const) {
+      const tracker = yield* makeClaudeProviderQuota(instanceId);
+      yield* tracker.recordRateLimitEvent(rateLimitEvent({ status: "allowed", utilization }));
+
+      const metric = (yield* tracker.quota.read).metrics[0];
+      NodeAssert.equal(metric?.usedPercent, usedPercent);
+      NodeAssert.equal(metric?.remainingPercent, remainingPercent);
+    }
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("omits quota headlines for absent, non-finite, or out-of-range utilization", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(initialTimeMs);
+
+    for (const utilization of [undefined, Number.NaN, Number.POSITIVE_INFINITY, -0.01, 1.01]) {
       const tracker = yield* makeClaudeProviderQuota(instanceId);
       yield* tracker.recordRateLimitEvent(
         rateLimitEvent({
@@ -122,7 +140,7 @@ it.effect("marks Claude quota stale at the 30-minute observation boundary", () =
     yield* tracker.recordRateLimitEvent(
       rateLimitEvent({
         status: "allowed",
-        utilization: 25,
+        utilization: 0.25,
         resetsAt: 1_700_007_200,
       }),
     );
@@ -148,7 +166,7 @@ it.effect("marks Claude quota stale at an earlier SDK reset boundary", () =>
     yield* tracker.recordRateLimitEvent(
       rateLimitEvent({
         status: "allowed",
-        utilization: 10,
+        utilization: 0.1,
         resetsAt: 1_700_000_600,
       }),
     );
@@ -167,9 +185,9 @@ it.effect("keeps Claude quota state and revisions isolated per provider instance
     const first = yield* makeClaudeProviderQuota(ProviderInstanceId.make("claude-first"));
     const second = yield* makeClaudeProviderQuota(ProviderInstanceId.make("claude-second"));
 
-    yield* first.recordRateLimitEvent(rateLimitEvent({ status: "allowed", utilization: 40 }));
+    yield* first.recordRateLimitEvent(rateLimitEvent({ status: "allowed", utilization: 0.4 }));
     yield* first.recordRateLimitEvent(
-      rateLimitEvent({ status: "allowed_warning", utilization: 50 }),
+      rateLimitEvent({ status: "allowed_warning", utilization: 0.5 }),
     );
 
     NodeAssert.equal(yield* first.quota.revision, 2);

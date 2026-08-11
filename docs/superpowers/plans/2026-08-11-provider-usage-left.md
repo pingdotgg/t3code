@@ -344,7 +344,9 @@ type ClaudeRateLimitEvent = Extract<SDKMessage, { readonly type: "rate_limit_eve
 
 Normalize only SDK-reported fields:
 
-- a finite `utilization` is a blocking metric with `remainingPercent = 100 - utilization`;
+- accept finite `utilization` only within the SDK's `0..1` ratio range;
+- normalize accepted ratios to `usedPercent = utilization * 100` on the shared `0..100` scale;
+- derive `remainingPercent = 100 - usedPercent` and mark the metric blocking;
 - `resetsAt` becomes an ISO reset timestamp when valid;
 - `status` and other safe enum/text metadata appear in `detail`;
 - before the first event, return `unknown` with source `claude-agent-sdk`;

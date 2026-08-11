@@ -44,17 +44,23 @@ const normalizeEvent = (
 ): RecordedClaudeQuota => {
   const info = event.rate_limit_info;
   const reset = unixSecondsToDateTime(info.resetsAt);
-  const utilization =
-    info.utilization !== undefined && Number.isFinite(info.utilization) ? info.utilization : null;
+  const utilizationRatio =
+    info.utilization !== undefined &&
+    Number.isFinite(info.utilization) &&
+    info.utilization >= 0 &&
+    info.utilization <= 1
+      ? info.utilization
+      : null;
+  const usedPercent = utilizationRatio === null ? null : utilizationRatio * 100;
   const metrics: ReadonlyArray<ProviderQuotaMetric> =
-    utilization === null
+    usedPercent === null
       ? []
       : [
           {
             key: "claude",
             label: "Claude usage",
-            remainingPercent: 100 - utilization,
-            usedPercent: utilization,
+            remainingPercent: 100 - usedPercent,
+            usedPercent,
             resetsAt: Option.match(reset, {
               onNone: () => null,
               onSome: DateTime.formatIso,

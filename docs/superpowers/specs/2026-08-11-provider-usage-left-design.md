@@ -169,6 +169,10 @@ utilization, and optional reset time. T3 already translates that message to an
 `account.rate-limits.updated` runtime event. The quota service retains the
 latest instance-scoped event as a current snapshot.
 
+The SDK reports `utilization` as a `0..1` ratio. The Claude adapter multiplies
+that ratio by 100 to normalize `usedPercent` to the shared `0..100` provider
+scale, then computes `remainingPercent = 100 - usedPercent`.
+
 Before a usable event arrives, or after it becomes stale, Claude renders an em
 dash. Historical transcript tokens remain available on the existing Usage page
 but are never converted into a quota estimate.
