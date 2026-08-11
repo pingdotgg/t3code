@@ -53,6 +53,7 @@ export const v2ThreadShell: OrchestrationV2ThreadShell = {
   updatedAt: v2Now,
   archivedAt: null,
   settledOverride: null,
+  settledOverrideAt: null,
   settledAt: null,
   lastVisitedAt: null,
   deletedAt: null,

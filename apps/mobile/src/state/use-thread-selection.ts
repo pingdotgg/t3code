@@ -95,6 +95,7 @@ function threadDetailToShell(
     updatedAt: thread.updatedAt,
     archivedAt: thread.archivedAt,
     settledOverride: thread.settledOverride,
+    settledOverrideAt: thread.settledOverrideAt,
     settledAt: thread.settledAt,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
