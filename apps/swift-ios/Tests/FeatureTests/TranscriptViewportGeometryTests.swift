@@ -20,13 +20,19 @@ struct TranscriptViewportGeometryTests {
     @Test
     func timestampRevealClaimsOnlyDeliberateLeftwardHorizontalPans() {
         #expect(
-            TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -24, velocityY: 4)
+            TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -240, velocityY: 40)
         )
         #expect(
-            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -4, velocityY: 24)
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -40, velocityY: 240)
         )
         #expect(
-            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: 24, velocityY: 4)
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: 240, velocityY: 40)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -40, velocityY: 2)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -120, velocityY: 100)
         )
     }
 

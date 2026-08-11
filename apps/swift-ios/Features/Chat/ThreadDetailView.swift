@@ -829,6 +829,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 return true
             }
             let velocity = pan.velocity(in: collectionView)
+            guard collectionView.effectiveUserInterfaceLayoutDirection == .leftToRight else {
+                return false
+            }
             return TranscriptTimestampRevealGeometry.shouldBegin(
                 velocityX: velocity.x,
                 velocityY: velocity.y
@@ -842,8 +845,13 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
-            gestureRecognizer === timestampPanGesture
-                || otherGestureRecognizer === timestampPanGesture
+            guard let collectionView = timestampPanGesture.view as? UICollectionView else {
+                return false
+            }
+            return (gestureRecognizer === timestampPanGesture
+                    && otherGestureRecognizer === collectionView.panGestureRecognizer)
+                || (otherGestureRecognizer === timestampPanGesture
+                    && gestureRecognizer === collectionView.panGestureRecognizer)
         }
 
         private func isNestedHorizontalScroller(
@@ -1260,9 +1268,14 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
 enum TranscriptTimestampRevealGeometry {
     static let maximumWidth: CGFloat = 76
+    static let minimumHorizontalVelocity: CGFloat = 120
+    static let horizontalIntentRatio: CGFloat = 1.35
 
     static func shouldBegin(velocityX: CGFloat, velocityY: CGFloat) -> Bool {
-        velocityX < 0 && abs(velocityX) > abs(velocityY)
+        let horizontalSpeed = abs(velocityX)
+        return velocityX < 0
+            && horizontalSpeed >= minimumHorizontalVelocity
+            && horizontalSpeed >= abs(velocityY) * horizontalIntentRatio
     }
 
     static func width(translationX: CGFloat) -> CGFloat {
@@ -1280,7 +1293,9 @@ private struct FeatureTimestampRevealMessageView: View {
     @ObservedObject var reveal: FeatureTimestampRevealState
 
     var body: some View {
-        ZStack(alignment: .trailing) {
+        ZStack(alignment: .topTrailing) {
+            FeatureMessageView(message: message)
+
             if message.createdAt != .distantPast {
                 Text(message.createdAt, format: .dateTime.hour().minute())
                     .font(T3Typography.supporting.monospacedDigit())
@@ -1292,13 +1307,13 @@ private struct FeatureTimestampRevealMessageView: View {
                         width: TranscriptTimestampRevealGeometry.maximumWidth,
                         alignment: .trailing
                     )
-                    .offset(x: TranscriptTimestampRevealGeometry.maximumWidth - reveal.width)
+                    .padding(.vertical, 5)
+                    .background(T3Colors.surface, in: Capsule())
+                    .frame(width: reveal.width, alignment: .trailing)
+                    .clipped()
                     .opacity(reveal.width > 0 ? 1 : 0)
                     .accessibilityHidden(true)
             }
-
-            FeatureMessageView(message: message)
-                .offset(x: -reveal.width)
         }
     }
 }
