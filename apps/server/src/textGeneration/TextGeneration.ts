@@ -1,14 +1,22 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
-import { TextGenerationError } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  TextGenerationError,
+  type ChatAttachment,
+  type ModelSelection,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
-export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "grok" | "opencode";
+/** Any registered provider driver can supply the required text-generation shape. */
+export type TextGenerationProvider = ProviderDriverKind;
+
+const OMP_DRIVER_KIND = ProviderDriverKind.make("omp");
 
 export interface CommitMessageGenerationInput {
   cwd: string;
@@ -129,11 +137,11 @@ const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,
   instanceId: ProviderInstanceId,
-): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
+): Effect.Effect<ProviderInstance, TextGenerationError> =>
   registry.getInstance(instanceId).pipe(
     Effect.flatMap((instance) =>
       instance
-        ? Effect.succeed(instance.textGeneration)
+        ? Effect.succeed(instance)
         : Effect.fail(
             new TextGenerationError({
               operation,
@@ -143,25 +151,103 @@ const resolveInstance = (
     ),
   );
 
+/**
+ * OMP's available selectors depend on the credentials and provider
+ * configuration of each instance, so no static fallback can be valid for
+ * every installation. Resolve provisional or stale OMP selections at the
+ * dispatch boundary, where both the live model snapshot and text-generation
+ * closure are available without introducing a settings/registry cycle.
+ */
+const resolveOmpModelSelection = (
+  instance: ProviderInstance,
+  operation: TextGenerationOp,
+  selection: ModelSelection,
+): Effect.Effect<ModelSelection, TextGenerationError> => {
+  if (instance.driverKind !== OMP_DRIVER_KIND) {
+    return Effect.succeed(selection);
+  }
+
+  return Effect.gen(function* () {
+    const current = yield* instance.snapshot.getSnapshot;
+    if (current.models.some((model) => model.slug === selection.model)) {
+      return selection;
+    }
+
+    // Refresh whenever the requested selector is absent. A non-empty cache can
+    // still be stale after switching to a newly discovered OMP model.
+    const resolvedSnapshot = yield* instance.snapshot.refresh;
+    if (resolvedSnapshot.models.some((model) => model.slug === selection.model)) {
+      return selection;
+    }
+
+    const fallback =
+      resolvedSnapshot.models.find((model) => !model.isCustom) ?? resolvedSnapshot.models[0];
+    if (!fallback) {
+      return yield* new TextGenerationError({
+        operation,
+        detail: `OMP provider instance '${instance.instanceId}' has no available models for text generation. Configure OMP credentials or add a custom model, then refresh providers.`,
+      });
+    }
+
+    // Provider options belong to the stale model and may not exist on the
+    // discovered fallback. Do not send them through OMP's strict ACP option
+    // validation.
+    return {
+      instanceId: instance.instanceId,
+      model: fallback.slug,
+    } satisfies ModelSelection;
+  });
+};
+
+const resolveTextGenerationTarget = (
+  registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
+  operation: TextGenerationOp,
+  selection: ModelSelection,
+): Effect.Effect<
+  {
+    readonly textGeneration: ProviderInstance["textGeneration"];
+    readonly modelSelection: ModelSelection;
+  },
+  TextGenerationError
+> =>
+  resolveInstance(registry, operation, selection.instanceId).pipe(
+    Effect.flatMap((instance) =>
+      resolveOmpModelSelection(instance, operation, selection).pipe(
+        Effect.map((modelSelection) => ({
+          textGeneration: instance.textGeneration,
+          modelSelection,
+        })),
+      ),
+    ),
+  );
+
 export const makeTextGenerationFromRegistry = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
 ): TextGeneration["Service"] =>
   TextGeneration.of({
     generateCommitMessage: (input) =>
-      resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
+      resolveTextGenerationTarget(registry, "generateCommitMessage", input.modelSelection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
+          textGeneration.generateCommitMessage({ ...input, modelSelection }),
+        ),
       ),
     generatePrContent: (input) =>
-      resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
+      resolveTextGenerationTarget(registry, "generatePrContent", input.modelSelection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
+          textGeneration.generatePrContent({ ...input, modelSelection }),
+        ),
       ),
     generateBranchName: (input) =>
-      resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
+      resolveTextGenerationTarget(registry, "generateBranchName", input.modelSelection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
+          textGeneration.generateBranchName({ ...input, modelSelection }),
+        ),
       ),
     generateThreadTitle: (input) =>
-      resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+      resolveTextGenerationTarget(registry, "generateThreadTitle", input.modelSelection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
+          textGeneration.generateThreadTitle({ ...input, modelSelection }),
+        ),
       ),
   });
 

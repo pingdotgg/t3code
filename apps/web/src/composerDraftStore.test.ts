@@ -24,9 +24,11 @@ const CODEX_INSTANCE = ProviderInstanceId.make("codex");
 const CODEX_SECONDARY_INSTANCE = ProviderInstanceId.make("codex_secondary");
 const CLAUDE_AGENT_INSTANCE = ProviderInstanceId.make("claudeAgent");
 const CURSOR_INSTANCE = ProviderInstanceId.make("cursor");
+const OMP_INSTANCE = ProviderInstanceId.make("omp");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const OMP_DRIVER = ProviderDriverKind.make("omp");
 
 type ProviderOptionSelectionBag = ReadonlyArray<ProviderOptionSelection>;
 type ProviderOptionSelectionsByProvider = Partial<Record<string, ProviderOptionSelectionBag>>;
@@ -132,6 +134,18 @@ function resetComposerDraftStore() {
     stickyModelSelectionByProvider: {},
     stickyActiveProvider: null,
   });
+}
+
+function mergePersistedComposerDraftState(persistedState: unknown) {
+  const persistApi = useComposerDraftStore.persist as unknown as {
+    getOptions: () => {
+      merge: (
+        persistedState: unknown,
+        currentState: ReturnType<typeof useComposerDraftStore.getState>,
+      ) => ReturnType<typeof useComposerDraftStore.getState>;
+    };
+  };
+  return persistApi.getOptions().merge(persistedState, useComposerDraftStore.getInitialState());
 }
 
 function modelSelection(
@@ -446,38 +460,27 @@ describe("composerDraftStore terminal contexts", () => {
   });
 
   it("hydrates persisted terminal contexts without in-memory snapshot text", () => {
-    const persistApi = useComposerDraftStore.persist as unknown as {
-      getOptions: () => {
-        merge: (
-          persistedState: unknown,
-          currentState: ReturnType<typeof useComposerDraftStore.getState>,
-        ) => ReturnType<typeof useComposerDraftStore.getState>;
-      };
-    };
-    const mergedState = persistApi.getOptions().merge(
-      {
-        draftsByThreadId: {
-          [threadId]: {
-            prompt: INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
-            attachments: [],
-            terminalContexts: [
-              {
-                id: "ctx-rehydrated",
-                threadId,
-                createdAt: "2026-03-13T12:00:00.000Z",
-                terminalId: "default",
-                terminalLabel: "Terminal 1",
-                lineStart: 4,
-                lineEnd: 5,
-              },
-            ],
-          },
+    const mergedState = mergePersistedComposerDraftState({
+      draftsByThreadId: {
+        [threadId]: {
+          prompt: INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+          attachments: [],
+          terminalContexts: [
+            {
+              id: "ctx-rehydrated",
+              threadId,
+              createdAt: "2026-03-13T12:00:00.000Z",
+              terminalId: "default",
+              terminalLabel: "Terminal 1",
+              lineStart: 4,
+              lineEnd: 5,
+            },
+          ],
         },
-        draftThreadsByThreadId: {},
-        projectDraftThreadIdByProjectKey: {},
       },
-      useComposerDraftStore.getInitialState(),
-    );
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectKey: {},
+    });
 
     expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.terminalContexts).toMatchObject([
       {
@@ -492,30 +495,19 @@ describe("composerDraftStore terminal contexts", () => {
   });
 
   it("sanitizes malformed persisted drafts during merge", () => {
-    const persistApi = useComposerDraftStore.persist as unknown as {
-      getOptions: () => {
-        merge: (
-          persistedState: unknown,
-          currentState: ReturnType<typeof useComposerDraftStore.getState>,
-        ) => ReturnType<typeof useComposerDraftStore.getState>;
-      };
-    };
-    const mergedState = persistApi.getOptions().merge(
-      {
-        draftsByThreadId: {
-          [threadId]: {
-            prompt: "",
-            attachments: "not-an-array",
-            terminalContexts: "not-an-array",
-            provider: "bogus-provider",
-            modelOptions: "not-an-object",
-          },
+    const mergedState = mergePersistedComposerDraftState({
+      draftsByThreadId: {
+        [threadId]: {
+          prompt: "",
+          attachments: "not-an-array",
+          terminalContexts: "not-an-array",
+          provider: "bogus-provider",
+          modelOptions: "not-an-object",
         },
-        draftThreadsByThreadId: "not-an-object",
-        projectDraftThreadIdByProjectKey: "not-an-object",
       },
-      useComposerDraftStore.getInitialState(),
-    );
+      draftThreadsByThreadId: "not-an-object",
+      projectDraftThreadIdByProjectKey: "not-an-object",
+    });
 
     expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]).toBeUndefined();
     expect(mergedState.draftThreadsByThreadKey).toEqual({});
@@ -676,6 +668,33 @@ describe("composerDraftStore review comments", () => {
     expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.reviewComments).toEqual([
       comment,
     ]);
+  });
+});
+describe("composerDraftStore legacy provider option migration", () => {
+  it("preserves OMP options and the exact provider/model selector", () => {
+    const threadId = ThreadId.make("thread-legacy-omp-options");
+    const mergedState = mergePersistedComposerDraftState({
+      draftsByThreadId: {
+        [threadId]: {
+          prompt: "",
+          attachments: [],
+          provider: "omp",
+          model: "openai-codex/gpt-5.4",
+          modelOptions: {
+            omp: { thinking: "high" },
+          },
+        },
+      },
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectKey: {},
+    });
+
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]).toMatchObject({
+      modelSelectionByProvider: {
+        omp: modelSelection(OMP_DRIVER, "openai-codex/gpt-5.4", { thinking: "high" }),
+      },
+      activeProvider: OMP_INSTANCE,
+    });
   });
 });
 
@@ -1438,6 +1457,17 @@ describe("composerDraftStore modelSelection", () => {
       createModelSelection(CODEX_INSTANCE, "gpt-5.4", toSelections({ fastMode: true })).options,
     );
     expect(draft?.activeProvider).toBe("claudeAgent");
+  });
+
+  it("updates OMP options without a hard-coded provider allowlist", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(threadRef, modelSelection(OMP_DRIVER, "openai-codex/gpt-5.4"));
+    store.setModelOptions(threadRef, providerModelOptions({ omp: { thinking: "high" } }));
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[OMP_INSTANCE]).toEqual(
+      modelSelection(OMP_DRIVER, "openai-codex/gpt-5.4", { thinking: "high" }),
+    );
   });
 
   it("creates the first sticky snapshot from provider option changes", () => {

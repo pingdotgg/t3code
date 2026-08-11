@@ -1,6 +1,5 @@
 import { useColorScheme } from "react-native";
-import { Path, Svg } from "react-native-svg";
-
+import { Circle, Path, Rect, Svg } from "react-native-svg";
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
   readonly size?: number;
@@ -54,6 +53,21 @@ export function ProviderIcon(props: ProviderIconProps) {
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
         <Path d="M24 32H8V16H24V32Z" fill={isDarkMode ? "#4B4646" : "#CFCECD"} />
         <Path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill={isDarkMode ? "#F1ECEC" : "#211E1E"} />
+      </Svg>
+    );
+  }
+
+  if (props.provider === "omp") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 120 90" fill="none">
+        <Rect x="10" y="8" width="100" height="12" rx="2" fill={mono} />
+        <Rect x="25" y="20" width="12" height="62" rx="2" fill={mono} />
+        <Rect x="75" y="20" width="12" height="45" rx="2" fill={mono} />
+        <Rect x="71" y="55" width="20" height="16" rx="3" fill="#f97316" />
+        <Rect x="76" y="59" width="3" height="8" rx="1" fill="#0d0d0d" />
+        <Rect x="82" y="59" width="3" height="8" rx="1" fill="#0d0d0d" />
+        <Circle cx="18" cy="14" r="2" fill="#f97316" opacity={0.8} />
+        <Circle cx="102" cy="14" r="2" fill="#f97316" opacity={0.8} />
       </Svg>
     );
   }

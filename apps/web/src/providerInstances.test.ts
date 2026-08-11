@@ -130,6 +130,15 @@ describe("deriveProviderInstanceEntries", () => {
     expect(entry?.driverKind).toBe("codex");
     expect(entry?.isDefault).toBe(false);
   });
+
+  it("uses the OMP brand label for its default instance", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      provider({ provider: ProviderDriverKind.make("omp"), instanceId: "omp" }),
+    ]);
+
+    expect(entry?.displayName).toBe("OMP");
+    expect(entry?.isDefault).toBe(true);
+  });
 });
 
 describe("resolveSelectableProviderInstance", () => {

@@ -37,6 +37,24 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("derives OMP binary and profile fields from its settings schema", () => {
+    const omp = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("omp")];
+
+    expect(omp).toBeDefined();
+    expect(deriveProviderSettingsFields(omp!)).toMatchObject([
+      {
+        key: "binaryPath",
+        label: "Binary path",
+        placeholder: "omp",
+      },
+      {
+        key: "profile",
+        label: "Profile",
+        placeholder: "e.g. work",
+      },
+    ]);
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();
