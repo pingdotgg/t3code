@@ -36,9 +36,9 @@ import {
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
-  THREAD_DETAILS_PANEL_ROW_CLASS,
   THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
 } from "./chat/threadDetailsPanelStyles";
+import { ThreadDetailsPrRow } from "./chat/ThreadDetailsPrRow";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import {
@@ -804,26 +804,16 @@ export function BranchToolbarBranchSelector({
           </ComboboxTrigger>
         </span>
         {displayMode === "panel" && branchPr && branchPrStatus ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className={THREAD_DETAILS_PANEL_ROW_CLASS}
-                  aria-label={branchPrTooltip}
-                  onClick={(event) => openPrLink(event, branchPrStatus.url)}
-                />
-              }
-            >
-              <ChangeRequestStatusIcon
-                className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, branchPrStatus.colorClass)}
-              />
-              <span className="min-w-0 flex-1 truncate text-left">{panelPrLabel}</span>
-            </TooltipTrigger>
-            <TooltipPopup side="top">{branchPrStatus.tooltip}</TooltipPopup>
-          </Tooltip>
+          <ThreadDetailsPrRow
+            environmentId={environmentId}
+            pr={branchPr}
+            status={branchPrStatus}
+            project={activeProject}
+            label={panelPrLabel}
+            openAriaLabel={branchPrTooltip}
+            onOpen={(event) => openPrLink(event, branchPrStatus.url)}
+            onActed={() => branchStatusQuery.refresh()}
+          />
         ) : null}
       </div>
       <ComboboxPopup

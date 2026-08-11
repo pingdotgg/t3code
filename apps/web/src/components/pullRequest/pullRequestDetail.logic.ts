@@ -1,67 +1,23 @@
-import * as Schema from "effect/Schema";
-
-import {
+import type {
+  PullRequestAction,
+  PullRequestActor,
+  PullRequestBaseComparison,
+  PullRequestCheck,
+  PullRequestComment,
   PullRequestDetail,
-  type PullRequestAction,
-  type PullRequestActor,
-  type PullRequestBaseComparison,
-  type PullRequestCheck,
-  type PullRequestChecksState,
-  type PullRequestComment,
-  type PullRequestCommit,
-  type PullRequestDetailView,
-  type PullRequestMergeability,
-  type PullRequestReaction,
-  type PullRequestReviewThread,
-  type PullRequestState,
-  type PullRequestUpdateMethod,
-  type SourceControlProviderKind,
-  type VcsRef,
+  PullRequestDetailView,
+  PullRequestMergeability,
+  PullRequestReaction,
+  PullRequestMergeMethod,
+  PullRequestReviewThread,
+  PullRequestState,
+  PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
 const bitbucketRepositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
-
-export type PullRequestPrimaryControl =
-  | "resolve"
-  | "ready"
-  | "merge"
-  | "enable-auto-merge"
-  | "auto-merge-armed"
-  | "merged"
-  | "closed"
-  | null;
-
-/** The one merge-area state shown in the header, including terminal and deferred states. */
-export function resolvePullRequestPrimaryControl(input: {
-  readonly state: PullRequestState;
-  readonly isDraft: boolean;
-  readonly mergeability: PullRequestMergeability;
-  readonly checksState: PullRequestChecksState | null;
-  readonly autoMergeEnabled: boolean | undefined;
-  readonly hasMergeMethod: boolean;
-  readonly canMerge: boolean;
-  readonly canMarkReady: boolean;
-  readonly canEnableAutoMerge: boolean;
-}): PullRequestPrimaryControl {
-  if (input.state === "merged") return "merged";
-  if (input.state === "closed") return "closed";
-  if (input.mergeability === "conflicting") return "resolve";
-  if (input.isDraft) return input.canMarkReady ? "ready" : null;
-  if (input.autoMergeEnabled) return "auto-merge-armed";
-  if (!input.hasMergeMethod) return null;
-  if (
-    input.autoMergeEnabled === false &&
-    input.checksState !== null &&
-    input.checksState !== "passing" &&
-    input.canEnableAutoMerge
-  ) {
-    return "enable-auto-merge";
-  }
-  return input.canMerge ? "merge" : null;
-}
 
 export function pullRequestCheckoutCommand(
   provider: SourceControlProviderKind,
@@ -151,11 +107,15 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
         fixFinding: "Fix in this thread",
         fixCheck: "Fix in this thread",
         fixFindings: "Fix findings in this thread",
+        resolve: "Resolve in this thread",
+        resolveConflicts: "Resolve conflicts in this thread",
       }
     : {
         fixFinding: "Fix in a thread",
         fixCheck: "Fix",
         fixFindings: "Fix findings in a thread",
+        resolve: "Resolve in a new thread",
+        resolveConflicts: "Resolve conflicts in a thread",
       };
 }
 
@@ -175,25 +135,73 @@ export function pullRequestActionMenuHasGroup(
   return showsDraftToggle || showsAutoMerge || showsMergeMethods;
 }
 
-export function isStackedPullRequestBase(
-  baseBranch: string,
-  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault" | "isRemote" | "remoteName">>,
-): boolean {
-  const defaultRef = refs.find((refName) => refName.isDefault);
-  if (!defaultRef) return false;
-  if (defaultRef.isRemote !== true) return defaultRef.name !== baseBranch;
-  const remotePrefix = `${defaultRef.remoteName ?? defaultRef.name.split("/")[0]}/`;
-  const defaultBranch = defaultRef.name.startsWith(remotePrefix)
-    ? defaultRef.name.slice(remotePrefix.length)
-    : defaultRef.name;
-  return defaultBranch !== baseBranch;
-}
-
 /** Plain-language state, shown beside the author. Conflicts are a merge signal, not a state. */
 export function describePullRequestState(state: PullRequestState, isDraft: boolean): string {
   if (state === "merged") return "Merged";
   if (state === "closed") return "Closed";
   return isDraft ? "Draft" : "Ready for review";
+}
+
+/** The slice of a detail that decides which actions it offers. */
+export type PullRequestActionableDetail = Pick<
+  PullRequestDetail,
+  "state" | "isDraft" | "mergeability" | "capabilities" | "viewerPermissions" | "mergeCapabilities"
+>;
+
+/**
+ * The host says which strategies it offers at all; the repository narrows that to the ones it
+ * actually allows.
+ */
+export function allowedPullRequestMergeMethods(
+  detail: Pick<PullRequestActionableDetail, "capabilities" | "mergeCapabilities"> | null,
+): ReadonlyArray<PullRequestMergeMethod> {
+  return detail === null
+    ? []
+    : detail.capabilities.mergeMethods.filter((method) => detail.mergeCapabilities[method]);
+}
+
+/** The reader's preference where the repository allows it, and the first allowed method else. */
+export function resolveSelectedMergeMethod(
+  allowedMergeMethods: ReadonlyArray<PullRequestMergeMethod>,
+  preferred: PullRequestMergeMethod,
+): PullRequestMergeMethod {
+  return allowedMergeMethods.includes(preferred) ? preferred : (allowedMergeMethods[0] ?? "merge");
+}
+
+/**
+ * Two questions, both of which have to say yes: whether this host can do it at all, and whether
+ * this account may. A reader with read access on someone else's project sees the pull request and
+ * none of the buttons that would only ever be refused.
+ */
+export function canPerformPullRequestAction(
+  detail: Pick<PullRequestActionableDetail, "capabilities" | "viewerPermissions"> | null,
+  action: PullRequestAction,
+): boolean {
+  return (
+    detail !== null &&
+    detail.capabilities.actions.includes(action) &&
+    detail.viewerPermissions.actions.includes(action)
+  );
+}
+
+export function isPullRequestConflicting(
+  detail: Pick<PullRequestActionableDetail, "state" | "mergeability"> | null,
+): boolean {
+  return detail?.state === "open" && detail.mergeability === "conflicting";
+}
+
+/**
+ * One live action holds the slot. A conflicting change cannot be merged now, so the slot goes to
+ * the thing that would help instead of a Merge button that only ever says no.
+ */
+export function resolvePullRequestPrimaryAction(
+  detail: PullRequestActionableDetail | null,
+): "ready" | "merge" | "resolve" | null {
+  if (detail === null || detail.state !== "open") return null;
+  if (detail.isDraft && canPerformPullRequestAction(detail, "ready")) return "ready";
+  if (!canPerformPullRequestAction(detail, "merge")) return null;
+  if (isPullRequestConflicting(detail)) return "resolve";
+  return allowedPullRequestMergeMethods(detail).length > 0 ? "merge" : null;
 }
 
 /** Chronological ascending, oldest to newest — reversed for the "newest" reading order. */
@@ -202,123 +210,6 @@ export function orderPullRequestComments<T extends { readonly createdAt: string 
   order: "newest" | "oldest",
 ): ReadonlyArray<T> {
   return order === "newest" ? comments.toReversed() : comments;
-}
-
-/** A review that says something about the change itself, rather than only carrying remarks. */
-export type PullRequestReviewOutcome = "approved" | "changes-requested" | "dismissed";
-
-/**
- * Which review states are a verdict. Hosts spell the same three differently — GitHub reports
- * `CHANGES_REQUESTED`, Bitbucket `changes_requested` — so case and separator are ignored, and
- * anything else (GitHub's `COMMENTED`, a state no host here reports yet) is not a verdict.
- */
-export function pullRequestReviewOutcome(
-  reviewState: string | null,
-): PullRequestReviewOutcome | null {
-  switch (reviewState?.trim().toLowerCase().replaceAll("_", "-")) {
-    case "approved":
-      return "approved";
-    case "changes-requested":
-      return "changes-requested";
-    case "dismissed":
-      return "dismissed";
-    default:
-      return null;
-  }
-}
-
-/**
- * An instant as a number, because the text is not the order. Every host returns ISO-8601 but not
- * all of them in UTC, and `2026-07-05T01:00:00+02:00` sorts after `2026-07-05T00:30:00Z` as text
- * while falling an hour and a half before it in time. NaN for anything unparseable, which every
- * caller treats as "cannot say" rather than as a position.
- */
-function instant(iso: string): number {
-  return Date.parse(iso);
-}
-
-/**
- * The newest commit on the branch, which is what a verdict is current against. Null where the
- * host reported no commits — or none with a timestamp that parses — since nothing can then be
- * said to predate them.
- */
-export function newestPullRequestCommitAt(
-  commits: ReadonlyArray<PullRequestCommit>,
-): string | null {
-  let newest: string | null = null;
-  let newestAt = Number.NEGATIVE_INFINITY;
-  for (const commit of commits) {
-    const at = instant(commit.committedDate);
-    if (Number.isNaN(at) || at <= newestAt) continue;
-    newest = commit.committedDate;
-    newestAt = at;
-  }
-  return newest;
-}
-
-/**
- * Whether a verdict was given before the code it was given on.
- *
- * Measured against commit dates, which is the only thing the detail carries. That is a proxy and
- * not the question: a commit date says when the work was written, not when it reached this change
- * request, so pushing a branch of older commits after an approval leaves the approval reading as
- * current, and a rebase re-dates commits a verdict already covered. Answering it exactly needs
- * the host's own review-to-commit link — GitHub hangs a commit off every review — which no
- * adapter reads yet. Until one does, this errs towards leaving a verdict alone: it dims only
- * where the branch plainly moved on.
- */
-export function isPullRequestVerdictStale(at: string, newestCommitAt: string | null): boolean {
-  if (newestCommitAt === null) return false;
-  const verdictAt = instant(at);
-  const commitAt = instant(newestCommitAt);
-  return !Number.isNaN(verdictAt) && !Number.isNaN(commitAt) && verdictAt < commitAt;
-}
-
-export interface PullRequestReviewOutcomeEntry {
-  /**
-   * What made this entry its own reviewer. A login where the host reported one, and otherwise the
-   * review's own id — so a surface listing these has a key that separates the same two authorless
-   * verdicts this does, rather than collapsing them back into one row.
-   */
-  readonly key: string;
-  readonly actor: PullRequestActor | null;
-  readonly outcome: PullRequestReviewOutcome;
-  readonly at: string;
-  /** Commits landed after this verdict, so it speaks for code that is no longer on the branch. */
-  readonly stale: boolean;
-}
-
-/**
- * Where each reviewer landed, which is what "is this approved?" actually asks. One entry per
- * person and only their last word: a host keeps every review somebody ever submitted, and an
- * approval later followed by a request for changes is not an approval any more. A dismissal is a
- * verdict taken back, so it leaves nothing to show rather than showing itself.
- */
-export function latestPullRequestReviewOutcomes(
-  comments: ReadonlyArray<PullRequestComment>,
-  /** Left empty by a caller with no commits to hand, which makes no verdict stale. */
-  commits: ReadonlyArray<PullRequestCommit> = [],
-): ReadonlyArray<PullRequestReviewOutcomeEntry> {
-  const newestCommitAt = newestPullRequestCommitAt(commits);
-  const latest = new Map<string, PullRequestReviewOutcomeEntry>();
-  for (const comment of comments) {
-    const outcome = pullRequestReviewOutcome(comment.reviewState);
-    if (outcome === null) continue;
-    // Two deleted accounts are two reviewers. Keying both as "ghost" would let one overwrite the
-    // other and undercount the verdicts, so a review with no author identity stands alone.
-    const login = comment.author?.login ?? `ghost:${comment.id}`;
-    const current = latest.get(login);
-    // Not every host returns its reviews in order, so the newest wins rather than the last read.
-    if (current !== undefined && instant(current.at) > instant(comment.createdAt)) continue;
-    latest.set(login, {
-      key: login,
-      actor: comment.author,
-      outcome,
-      at: comment.createdAt,
-      stale: isPullRequestVerdictStale(comment.createdAt, newestCommitAt),
-    });
-  }
-  return [...latest.values()].filter((entry) => entry.outcome !== "dismissed");
 }
 
 export interface PullRequestTimelineEvent {
@@ -350,20 +241,13 @@ export type PullRequestTimelineRow =
  * Consecutive comments are one conversation section. Commits and pull-request lifecycle updates
  * stay first-class rows and split those sections, so expanding a conversation never hides the
  * work that happened between two review rounds.
- *
- * A verdict is a first-class row too. Whether the change was approved is the question a reader
- * opens the timeline with, and folding the answer into a collapsed "9 comments" section hides it
- * behind a press — the one thing on the page that must be readable without one.
  */
 export function groupPullRequestTimelineConversations(
   events: ReadonlyArray<PullRequestTimelineEvent>,
 ): ReadonlyArray<PullRequestTimelineRow> {
   const rows: PullRequestTimelineRow[] = [];
   for (const event of events) {
-    if (
-      (event.kind === "comment" || event.kind === "review") &&
-      pullRequestReviewOutcome(event.reviewState) === null
-    ) {
+    if (event.kind === "comment" || event.kind === "review") {
       const last = rows.at(-1);
       if (last?.kind === "comments") {
         rows[rows.length - 1] = { kind: "comments", events: [...last.events, event] };
@@ -383,7 +267,7 @@ export function groupPullRequestTimelineConversations(
  * at all. The stripped text decides that and nothing else: the body itself is passed on whole,
  * because a comment demonstrating an HTML comment inside a code fence still has to show it.
  */
-export function visibleBody(body: string): string | null {
+function visibleBody(body: string): string | null {
   return body.replace(/<!--[\s\S]*?-->/gu, "").trim().length === 0 ? null : body.trim();
 }
 
@@ -992,9 +876,11 @@ export function resolveBaseFreshness(detail: {
 }
 
 /**
- * Whether a completed action needs the uncached host read rather than the cheaper detail refresh.
- * Updating a branch moves the diff's head. Approving workflows changes data GitHub omits from the
- * normal pull-request detail. Written as a `Record` so every new action makes that choice here.
+ * Whether a completed action leaves the diff atom pointed at a comparison that no longer exists,
+ * the same staleness the manual refresh button fixes. Only `update-branch` moves the head commit;
+ * a merge moves the branch too, but it also closes the pull request, where the diff is no longer
+ * what anyone is looking at. Written as a `Record` so a new `PullRequestAction` fails to compile
+ * here until somebody decides which side of the diff it belongs on.
  */
 const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "update-branch": true,
@@ -1005,82 +891,8 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   reopen: false,
   "enable-auto-merge": false,
   "disable-auto-merge": false,
-  revert: false,
-  "approve-workflows": true,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
   return ACTION_NEEDS_HOST_REFRESH[action];
-}
-
-type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
-
-export interface PullRequestDetailSnapshotRef {
-  readonly projectId: string;
-  readonly repository: string;
-  readonly number: number;
-}
-
-const pullRequestDetailSnapshotKey = (
-  environmentId: string,
-  reference: PullRequestDetailSnapshotRef,
-) =>
-  `t3.pullRequests.detail:${environmentId}:${reference.projectId}:${reference.repository}#${reference.number}`;
-
-const decodeDetailSnapshot = Schema.decodeUnknownOption(PullRequestDetail);
-
-/**
- * The last detail answered for this change request, brought back across a reload. The registry
- * the queries live in is recreated with the renderer, so without this a reopen cold-starts
- * into a full-tab ghost even though the title, author, and the rest barely moved. Hydrated,
- * the chrome stays and the live read replaces fields in place — line counts included.
- */
-export function readPullRequestDetailSnapshot(
-  storage: SnapshotStorage | undefined,
-  environmentId: string,
-  reference: PullRequestDetailSnapshotRef,
-): PullRequestDetail | null {
-  try {
-    const raw = storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference));
-    if (!raw) return null;
-    const decoded = decodeDetailSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some" ? decoded.value : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writePullRequestDetailSnapshot(
-  storage: SnapshotStorage | undefined,
-  environmentId: string,
-  reference: PullRequestDetailSnapshotRef,
-  detail: PullRequestDetail,
-): void {
-  try {
-    storage?.setItem(
-      pullRequestDetailSnapshotKey(environmentId, reference),
-      JSON.stringify(detail),
-    );
-  } catch {
-    // Quota or a private-mode store: the next open waits on the live read, which is the
-    // cold start this snapshot exists to avoid, not a failure of its own.
-  }
-}
-
-/** Live host state wins; a snapshot is only the same change request, never a neighbour's. */
-export function resolveDisplayedPullRequestDetail(input: {
-  readonly live: PullRequestDetail | null;
-  readonly cached: PullRequestDetail | null;
-  readonly reference: PullRequestDetailSnapshotRef;
-}): PullRequestDetail | null {
-  if (input.live !== null) return input.live;
-  if (
-    input.cached !== null &&
-    input.cached.projectId === input.reference.projectId &&
-    input.cached.repository.toLowerCase() === input.reference.repository.toLowerCase() &&
-    input.cached.number === input.reference.number
-  ) {
-    return input.cached;
-  }
-  return null;
 }

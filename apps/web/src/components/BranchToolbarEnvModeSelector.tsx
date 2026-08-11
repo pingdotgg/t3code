@@ -149,7 +149,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             data-composer-label
             className={
               displayMode === "panel"
-                ? undefined
+                ? // flex-1 pushes the kind label and chevron cell to the right edge, so the
+                  // chevron lines up with every other row's trigger.
+                  "min-w-0 flex-1 truncate text-left"
                 : "min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
             }
           >
