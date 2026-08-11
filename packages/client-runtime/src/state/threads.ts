@@ -574,6 +574,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
   const waitingResubscriptions = Stream.tick(WAITING_PROJECTION_RESYNC_INTERVAL).pipe(
+    // Stream.tick emits immediately. A refresh is periodic recovery, not an
+    // attach-time reload, so wait one full interval before the first attempt.
+    Stream.drop(1),
     Stream.mapEffect(() => SubscriptionRef.get(state)),
     Stream.filter(
       (current) =>

@@ -64,6 +64,54 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
 
+function makeBackgroundWaitingProjection(): OrchestrationV2ThreadProjection {
+  const providerThreadId = ProviderThreadId.make("provider-thread-stale-waiting");
+  return {
+    ...BASE_PROJECTION,
+    thread: { ...BASE_PROJECTION.thread, activeProviderThreadId: providerThreadId },
+    runs: [
+      {
+        id: RunId.make("run-stale-waiting"),
+        threadId: THREAD_ID,
+        ordinal: 1,
+        providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
+        modelSelection: BASE_PROJECTION.thread.modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("message-stale-waiting"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "completed",
+        queuePosition: null,
+        requestedAt: BASE_PROJECTION.updatedAt,
+        startedAt: BASE_PROJECTION.updatedAt,
+        completedAt: BASE_PROJECTION.updatedAt,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    ],
+    providerThreads: [
+      {
+        id: providerThreadId,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
+        providerSessionId: null,
+        appThreadId: THREAD_ID,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        pendingBackgroundTasks: [{ taskId: "stale-task" }],
+        createdAt: BASE_PROJECTION.updatedAt,
+        updatedAt: BASE_PROJECTION.updatedAt,
+      },
+    ],
+  };
+}
+
 type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
 
 function testSession(
@@ -311,51 +359,7 @@ describe("EnvironmentThreads", () => {
 
   it.effect("authoritatively refreshes a thread that remains in background Waiting", () =>
     Effect.gen(function* () {
-      const providerThreadId = ProviderThreadId.make("provider-thread-stale-waiting");
-      const waitingProjection: OrchestrationV2ThreadProjection = {
-        ...BASE_PROJECTION,
-        thread: { ...BASE_PROJECTION.thread, activeProviderThreadId: providerThreadId },
-        runs: [
-          {
-            id: RunId.make("run-stale-waiting"),
-            threadId: THREAD_ID,
-            ordinal: 1,
-            providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
-            modelSelection: BASE_PROJECTION.thread.modelSelection,
-            providerThreadId,
-            userMessageId: MessageId.make("message-stale-waiting"),
-            rootNodeId: null,
-            activeAttemptId: null,
-            status: "completed",
-            queuePosition: null,
-            requestedAt: BASE_PROJECTION.updatedAt,
-            startedAt: BASE_PROJECTION.updatedAt,
-            completedAt: BASE_PROJECTION.updatedAt,
-            checkpointId: null,
-            contextHandoffId: null,
-          },
-        ],
-        providerThreads: [
-          {
-            id: providerThreadId,
-            driver: ProviderDriverKind.make("codex"),
-            providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
-            providerSessionId: null,
-            appThreadId: THREAD_ID,
-            ownerNodeId: null,
-            nativeThreadRef: null,
-            nativeConversationHeadRef: null,
-            status: "idle",
-            firstRunOrdinal: null,
-            lastRunOrdinal: null,
-            handoffIds: [],
-            forkedFrom: null,
-            pendingBackgroundTasks: [{ taskId: "stale-task" }],
-            createdAt: BASE_PROJECTION.updatedAt,
-            updatedAt: BASE_PROJECTION.updatedAt,
-          },
-        ],
-      };
+      const waitingProjection = makeBackgroundWaitingProjection();
       const harness = yield* makeHarness({
         cached: BASE_PROJECTION,
         httpSnapshot: {
@@ -370,8 +374,7 @@ describe("EnvironmentThreads", () => {
       yield* Queue.offer(harness.inputs, snapshot(waitingProjection, CACHED_SNAPSHOT_SEQUENCE + 1));
       yield* awaitThreadState(
         harness.observed,
-        (value) =>
-          Option.isSome(value.data) && value.data.value.providerThreads[0]?.id === providerThreadId,
+        (value) => Option.isSome(value.data) && value.data.value.providerThreads.length === 1,
       );
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
 
@@ -384,6 +387,35 @@ describe("EnvironmentThreads", () => {
       expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(20);
       expect(Option.getOrThrow((yield* Ref.get(harness.latest)).data).providerThreads).toEqual([]);
+    }),
+  );
+
+  it.effect("waits a full interval before refreshing cached background Waiting", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        cached: makeBackgroundWaitingProjection(),
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: { snapshotSequence: 20, projection: BASE_PROJECTION },
+        },
+      });
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 1) break;
+        yield* Effect.yieldNow;
+      }
+
+      yield* TestClock.adjust(299_000);
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(1);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+
+      yield* TestClock.adjust(1_000);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(20);
     }),
   );
 

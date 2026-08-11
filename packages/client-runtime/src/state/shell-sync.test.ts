@@ -159,6 +159,10 @@ describe("environment shell synchronization", () => {
       const cachedSnapshot: OrchestrationV2ShellSnapshot = {
         ...v2ShellSnapshot,
         snapshotSequence: 5,
+        threads: v2ShellSnapshot.threads.map((thread) => ({
+          ...thread,
+          pendingBackgroundTasks: [{ taskId: "stale-task" }],
+        })),
       };
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const capturedAfterSequence = yield* SubscriptionRef.make<number | undefined>(undefined);
@@ -167,6 +171,10 @@ describe("environment shell synchronization", () => {
       const httpSnapshot: OrchestrationV2ShellSnapshot = {
         ...v2ShellSnapshot,
         snapshotSequence: 9,
+        threads: v2ShellSnapshot.threads.map((thread) => ({
+          ...thread,
+          pendingBackgroundTasks: [{ taskId: "stale-task" }],
+        })),
       };
       const client = {
         [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: {
@@ -237,6 +245,17 @@ describe("environment shell synchronization", () => {
         Stream.filter((value) => value.status === "live"),
         Stream.runHead,
       );
+
+      yield* TestClock.adjust(299_000);
+      yield* Effect.yieldNow;
+      expect(yield* SubscriptionRef.get(loaderCalls)).toBe(1);
+
+      yield* TestClock.adjust(1_000);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* SubscriptionRef.get(loaderCalls)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* SubscriptionRef.get(loaderCalls)).toBe(2);
     }),
   );
 
