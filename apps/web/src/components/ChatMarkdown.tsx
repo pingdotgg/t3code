@@ -44,6 +44,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { HexColorSwatch, parseHexColorLiteral } from "./chat/HexColorInlineText";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -1634,6 +1635,15 @@ function ChatMarkdown({
             resolveInlineCodeFileLinkMeta(codeText, cwd);
           if (fileLinkMeta) {
             return fileLinkChip(fileLinkMeta, `\`${codeText}\``);
+          }
+          const hexColor = parseHexColorLiteral(codeText);
+          if (hexColor) {
+            return (
+              <code {...props} className={className}>
+                {children}
+                <HexColorSwatch color={hexColor} />
+              </code>
+            );
           }
         }
         return (

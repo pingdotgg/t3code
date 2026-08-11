@@ -464,6 +464,19 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
+  it("renders color swatches beside hex literals in prose and inline code", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Use #FF5733, not `#0F172A`, and not #5815.")]}
+      />,
+    );
+
+    expect(markup).toContain("background-color:#FF5733");
+    expect(markup).toContain("background-color:#0F172A");
+    expect(markup).not.toContain("background-color:#5815");
+  });
+
   it("renders inline terminal labels with the composer chip UI", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

@@ -8,6 +8,7 @@ import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
 } from "../composerInlineChip";
+import { HexColorInlineText } from "./HexColorInlineText";
 import { cn } from "~/lib/utils";
 
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
@@ -29,17 +30,20 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
     }
 
     if (start > cursor) {
-      nodes.push(props.text.slice(cursor, start));
+      nodes.push(
+        <HexColorInlineText key={`text:${cursor}`} text={props.text.slice(cursor, start)} />,
+      );
     }
     nodes.push(<SkillChip key={`${start}:${name}`} skill={skill} rawText={rawText} />);
     cursor = start + rawText.length;
   }
 
+  // The plain runs around skill chips are the same runs that carry hex colors.
   if (cursor === 0) {
-    return <>{props.text}</>;
+    return <HexColorInlineText text={props.text} />;
   }
   if (cursor < props.text.length) {
-    nodes.push(props.text.slice(cursor));
+    nodes.push(<HexColorInlineText key={`text:${cursor}`} text={props.text.slice(cursor)} />);
   }
   return <>{nodes}</>;
 }
