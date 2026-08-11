@@ -142,12 +142,11 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
-          // Only a complete, non-empty listing proves the commit left the range. A capped
-          // listing, a failed one, and one that has not loaded yet all look empty here.
+          // A capped listing cannot prove the commit left the range, but a complete one can,
+          // including a complete listing that is empty.
           if (
             previous?.kind !== "commit" ||
             !listIsComplete ||
-            availableCommitShas.length === 0 ||
             availableCommitShas.includes(previous.commitSha)
           ) {
             return state;
@@ -185,6 +184,15 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     },
   ),
 );
+
+/** The base ref this thread's branch comparison uses, including while a turn is selected. */
+export function selectThreadBranchBaseRef(
+  branchBaseRefByThreadKey: Record<string, string | null>,
+  ref: ScopedThreadRef | null | undefined,
+): string | null {
+  if (!ref) return null;
+  return branchBaseRefByThreadKey[scopedThreadKey(ref)] ?? null;
+}
 
 export function selectThreadDiffPanelSelection(
   byThreadKey: Record<string, DiffPanelSelection>,

@@ -28,7 +28,11 @@ import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
-import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import {
+  selectThreadBranchBaseRef,
+  selectThreadDiffPanelSelection,
+  useDiffPanelStore,
+} from "../diffPanelStore";
 import { useTheme } from "../hooks/useTheme";
 import {
   buildFileDiffRenderKey,
@@ -108,6 +112,7 @@ export default function DiffPanel({
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [baseRefQuery, setBaseRefQuery] = useState("");
+  const [commitsMenuOpen, setCommitsMenuOpen] = useState(false);
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
@@ -158,6 +163,9 @@ export default function DiffPanel({
       initialGitScope === "unstaged",
     ),
   );
+  const rememberedBranchBaseRef = useDiffPanelStore((state) =>
+    selectThreadBranchBaseRef(state.branchBaseRefByThreadKey, routeThreadRef),
+  );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
@@ -187,10 +195,13 @@ export default function DiffPanel({
   const selectedTurnId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   const selectedCommitSha = diffSelection.kind === "commit" ? diffSelection.commitSha : null;
   const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
+  // Turn and working-tree selections carry no base of their own, so the branch comparison
+  // stays on the base this thread last chose. That is the base `selectCommit` records, so
+  // the Commits list and a selection made from it always describe the same range.
   const selectedBaseRef =
     diffSelection.kind === "branch" || diffSelection.kind === "commit"
       ? diffSelection.baseRef
-      : null;
+      : rememberedBranchBaseRef;
   const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
@@ -254,10 +265,11 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
-  // Runs for every selection: the scope menu lists this preview's commits even while a
-  // turn or a single commit is being viewed.
+  // This preview also carries the commit list. It is the rendered diff for every non-turn
+  // selection; for a turn it is loaded only while the Commits submenu is open, because the
+  // full preview also builds the working-tree and branch-range patches.
   const primaryBranchDiffPreview = useEnvironmentQuery(
-    activeThread && activeCwd
+    (selectedTurnId === null || commitsMenuOpen) && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
@@ -548,7 +560,11 @@ export default function DiffPanel({
   const headerRow = (
     <>
       <div className="flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
-        <DropdownMenu>
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (!open) setCommitsMenuOpen(false);
+          }}
+        >
           <DropdownMenuTrigger
             className="inline-flex h-6 max-w-full items-center gap-1 rounded-md bg-accent px-2 text-xs font-medium text-accent-foreground outline-none transition-colors hover:bg-accent/80 focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={`Diff scope: ${selectedScopeLabel}`}
@@ -606,7 +622,7 @@ export default function DiffPanel({
                 })}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            <DropdownMenuSub>
+            <DropdownMenuSub onOpenChange={(open) => setCommitsMenuOpen(open)}>
               <DropdownMenuSubTrigger>Commits</DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="max-h-80 w-80 overflow-y-auto">
                 {branchCommits.length === 0 ? (
