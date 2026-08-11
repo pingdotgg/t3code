@@ -90,7 +90,7 @@ import type {
 import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ExecutionEnvironmentDescriptor, ScopedThreadRef } from "./environment.ts";
 import type { ClientSettings } from "./settings.ts";
 import type {
   SourceControlCloneRepositoryInput,
@@ -166,6 +166,38 @@ export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
+
+/**
+ * Agent-task events that raise a native OS notification. Deliberately narrow:
+ * these are the moments a thread stops making progress without the user, so
+ * app-lifecycle noise (updates, connection changes) never lands here.
+ */
+export const DesktopNotificationKindSchema = Schema.Literals([
+  "task-completed",
+  "task-failed",
+  "approval-needed",
+]);
+export type DesktopNotificationKind = typeof DesktopNotificationKindSchema.Type;
+
+/**
+ * Title and body are composed in the renderer and shipped as data: only it has
+ * the project title, thread title, and awareness headline. The main process
+ * never sees a phase and never formats copy.
+ */
+export const DesktopNotificationInputSchema = Schema.Struct({
+  kind: DesktopNotificationKindSchema,
+  title: Schema.String,
+  body: Schema.String,
+  silent: Schema.Boolean,
+  threadRef: ScopedThreadRef,
+});
+export type DesktopNotificationInput = typeof DesktopNotificationInputSchema.Type;
+
+/** Echoed back to the renderer when the user clicks a notification. */
+export const DesktopNotificationActivationSchema = Schema.Struct({
+  threadRef: ScopedThreadRef,
+});
+export type DesktopNotificationActivation = typeof DesktopNotificationActivationSchema.Type;
 
 export interface DesktopAppBranding {
   baseName: string;
@@ -1048,6 +1080,15 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /**
+   * Raises a native OS notification. Optional: older desktop builds lack it,
+   * and web builds have no bridge at all, so callers feature-check first.
+   */
+  showNotification?: (input: DesktopNotificationInput) => Promise<void>;
+  /** Fires when the user clicks a notification raised by `showNotification`. */
+  onNotificationActivated?: (
+    listener: (activation: DesktopNotificationActivation) => void,
+  ) => () => void;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;

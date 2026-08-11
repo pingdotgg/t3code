@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopNotificationActivation,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -105,6 +106,24 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  showNotification: (input) => ipcRenderer.invoke(IpcChannels.SHOW_NOTIFICATION_CHANNEL, input),
+  onNotificationActivated: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, activation: unknown) => {
+      if (typeof activation !== "object" || activation === null) return;
+      const { threadRef } = activation as { threadRef?: unknown };
+      if (typeof threadRef !== "object" || threadRef === null) return;
+      const { environmentId, threadId } = threadRef as Record<string, unknown>;
+      if (typeof environmentId !== "string" || typeof threadId !== "string") return;
+      listener({
+        threadRef: { environmentId, threadId },
+      } as DesktopNotificationActivation);
+    };
+
+    ipcRenderer.on(IpcChannels.NOTIFICATION_ACTIVATED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.NOTIFICATION_ACTIVATED_CHANNEL, wrappedListener);
+    };
+  },
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

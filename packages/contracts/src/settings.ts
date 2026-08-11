@@ -177,6 +177,20 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Native OS notifications for agent tasks. Desktop-only: the settings section
+  // is hidden without a desktop bridge, and the keys are inert there. Default
+  // on because the OS still owns the real consent prompt (macOS asks on the
+  // first notification), and the trigger engine seeds silently on first
+  // observation, so a launch never produces a backlog of notifications.
+  desktopNotificationsEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  desktopNotifyTaskCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  desktopNotifyTaskFailed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  desktopNotifyApprovalNeeded: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  desktopNotificationSound: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -792,6 +806,11 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
+  desktopNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
+  desktopNotifyTaskCompleted: Schema.optionalKey(Schema.Boolean),
+  desktopNotifyTaskFailed: Schema.optionalKey(Schema.Boolean),
+  desktopNotifyApprovalNeeded: Schema.optionalKey(Schema.Boolean),
+  desktopNotificationSound: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
