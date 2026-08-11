@@ -388,6 +388,11 @@ function deriveTurnFolds(input: {
       if (entry.id === group.terminalEntry?.id) {
         continue;
       }
+      // Generated images remain part of the visible answer even when a later
+      // text-only assistant message becomes the turn's terminal response.
+      if (entry.kind === "message" && (entry.message.attachments?.length ?? 0) > 0) {
+        continue;
+      }
       // Agent-spawn CTA rows never fold: workflows outlive their launching
       // turn (dynamic spawns, background execution), and folding the CTA
       // when the turn settles makes a still-running fleet invisible.

@@ -1196,7 +1196,17 @@ function deriveThreadFeedTurnFolds(
 
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
     const hiddenEntryIds = new Set(
-      entries.filter((entry) => entry.id !== terminalAssistantMessageId).map((entry) => entry.id),
+      entries
+        .filter(
+          (entry) =>
+            entry.id !== terminalAssistantMessageId &&
+            !(
+              entry.type === "message" &&
+              entry.message.role === "assistant" &&
+              (entry.message.attachments?.length ?? 0) > 0
+            ),
+        )
+        .map((entry) => entry.id),
     );
     if (hiddenEntryIds.size === 0) {
       continue;
