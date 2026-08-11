@@ -32,6 +32,19 @@ function makeUpdateClient(overrides: Partial<AppUpdateClient> = {}): AppUpdateCl
 }
 
 describe("runAppUpdateCheck", () => {
+  it("does nothing while running from the Metro development server", async () => {
+    vi.stubGlobal("__DEV__", true);
+    const client = makeUpdateClient();
+
+    try {
+      await runAppUpdateCheck({ client });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(client.checkForUpdateAsync).not.toHaveBeenCalled();
+  });
+
   it("downloads and restarts when a new update is available", async () => {
     const client = makeUpdateClient({
       checkForUpdateAsync: vi.fn(async () => ({
@@ -99,6 +112,32 @@ describe("runAppUpdateCheck", () => {
     expect(states).toEqual(["checking", "idle"]);
     reportError.mockRestore();
   });
+
+  it.each(["ERR_NOT_AVAILABLE_IN_DEV_CLIENT", "ERR_UPDATES_DISABLED"])(
+    "treats Expo's %s failure as an unavailable update check",
+    async (code) => {
+      const reportError = vi.spyOn(console, "error").mockImplementation(() => {});
+      const error = Object.assign(new Error("Updates are unavailable"), { code });
+      const client = makeUpdateClient({
+        checkForUpdateAsync: vi.fn(async () => {
+          throw error;
+        }),
+      });
+      const failures: string[] = [];
+      const states: AppUpdateCheckState[] = [];
+
+      await runAppUpdateCheck({
+        client,
+        onFailure: (message) => failures.push(message),
+        onStateChange: (state) => states.push(state),
+      });
+
+      expect(reportError).not.toHaveBeenCalled();
+      expect(failures).toEqual([]);
+      expect(states).toEqual(["checking", "idle"]);
+      reportError.mockRestore();
+    },
+  );
 
   it("coalesces overlapping launch and manual checks", async () => {
     let resolveCheck!: (result: {

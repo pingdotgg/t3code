@@ -21,7 +21,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@effect/atom-react": "catalog:",
     "@formkit/auto-animate": "^0.9.0",
-    "@legendapp/list": "3.3.3",
+    "@legendapp/list": "catalog:",
     "@lexical/react": "^0.41.0",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "1.0.0-beta.4",

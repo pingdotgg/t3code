@@ -48,7 +48,16 @@ interface Deferred {
 }
 
 const HIDDEN_UPDATE_TAP_COUNT = 5;
+const UPDATE_CHECK_UNAVAILABLE_ERROR_CODES = new Set([
+  "ERR_NOT_AVAILABLE_IN_DEV_CLIENT",
+  "ERR_UPDATES_DISABLED",
+]);
 let appUpdateCheckInFlight: AppUpdateCheckInFlight | undefined;
+
+/** Expo's development launcher reports updates as enabled even though its OTA APIs reject. */
+export function isAppUpdateCheckAvailable(client: Pick<AppUpdateClient, "isEnabled"> = Updates) {
+  return client.isEnabled && !(typeof __DEV__ !== "undefined" && __DEV__);
+}
 
 /**
  * Keeps the manual update affordance discoverable only to someone deliberately
@@ -73,7 +82,7 @@ export function registerHiddenUpdateTap(count: number): {
 
 export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Promise<void> {
   const client = options.client ?? Updates;
-  if (!client.isEnabled) return;
+  if (!isAppUpdateCheckAvailable(client)) return;
 
   if (appUpdateCheckInFlight) {
     await observeAppUpdateCheck(appUpdateCheckInFlight, options);
@@ -207,10 +216,18 @@ function reportUpdateFailure(
   fallback: string,
   onFailure: AppUpdateCheckOptions["onFailure"],
 ): void {
-  reportAtomCommandResult(result, { label: "app update check" });
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
   const error = squashAtomCommandFailure(result);
+  if (isAppUpdateUnavailableError(error)) return;
+
+  reportAtomCommandResult(result, { label: "app update check" });
   onFailure?.(error instanceof Error ? error.message : fallback);
+}
+
+function isAppUpdateUnavailableError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  const code = error.code;
+  return typeof code === "string" && UPDATE_CHECK_UNAVAILABLE_ERROR_CODES.has(code);
 }
 
 export function createAppUpdateLaunchCheck(
@@ -219,7 +236,7 @@ export function createAppUpdateLaunchCheck(
   let started = false;
 
   return () => {
-    if (started || !client.isEnabled) return undefined;
+    if (started || !isAppUpdateCheckAvailable(client)) return undefined;
     started = true;
     return runAppUpdateCheck({ client });
   };
