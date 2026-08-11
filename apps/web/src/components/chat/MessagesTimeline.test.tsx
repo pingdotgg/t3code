@@ -475,6 +475,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("background-color:#FF5733");
     expect(markup).toContain("background-color:#0F172A");
     expect(markup).not.toContain("background-color:#5815");
+    expect(markup).toMatch(/<code[^>]*whitespace-nowrap[^>]*>#0F172A/);
   });
 
   it("renders inline terminal labels with the composer chip UI", () => {

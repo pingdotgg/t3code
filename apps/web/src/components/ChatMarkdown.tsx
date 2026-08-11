@@ -1638,8 +1638,9 @@ function ChatMarkdown({
           }
           const hexColor = parseHexColorLiteral(codeText);
           if (hexColor) {
+            // nowrap keeps the swatch from wrapping off its literal, as in prose.
             return (
-              <code {...props} className={className}>
+              <code {...props} className={cn(className, "whitespace-nowrap")}>
                 {children}
                 <HexColorSwatch color={hexColor} />
               </code>
