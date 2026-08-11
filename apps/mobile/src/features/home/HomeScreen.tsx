@@ -71,6 +71,7 @@ import {
   sortHomeProjectScopes,
   type HomeProjectSortOrder,
 } from "./homeThreadList";
+import { homeEnvironmentScopeKey, isEnvironmentInHomeScope } from "./home-list-options";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
@@ -85,7 +86,7 @@ interface HomeScreenProps {
     HomeListFilterMenuEnvironment & Pick<WorkspaceEnvironment, "connectionState">
   >;
   readonly searchQuery: string;
-  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
@@ -215,20 +216,37 @@ export function HomeScreen(props: HomeScreenProps) {
     Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
       ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
       : 0;
+  const environmentScopedProjects = useMemo(
+    () =>
+      props.projects.filter((project) =>
+        isEnvironmentInHomeScope(props.selectedEnvironmentIds, project.environmentId),
+      ),
+    [props.projects, props.selectedEnvironmentIds],
+  );
+  const environmentScopedThreads = useMemo(
+    () =>
+      props.threads.filter((thread) =>
+        isEnvironmentInHomeScope(props.selectedEnvironmentIds, thread.environmentId),
+      ),
+    [props.selectedEnvironmentIds, props.threads],
+  );
+  const environmentScopedPendingTasks = useMemo(
+    () =>
+      props.pendingTasks.filter((pendingTask) =>
+        isEnvironmentInHomeScope(props.selectedEnvironmentIds, pendingTask.message.environmentId),
+      ),
+    [props.pendingTasks, props.selectedEnvironmentIds],
+  );
   const searchEnvironmentIds = useMemo(
     () =>
-      props.selectedEnvironmentId === null
-        ? props.environments
-            .filter((environment) => environment.connectionState === "connected")
-            .map((environment) => environment.environmentId)
-        : props.environments.some(
-              (environment) =>
-                environment.environmentId === props.selectedEnvironmentId &&
-                environment.connectionState === "connected",
-            )
-          ? [props.selectedEnvironmentId]
-          : [],
-    [props.environments, props.selectedEnvironmentId],
+      props.environments
+        .filter(
+          (environment) =>
+            environment.connectionState === "connected" &&
+            isEnvironmentInHomeScope(props.selectedEnvironmentIds, environment.environmentId),
+        )
+        .map((environment) => environment.environmentId),
+    [props.environments, props.selectedEnvironmentIds],
   );
   const threadSearch = useThreadSearch(searchEnvironmentIds, props.searchQuery);
   const threadSearchMatchByKey = useMemo(() => {
@@ -303,11 +321,11 @@ export function HomeScreen(props: HomeScreenProps) {
   const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
-        projects: props.projects,
-        environmentId: props.selectedEnvironmentId,
+        projects: environmentScopedProjects,
+        environmentId: null,
         projectGroupingMode: props.projectGroupingMode,
       }),
-    [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
+    [environmentScopedProjects, props.projectGroupingMode],
   );
   const selectedProjectScope = useMemo(
     () =>
@@ -338,31 +356,31 @@ export function HomeScreen(props: HomeScreenProps) {
   const scopedProjects = useMemo(
     () =>
       selectedProjectRefKeys === null
-        ? props.projects
-        : props.projects.filter((project) =>
+        ? environmentScopedProjects
+        : environmentScopedProjects.filter((project) =>
             selectedProjectRefKeys.has(scopedProjectKey(project.environmentId, project.id)),
           ),
-    [props.projects, selectedProjectRefKeys],
+    [environmentScopedProjects, selectedProjectRefKeys],
   );
   const scopedThreads = useMemo(
     () =>
       selectedProjectRefKeys === null
-        ? props.threads
-        : props.threads.filter((thread) =>
+        ? environmentScopedThreads
+        : environmentScopedThreads.filter((thread) =>
             selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
           ),
-    [props.threads, selectedProjectRefKeys],
+    [environmentScopedThreads, selectedProjectRefKeys],
   );
   const scopedPendingTasks = useMemo(
     () =>
       selectedProjectRefKeys === null
-        ? props.pendingTasks
-        : props.pendingTasks.filter((pendingTask) =>
+        ? environmentScopedPendingTasks
+        : environmentScopedPendingTasks.filter((pendingTask) =>
             selectedProjectRefKeys.has(
               scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
             ),
           ),
-    [props.pendingTasks, selectedProjectRefKeys],
+    [environmentScopedPendingTasks, selectedProjectRefKeys],
   );
 
   const projectGroups = useMemo(
@@ -371,7 +389,7 @@ export function HomeScreen(props: HomeScreenProps) {
         projects: scopedProjects,
         threads: scopedThreads,
         pendingTasks: scopedPendingTasks,
-        environmentId: props.selectedEnvironmentId,
+        environmentId: null,
         searchQuery: props.searchQuery,
         matchedThreadKeys,
         projectSortOrder: props.projectSortOrder,
@@ -382,7 +400,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.projectGroupingMode,
       props.projectSortOrder,
       props.searchQuery,
-      props.selectedEnvironmentId,
+      props.selectedEnvironmentIds,
       props.threadSortOrder,
       matchedThreadKeys,
       scopedPendingTasks,
@@ -423,16 +441,14 @@ export function HomeScreen(props: HomeScreenProps) {
     () =>
       sortHomeProjectScopes({
         scopes: projectScopes,
-        threads: props.threads,
-        pendingTasks: props.pendingTasks,
+        threads: environmentScopedThreads,
+        pendingTasks: environmentScopedPendingTasks,
         projectSortOrder: props.projectSortOrder,
       }),
     [
-      props.pendingTasks,
-      props.projects,
+      environmentScopedPendingTasks,
+      environmentScopedThreads,
       props.projectSortOrder,
-      props.selectedEnvironmentId,
-      props.threads,
       projectScopes,
     ],
   );
@@ -545,7 +561,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
-  const settledResetKey = `${props.selectedEnvironmentId ?? "all"}:${v2ProjectScopeKey ?? "all"}:${props.searchQuery.trim()}`;
+  const settledResetKey = `${homeEnvironmentScopeKey(props.selectedEnvironmentIds)}:${v2ProjectScopeKey ?? "all"}:${props.searchQuery.trim()}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -643,8 +659,8 @@ export function HomeScreen(props: HomeScreenProps) {
     // Settled threads are live shells; archived threads keep their original
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
-      environmentId: props.selectedEnvironmentId,
+      threads: environmentScopedThreads.filter((thread) => thread.archivedAt === null),
+      environmentId: null,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
@@ -668,8 +684,7 @@ export function HomeScreen(props: HomeScreenProps) {
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     props.searchQuery,
-    props.selectedEnvironmentId,
-    props.threads,
+    environmentScopedThreads,
     matchedThreadKeys,
     threadListV2Enabled,
     v2ScopedProjectGroup,
@@ -695,10 +710,8 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
   const v2PendingTasks = useMemo(
     () =>
-      props.pendingTasks.filter(
+      environmentScopedPendingTasks.filter(
         (pendingTask) =>
-          (props.selectedEnvironmentId === null ||
-            pendingTask.message.environmentId === props.selectedEnvironmentId) &&
           (v2ScopedProjectKeys === null ||
             v2ScopedProjectKeys.has(
               scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
@@ -706,7 +719,7 @@ export function HomeScreen(props: HomeScreenProps) {
           (v2SearchQuery.length === 0 ||
             pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
       ),
-    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
+    [environmentScopedPendingTasks, v2ScopedProjectKeys, v2SearchQuery],
   );
   const threadListV2Items = useMemo(
     () =>
@@ -1013,10 +1026,12 @@ export function HomeScreen(props: HomeScreenProps) {
     props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
   const hasResults = projectGroups.length > 0;
   const selectedEnvironmentLabel =
-    props.selectedEnvironmentId === null
-      ? null
-      : (props.savedConnectionsById[props.selectedEnvironmentId]?.environmentLabel ??
-        "this environment");
+    props.selectedEnvironmentIds.size === 1
+      ? (props.savedConnectionsById[[...props.selectedEnvironmentIds][0]!]?.environmentLabel ??
+        "this environment")
+      : props.selectedEnvironmentIds.size > 1
+        ? `${props.selectedEnvironmentIds.size} environments`
+        : null;
   // Connection state surfaces in the header title slot
   // (WorkspaceConnectionTitle) — nothing renders inside the list, so
   // reconnects never shift the rows.

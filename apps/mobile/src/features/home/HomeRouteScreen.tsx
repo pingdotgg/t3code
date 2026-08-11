@@ -15,7 +15,7 @@ import { checkForAppUpdateOnLaunch } from "../updates/app-updates";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
-import { useHomeListOptions } from "./home-list-options";
+import { isEnvironmentInHomeScope, useHomeListOptions } from "./home-list-options";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
@@ -75,19 +75,26 @@ export function HomeRouteScreen() {
     setProjectSortOrder,
     setThreadSortOrder,
   } = useHomeListOptions(availableEnvironmentIds);
-  const selectedEnvironmentId = listOptions.selectedEnvironmentId;
+  const selectedEnvironmentIds = listOptions.selectedEnvironmentIds;
+  const environmentScopedProjects = useMemo(
+    () =>
+      projects.filter((project) =>
+        isEnvironmentInHomeScope(selectedEnvironmentIds, project.environmentId),
+      ),
+    [projects, selectedEnvironmentIds],
+  );
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectFilterOptions = useMemo(
     () =>
       buildHomeProjectScopes({
-        projects,
-        environmentId: selectedEnvironmentId,
+        projects: environmentScopedProjects,
+        environmentId: null,
         projectGroupingMode: listOptions.projectGroupingMode,
       }).map((scope) => ({
         key: scope.key,
         label: scope.title,
       })),
-    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+    [environmentScopedProjects, listOptions.projectGroupingMode],
   );
   useEffect(() => {
     if (
@@ -141,7 +148,7 @@ export function HomeRouteScreen() {
           environments={environments}
           projects={projectFilterOptions}
           searchQuery={searchQuery}
-          selectedEnvironmentId={selectedEnvironmentId}
+          selectedEnvironmentIds={selectedEnvironmentIds}
           selectedProjectKey={selectedProjectKey}
           projectSortOrder={listOptions.projectSortOrder}
           threadSortOrder={listOptions.threadSortOrder}
@@ -205,7 +212,7 @@ export function HomeRouteScreen() {
           projectSortOrder={listOptions.projectSortOrder}
           savedConnectionsById={savedConnectionsById}
           searchQuery={searchQuery}
-          selectedEnvironmentId={selectedEnvironmentId}
+          selectedEnvironmentIds={selectedEnvironmentIds}
           selectedProjectKey={selectedProjectKey}
           threads={threads}
           threadSortOrder={listOptions.threadSortOrder}

@@ -29,6 +29,7 @@ import {
 } from "./home-list-filter-menu";
 import {
   hasCustomHomeListOptions,
+  isEnvironmentInHomeScope,
   PROJECT_SORT_OPTIONS,
   THREAD_SORT_OPTIONS,
 } from "./home-list-options";
@@ -39,7 +40,7 @@ export function HomeHeader(props: {
   readonly environments: ReadonlyArray<HomeHeaderEnvironment>;
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
   readonly searchQuery: string;
-  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
@@ -75,7 +76,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
   // key the "customized" icon state off the environment filter alone.
   const threadListV2Enabled = useThreadListV2Enabled();
   const hasCustomListOptions = threadListV2Enabled
-    ? props.selectedEnvironmentId !== null || props.selectedProjectKey !== null
+    ? props.selectedEnvironmentIds.size > 0 || props.selectedProjectKey !== null
     : hasCustomHomeListOptions(props);
   const menuActions = useMemo<MenuAction[]>(
     () => [
@@ -86,12 +87,15 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
           {
             id: "environment:all",
             title: "All environments",
-            state: checkedMenuState(props.selectedEnvironmentId === null),
+            state: checkedMenuState(props.selectedEnvironmentIds.size === 0),
           },
           ...props.environments.map((environment) => ({
             id: `environment:${environment.environmentId}`,
             title: environment.label,
-            state: checkedMenuState(props.selectedEnvironmentId === environment.environmentId),
+            state: checkedMenuState(
+              props.selectedEnvironmentIds.size > 0 &&
+                isEnvironmentInHomeScope(props.selectedEnvironmentIds, environment.environmentId),
+            ),
           })),
         ],
       },
@@ -142,7 +146,7 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
       props.environments,
       props.projectSortOrder,
       props.projects,
-      props.selectedEnvironmentId,
+      props.selectedEnvironmentIds,
       props.selectedProjectKey,
       props.threadSortOrder,
       threadListV2Enabled,
@@ -306,7 +310,7 @@ function IosHomeHeader(props: HomeHeaderProps) {
   // key the "customized" icon state off the environment filter alone.
   const threadListV2Enabled = useThreadListV2Enabled();
   const hasCustomListOptions = threadListV2Enabled
-    ? props.selectedEnvironmentId !== null || props.selectedProjectKey !== null
+    ? props.selectedEnvironmentIds.size > 0 || props.selectedProjectKey !== null
     : hasCustomHomeListOptions(props);
   const focusSearch = useCallback(() => {
     searchBarRef.current?.focus();
@@ -393,7 +397,7 @@ function IosHomeHeader(props: HomeHeaderProps) {
             <NativeHeaderToolbar.Menu title="Environment">
               <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
-                isOn={props.selectedEnvironmentId === null}
+                isOn={props.selectedEnvironmentIds.size === 0}
                 onPress={() => props.onEnvironmentChange(null)}
                 subtitle="Show threads from every environment"
               >
@@ -402,7 +406,13 @@ function IosHomeHeader(props: HomeHeaderProps) {
               {props.environments.map((environment) => (
                 <NativeHeaderToolbar.MenuAction
                   key={environment.environmentId}
-                  isOn={props.selectedEnvironmentId === environment.environmentId}
+                  isOn={
+                    props.selectedEnvironmentIds.size > 0 &&
+                    isEnvironmentInHomeScope(
+                      props.selectedEnvironmentIds,
+                      environment.environmentId,
+                    )
+                  }
                   onPress={() => props.onEnvironmentChange(environment.environmentId)}
                 >
                   <NativeHeaderToolbar.Label>{environment.label}</NativeHeaderToolbar.Label>

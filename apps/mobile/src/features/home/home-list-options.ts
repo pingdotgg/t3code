@@ -22,7 +22,7 @@ import {
 import type { HomeProjectSortOrder } from "./homeThreadList";
 
 export interface HomeListOptions {
-  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
 }
@@ -49,13 +49,26 @@ export const THREAD_SORT_OPTIONS: ReadonlyArray<{
 
 function defaultHomeListOptions(): HomeListOptions {
   return {
-    selectedEnvironmentId: null,
+    selectedEnvironmentIds: new Set(),
     projectSortOrder:
       DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
         ? "updated_at"
         : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
     threadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   };
+}
+
+export function isEnvironmentInHomeScope(
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+  environmentId: EnvironmentId,
+): boolean {
+  return selectedEnvironmentIds.size === 0 || selectedEnvironmentIds.has(environmentId);
+}
+
+export function homeEnvironmentScopeKey(
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+): string {
+  return selectedEnvironmentIds.size === 0 ? "all" : [...selectedEnvironmentIds].sort().join(",");
 }
 
 interface HomeListOptionsContextValue {
@@ -91,7 +104,7 @@ export function hasCustomHomeListOptions(
       ? "updated_at"
       : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER;
   return (
-    options.selectedEnvironmentId !== null ||
+    options.selectedEnvironmentIds.size > 0 ||
     (options.selectedProjectKey !== null && options.selectedProjectKey !== undefined) ||
     options.projectSortOrder !== defaultProjectSortOrder ||
     options.threadSortOrder !== DEFAULT_SIDEBAR_THREAD_SORT_ORDER
@@ -103,22 +116,34 @@ export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<Environm
   const [localOptions, setLocalOptions] = useState<HomeListOptions>(defaultHomeListOptions);
   const options = shared?.options ?? localOptions;
   const setOptions = shared?.setOptions ?? setLocalOptions;
-  const selectedEnvironmentId =
-    options.selectedEnvironmentId !== null &&
-    availableEnvironmentIds.has(options.selectedEnvironmentId)
-      ? options.selectedEnvironmentId
-      : null;
+  const selectedEnvironmentIds =
+    options.selectedEnvironmentIds.size === 0
+      ? options.selectedEnvironmentIds
+      : new Set(
+          [...options.selectedEnvironmentIds].filter((environmentId) =>
+            availableEnvironmentIds.has(environmentId),
+          ),
+        );
   const availableOptions =
-    selectedEnvironmentId === options.selectedEnvironmentId
+    selectedEnvironmentIds.size === options.selectedEnvironmentIds.size
       ? options
-      : { ...options, selectedEnvironmentId };
+      : { ...options, selectedEnvironmentIds };
   const resolvedOptions: ResolvedHomeListOptions = {
     ...availableOptions,
     projectGroupingMode: shared?.projectGroupingMode ?? "repository",
   };
 
   const setSelectedEnvironmentId = useCallback((value: EnvironmentId | null) => {
-    setOptions((current) => ({ ...current, selectedEnvironmentId: value }));
+    setOptions((current) => {
+      if (value === null) return { ...current, selectedEnvironmentIds: new Set() };
+      const selectedEnvironmentIds = new Set(current.selectedEnvironmentIds);
+      if (selectedEnvironmentIds.has(value)) {
+        selectedEnvironmentIds.delete(value);
+      } else {
+        selectedEnvironmentIds.add(value);
+      }
+      return { ...current, selectedEnvironmentIds };
+    });
   }, []);
   const setProjectSortOrder = useCallback((value: HomeProjectSortOrder) => {
     setOptions((current) => ({ ...current, projectSortOrder: value }));

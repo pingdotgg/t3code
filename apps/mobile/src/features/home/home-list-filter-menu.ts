@@ -2,6 +2,7 @@ import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 
 import type { HomeProjectSortOrder } from "./homeThreadList";
 import { PROJECT_SORT_OPTIONS, THREAD_SORT_OPTIONS } from "./home-list-options";
+import { isEnvironmentInHomeScope } from "./home-list-options";
 
 export interface HomeListFilterMenuEnvironment {
   readonly environmentId: EnvironmentId;
@@ -35,7 +36,7 @@ export interface HomeListFilterMenu {
 export function buildHomeListFilterMenu(props: {
   readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
-  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly threadSortOrder: SidebarThreadSortOrder;
@@ -58,14 +59,15 @@ export function buildHomeListFilterMenu(props: {
         type: "action",
         title: "All environments",
         subtitle: "Show threads from every environment",
-        state: props.selectedEnvironmentId === null ? "on" : "off",
+        state: props.selectedEnvironmentIds.size === 0 ? "on" : "off",
         onPress: () => props.onEnvironmentChange(null),
       },
       ...props.environments.map((environment) => ({
         type: "action" as const,
         title: environment.label,
         state:
-          props.selectedEnvironmentId === environment.environmentId
+          isEnvironmentInHomeScope(props.selectedEnvironmentIds, environment.environmentId) &&
+          props.selectedEnvironmentIds.size > 0
             ? ("on" as const)
             : ("off" as const),
         onPress: () => props.onEnvironmentChange(environment.environmentId),
