@@ -21,6 +21,7 @@ import {
   subscribeToThemePreview,
   subscribeToCustomThemes,
   T3_CHAT_THEME,
+  VERCEL_DARK_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -321,6 +322,43 @@ describe("theme files", () => {
     }
   });
 
+  it("keeps Vercel Dark on the exact source palette", () => {
+    expect(VERCEL_DARK_THEME).toMatchObject({
+      id: "vercel-dark",
+      label: "Vercel Dark",
+      appearance: "dark",
+      colors: {
+        canvas: "#000000",
+        chrome: "#000000",
+        surface: "#101010",
+        surfaceRaised: "#1f1f1f",
+        text: "#ededed",
+        textMuted: "#a1a1a1",
+        border: "#1f1f1f",
+        focus: "#676767",
+        accent: "#62c073",
+        secondaryForeground: "#c472fb",
+        error: "#f75f8f",
+        errorSurface: "#1e0b11",
+        warning: "#ff9907",
+        messageAction: "#52a8ff",
+        codeBackground: "#101010",
+        terminalBackground: "#000000",
+      },
+    });
+    expect(getThemeDefinition(VERCEL_DARK_THEME.id)).toBe(VERCEL_DARK_THEME);
+    expect(getThemeModes(VERCEL_DARK_THEME)).toEqual(["dark"]);
+    expect(
+      contrastRatio(VERCEL_DARK_THEME.colors.text, VERCEL_DARK_THEME.colors.canvas),
+    ).toBeGreaterThanOrEqual(7);
+    expect(
+      contrastRatio(
+        VERCEL_DARK_THEME.colors.messageActionForeground,
+        VERCEL_DARK_THEME.colors.messageAction,
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
   it("includes the dual-mode maintainer themes", () => {
     for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
       expect(getThemeDefinition(theme.id)).toBe(theme);
@@ -524,7 +562,14 @@ describe("stored theme preferences", () => {
   });
 
   it("recognizes only preferences the runtime can render", () => {
-    for (const preference of ["light", "dark", "system", T3_CHAT_THEME.id, GROVE_THEME.id]) {
+    for (const preference of [
+      "light",
+      "dark",
+      "system",
+      VERCEL_DARK_THEME.id,
+      T3_CHAT_THEME.id,
+      GROVE_THEME.id,
+    ]) {
       expect(isKnownThemePreference(preference)).toBe(true);
     }
     expect(isKnownThemePreference(`${GROVE_THEME.id}:dark`)).toBe(false);

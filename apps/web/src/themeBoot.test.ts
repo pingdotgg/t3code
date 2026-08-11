@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import indexHtml from "../index.html?raw";
 import {
   CUSTOM_THEMES_STORAGE_KEY,
+  DEFAULT_THEME_PREFERENCE,
   getDefaultThemeColors,
   getThemeColorsForMode,
   invalidateCustomThemes,
   isKnownThemePreference,
   resolveThemeAppearance,
   T3_CHAT_THEME,
+  VERCEL_DARK_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -107,7 +109,7 @@ function runtimeResolvedAppearance(
   invalidateCustomThemes();
   try {
     const raw = storage[THEME_STORAGE_KEY] ?? null;
-    const theme = raw !== null && isKnownThemePreference(raw) ? raw : "system";
+    const theme = raw !== null && isKnownThemePreference(raw) ? raw : DEFAULT_THEME_PREFERENCE;
     const followRaw = storage[THEME_FOLLOW_SYSTEM_STORAGE_KEY] ?? null;
     const appearanceRaw = storage[THEME_APPEARANCE_MODE_STORAGE_KEY] ?? null;
     const appearanceMode =
@@ -149,6 +151,7 @@ describe("index.html boot script", () => {
     prefersDark: boolean;
   }> = [
     { name: "no stored preference on a dark OS", storage: {}, prefersDark: true },
+    { name: "no stored preference on a light OS", storage: {}, prefersDark: false },
     {
       name: "T3 Chat follows a dark OS",
       storage: { [THEME_STORAGE_KEY]: "t3-chat", [THEME_FOLLOW_SYSTEM_STORAGE_KEY]: "true" },
@@ -275,6 +278,19 @@ describe("index.html boot script", () => {
     expect(aurora.metaContent).toBe(DEFAULT_DARK_CHROME);
   });
 
+  it("uses Vercel Dark as the fresh-install default", () => {
+    const boot = runBootScript({ storage: {}, prefersDark: false });
+
+    expect(boot.themeId).toBe(VERCEL_DARK_THEME.id);
+    expect(boot.themeSelected).toBe("true");
+    expect(boot.isDark).toBe(true);
+    expect(boot.bootVariables["--boot-background"]).toBe(VERCEL_DARK_THEME.colors.canvas);
+    expect(boot.bootVariables["--boot-foreground"]).toBe(VERCEL_DARK_THEME.colors.text);
+    expect(boot.bootVariables["--boot-accent"]).toBe(VERCEL_DARK_THEME.colors.accent);
+    expect(boot.backgroundColor).toBe(VERCEL_DARK_THEME.colors.chrome);
+    expect(boot.metaContent).toBe(VERCEL_DARK_THEME.colors.chrome);
+  });
+
   // Asserting against the real palette definitions (not literals) turns the
   // boot script's hand-maintained copy into a CI-enforced contract: any
   // palette change breaks this test until the copy in index.html is updated.
@@ -301,6 +317,18 @@ describe("index.html boot script", () => {
         expect(boot.metaContent).toBe(colors!.chrome);
       }
     }
+
+    const boot = runBootScript({
+      storage: { [THEME_STORAGE_KEY]: VERCEL_DARK_THEME.id },
+      prefersDark: false,
+    });
+    expect(boot.themeId).toBe(VERCEL_DARK_THEME.id);
+    expect(boot.isDark).toBe(true);
+    expect(boot.bootVariables["--boot-background"]).toBe(VERCEL_DARK_THEME.colors.canvas);
+    expect(boot.bootVariables["--boot-foreground"]).toBe(VERCEL_DARK_THEME.colors.text);
+    expect(boot.bootVariables["--boot-accent"]).toBe(VERCEL_DARK_THEME.colors.accent);
+    expect(boot.backgroundColor).toBe(VERCEL_DARK_THEME.colors.chrome);
+    expect(boot.metaContent).toBe(VERCEL_DARK_THEME.colors.chrome);
   });
 
   it("applies the matching half of an automatic mix to the splash", () => {
@@ -417,7 +445,7 @@ describe("index.html boot script", () => {
     expect(boot.metaContent).toBe(DEFAULT_DARK_CHROME);
   });
 
-  it("ignores malformed custom theme entries before applying a splash", () => {
+  it("falls back to Vercel Dark for malformed custom theme entries", () => {
     const boot = runBootScript({
       storage: {
         [THEME_STORAGE_KEY]: "broken",
@@ -428,28 +456,30 @@ describe("index.html boot script", () => {
       prefersDark: false,
     });
 
-    expect(boot.themeId).toBeUndefined();
-    expect(boot.themeSelected).toBeUndefined();
-    expect(boot.backgroundColor).toBe("#ffffff");
-    expect(boot.metaContent).toBe("#ffffff");
+    expect(boot.themeId).toBe(VERCEL_DARK_THEME.id);
+    expect(boot.themeSelected).toBe("true");
+    expect(boot.backgroundColor).toBe(VERCEL_DARK_THEME.colors.chrome);
+    expect(boot.metaContent).toBe(VERCEL_DARK_THEME.colors.chrome);
   });
 
-  it("leaves unknown preferences unthemed so the runtime default applies", () => {
+  it("falls back to Vercel Dark for unknown preferences", () => {
     const boot = runBootScript({
       storage: { [THEME_STORAGE_KEY]: "gone-theme" },
       prefersDark: true,
     });
-    expect(boot.themeId).toBeUndefined();
-    expect(boot.themeSelected).toBeUndefined();
+    expect(boot.themeId).toBe(VERCEL_DARK_THEME.id);
+    expect(boot.themeSelected).toBe("true");
     expect(boot.isDark).toBe(true);
   });
 
-  it("follows the OS appearance when storage is unavailable", () => {
+  it("uses Vercel Dark when storage is unavailable", () => {
     const light = runBootScript({ storageThrows: true, prefersDark: false });
-    expect(light.isDark).toBe(false);
-    expect(light.themeId).toBeUndefined();
+    expect(light.isDark).toBe(true);
+    expect(light.themeId).toBe(VERCEL_DARK_THEME.id);
+    expect(light.themeSelected).toBe("true");
 
     const dark = runBootScript({ storageThrows: true, prefersDark: true });
     expect(dark.isDark).toBe(true);
+    expect(dark.themeId).toBe(VERCEL_DARK_THEME.id);
   });
 });
