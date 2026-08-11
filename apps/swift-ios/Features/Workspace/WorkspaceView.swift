@@ -104,6 +104,15 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
             && !previousWasSettled
             && updatedThread?.isSettled == true
     }
+
+    static func targetIsValid(
+        notice: HomeThreadSettleUndoNotice,
+        in threads: [FeatureThread]
+    ) -> Bool {
+        threads.contains {
+            $0.id == notice.threadID && $0.isSettled && !$0.isArchived
+        }
+    }
 }
 
 struct HomeThreadDeleteRequest: Equatable, Sendable {
@@ -815,9 +824,10 @@ public struct WorkspaceView: View {
 
     private var settleUndoTargetIsValid: Bool {
         guard let notice = settleUndo.notice else { return true }
-        return model.snapshot.threads.contains {
-            $0.id == notice.threadID && $0.isSettled && !$0.isArchived
-        }
+        return HomeThreadSettleUndoState.targetIsValid(
+            notice: notice,
+            in: model.snapshot.threads
+        )
     }
 
     private func openThread(_ id: String) {

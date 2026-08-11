@@ -13,7 +13,6 @@ enum HomeThreadSwipeActionKind: Equatable, Sendable {
 struct HomeThreadSwipeActionPlan: Equatable, Sendable {
     let actions: [HomeThreadSwipeActionKind]
     let performsFirstActionWithFullSwipe: Bool
-    let deleteFinishesOptimistically: Bool
 
     static func make(
         thread: FeatureThread,
@@ -34,8 +33,7 @@ struct HomeThreadSwipeActionPlan: Equatable, Sendable {
         }
         return HomeThreadSwipeActionPlan(
             actions: [primary, .delete],
-            performsFirstActionWithFullSwipe: true,
-            deleteFinishesOptimistically: false
+            performsFirstActionWithFullSwipe: true
         )
     }
 }
@@ -237,9 +235,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 isArchived: isArchived,
                 now: .now
             )
-            let actions = plan.actions.map {
-                swipeAction($0, for: thread, plan: plan)
-            }
+            let actions = plan.actions.map { swipeAction($0, for: thread) }
             let configuration = UISwipeActionsConfiguration(actions: actions)
             configuration.performsFirstActionWithFullSwipe =
                 plan.performsFirstActionWithFullSwipe
@@ -248,8 +244,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
         private func swipeAction(
             _ kind: HomeThreadSwipeActionKind,
-            for thread: FeatureThread,
-            plan: HomeThreadSwipeActionPlan
+            for thread: FeatureThread
         ) -> UIContextualAction {
             let action: UIContextualAction
             switch kind {
@@ -291,15 +286,16 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 action.image = UIImage(systemName: "archivebox")
                 action.backgroundColor = .systemGray
             case .delete:
-                action = UIContextualAction(style: .destructive, title: "Delete") {
+                action = UIContextualAction(style: .normal, title: "Delete") {
                     [weak self] _, _, finish in
                     self?.parent.onDelete(thread)
-                    // Deletion is deferred until the confirmation alert. Keep
-                    // the row if the user cancels instead of letting UIKit
-                    // animate a removal that never reached the model.
-                    finish(plan.deleteFinishesOptimistically)
+                    // The alert owns the destructive operation. Complete this
+                    // non-destructive contextual action so Cancel closes the
+                    // swipe without UIKit animating a row deletion.
+                    finish(true)
                 }
                 action.image = UIImage(systemName: "trash")
+                action.backgroundColor = .systemRed
             }
             return action
         }

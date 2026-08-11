@@ -97,7 +97,6 @@ struct DailyUXSidebarTests {
         #expect(pinnedPlan.actions == [.unpin, .delete])
         #expect(archiveOnlyPlan.actions == [.archive, .delete])
         #expect(activePlan.performsFirstActionWithFullSwipe)
-        #expect(!activePlan.deleteFinishesOptimistically)
     }
 
     @Test
@@ -300,6 +299,43 @@ struct DailyUXSidebarTests {
                 updatedThread: nil
             )
         )
+    }
+
+    @Test
+    func settleUndoTargetRequiresTheSameSettledUnarchivedThread() {
+        let notice = HomeThreadSettleUndoNotice(
+            id: UUID(),
+            threadID: "target",
+            title: "Target",
+            restoresPin: false,
+            restoresSnoozeUntil: nil
+        )
+        let settled = thread(
+            id: "target",
+            created: -20,
+            updated: -10,
+            isSettled: true
+        )
+        let active = thread(id: "target", created: -20, updated: -10)
+        let archived = thread(
+            id: "target",
+            created: -20,
+            updated: -10,
+            isArchived: true,
+            isSettled: true
+        )
+        let other = thread(
+            id: "other",
+            created: -20,
+            updated: -10,
+            isSettled: true
+        )
+
+        #expect(HomeThreadSettleUndoState.targetIsValid(notice: notice, in: [settled]))
+        #expect(!HomeThreadSettleUndoState.targetIsValid(notice: notice, in: [active]))
+        #expect(!HomeThreadSettleUndoState.targetIsValid(notice: notice, in: [archived]))
+        #expect(!HomeThreadSettleUndoState.targetIsValid(notice: notice, in: [other]))
+        #expect(!HomeThreadSettleUndoState.targetIsValid(notice: notice, in: []))
     }
 
     @Test
@@ -756,6 +792,7 @@ struct DailyUXSidebarTests {
         created: TimeInterval,
         updated: TimeInterval,
         state: FeatureThreadState = .idle,
+        isArchived: Bool = false,
         isSettled: Bool = false,
         pinned: TimeInterval? = nil,
         snoozedUntil: Date? = nil,
@@ -768,6 +805,7 @@ struct DailyUXSidebarTests {
             createdAt: now.addingTimeInterval(created),
             updatedAt: now.addingTimeInterval(updated),
             state: state,
+            isArchived: isArchived,
             isSettled: isSettled,
             lastActivityAt: now.addingTimeInterval(updated),
             snoozedUntil: snoozedUntil,
