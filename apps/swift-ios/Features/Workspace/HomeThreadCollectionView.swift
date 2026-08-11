@@ -195,7 +195,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
             let delete = UIContextualAction(style: .destructive, title: "Delete") { [weak self] _, _, finish in
                 self?.parent.onDelete(thread)
-                finish(true)
+                // Deletion is deferred until the confirmation alert. Keep the
+                // row in place if the user cancels instead of letting UIKit
+                // animate an optimistic removal that never reached the model.
+                finish(false)
             }
             delete.image = UIImage(systemName: "trash")
 

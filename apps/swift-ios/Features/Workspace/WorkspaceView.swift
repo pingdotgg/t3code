@@ -22,23 +22,35 @@ struct HomeThreadSettleUndoNotice: Equatable, Identifiable, Sendable {
     let threadID: String
     let title: String
     let restoresPin: Bool
+    let restoresSnoozeUntil: Date?
 }
 
 struct HomeThreadSettleUndoState: Equatable, Sendable {
     private(set) var notice: HomeThreadSettleUndoNotice?
+    private(set) var latestSettleRequestID: UUID?
+
+    @discardableResult
+    mutating func beginSettleRequest(id: UUID = UUID()) -> UUID {
+        latestSettleRequestID = id
+        return id
+    }
 
     @discardableResult
     mutating func present(
+        requestID: UUID,
         threadID: String,
         title: String,
         restoresPin: Bool,
+        restoresSnoozeUntil: Date?,
         id: UUID = UUID()
-    ) -> HomeThreadSettleUndoNotice {
+    ) -> HomeThreadSettleUndoNotice? {
+        guard requestID == latestSettleRequestID else { return nil }
         let notice = HomeThreadSettleUndoNotice(
             id: id,
             threadID: threadID,
             title: title,
-            restoresPin: restoresPin
+            restoresPin: restoresPin,
+            restoresSnoozeUntil: restoresSnoozeUntil
         )
         self.notice = notice
         return notice
@@ -57,9 +69,14 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
 
     static func shouldPresent(
         afterRequesting settled: Bool,
+        didSucceed: Bool,
+        previousThread: FeatureThread,
         updatedThread: FeatureThread?
     ) -> Bool {
-        settled && updatedThread?.isSettled == true
+        settled
+            && didSucceed
+            && !previousThread.isSettled
+            && updatedThread?.isSettled == true
     }
 }
 
@@ -77,6 +94,11 @@ struct HomeThreadDeleteConfirmation: Equatable, Sendable {
 
     mutating func cancel() {
         request = nil
+    }
+
+    mutating func takeConfirmedRequest() -> HomeThreadDeleteRequest? {
+        defer { request = nil }
+        return request
     }
 }
 
@@ -237,8 +259,9 @@ public struct WorkspaceView: View {
                 deleteConfirmation.cancel()
             }
             Button("Delete", role: .destructive) {
-                deleteConfirmation.cancel()
-                Task { await model.deleteThread(request.id) }
+                guard let confirmed = deleteConfirmation.takeConfirmedRequest(),
+                      confirmed == request else { return }
+                Task { await model.deleteThread(confirmed.id) }
             }
         } message: { request in
             Text("“\(request.title)” will be permanently deleted.")
@@ -344,22 +367,32 @@ public struct WorkspaceView: View {
                     Task { await model.setArchived(thread.id, archived: archived) }
                 },
                 onSettle: { thread, settled in
+                    let requestID = settleUndo.beginSettleRequest()
                     Task {
-                        await model.setSettled(thread.id, settled: settled)
+                        let didSucceed = await model.setSettled(thread.id, settled: settled)
                         let updatedThread = model.snapshot.threads.first {
                             $0.id == thread.id
                         }
                         guard HomeThreadSettleUndoState.shouldPresent(
                             afterRequesting: settled,
+                            didSucceed: didSucceed,
+                            previousThread: thread,
                             updatedThread: updatedThread
                         ) else { return }
-                        _ = withAnimation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.18)) {
+                        let notice = withAnimation(
+                            accessibilityReduceMotion ? nil : .easeOut(duration: 0.18)
+                        ) {
                             settleUndo.present(
+                                requestID: requestID,
                                 threadID: thread.id,
                                 title: thread.title,
-                                restoresPin: thread.pinnedAt != nil
+                                restoresPin: thread.pinnedAt != nil,
+                                restoresSnoozeUntil: thread.pinnedAt == nil
+                                    ? nil
+                                    : thread.snoozedUntil
                             )
                         }
+                        guard notice != nil else { return }
                         UIAccessibility.post(
                             notification: .announcement,
                             argument: "\(thread.title) settled. Undo available."
@@ -409,6 +442,7 @@ public struct WorkspaceView: View {
             .shadow(color: T3Colors.shadow, radius: 14, y: 6)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .accessibilityElement(children: .contain)
+            .accessibilitySortPriority(1_000)
         }
     }
 
@@ -437,10 +471,13 @@ public struct WorkspaceView: View {
                 _ = settleUndo.takeUndo(id: notice.id)
             }
             Task {
-                await model.setSettled(notice.threadID, settled: false)
+                let didReopen = await model.setSettled(notice.threadID, settled: false)
                 let reopened = model.snapshot.threads.first { $0.id == notice.threadID }
-                guard reopened?.isSettled == false, notice.restoresPin else { return }
+                guard didReopen, reopened?.isSettled == false, notice.restoresPin else { return }
                 await model.setPinned(notice.threadID, pinned: true)
+                if let snoozeUntil = notice.restoresSnoozeUntil {
+                    await model.setSnoozed(notice.threadID, until: snoozeUntil)
+                }
             }
         }
         .font(T3Typography.supportingStrong)

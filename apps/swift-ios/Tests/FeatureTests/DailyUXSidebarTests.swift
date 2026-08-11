@@ -20,10 +20,12 @@ struct DailyUXSidebarTests {
         confirmation.present(threadID: "thread-2", title: "Keep me")
         confirmation.cancel()
         #expect(confirmation.request == nil)
+        #expect(confirmation.takeConfirmedRequest() == nil)
 
         confirmation.present(threadID: "thread-3", title: "Replace me")
         confirmation.present(threadID: "thread-4", title: "Delete me")
-        #expect(confirmation.request?.id == "thread-4")
+        #expect(confirmation.takeConfirmedRequest()?.id == "thread-4")
+        #expect(confirmation.takeConfirmedRequest() == nil)
     }
 
     private let now = Date(timeIntervalSince1970: 2_000_000)
@@ -33,24 +35,31 @@ struct DailyUXSidebarTests {
         let firstID = UUID()
         let secondID = UUID()
         var state = HomeThreadSettleUndoState()
+        let requestID = state.beginSettleRequest()
 
         state.present(
+            requestID: requestID,
             threadID: "first",
             title: "First thread",
             restoresPin: false,
+            restoresSnoozeUntil: nil,
             id: firstID
         )
         state.present(
+            requestID: requestID,
             threadID: "second",
             title: "Second thread",
             restoresPin: true,
+            restoresSnoozeUntil: now.addingTimeInterval(300),
             id: secondID
         )
 
         state.expire(id: firstID)
         #expect(state.notice?.threadID == "second")
         #expect(state.takeUndo(id: firstID) == nil)
-        #expect(state.takeUndo(id: secondID)?.restoresPin == true)
+        let undo = state.takeUndo(id: secondID)
+        #expect(undo?.restoresPin == true)
+        #expect(undo?.restoresSnoozeUntil == now.addingTimeInterval(300))
         #expect(state.takeUndo(id: secondID) == nil)
     }
 
@@ -58,16 +67,45 @@ struct DailyUXSidebarTests {
     func settleUndoExpiresOnlyItsCurrentNotice() {
         let noticeID = UUID()
         var state = HomeThreadSettleUndoState()
+        let requestID = state.beginSettleRequest()
 
         state.present(
+            requestID: requestID,
             threadID: "thread",
             title: "Thread",
             restoresPin: false,
+            restoresSnoozeUntil: nil,
             id: noticeID
         )
         state.expire(id: noticeID)
 
         #expect(state.notice == nil)
+    }
+
+    @Test
+    func settleUndoRejectsAnOlderRequestThatFinishesLast() {
+        var state = HomeThreadSettleUndoState()
+        let firstRequestID = state.beginSettleRequest()
+        let secondRequestID = state.beginSettleRequest()
+
+        let stale = state.present(
+            requestID: firstRequestID,
+            threadID: "first",
+            title: "First",
+            restoresPin: false,
+            restoresSnoozeUntil: nil
+        )
+        let current = state.present(
+            requestID: secondRequestID,
+            threadID: "second",
+            title: "Second",
+            restoresPin: false,
+            restoresSnoozeUntil: nil
+        )
+
+        #expect(stale == nil)
+        #expect(current?.threadID == "second")
+        #expect(state.notice?.threadID == "second")
     }
 
     @Test
@@ -83,24 +121,48 @@ struct DailyUXSidebarTests {
         #expect(
             HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
+                didSucceed: true,
+                previousThread: active,
                 updatedThread: settled
             )
         )
         #expect(
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: false,
+                didSucceed: true,
+                previousThread: active,
                 updatedThread: settled
             )
         )
         #expect(
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
+                didSucceed: false,
+                previousThread: active,
+                updatedThread: settled
+            )
+        )
+        #expect(
+            !HomeThreadSettleUndoState.shouldPresent(
+                afterRequesting: true,
+                didSucceed: true,
+                previousThread: settled,
+                updatedThread: settled
+            )
+        )
+        #expect(
+            !HomeThreadSettleUndoState.shouldPresent(
+                afterRequesting: true,
+                didSucceed: true,
+                previousThread: active,
                 updatedThread: active
             )
         )
         #expect(
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
+                didSucceed: true,
+                previousThread: active,
                 updatedThread: nil
             )
         )

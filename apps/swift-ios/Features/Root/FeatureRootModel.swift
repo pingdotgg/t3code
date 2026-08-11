@@ -299,9 +299,10 @@ public final class FeatureRootModel {
         }
     }
 
-    public func setSettled(_ id: String, settled: Bool) async {
+    @discardableResult
+    public func setSettled(_ id: String, settled: Bool) async -> Bool {
         let environment = currentEnvironmentIdentity
-        await perform {
+        return await perform {
             try await client.setThreadSettled(id: id, settled: settled)
             guard currentEnvironmentIdentity == environment else { return }
             let settledAt = settled ? Date.now : nil

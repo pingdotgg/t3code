@@ -657,6 +657,24 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func testSettleReportsWhetherTheMutationSucceeded() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
+        client.createdThread = thread
+        let model = testRootModel(client: client)
+        _ = await model.createThread(projectID: thread.projectID, title: nil, selection: nil)
+
+        let succeeded = await model.setSettled(thread.id, settled: true)
+        #expect(succeeded)
+        #expect(model.snapshot.threads[0].isSettled)
+
+        client.setThreadSettledError = URLError(.cannotConnectToHost)
+        let failed = await model.setSettled(thread.id, settled: false)
+        #expect(!failed)
+        #expect(model.snapshot.threads[0].isSettled)
+    }
+
+    @Test
     func testCancelledDetailRefreshKeepsCachedContentWithoutAlert() async {
         let client = FeatureClientStub()
         let thread = FeatureThread(id: "thread-1", projectID: "project-1", title: "Thread")
@@ -1226,6 +1244,7 @@ private final class FeatureClientStub: FeatureClient {
     var sendMessageCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
+    var setThreadSettledError: (any Error)?
     var enabledEnvironmentID: String?
     var environmentEnabledValue: Bool?
     var removedEnvironmentID: String?
@@ -1334,6 +1353,9 @@ private final class FeatureClientStub: FeatureClient {
 
     func renameThread(id: String, title: String) async throws {}
     func setThreadArchived(id: String, archived: Bool) async throws {}
+    func setThreadSettled(id: String, settled: Bool) async throws {
+        if let setThreadSettledError { throw setThreadSettledError }
+    }
     func deleteThread(id: String) async throws {}
 
     func loadThread(id: String) async throws -> FeatureThreadDetail {
