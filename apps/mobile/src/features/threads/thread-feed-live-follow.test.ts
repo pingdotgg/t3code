@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveThreadFeedLiveFollow,
+  resolveThreadFeedAtEndState,
   shouldShowThreadFeedScrollToEnd,
 } from "./thread-feed-live-follow";
 
@@ -98,5 +99,21 @@ describe("shouldShowThreadFeedScrollToEnd", () => {
         isAtEnd: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveThreadFeedAtEndState", () => {
+  it("resets at-end state when returning to a previously scrolled thread", () => {
+    const threadAAwayFromEnd = {
+      threadKey: "thread-a",
+      isAtEnd: false,
+    } as const;
+    const threadBAtEnd = resolveThreadFeedAtEndState(threadAAwayFromEnd, "thread-b");
+
+    expect(threadBAtEnd).toEqual({ threadKey: "thread-b", isAtEnd: true });
+    expect(resolveThreadFeedAtEndState(threadBAtEnd, "thread-a")).toEqual({
+      threadKey: "thread-a",
+      isAtEnd: true,
+    });
   });
 });

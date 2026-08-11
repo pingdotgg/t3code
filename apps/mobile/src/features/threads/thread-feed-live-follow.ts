@@ -40,3 +40,18 @@ export function shouldShowThreadFeedScrollToEnd(input: {
 }): boolean {
   return !input.endFollowEnabled && !input.isAtEnd;
 }
+
+export interface ThreadFeedAtEndState {
+  readonly threadKey: string;
+  readonly isAtEnd: boolean;
+}
+
+export function resolveThreadFeedAtEndState(
+  current: ThreadFeedAtEndState,
+  selectedThreadKey: string,
+): ThreadFeedAtEndState {
+  if (current.threadKey === selectedThreadKey) {
+    return current;
+  }
+  return { threadKey: selectedThreadKey, isAtEnd: true };
+}

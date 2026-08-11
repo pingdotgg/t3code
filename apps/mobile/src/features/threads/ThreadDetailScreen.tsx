@@ -77,7 +77,10 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
-import { shouldShowThreadFeedScrollToEnd } from "./thread-feed-live-follow";
+import {
+  resolveThreadFeedAtEndState,
+  shouldShowThreadFeedScrollToEnd,
+} from "./thread-feed-live-follow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface ThreadDetailScreenProps {
@@ -459,6 +462,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
+    setFeedAtEndState((current) => resolveThreadFeedAtEndState(current, selectedThreadKey));
   }, [selectedThreadKey]);
 
   useEffect(() => {
