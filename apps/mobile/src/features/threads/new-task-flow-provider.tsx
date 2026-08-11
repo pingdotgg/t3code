@@ -14,6 +14,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   MessageId,
+  ProviderDriverKind,
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
@@ -74,6 +75,9 @@ import {
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+
+/** Mirrors the web composer's own declaration (ChatView).*/
+const AETHER_DRIVER_KIND = ProviderDriverKind.make("aether");
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -370,20 +374,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
     return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
   }, [t3ProjectFileData]);
-  const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
-    projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFile: t3ProjectFileDefaultMode,
-    globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
-  });
-  // While unsettled the resolved default is provisional. Nothing may write
-  // it into the draft during that window (the auto-branch effect does), or
-  // the frozen interim value beats the t3.json default once it loads.
-  const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
-    explicitMode: selectedProjectDraft.workspaceSelection?.mode,
-    projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFilePending: t3ProjectFileQuery.isPending,
-  });
-  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
   // Keep the user's explicit choice separate from the resolved display value:
@@ -428,6 +418,32 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
+  // Resolved AFTER the model selection on purpose: the Aether driver turns the
+  // thread's checkout into a one-way MIRROR of its cloud VM — every settle
+  // resets it and re-applies the cloud tree. Pointed at the SHARED project
+  // checkout that would discard the user's own work, so an untouched draft
+  // with an Aether model selected defaults to an isolated worktree, the same
+  // safety default the web composer applies. An explicit pick still wins:
+  // `workspaceSelection.mode` is read ahead of this default below.
+  const selectedProviderIsAether =
+    modelOptions.find((option) => option.key === selectedModelKey)?.providerDriver ===
+    AETHER_DRIVER_KIND;
+  const defaultWorkspaceMode: WorkspaceMode = selectedProviderIsAether
+    ? "worktree"
+    : resolveDefaultThreadEnvMode({
+        projectSetting: selectedProject?.defaultThreadEnvMode,
+        projectFile: t3ProjectFileDefaultMode,
+        globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
+      });
+  // While unsettled the resolved default is provisional. Nothing may write
+  // it into the draft during that window (the auto-branch effect does), or
+  // the frozen interim value beats the t3.json default once it loads.
+  const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
+    explicitMode: selectedProjectDraft.workspaceSelection?.mode,
+    projectSetting: selectedProject?.defaultThreadEnvMode,
+    projectFilePending: t3ProjectFileQuery.isPending,
+  });
+  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
 
   const selectedModelOption =
     modelOptions.find(
