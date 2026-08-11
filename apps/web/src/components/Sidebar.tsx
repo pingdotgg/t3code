@@ -28,7 +28,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -154,7 +154,6 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
@@ -176,6 +175,9 @@ import {
 // stays behind an explicit Show more.
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+// Stable identity for environments whose config hasn't arrived yet, so a
+// row that can't resolve its provider doesn't re-render on every pass.
+const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -233,6 +235,27 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+/**
+ * The driver logo alone cannot distinguish two configured instances of the
+ * same driver (e.g. `claudeAgent` + `claude_work`). Mirror the model picker:
+ * surface the accent badge when the instance has an accent color, or when
+ * its driver has more than one configured instance so the ambiguity is at
+ * least visible (hover reveals the instance name).
+ */
+function shouldShowInstanceBadge(
+  entry: ProviderInstanceEntry,
+  entries: ReadonlyMap<string, ProviderInstanceEntry>,
+): boolean {
+  if (entry.accentColor) return true;
+  let driverInstanceCount = 0;
+  for (const candidate of entries.values()) {
+    if (candidate.driverKind !== entry.driverKind) continue;
+    driverInstanceCount += 1;
+    if (driverInstanceCount > 1) return true;
+  }
+  return false;
+}
+
 function SidebarThreadTooltip({
   thread,
   projectTitle,
@@ -242,6 +265,9 @@ function SidebarThreadTooltip({
   driverKind,
   modelInstanceId,
   modelLabel,
+  instanceDisplayName,
+  instanceAccentColor,
+  showInstanceBadge,
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
@@ -254,6 +280,9 @@ function SidebarThreadTooltip({
   driverKind: ProviderInstanceEntry["driverKind"] | null;
   modelInstanceId: string;
   modelLabel: string;
+  instanceDisplayName: string | null;
+  instanceAccentColor: string | undefined;
+  showInstanceBadge: boolean;
   branchMismatch: {
     threadBranch: string;
     currentBranch: string;
@@ -309,10 +338,17 @@ function SidebarThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
-                displayName={thread.session?.providerName ?? modelInstanceId}
+                displayName={instanceDisplayName ?? thread.session?.providerName ?? modelInstanceId}
+                accentColor={instanceAccentColor}
+                showBadge={showInstanceBadge}
+                badgeContent="none"
                 iconClassName="size-3 shrink-0 grayscale opacity-60"
+                badgeClassName="-right-0.5 -bottom-0.5 h-1.5 min-w-1.5 px-0"
+                indicatorBackground="var(--popover)"
               />
-              <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
+              <div className="min-w-0 truncate text-foreground/75">
+                {instanceDisplayName ? `${instanceDisplayName} · ${modelLabel}` : modelLabel}
+              </div>
             </div>
           ) : null}
           {terminalStatus ? (
@@ -859,6 +895,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
+  const instanceDisplayName = providerEntry?.displayName ?? thread.session?.providerName ?? null;
+  const instanceAccentColor = providerEntry?.accentColor;
+  const showInstanceBadge = providerEntry
+    ? shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId)
+    : false;
 
   const isRemote =
     props.currentEnvironmentId !== null && thread.environmentId !== props.currentEnvironmentId;
@@ -873,6 +914,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       driverKind={driverKind}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
+      instanceDisplayName={instanceDisplayName}
+      instanceAccentColor={instanceAccentColor}
+      showInstanceBadge={showInstanceBadge}
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
@@ -1448,11 +1492,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center opacity-60">
+                  <span className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
-                      displayName={thread.session?.providerName ?? modelInstanceId}
-                      iconClassName="size-3.5"
+                      displayName={
+                        instanceDisplayName ?? thread.session?.providerName ?? modelInstanceId
+                      }
+                      accentColor={instanceAccentColor}
+                      showBadge={showInstanceBadge}
+                      badgeContent="none"
+                      iconClassName="size-3.5 opacity-60"
+                      badgeClassName="-right-0.5 -bottom-0.5 h-1.5 min-w-1.5 px-0"
+                      indicatorBackground="var(--sidebar)"
                     />
                   </span>
                 ) : null}
@@ -1516,6 +1567,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
+  const instanceDisplayName = providerEntry?.displayName ?? thread.session?.providerName ?? null;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,
@@ -1570,6 +1622,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           driverKind={driverKind}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
+          instanceDisplayName={instanceDisplayName}
+          instanceAccentColor={providerEntry?.accentColor}
+          showInstanceBadge={
+            providerEntry
+              ? shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId)
+              : false
+          }
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}
@@ -1722,16 +1781,6 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const providerEntryByInstanceId = useMemo(
-    () =>
-      new Map(
-        deriveProviderInstanceEntries(serverProviders).map(
-          (entry) => [entry.instanceId as string, entry] as const,
-        ),
-      ),
-    [serverProviders],
-  );
   const projectCwdByKey = useMemo(
     () =>
       new Map(
@@ -1871,6 +1920,26 @@ export default function Sidebar() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  // Provider metadata is per environment, never global. Instance ids are
+  // user-defined and a driver's default id is the driver kind itself, so
+  // `claudeAgent` exists on every server that runs Claude — with a
+  // different name and accent on each. Resolving a remote thread against
+  // the primary server's list would paint another machine's account onto
+  // it, which is exactly the confusion the badge exists to remove.
+  const providerEntriesByEnvironment = useMemo(() => {
+    const byEnvironment = new Map<EnvironmentId, ReadonlyMap<string, ProviderInstanceEntry>>();
+    for (const [environmentId, config] of serverConfigs) {
+      byEnvironment.set(
+        environmentId,
+        new Map(
+          deriveProviderInstanceEntries(config.providers).map(
+            (entry) => [entry.instanceId as string, entry] as const,
+          ),
+        ),
+      );
+    }
+    return byEnvironment;
+  }, [serverConfigs]);
   const {
     pinnedThreads,
     reorderablePinnedKeys,
@@ -3389,7 +3458,10 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntryByInstanceId={
+                          providerEntriesByEnvironment.get(thread.environmentId) ??
+                          EMPTY_PROVIDER_ENTRIES
+                        }
                         isHighlighted={activeSearchResultIndex === index}
                         isRouteActive={routeThreadKey === threadKey}
                         resultId={`sidebar-thread-search-result-${index}`}
@@ -3497,7 +3569,10 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntryByInstanceId={
+                          providerEntriesByEnvironment.get(thread.environmentId) ??
+                          EMPTY_PROVIDER_ENTRIES
+                        }
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
                         onThreadActivate={navigateToThread}
