@@ -174,6 +174,7 @@ import {
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 interface ChatMarkdownProps {
   text: string;
@@ -2713,7 +2714,7 @@ function ChatMarkdown({
 
         const language = extractFenceLanguage(codeBlock.className);
         const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
-        return (
+        const codeFallback = (
           <MarkdownCodeBlock
             code={codeBlock.code}
             language={language}
@@ -2732,6 +2733,12 @@ function ChatMarkdown({
             </RenderErrorBoundary>
           </MarkdownCodeBlock>
         );
+        if (!isStreaming && language.toLowerCase() === "mermaid") {
+          return (
+            <MermaidDiagram code={codeBlock.code} theme={resolvedTheme} fallback={codeFallback} />
+          );
+        }
+        return codeFallback;
       },
     };
   }, [
