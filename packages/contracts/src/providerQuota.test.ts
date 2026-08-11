@@ -6,6 +6,10 @@ import {
   ProviderQuotaConsumeResetInput,
   ProviderQuotaSnapshot,
   ProviderQuotaSummary,
+  PROVIDER_QUOTA_BANKED_RESETS_MAX_ITEMS,
+  PROVIDER_QUOTA_DETAIL_MAX_PROPERTIES,
+  PROVIDER_QUOTA_METRICS_MAX_ITEMS,
+  PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES,
 } from "./providerQuota.ts";
 
 const decodeSnapshot = Schema.decodeUnknownSync(ProviderQuotaSnapshot);
@@ -115,6 +119,38 @@ describe("ProviderQuotaSnapshot", () => {
         bankedResets: { ...currentCodexSnapshot.bankedResets, availableCount: -1 },
       }),
     ).toThrow();
+  });
+
+  it.each([
+    [
+      "metrics",
+      (count: number) => ({
+        metrics: Array.from({ length: count }, () => currentCodexSnapshot.metrics[0]),
+      }),
+      PROVIDER_QUOTA_METRICS_MAX_ITEMS,
+    ],
+    [
+      "banked resets",
+      (count: number) => ({
+        bankedResets: {
+          ...currentCodexSnapshot.bankedResets,
+          resets: Array.from({ length: count }, () => currentCodexSnapshot.bankedResets.resets[0]),
+        },
+      }),
+      PROVIDER_QUOTA_BANKED_RESETS_MAX_ITEMS,
+    ],
+    [
+      "detail properties",
+      (count: number) => ({
+        detail: Object.fromEntries(
+          Array.from({ length: count }, (_, index) => [`key-${index}`, "value"]),
+        ),
+      }),
+      PROVIDER_QUOTA_DETAIL_MAX_PROPERTIES,
+    ],
+  ] as const)("accepts %s at its cardinality limit and rejects one more", (_name, patch, limit) => {
+    expect(() => decodeSnapshot({ ...currentCodexSnapshot, ...patch(limit) })).not.toThrow();
+    expect(() => decodeSnapshot({ ...currentCodexSnapshot, ...patch(limit + 1) })).toThrow();
   });
 
   it("accepts provider display strings exactly at their wire boundaries", () => {
@@ -257,6 +293,21 @@ describe("ProviderQuotaSummary", () => {
       decodeSummary({
         readAt: "r".repeat(65),
         instances: [currentCodexSnapshot],
+      }),
+    ).toThrow();
+  });
+
+  it("accepts the instance cardinality limit and rejects one more", () => {
+    const instances = Array.from({ length: PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES }, (_, index) => ({
+      ...currentCodexSnapshot,
+      instanceId: `codex-${index}`,
+    }));
+
+    expect(() => decodeSummary({ readAt: currentCodexSnapshot.readAt, instances })).not.toThrow();
+    expect(() =>
+      decodeSummary({
+        readAt: currentCodexSnapshot.readAt,
+        instances: [...instances, { ...currentCodexSnapshot, instanceId: "codex-overflow" }],
       }),
     ).toThrow();
   });

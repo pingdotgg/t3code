@@ -9,7 +9,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { RpcClientError } from "effect/unstable/rpc";
 import { act, createElement } from "react";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { installReactHookTestDom, mountReactHookTestComponent } from "../test/reactDomHookHarness";
 
@@ -52,6 +52,13 @@ const input: ProviderQuotaConsumeResetInput = {
 };
 
 describe("provider quota state", () => {
+  beforeEach(() => {
+    mocks.appAtomRegistry.refresh.mockReset();
+    mocks.serverEnvironment.configProjection.mockReset();
+    mocks.serverEnvironment.providerQuota.mockReset();
+    mocks.primaryEnvironmentId = null;
+  });
+
   it("exposes a successful primary-environment quota summary", () => {
     expect(resolveProviderQuotaView(AsyncResult.success(summary), true)).toEqual({
       summary,
@@ -107,7 +114,17 @@ describe("provider quota state", () => {
     expect(refresh).toHaveBeenCalledExactlyOnceWith(environmentId);
   });
 
-  it("refreshes only the primary quota query after a settings projection update", async () => {
+  it("refreshes the quota query when a consume command rejects", async () => {
+    const refresh = vi.fn();
+    const consume = vi.fn(async () => Promise.reject(new Error("transport failed")));
+
+    await expect(
+      consumeAndRefreshProviderQuota({ environmentId, input, consume, refresh }),
+    ).rejects.toThrow("transport failed");
+    expect(refresh).toHaveBeenCalledExactlyOnceWith(environmentId);
+  });
+
+  it("refreshes only the primary quota query after provider reconciliation completes", async () => {
     const primaryEnvironmentId = "primary" as EnvironmentId;
     const primaryQuotaAtom = Atom.make(AsyncResult.initial<ProviderQuotaSummary, never>(false));
     const secondaryQuotaAtom = Atom.make(AsyncResult.initial<ProviderQuotaSummary, never>(false));
@@ -138,6 +155,15 @@ describe("provider quota state", () => {
       registry.set(
         projectionAtom,
         AsyncResult.success({ latestEvent: { type: "settingsUpdated" } } as never),
+      );
+    });
+
+    expect(mocks.appAtomRegistry.refresh).not.toHaveBeenCalled();
+
+    await act(async () => {
+      registry.set(
+        projectionAtom,
+        AsyncResult.success({ latestEvent: { type: "providerStatuses" } } as never),
       );
     });
 

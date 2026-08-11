@@ -2,6 +2,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderQuotaConsumeResetInput,
   type ProviderQuotaConsumeResetOutcome,
   type ProviderQuotaSnapshot,
   type ProviderQuotaSummary,
@@ -59,8 +60,16 @@ export function buildProviderUsageStripItems(input: {
 
 export interface ProviderResetAttemptState {
   readonly idempotencyKey: string | null;
+  readonly creditId?: ProviderQuotaConsumeResetInput["creditId"];
   readonly pending: boolean;
   readonly feedback: string | null;
+}
+
+export interface ConfirmedProviderResetAttemptState extends ProviderResetAttemptState {
+  readonly idempotencyKey: string;
+  readonly creditId: ProviderQuotaConsumeResetInput["creditId"];
+  readonly pending: true;
+  readonly feedback: null;
 }
 
 export function createProviderResetAttemptState(): ProviderResetAttemptState {
@@ -69,10 +78,16 @@ export function createProviderResetAttemptState(): ProviderResetAttemptState {
 
 export function confirmProviderResetAttempt(
   state: ProviderResetAttemptState,
+  creditId: ProviderQuotaConsumeResetInput["creditId"],
   createIdempotencyKey: () => string,
-): ProviderResetAttemptState {
+): ConfirmedProviderResetAttemptState {
+  const idempotencyKey =
+    state.idempotencyKey !== null && state.creditId === creditId
+      ? state.idempotencyKey
+      : createIdempotencyKey();
   return {
-    idempotencyKey: state.idempotencyKey ?? createIdempotencyKey(),
+    idempotencyKey,
+    creditId,
     pending: true,
     feedback: null,
   };
@@ -100,15 +115,23 @@ export function settleProviderResetAttempt(
   }
   return {
     idempotencyKey: state.idempotencyKey,
+    ...(state.creditId === undefined ? {} : { creditId: state.creditId }),
     pending: false,
     feedback: result.message,
   };
 }
 
 export function cancelProviderResetAttempt(
-  _state: ProviderResetAttemptState,
+  state: ProviderResetAttemptState,
 ): ProviderResetAttemptState {
-  return createProviderResetAttemptState();
+  return state.idempotencyKey === null
+    ? createProviderResetAttemptState()
+    : {
+        idempotencyKey: state.idempotencyKey,
+        ...(state.creditId === undefined ? {} : { creditId: state.creditId }),
+        pending: false,
+        feedback: null,
+      };
 }
 
 export function providerUsageAriaLabel(item: ProviderUsageStripItem): string {

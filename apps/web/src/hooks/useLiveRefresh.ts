@@ -20,6 +20,7 @@ export const LIVE_REFRESH_MIN_INTERVAL_MS = 10_000;
 
 /** Slow enough to be cheap on the host, quick enough that a reader is not reading last minute. */
 export const LIVE_REFRESH_INTERVAL_MS = 60_000;
+const LIVE_REFRESH_SAFE_INTERVAL_FLOOR_MS = 1_000;
 
 export interface LiveRefreshCadenceOptions {
   readonly intervalMs?: number;
@@ -29,9 +30,13 @@ export interface LiveRefreshCadenceOptions {
 export function resolveLiveRefreshCadence(
   options: LiveRefreshCadenceOptions = {},
 ): Required<LiveRefreshCadenceOptions> {
+  const minimumIntervalMs = Math.max(
+    LIVE_REFRESH_SAFE_INTERVAL_FLOOR_MS,
+    options.minimumIntervalMs ?? LIVE_REFRESH_MIN_INTERVAL_MS,
+  );
   return {
-    intervalMs: options.intervalMs ?? LIVE_REFRESH_INTERVAL_MS,
-    minimumIntervalMs: options.minimumIntervalMs ?? LIVE_REFRESH_MIN_INTERVAL_MS,
+    intervalMs: Math.max(minimumIntervalMs, options.intervalMs ?? LIVE_REFRESH_INTERVAL_MS),
+    minimumIntervalMs,
   };
 }
 

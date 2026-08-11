@@ -80,6 +80,22 @@ describe("provider settings row ordering", () => {
     ]);
   });
 
+  it("excludes every instance of a hidden driver from visible rows", () => {
+    const rows = deriveVisibleOrderedProviderSettingsRows({
+      settings: {
+        providerInstances: {
+          cursor: instance(cursor),
+          cursor_work: instance(cursor),
+        } as Readonly<Record<ProviderInstanceId, ProviderInstanceConfig>>,
+        providers: DEFAULT_UNIFIED_SETTINGS.providers,
+      },
+      driverOrder: [codex, cursor, claude],
+      serverProviders: [],
+    });
+
+    expect(rows.map((row) => row.instanceId)).toEqual(["codex", "claudeAgent"]);
+  });
+
   it("gives Settings and strip input identical legacy, default, and custom row order", () => {
     const settings = {
       providerInstances: {
@@ -175,7 +191,11 @@ describe("provider settings row ordering", () => {
   });
 
   it("synthesizes a default row from legacy provider settings", () => {
-    const rows = rowsFor({ driverOrder: [codex], providerInstances: {} });
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {},
+      providers: structuredClone(DEFAULT_UNIFIED_SETTINGS.providers),
+    });
 
     expect(rows).toContainEqual(
       expect.objectContaining({

@@ -30,6 +30,7 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarMenuItem } from "../ui/sidebar";
 import {
+  formatDate,
   ProviderQuotaDetails,
   ProviderQuotaResetConfirmationContent,
 } from "./ProviderQuotaDetails";
@@ -40,6 +41,7 @@ import {
   createProviderResetAttemptState,
   providerUsageAriaLabel,
   settleProviderResetAttempt,
+  type ConfirmedProviderResetAttemptState,
   type ProviderResetAttemptState,
   type ProviderUsageStripItem,
 } from "./ProviderUsageStrip.logic";
@@ -69,10 +71,10 @@ function ProviderUsageButton({
   );
 }
 
-function providerUsageTooltip(item: ProviderUsageStripItem): string {
+export function providerUsageTooltip(item: ProviderUsageStripItem): string {
   const label = providerUsageAriaLabel(item);
   if (item.snapshot?.lastSuccessfulReadAt) {
-    return `${label}. Last successful read ${item.snapshot.lastSuccessfulReadAt}`;
+    return `${label}. Last successful read ${formatDate(item.snapshot.lastSuccessfulReadAt)}`;
   }
   return `${label}. No successful read is available`;
 }
@@ -91,18 +93,18 @@ function consumeErrorMessage(result: Parameters<typeof squashAtomCommandFailure>
 export function prepareProviderResetConsumption(input: {
   readonly attempt: ProviderResetAttemptState;
   readonly instanceId: ProviderQuotaConsumeResetInput["instanceId"];
-  readonly creditId: NonNullable<ProviderQuotaConsumeResetInput["creditId"]>;
+  readonly creditId: ProviderQuotaConsumeResetInput["creditId"];
 }): {
-  readonly attempt: ProviderResetAttemptState;
+  readonly attempt: ConfirmedProviderResetAttemptState;
   readonly input: ProviderQuotaConsumeResetInput;
 } {
-  const attempt = confirmProviderResetAttempt(input.attempt, randomUUID);
+  const attempt = confirmProviderResetAttempt(input.attempt, input.creditId, randomUUID);
   return {
     attempt,
     input: {
       instanceId: input.instanceId,
       creditId: input.creditId,
-      idempotencyKey: attempt.idempotencyKey!,
+      idempotencyKey: attempt.idempotencyKey,
     },
   };
 }
@@ -121,7 +123,7 @@ const ProviderUsageItemSurface = memo(function ProviderUsageItemSurface({
   const [attempt, setAttempt] = useState(createProviderResetAttemptState);
   const attemptRef = useRef(attempt);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
-  const [selectedReset, setSelectedReset] = useState<ProviderBankedReset | null>(null);
+  const [selectedReset, setSelectedReset] = useState<ProviderBankedReset | null | undefined>();
 
   const updateAttempt = useCallback((next: ProviderResetAttemptState) => {
     attemptRef.current = next;
@@ -129,9 +131,11 @@ const ProviderUsageItemSurface = memo(function ProviderUsageItemSurface({
   }, []);
 
   const requestReset = useCallback(
-    (reset: ProviderBankedReset) => {
+    (reset: ProviderBankedReset | null) => {
       if (attemptRef.current.pending) return;
-      if (selectedReset !== null && selectedReset.id !== reset.id) {
+      const selectedCreditId = selectedReset?.id ?? null;
+      const nextCreditId = reset?.id ?? null;
+      if (selectedReset !== undefined && selectedCreditId !== nextCreditId) {
         updateAttempt(cancelProviderResetAttempt(attemptRef.current));
       }
       setSelectedReset(reset);
@@ -144,15 +148,15 @@ const ProviderUsageItemSurface = memo(function ProviderUsageItemSurface({
     if (attemptRef.current.pending) return;
     updateAttempt(cancelProviderResetAttempt(attemptRef.current));
     setConfirmationOpen(false);
-    setSelectedReset(null);
+    setSelectedReset(undefined);
   }, [updateAttempt]);
 
   const confirmReset = useCallback(async () => {
-    if (selectedReset === null || attemptRef.current.pending) return;
+    if (selectedReset === undefined || attemptRef.current.pending) return;
     const prepared = prepareProviderResetConsumption({
       attempt: attemptRef.current,
       instanceId: item.instanceId,
-      creditId: selectedReset.id,
+      creditId: selectedReset?.id ?? null,
     });
     const confirmed = prepared.attempt;
     updateAttempt(confirmed);
@@ -165,7 +169,7 @@ const ProviderUsageItemSurface = memo(function ProviderUsageItemSurface({
       });
       updateAttempt(settled);
       setConfirmationOpen(false);
-      setSelectedReset(null);
+      setSelectedReset(undefined);
       toastManager.add({
         type: result.value === "reset" ? "success" : "info",
         title: "Provider reset",
@@ -224,7 +228,7 @@ const ProviderUsageItemSurface = memo(function ProviderUsageItemSurface({
         <TooltipPopup>{providerUsageTooltip(item)}</TooltipPopup>
       </Tooltip>
 
-      {selectedReset === null ? null : (
+      {selectedReset === undefined ? null : (
         <AlertDialog
           open={confirmationOpen}
           onOpenChange={(open) => {

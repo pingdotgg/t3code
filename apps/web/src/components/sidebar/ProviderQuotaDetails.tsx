@@ -20,7 +20,7 @@ function formatPercentage(value: number): string {
   return `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
 }
 
-function formatDate(value: string): string {
+export function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
@@ -165,12 +165,18 @@ export const ProviderQuotaDetails = memo(function ProviderQuotaDetails({
   readonly canOperate: boolean;
   readonly feedback: string | null;
   readonly item: ProviderUsageStripItem;
-  readonly onRequestReset: (reset: ProviderBankedReset) => void;
+  readonly onRequestReset: (reset: ProviderBankedReset | null) => void;
   readonly pendingReset: boolean;
 }) {
   const snapshot = item.snapshot;
   const Icon = PROVIDER_ICON_BY_PROVIDER[item.driver] ?? BotIcon;
   const canUseCodexReset = snapshot?.status === "current" && canOperate && item.driver === "codex";
+  const bankedResets = snapshot?.bankedResets ?? null;
+  const showCountOnlyCodexReset =
+    canUseCodexReset &&
+    bankedResets !== null &&
+    bankedResets.availableCount > 0 &&
+    bankedResets.resets.length === 0;
 
   return (
     <div className="w-full min-w-0 space-y-4 text-foreground">
@@ -230,6 +236,17 @@ export const ProviderQuotaDetails = memo(function ProviderQuotaDetails({
                   />
                 ))}
               </ul>
+              {showCountOnlyCodexReset ? (
+                <Button
+                  className="mt-2"
+                  disabled={pendingReset}
+                  size="xs"
+                  variant="outline"
+                  onClick={() => onRequestReset(null)}
+                >
+                  Use reset
+                </Button>
+              ) : null}
             </section>
           )}
           {Object.keys(snapshot.detail).length === 0 ? null : (
@@ -247,11 +264,9 @@ export const ProviderQuotaDetails = memo(function ProviderQuotaDetails({
           )}
         </>
       )}
-      {feedback ? (
-        <p aria-live="polite" className="rounded-lg bg-muted/40 p-3 text-sm">
-          {feedback}
-        </p>
-      ) : null}
+      <p aria-live="polite" className={feedback ? "rounded-lg bg-muted/40 p-3 text-sm" : "sr-only"}>
+        {feedback ?? ""}
+      </p>
     </div>
   );
 });
@@ -265,16 +280,18 @@ export function ProviderQuotaResetConfirmationContent({
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
   readonly pending: boolean;
-  readonly reset: ProviderBankedReset;
+  readonly reset: ProviderBankedReset | null;
 }) {
-  const title = reset.title ?? detailLabel(reset.resetType);
+  const title = reset === null ? "banked reset" : (reset.title ?? detailLabel(reset.resetType));
   return (
     <>
       <AlertDialogHeader>
         <AlertDialogTitle>Use {title}?</AlertDialogTitle>
         <AlertDialogDescription>
           This will apply {title}.{" "}
-          {reset.expiresAt === null ? (
+          {reset === null ? (
+            "No specific reset credit was reported; the provider will select the next available reset."
+          ) : reset.expiresAt === null ? (
             "No expiry is reported for this reset."
           ) : (
             <>

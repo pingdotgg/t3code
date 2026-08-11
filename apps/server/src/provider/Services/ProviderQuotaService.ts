@@ -6,6 +6,7 @@ import {
   ProviderQuotaReadError,
   type ProviderQuotaSnapshot,
   type ProviderQuotaSummary,
+  PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
@@ -27,6 +28,7 @@ import { ProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
 
 const CACHE_TTL_MS = 30_000;
 const PROVIDER_READ_TIMEOUT = "10 seconds";
+const SUMMARY_STABILIZATION_ATTEMPTS = 3;
 
 interface CacheEntry {
   readonly instance: ProviderInstance;
@@ -78,6 +80,22 @@ const mapConsumeError = (error: ProviderQuotaAdapterError): ProviderQuotaConsume
       return safeConsumeError("providerFailed", "The provider could not consume the banked reset.");
   }
 };
+
+const withConsumeTimeout = <A>(
+  effect: Effect.Effect<A, ProviderQuotaAdapterError>,
+): Effect.Effect<A, ProviderQuotaAdapterError> =>
+  effect.pipe(
+    Effect.timeoutOrElse({
+      duration: PROVIDER_READ_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new ProviderQuotaAdapterError({
+            reason: "timeout",
+            detail: "The provider reset request timed out.",
+          }),
+        ),
+    }),
+  );
 
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry;
@@ -266,7 +284,7 @@ export const make = Effect.gen(function* () {
   });
 
   const readSummary = Effect.fn("ProviderQuotaService.readSummary")(function* () {
-    while (true) {
+    for (let attempt = 0; attempt < SUMMARY_STABILIZATION_ATTEMPTS; attempt += 1) {
       const instances = yield* registry.listInstances.pipe(
         Effect.catchCause(() =>
           Effect.fail(
@@ -277,7 +295,9 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
-      const enabled = instances.filter((instance) => instance.enabled);
+      const enabled = instances
+        .filter((instance) => instance.enabled)
+        .slice(0, PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES);
       const enabledIdentities = new Map(enabled.map((instance) => [instance.instanceId, instance]));
       const retired = yield* cacheMutex.withPermits(1)(
         Effect.sync(() => {
@@ -319,13 +339,23 @@ export const make = Effect.gen(function* () {
         }
         snapshots.push(outcome.snapshot);
       }
-      if (obsolete) continue;
+      if (obsolete) {
+        if (attempt + 1 < SUMMARY_STABILIZATION_ATTEMPTS) continue;
+        return yield* new ProviderQuotaReadError({
+          reason: "registryUnavailable",
+          detail: "Provider instances did not stabilize while quota was read.",
+        });
+      }
 
       return {
         readAt,
         instances: snapshots,
       } satisfies ProviderQuotaSummary;
     }
+    return yield* new ProviderQuotaReadError({
+      reason: "registryUnavailable",
+      detail: "Provider instances could not be read.",
+    });
   });
 
   const consumeBankedReset = Effect.fn("ProviderQuotaService.consumeBankedReset")(function* (
@@ -355,7 +385,7 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    const eligibility = yield* quota.read.pipe(
+    const eligibility = yield* withConsumeTimeout(quota.read).pipe(
       Effect.catchCause((cause) => {
         const error = Cause.findErrorOption(cause);
         return Effect.fail(
@@ -394,7 +424,9 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    return yield* consume({ creditId: input.creditId, idempotencyKey: input.idempotencyKey }).pipe(
+    return yield* withConsumeTimeout(
+      consume({ creditId: input.creditId, idempotencyKey: input.idempotencyKey }),
+    ).pipe(
       Effect.catchCause((cause) => {
         const error = Cause.findErrorOption(cause);
         return Effect.fail(

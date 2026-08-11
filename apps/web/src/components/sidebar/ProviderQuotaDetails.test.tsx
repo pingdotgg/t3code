@@ -95,6 +95,63 @@ describe("ProviderQuotaDetails", () => {
     expect(markup).not.toContain(">Use reset<");
   });
 
+  it("disables reset controls while a reset request is pending", () => {
+    const markup = renderToStaticMarkup(
+      <ProviderQuotaDetails
+        canOperate
+        feedback={null}
+        item={item}
+        pendingReset
+        onRequestReset={() => {}}
+      />,
+    );
+
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Use reset<\/button>/u);
+  });
+
+  it("keeps a live region mounted and exposes reset feedback", () => {
+    const emptyMarkup = renderToStaticMarkup(
+      <ProviderQuotaDetails
+        canOperate
+        feedback={null}
+        item={item}
+        pendingReset={false}
+        onRequestReset={() => {}}
+      />,
+    );
+    const feedbackMarkup = renderToStaticMarkup(
+      <ProviderQuotaDetails
+        canOperate
+        feedback="Reset applied."
+        item={item}
+        pendingReset={false}
+        onRequestReset={() => {}}
+      />,
+    );
+
+    expect(emptyMarkup).toContain('aria-live="polite"');
+    expect(feedbackMarkup).toContain("Reset applied.");
+  });
+
+  it("offers a generic reset action for current count-only Codex inventory", () => {
+    const countOnlySnapshot = {
+      ...snapshot,
+      bankedResets: { availableCount: 2, resets: [], detailsComplete: false },
+    };
+    const markup = renderToStaticMarkup(
+      <ProviderQuotaDetails
+        canOperate
+        feedback={null}
+        item={{ ...item, snapshot: countOnlySnapshot }}
+        pendingReset={false}
+        onRequestReset={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("2 available");
+    expect(markup).toContain(">Use reset<");
+  });
+
   it("keeps Codex reset controls hidden for other provider drivers", () => {
     const markup = renderToStaticMarkup(
       <ProviderQuotaDetails
@@ -157,5 +214,22 @@ describe("ProviderQuotaResetConfirmationContent", () => {
     expect(markup).toContain("Confirm reset");
     expect(markup).toContain('data-slot="alert-dialog-title"');
     expect(markup).toContain('data-slot="alert-dialog-description"');
+  });
+
+  it("confirms a count-only reset without inventing credit details", () => {
+    const markup = renderToStaticMarkup(
+      <AlertDialog open>
+        <ProviderQuotaResetConfirmationContent
+          pending={false}
+          reset={null}
+          onCancel={() => {}}
+          onConfirm={() => {}}
+        />
+      </AlertDialog>,
+    );
+
+    expect(markup).toContain("Use banked reset?");
+    expect(markup).toContain("No specific reset credit was reported");
+    expect(markup).toContain("Confirm reset");
   });
 });

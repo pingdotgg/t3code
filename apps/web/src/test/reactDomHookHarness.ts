@@ -29,7 +29,14 @@ class TestElement extends EventTarget {
   }
 
   removeChild(child: TestElement): TestElement {
-    this.childNodes.splice(this.childNodes.indexOf(child), 1);
+    const index = this.childNodes.indexOf(child);
+    if (index === -1) {
+      throw new DOMException(
+        "The node to be removed is not a child of this node.",
+        "NotFoundError",
+      );
+    }
+    this.childNodes.splice(index, 1);
     child.parentNode = null;
     return child;
   }

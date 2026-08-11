@@ -79,12 +79,14 @@ export async function consumeAndRefreshProviderQuota(input: {
   }) => Promise<ProviderQuotaConsumeResult>;
   readonly refresh: (environmentId: EnvironmentId) => void;
 }): Promise<ProviderQuotaConsumeResult> {
-  const result = await input.consume({
-    environmentId: input.environmentId,
-    input: input.input,
-  });
-  refreshProviderQuota(input);
-  return result;
+  try {
+    return await input.consume({
+      environmentId: input.environmentId,
+      input: input.input,
+    });
+  } finally {
+    refreshProviderQuota(input);
+  }
 }
 
 export interface PrimaryProviderQuotaState extends ProviderQuotaView {
@@ -135,12 +137,12 @@ export function usePrimaryProviderQuota(): PrimaryProviderQuotaState {
     [consume, environmentId],
   );
 
-  const latestSettingsEvent = Option.getOrNull(AsyncResult.value(settingsProjection));
+  const latestConfigEvent = Option.getOrNull(AsyncResult.value(settingsProjection))?.latestEvent;
   useEffect(() => {
-    if (latestSettingsEvent?.latestEvent.type === "settingsUpdated") {
+    if (latestConfigEvent?.type === "providerStatuses") {
       refresh();
     }
-  }, [latestSettingsEvent, refresh]);
+  }, [latestConfigEvent, refresh]);
   useLiveRefresh(refresh, {
     enabled: environmentId !== null,
     ...(environmentId === null ? {} : { key: environmentId }),

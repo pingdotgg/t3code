@@ -112,9 +112,17 @@ export function deriveVisibleOrderedProviderSettingsRows(input: {
   readonly driverOrder: ReadonlyArray<ProviderDriverKind>;
   readonly serverProviders: ReadonlyArray<Pick<ServerProvider, "instanceId">>;
 }): ReadonlyArray<OrderedProviderSettingsRow> {
+  const visibleDriverOrder = deriveVisibleProviderDriverOrder(input);
+  const visibleDrivers = new Set(visibleDriverOrder);
+  const hiddenDrivers = new Set(input.driverOrder.filter((driver) => !visibleDrivers.has(driver)));
+  const providerInstances = Object.fromEntries(
+    Object.entries(input.settings.providerInstances ?? {}).filter(
+      ([, instance]) => !hiddenDrivers.has(instance.driver),
+    ),
+  ) as Readonly<Record<ProviderInstanceId, ProviderInstanceConfig>>;
   return deriveOrderedProviderSettingsRows({
-    settings: input.settings,
-    driverOrder: deriveVisibleProviderDriverOrder(input),
+    settings: { ...input.settings, providerInstances },
+    driverOrder: visibleDriverOrder,
   });
 }
 

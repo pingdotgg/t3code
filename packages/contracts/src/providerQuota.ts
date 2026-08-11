@@ -17,6 +17,10 @@ export const PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH = 128;
 export const PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH = 256;
 export const PROVIDER_QUOTA_LONG_TEXT_MAX_LENGTH = 512;
 export const PROVIDER_QUOTA_TIMESTAMP_MAX_LENGTH = 64;
+export const PROVIDER_QUOTA_METRICS_MAX_ITEMS = 64;
+export const PROVIDER_QUOTA_BANKED_RESETS_MAX_ITEMS = 32;
+export const PROVIDER_QUOTA_DETAIL_MAX_PROPERTIES = 32;
+export const PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES = 128;
 
 const ProviderQuotaIdentifier = TrimmedNonEmptyString.check(
   Schema.isMaxLength(PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH),
@@ -78,7 +82,9 @@ export type ProviderBankedReset = typeof ProviderBankedReset.Type;
 
 export const ProviderBankedResetSummary = Schema.Struct({
   availableCount: NonNegativeInt,
-  resets: Schema.Array(ProviderBankedReset),
+  resets: Schema.Array(ProviderBankedReset).check(
+    Schema.isMaxLength(PROVIDER_QUOTA_BANKED_RESETS_MAX_ITEMS),
+  ),
   detailsComplete: Schema.Boolean,
 });
 export type ProviderBankedResetSummary = typeof ProviderBankedResetSummary.Type;
@@ -91,17 +97,23 @@ export const ProviderQuotaSnapshot = Schema.Struct({
   readAt: ProviderQuotaTimestamp,
   lastSuccessfulReadAt: Schema.NullOr(ProviderQuotaTimestamp),
   headlineMetricKey: Schema.NullOr(ProviderQuotaIdentifier),
-  metrics: Schema.Array(ProviderQuotaMetric),
+  metrics: Schema.Array(ProviderQuotaMetric).check(
+    Schema.isMaxLength(PROVIDER_QUOTA_METRICS_MAX_ITEMS),
+  ),
   credits: Schema.NullOr(ProviderQuotaCredits),
   bankedResets: Schema.NullOr(ProviderBankedResetSummary),
-  detail: Schema.Record(ProviderQuotaIdentifier, ProviderQuotaLongText),
+  detail: Schema.Record(ProviderQuotaIdentifier, ProviderQuotaLongText).check(
+    Schema.isMaxProperties(PROVIDER_QUOTA_DETAIL_MAX_PROPERTIES),
+  ),
   message: Schema.NullOr(ProviderQuotaLongText),
 });
 export type ProviderQuotaSnapshot = typeof ProviderQuotaSnapshot.Type;
 
 export const ProviderQuotaSummary = Schema.Struct({
   readAt: ProviderQuotaTimestamp,
-  instances: Schema.Array(ProviderQuotaSnapshot),
+  instances: Schema.Array(ProviderQuotaSnapshot).check(
+    Schema.isMaxLength(PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES),
+  ),
 });
 export type ProviderQuotaSummary = typeof ProviderQuotaSummary.Type;
 

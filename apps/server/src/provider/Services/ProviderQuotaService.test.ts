@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderQuotaConsumeResetError,
+  PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES,
   type ProviderQuotaConsumeResetOutcome,
   type ProviderQuotaSnapshot,
 } from "@t3tools/contracts";
@@ -98,6 +99,20 @@ describe("ProviderQuotaService", () => {
         source: "unsupported",
         driver: claude,
       });
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("bounds the number of provider snapshots returned on the wire", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      instances = Array.from({ length: PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES + 1 }, (_, index) =>
+        makeInstance({ id: `provider-${index}` }),
+      );
+      const service = yield* ProviderQuotaService;
+
+      const summary = yield* service.readSummary;
+
+      expect(summary.instances).toHaveLength(PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES);
     }).pipe(provideService(() => instances));
   });
 
@@ -405,6 +420,35 @@ describe("ProviderQuotaService", () => {
     }).pipe(provideService(() => instances));
   });
 
+  it.effect("fails a summary when provider generations never stabilize", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      let revision = 0;
+      let reads = 0;
+      const instance = makeInstance({
+        id: "codex-churning",
+        quota: {
+          read: Effect.suspend(() => {
+            reads += 1;
+            if (reads > 5) return Effect.die("unbounded retry guard");
+            revision += 1;
+            return Effect.succeed(snapshot("codex-churning"));
+          }),
+          revision: Effect.sync(() => revision),
+        },
+      });
+      instances = [instance];
+      const service = yield* ProviderQuotaService;
+      const result = yield* service.readSummary.pipe(Effect.result);
+
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "registryUnavailable" },
+      });
+      expect(reads).toBeLessThanOrEqual(4);
+    }).pipe(provideService(() => instances));
+  });
+
   it.effect(
     "bypasses cached data after revision, identity, and explicit invalidation changes",
     () => {
@@ -601,6 +645,89 @@ describe("ProviderQuotaService", () => {
 
       expect(error.reason).toBe("providerFailed");
       expect(consumes).toBe(0);
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("times out a reset eligibility refresh that never settles", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      instances = [
+        makeInstance({
+          id: "codex-reset",
+          quota: {
+            read: Effect.never,
+            revision: Effect.succeed(0),
+            consumeBankedReset: () => Effect.succeed("reset"),
+          },
+        }),
+      ];
+      const service = yield* ProviderQuotaService;
+      const fiber = yield* service
+        .consumeBankedReset({
+          instanceId: ProviderInstanceId.make("codex-reset"),
+          creditId: null,
+          idempotencyKey: "request-7",
+        })
+        .pipe(
+          Effect.result,
+          Effect.timeoutOrElse({
+            duration: "11 seconds",
+            orElse: () => Effect.succeed("outer-timeout"),
+          }),
+          Effect.forkChild,
+        );
+
+      yield* TestClock.adjust("11 seconds");
+      const result = yield* Fiber.join(fiber);
+
+      expect(result).not.toBe("outer-timeout");
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "providerFailed" },
+      });
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("times out a reset mutation that never settles", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      instances = [
+        makeInstance({
+          id: "codex-reset",
+          quota: {
+            read: Effect.succeed({
+              ...snapshot("codex-reset"),
+              bankedResets: { availableCount: 1, resets: [], detailsComplete: false },
+            }),
+            revision: Effect.succeed(0),
+            consumeBankedReset: () => Effect.never,
+          },
+        }),
+      ];
+      const service = yield* ProviderQuotaService;
+      const fiber = yield* service
+        .consumeBankedReset({
+          instanceId: ProviderInstanceId.make("codex-reset"),
+          creditId: null,
+          idempotencyKey: "request-7",
+        })
+        .pipe(
+          Effect.result,
+          Effect.timeoutOrElse({
+            duration: "11 seconds",
+            orElse: () => Effect.succeed("outer-timeout"),
+          }),
+          Effect.forkChild,
+        );
+
+      yield* TestClock.adjust("11 seconds");
+      const result = yield* Fiber.join(fiber);
+
+      expect(result).not.toBe("outer-timeout");
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "providerFailed" },
+      });
     }).pipe(provideService(() => instances));
   });
 

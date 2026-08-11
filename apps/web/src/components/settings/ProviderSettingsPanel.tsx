@@ -92,6 +92,7 @@ import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
   deriveVisibleOrderedProviderSettingsRows,
+  type OrderedProviderSettingsRow,
   type ProviderEnvironmentAccess,
   type ProviderOperateAccess,
   resolvePrimaryOperateAccess,
@@ -479,7 +480,7 @@ export function EnvironmentProviderSettings({
   });
 
   const updateProviderInstance = (
-    row: (typeof rows)[number],
+    row: OrderedProviderSettingsRow,
     next: ProviderInstanceConfig,
     options?: {
       readonly textGenerationModelSelection?: Parameters<

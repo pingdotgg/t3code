@@ -7,7 +7,9 @@ import {
   type ProviderQuotaSnapshot,
   type ProviderInstanceId,
   PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH,
+  PROVIDER_QUOTA_BANKED_RESETS_MAX_ITEMS,
   PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH,
+  PROVIDER_QUOTA_METRICS_MAX_ITEMS,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -36,6 +38,7 @@ import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
 
 const DRIVER = ProviderDriverKind.make("codex");
 const CACHE_TTL = "30 seconds" as const;
+const REQUEST_TIMEOUT = "10 seconds" as const;
 const DETAIL_VALUE_MAX_LENGTH = 160;
 const MULTI_LIMIT_ID_MAX_LENGTH = PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH - "limit::individual".length;
 const OPAQUE_TOKEN_PREFIX = "t3q";
@@ -257,13 +260,16 @@ const normalizeCodexProviderQuotaWithIdentities = (
     individualLabel: "Individual limit",
   });
 
-  const rateLimitsByLimitId = response.rateLimitsByLimitId ?? {};
+  const rateLimitsByLimitId = Object.entries(response.rateLimitsByLimitId ?? {}).slice(
+    0,
+    PROVIDER_QUOTA_METRICS_MAX_ITEMS,
+  );
   const limitTokens = buildStableOpaqueTokenIndex(
-    Object.keys(rateLimitsByLimitId),
+    rateLimitsByLimitId.map(([limitId]) => limitId),
     "limit",
     MULTI_LIMIT_ID_MAX_LENGTH,
   );
-  for (const [limitId, rateLimits] of Object.entries(rateLimitsByLimitId)) {
+  for (const [limitId, rateLimits] of rateLimitsByLimitId) {
     const name = boundedNullableDisplayText(rateLimits.limitName) ?? "Limit";
     const boundedLimitId = limitTokens.tokenByRaw.get(limitId);
     if (boundedLimitId === undefined) continue;
@@ -273,10 +279,17 @@ const normalizeCodexProviderQuotaWithIdentities = (
       secondaryLabel: `${name} secondary`,
       individualLabel: `${name} individual limit`,
     });
+    if (metrics.length >= PROVIDER_QUOTA_METRICS_MAX_ITEMS) {
+      metrics.length = PROVIDER_QUOTA_METRICS_MAX_ITEMS;
+      break;
+    }
   }
 
   const resetSummary = response.rateLimitResetCredits;
-  const resetCredits = resetSummary?.credits ?? [];
+  const resetCredits = (resetSummary?.credits ?? []).slice(
+    0,
+    PROVIDER_QUOTA_BANKED_RESETS_MAX_ITEMS,
+  );
   const resetTokens = buildStableOpaqueTokenIndex(
     resetCredits.map((reset) => reset.id),
     "reset",
@@ -410,7 +423,19 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
         }),
       ),
     ),
-  ).pipe(Effect.mapError(quotaRequestError));
+  ).pipe(
+    Effect.timeoutOrElse({
+      duration: REQUEST_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new ProviderQuotaAdapterError({
+            reason: "timeout",
+            detail: "The Codex quota request timed out.",
+          }),
+        ),
+    }),
+    Effect.mapError(quotaRequestError),
+  );
   const [read, invalidate] = yield* Effect.cachedInvalidateWithTTL(readUncached, CACHE_TTL);
   const revisionRef = yield* Ref.make(0);
 
@@ -466,7 +491,6 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
   const onRateLimitsUpdated = Effect.fn("CodexProviderQuota.onRateLimitsUpdated")(function* (
     _update: CodexSchema.V2AccountRateLimitsUpdatedNotification,
   ) {
-    yield* Ref.set(resetIdsByTokenRef, new Map());
     yield* invalidate;
     yield* Ref.update(revisionRef, (revision) => revision + 1);
   });

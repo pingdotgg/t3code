@@ -123,6 +123,16 @@ describe("buildProviderUsageStripItems", () => {
     expect(item?.headlineLabel).toBe("Weekly limit");
   });
 
+  it("uses a dash when the current blocking headline has no remaining percentage", () => {
+    const [item] = buildProviderUsageStripItems({
+      rows: [row({ id: "codex" })],
+      summary: summary([snapshot({ id: "codex", remaining: null })]),
+    });
+
+    expect(item?.percentage).toBeNull();
+    expect(item?.headlineLabel).toBeNull();
+  });
+
   it.each(["stale", "authRequired", "error", "unknown"] as const)(
     "uses a dash for a %s snapshot",
     (status) => {
@@ -161,16 +171,20 @@ describe("buildProviderUsageStripItems", () => {
 describe("provider reset attempt", () => {
   it("creates one key on confirmation and retains it after a transport failure", () => {
     const created: string[] = [];
-    const confirmed = confirmProviderResetAttempt(createProviderResetAttemptState(), () => {
-      const key = `attempt-${created.length + 1}`;
-      created.push(key);
-      return key;
-    });
+    const confirmed = confirmProviderResetAttempt(
+      createProviderResetAttemptState(),
+      "credit-1",
+      () => {
+        const key = `attempt-${created.length + 1}`;
+        created.push(key);
+        return key;
+      },
+    );
     const failed = settleProviderResetAttempt(confirmed, {
       kind: "transportError",
       message: "Offline",
     });
-    const retried = confirmProviderResetAttempt(failed, () => "unexpected-second-key");
+    const retried = confirmProviderResetAttempt(failed, "credit-1", () => "unexpected-second-key");
 
     expect(created).toEqual(["attempt-1"]);
     expect(retried).toMatchObject({ idempotencyKey: "attempt-1", pending: true });
@@ -179,7 +193,11 @@ describe("provider reset attempt", () => {
   it.each(["reset", "nothingToReset", "noCredit", "alreadyRedeemed"] as const)(
     "clears the key and provides explicit feedback for %s",
     (outcome) => {
-      const pending = confirmProviderResetAttempt(createProviderResetAttemptState(), () => "key");
+      const pending = confirmProviderResetAttempt(
+        createProviderResetAttemptState(),
+        "credit-1",
+        () => "key",
+      );
       const settled = settleProviderResetAttempt(pending, { kind: "outcome", outcome });
 
       expect(settled.idempotencyKey).toBeNull();
@@ -188,8 +206,17 @@ describe("provider reset attempt", () => {
     },
   );
 
-  it("clears a retained attempt when confirmation is cancelled", () => {
-    const pending = confirmProviderResetAttempt(createProviderResetAttemptState(), () => "key");
-    expect(cancelProviderResetAttempt(pending)).toEqual(createProviderResetAttemptState());
+  it("keeps a retained key when an unresolved confirmation is cancelled", () => {
+    const pending = confirmProviderResetAttempt(
+      createProviderResetAttemptState(),
+      "credit-1",
+      () => "key",
+    );
+    expect(cancelProviderResetAttempt(pending)).toEqual({
+      idempotencyKey: "key",
+      creditId: "credit-1",
+      pending: false,
+      feedback: null,
+    });
   });
 });

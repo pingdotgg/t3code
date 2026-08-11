@@ -2,7 +2,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ServerConfig,
+  type ServerProvider,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -10,13 +11,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { ProviderUsageStripItem } from "./ProviderUsageStrip.logic";
 import {
   prepareProviderResetConsumption,
+  providerUsageTooltip,
   ProviderUsageStrip,
   ProviderUsageStripView,
 } from "./ProviderUsageStrip";
 import { SidebarMenu, SidebarMenuItem } from "../ui/sidebar";
 
 const mocks = vi.hoisted(() => ({
-  primaryEnvironment: null as { readonly serverConfig: ServerConfig | null } | null,
+  primaryEnvironment: null as {
+    readonly serverConfig: {
+      readonly providers: ReadonlyArray<Pick<ServerProvider, "instanceId">>;
+      readonly settings: ServerSettings;
+    } | null;
+  } | null,
 }));
 
 vi.mock("../../state/environments", () => ({
@@ -92,6 +99,30 @@ describe("ProviderUsageStripView", () => {
     expect(markup).toContain('aria-label="Work Codex: usage remaining unavailable"');
   });
 
+  it("formats the last successful read consistently in the tooltip", () => {
+    const value = "2026-08-11T08:00:00.000Z";
+    const withSnapshot = {
+      ...item({ id: "codex-personal", percentage: 100 }),
+      snapshot: {
+        instanceId: ProviderInstanceId.make("codex-personal"),
+        driver: ProviderDriverKind.make("codex"),
+        status: "current" as const,
+        source: "test",
+        readAt: value,
+        lastSuccessfulReadAt: value,
+        headlineMetricKey: null,
+        metrics: [],
+        credits: null,
+        bankedResets: null,
+        detail: {},
+        message: null,
+      },
+    };
+
+    expect(providerUsageTooltip(withSnapshot)).toContain(new Date(value).toLocaleString());
+    expect(providerUsageTooltip(withSnapshot)).not.toContain(value);
+  });
+
   it("forwards composed popover trigger semantics to the rendered provider button", () => {
     const markup = renderToStaticMarkup(
       <ProviderUsageStripView
@@ -131,19 +162,23 @@ describe("ProviderUsageStripView", () => {
 });
 
 describe("ProviderUsageStrip", () => {
+  const codexWorkId = ProviderInstanceId.make("codex-work");
   const codexConfig = {
     settings: {
       ...DEFAULT_SERVER_SETTINGS,
       providerInstances: {
-        "codex-work": {
+        [codexWorkId]: {
           driver: ProviderDriverKind.make("codex"),
           displayName: "Work Codex",
           enabled: true,
         },
       },
     },
-    providers: [{ instanceId: ProviderInstanceId.make("codex-work") }],
-  } as unknown as ServerConfig;
+    providers: [{ instanceId: codexWorkId }],
+  } satisfies {
+    readonly providers: ReadonlyArray<Pick<ServerProvider, "instanceId">>;
+    readonly settings: ServerSettings;
+  };
 
   beforeEach(() => {
     mocks.primaryEnvironment = null;
@@ -204,8 +239,42 @@ describe("prepareProviderResetConsumption", () => {
     );
     expect(prepared.attempt).toEqual({
       idempotencyKey: prepared.input.idempotencyKey,
+      creditId: "credit-1",
       pending: true,
       feedback: null,
     });
+  });
+
+  it("uses a new idempotency key when a failed attempt switches reset credits", () => {
+    const first = prepareProviderResetConsumption({
+      attempt: { idempotencyKey: null, pending: false, feedback: null },
+      instanceId: ProviderInstanceId.make("codex-work"),
+      creditId: "credit-1",
+    });
+    const failedAttempt = {
+      ...first.attempt,
+      pending: false,
+      feedback: "Offline",
+    };
+
+    const second = prepareProviderResetConsumption({
+      attempt: failedAttempt,
+      instanceId: ProviderInstanceId.make("codex-work"),
+      creditId: "credit-2",
+    });
+
+    expect(second.input.idempotencyKey).not.toBe(first.input.idempotencyKey);
+    expect(second.attempt.creditId).toBe("credit-2");
+  });
+
+  it("builds a count-only reset request without a credit id", () => {
+    const prepared = prepareProviderResetConsumption({
+      attempt: { idempotencyKey: null, pending: false, feedback: null },
+      instanceId: ProviderInstanceId.make("codex-work"),
+      creditId: null,
+    });
+
+    expect(prepared.input.creditId).toBeNull();
+    expect(prepared.attempt.creditId).toBeNull();
   });
 });

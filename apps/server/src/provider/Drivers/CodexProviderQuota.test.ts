@@ -4,12 +4,16 @@ import {
   ProviderInstanceId,
   ProviderQuotaSnapshot,
   CodexSettings,
+  PROVIDER_QUOTA_BANKED_RESETS_MAX_ITEMS,
+  PROVIDER_QUOTA_METRICS_MAX_ITEMS,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as CodexClient from "effect-codex-app-server/client";
 import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
@@ -546,3 +550,115 @@ it.effect("caches full reads until a sparse update invalidates and bumps the rev
     NodeAssert.equal(reads, 2);
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
 );
+
+it.effect("times out a Codex quota read whose app-server never responds", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const request = (() => Effect.never) as CodexClient.CodexAppServerClient["Service"]["request"];
+    const quota = yield* makeCodexProviderQuota(decodeCodexSettings({}), {}, instanceId, spawner, {
+      openClient: Effect.succeed({ request }),
+    });
+    const fiber = yield* quota.read.pipe(
+      Effect.result,
+      Effect.timeoutOrElse({
+        duration: "11 seconds",
+        orElse: () => Effect.succeed("outer-timeout"),
+      }),
+      Effect.forkChild,
+    );
+
+    yield* TestClock.adjust("11 seconds");
+    const result = yield* Fiber.join(fiber);
+
+    NodeAssert.notEqual(result, "outer-timeout");
+    NodeAssert.equal(typeof result === "object" && result._tag, "Failure");
+    if (typeof result === "object" && result._tag === "Failure") {
+      NodeAssert.equal(result.failure.reason, "timeout");
+    }
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
+);
+
+it.effect("keeps a delivered reset token actionable across a rate-limit notification", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let consumedCreditId: string | null | undefined;
+    const request = ((method: string, payload: unknown) => {
+      if (method === "account/read") {
+        return Effect.succeed({
+          account: { type: "chatgpt", email: null, planType: "plus" },
+          requiresOpenaiAuth: false,
+        });
+      }
+      if (method === "account/rateLimits/read") {
+        return Effect.succeed({
+          rateLimits: {},
+          rateLimitResetCredits: {
+            availableCount: 1,
+            credits: [
+              {
+                id: "raw-reset-credit",
+                grantedAt: 1_700_000_000,
+                resetType: "codexRateLimits",
+                status: "available",
+              },
+            ],
+          },
+        });
+      }
+      NodeAssert.equal(method, "account/rateLimitResetCredit/consume");
+      consumedCreditId = (payload as { readonly creditId: string | null }).creditId;
+      return Effect.succeed({ outcome: "reset" });
+    }) as CodexClient.CodexAppServerClient["Service"]["request"];
+    const quota = yield* makeCodexProviderQuota(decodeCodexSettings({}), {}, instanceId, spawner, {
+      openClient: Effect.succeed({ request }),
+    });
+    NodeAssert.ok(quota.consumeBankedReset);
+
+    const token = (yield* quota.read).bankedResets?.resets[0]?.id;
+    NodeAssert.ok(token);
+    yield* quota.onRateLimitsUpdated({ rateLimits: {} });
+    yield* quota.consumeBankedReset({ creditId: token, idempotencyKey: "attempt-1" });
+
+    NodeAssert.equal(consumedCreditId, "raw-reset-credit");
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
+);
+
+it("truncates Codex metrics and reset rows to the wire cardinality limits", () => {
+  const manyLimits = Object.fromEntries(
+    Array.from({ length: 40 }, (_, index) => [
+      `limit-${index}`,
+      {
+        limitId: `limit-${index}`,
+        primary: { usedPercent: index },
+        secondary: { usedPercent: index },
+        individualLimit: {
+          limit: "100",
+          remainingPercent: 100 - index,
+          resetsAt: 1_700_000_000,
+          used: String(index),
+        },
+      },
+    ]),
+  );
+  const manyResets = Array.from({ length: 40 }, (_, index) => ({
+    id: `credit-${index}`,
+    grantedAt: 1_700_000_000 + index,
+    resetType: "codexRateLimits" as const,
+    status: "available" as const,
+  }));
+
+  const result = normalizeCodexProviderQuota(
+    {
+      rateLimits: {},
+      rateLimitsByLimitId: manyLimits,
+      rateLimitResetCredits: { availableCount: manyResets.length, credits: manyResets },
+    },
+    instanceId,
+    readAt,
+  );
+
+  NodeAssert.equal(result.metrics.length, PROVIDER_QUOTA_METRICS_MAX_ITEMS);
+  NodeAssert.equal(result.bankedResets?.resets.length, PROVIDER_QUOTA_BANKED_RESETS_MAX_ITEMS);
+  NodeAssert.equal(result.bankedResets?.detailsComplete, false);
+  NodeAssert.doesNotThrow(() => decodeProviderQuotaSnapshot(result));
+});

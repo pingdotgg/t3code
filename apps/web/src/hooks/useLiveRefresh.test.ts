@@ -104,6 +104,13 @@ describe("resolveLiveRefreshCadence", () => {
       }),
     ).toBe(false);
   });
+
+  it("clamps explicit zero and negative cadences to a safe positive interval", () => {
+    expect(resolveLiveRefreshCadence({ intervalMs: 0, minimumIntervalMs: -1 })).toEqual({
+      intervalMs: 1_000,
+      minimumIntervalMs: 1_000,
+    });
+  });
 });
 
 describe("useLiveRefresh", () => {

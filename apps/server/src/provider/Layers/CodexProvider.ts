@@ -36,7 +36,7 @@ import { expandHomePath } from "../../pathExpansion.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
-const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -355,7 +355,7 @@ export const makeScopedCodexAppServerClient = Effect.fn("makeScopedCodexAppServe
           cwd: input.cwd,
           env: environment,
           extendEnv: true,
-          forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
+          forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
           shell: spawnCommand.shell,
         }),
       )
