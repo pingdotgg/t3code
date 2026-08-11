@@ -5,6 +5,7 @@ import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
   StageBackdropArt,
+  StageBackdropButtonArt,
 } from "./SidebarStageBackdrop";
 
 describe("SidebarStageBackdrop", () => {
@@ -37,4 +38,26 @@ describe("SidebarStageBackdrop", () => {
       expect(new Set(ids).size).toBe(ids.length);
     },
   );
+
+  it("paints each artwork variant with theme-owned color tokens", () => {
+    const nightlyMarkup = renderToStaticMarkup(<StageBackdropArt variant="nightly" />);
+    const devMarkup = renderToStaticMarkup(<StageBackdropArt variant="dev" />);
+
+    expect(nightlyMarkup).toContain("var(--stage-night-bottom)");
+    expect(nightlyMarkup).toContain("var(--stage-night-line)");
+    expect(devMarkup).toContain("var(--stage-art-bottom)");
+    expect(devMarkup).toContain("var(--stage-art-line)");
+    expect(nightlyMarkup).not.toMatch(/#[0-9a-f]{3,8}/i);
+    expect(devMarkup).not.toMatch(/#[0-9a-f]{3,8}/i);
+  });
+
+  it.each([
+    ["nightly", "96 0 8192 96"],
+    ["dev", "64 0 8192 96"],
+  ] as const)("uses the compact %s crop inside the send button", (variant, viewBox) => {
+    const markup = renderToStaticMarkup(<StageBackdropButtonArt variant={variant} />);
+
+    expect(markup).toContain(`viewBox="${viewBox}"`);
+    expect(markup).toContain(`stage-${variant === "dev" ? "blueprint" : "nightly"}`);
+  });
 });
