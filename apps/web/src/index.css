@@ -316,7 +316,7 @@ html[data-native-vibrancy="true"]
   [data-thread-item]
   :is(
     [data-slot="sidebar-menu-sub-button"],
-    [data-slot="sidebar-menu-sub-button"] *,
+    [data-slot="sidebar-menu-sub-button"] *:not([data-thread-status-pulse]),
     [class*="transition-"]
   ) {
   transition-duration: 0ms !important;
