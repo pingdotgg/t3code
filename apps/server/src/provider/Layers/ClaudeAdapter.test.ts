@@ -157,6 +157,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
+  readonly onRateLimitEvent?: ClaudeAdapterLiveOptions["onRateLimitEvent"];
   readonly cwd?: string;
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
@@ -176,6 +177,7 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.onRateLimitEvent ? { onRateLimitEvent: config.onRateLimitEvent } : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -273,6 +275,70 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("records Claude rate limits before preserving the canonical runtime event", () => {
+    const callbackEvents: Array<Extract<SDKMessage, { readonly type: "rate_limit_event" }>> = [];
+    let markCallbackStarted: () => void = () => undefined;
+    let releaseCallback: () => void = () => undefined;
+    const callbackStarted = new Promise<void>((resolve) => {
+      markCallbackStarted = resolve;
+    });
+    const callbackGate = new Promise<void>((resolve) => {
+      releaseCallback = resolve;
+    });
+    const harness = makeHarness({
+      onRateLimitEvent: (event) =>
+        Effect.sync(() => {
+          callbackEvents.push(event);
+          markCallbackStarted();
+        }).pipe(Effect.andThen(Effect.promise(() => callbackGate))),
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const runtimeEventFiber = yield* Stream.filter(
+        adapter.streamEvents,
+        (event) => event.type === "account.rate-limits.updated",
+      ).pipe(Stream.runHead, Effect.forkChild);
+      const sdkEvent = {
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "allowed_warning",
+          utilization: 82,
+          resetsAt: 1_700_003_600,
+          rateLimitType: "five_hour",
+        },
+        uuid: "00000000-0000-4000-8000-000000000002",
+        session_id: "sdk-session-rate-limit",
+      } satisfies Extract<SDKMessage, { readonly type: "rate_limit_event" }>;
+
+      harness.query.emit(sdkEvent);
+
+      yield* Effect.promise(() => callbackStarted);
+      assert.deepEqual(callbackEvents, [sdkEvent]);
+      assert.equal(runtimeEventFiber.pollUnsafe(), undefined);
+
+      releaseCallback();
+      const runtimeEvent = yield* Fiber.join(runtimeEventFiber);
+      assert.equal(runtimeEvent._tag, "Some");
+      if (runtimeEvent._tag === "Some") {
+        assert.equal(runtimeEvent.value.type, "account.rate-limits.updated");
+        if (runtimeEvent.value.type === "account.rate-limits.updated") {
+          assert.deepEqual(runtimeEvent.value.payload.rateLimits, sdkEvent);
+        }
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
