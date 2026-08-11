@@ -1654,7 +1654,11 @@ function storedThemeHasId(storedTheme: unknown, themeId: string): boolean {
 }
 
 function storedThemeHasCollectionId(storedTheme: unknown, collectionId: string): boolean {
-  return isRecord(storedTheme) && parseThemeCollection(storedTheme.collection)?.id === collectionId;
+  return (
+    isRecord(storedTheme) &&
+    isRecord(storedTheme.collection) &&
+    storedTheme.collection.id === collectionId
+  );
 }
 
 export function installCustomTheme(theme: ThemeDefinition): ThemeDefinition {

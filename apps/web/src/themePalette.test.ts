@@ -645,6 +645,48 @@ describe("theme files", () => {
     invalidateCustomThemes();
   });
 
+  it("replaces collection entries even when their stored collection label is malformed", () => {
+    const collection = { id: "open-vsx:demo.theme", label: "Demo Theme" };
+    const stored = new Map<string, string>([
+      [
+        CUSTOM_THEMES_STORAGE_KEY,
+        JSON.stringify([
+          {
+            id: "old-light",
+            label: "Old Light",
+            appearance: "light",
+            colors: { canvas: "#ffffff" },
+            collection: { id: collection.id, label: 42 },
+          },
+        ]),
+      ],
+    ]);
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => stored.set(key, value),
+      },
+    });
+
+    invalidateCustomThemes();
+    const replacement = {
+      ...parseThemeFile({
+        version: THEME_FILE_VERSION,
+        id: "old-light",
+        name: "New Light",
+        appearance: "light",
+        colors: { canvas: "#fafafa" },
+      }),
+      collection,
+    };
+
+    expect(replaceCustomThemeCollection(collection.id, [replacement])).toEqual([replacement]);
+    expect(getCustomThemes()).toEqual([replacement]);
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
   it("canonicalizes explicit writes without migrating untouched themes", () => {
     const stored = new Map<string, string>();
     const untouchedTheme = {

@@ -116,11 +116,12 @@ function ThemeLibraryCard({
   variantNavigation?: {
     collectionLabel: string;
     options: ReadonlyArray<{
+      themeIndex: number;
       label: string;
       activeModes: ReadonlyArray<ThemeMode>;
-      preview: ThemeCardDefinition["previews"][number] | undefined;
+      preview: ThemeCardDefinition["previews"][number];
     }>;
-    onSelectAndUse: (index: number, mode: ThemeAppearance) => void;
+    onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
   };
 }) {
   // A one-appearance theme can only take its own side of the mix, so the card
@@ -129,9 +130,9 @@ function ThemeLibraryCard({
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
   const radialModeGroups = (["light", "dark"] as const).map((mode) => {
     const options =
-      variantNavigation?.options.flatMap((option, index) => {
+      variantNavigation?.options.flatMap((option) => {
         const preview = option.preview;
-        return preview?.mode === mode ? [{ index, option, preview }] : [];
+        return preview.mode === mode ? [{ option, preview }] : [];
       }) ?? [];
     return {
       mode,
@@ -198,7 +199,7 @@ function ThemeLibraryCard({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              variantNavigation.onSelectAndUse(selected.index, mode);
+                              variantNavigation.onSelectAndUse(selected.option.themeIndex, mode);
                             }}
                             onFocus={() => setRadialModeOpen(mode)}
                             onMouseEnter={() => setRadialModeOpen(mode)}
@@ -236,7 +237,7 @@ function ThemeLibraryCard({
                           ) : null}
                         </span>
                         {options.length > 1
-                          ? options.map(({ index, option, preview }, optionIndex) => {
+                          ? options.map(({ option, preview }, optionIndex) => {
                               const progress = optionIndex / (options.length - 1) - 0.5;
                               const childOffsetX = rootOffsetX + progress * 68;
                               const childOffsetY = Math.abs(progress) * 10;
@@ -262,7 +263,7 @@ function ThemeLibraryCard({
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      variantNavigation.onSelectAndUse(index, mode);
+                                      variantNavigation.onSelectAndUse(option.themeIndex, mode);
                                     }}
                                     onFocus={() => setRadialModeOpen(mode)}
                                     onMouseEnter={() => setRadialModeOpen(mode)}
@@ -468,15 +469,18 @@ function CustomThemeCollectionCard({
         ? {
             variantNavigation: {
               collectionLabel,
-              options: themes.map((variant, index) => ({
-                label: variantLabels[index] ?? variant.label,
-                activeModes: activeModesFor(variant.id),
-                preview: getThemeCardDefinition(variant).previews[0],
-              })),
-              onSelectAndUse: (index, mode) => {
-                const selectedTheme = themes[index];
+              options: themes.flatMap((variant, themeIndex) =>
+                getThemeCardDefinition(variant).previews.map((preview) => ({
+                  themeIndex,
+                  label: variantLabels[themeIndex] ?? variant.label,
+                  activeModes: activeModesFor(variant.id),
+                  preview,
+                })),
+              ),
+              onSelectAndUse: (themeIndex, mode) => {
+                const selectedTheme = themes[themeIndex];
                 if (!selectedTheme) return;
-                setVariantIndex(index);
+                setVariantIndex(themeIndex);
                 onUseMode(selectedTheme, mode);
               },
             },
@@ -725,7 +729,9 @@ export function ThemeLibrary({
   const customThemeCollections = [
     ...customThemes
       .reduce((groups, customTheme) => {
-        const groupId = customTheme.collection?.id ?? `theme:${customTheme.id}`;
+        const groupId = customTheme.collection
+          ? `collection:${customTheme.collection.id}`
+          : `theme:${customTheme.id}`;
         const group = groups.get(groupId);
         if (group) group.push(customTheme);
         else groups.set(groupId, [customTheme]);

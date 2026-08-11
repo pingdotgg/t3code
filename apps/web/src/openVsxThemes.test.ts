@@ -413,6 +413,21 @@ describe("Open VSX themes", () => {
     const renamedThemes = await importOpenVsxThemeExtension(extension);
     expect(renamedThemes.map((theme) => theme.id)).toEqual(themes.map((theme) => theme.id));
 
+    packagedManifest.contributes.themes.push({
+      label: "Duplicate Demo",
+      uiTheme: "vs-dark",
+      path: "./themes/demo.json",
+    });
+    await rebuildPackage();
+    const duplicatePathThemes = await importOpenVsxThemeExtension(extension);
+    expect(new Set(duplicatePathThemes.map((theme) => theme.id)).size).toBe(
+      duplicatePathThemes.length,
+    );
+    expect(themes.every(({ id }) => duplicatePathThemes.some((theme) => theme.id === id))).toBe(
+      true,
+    );
+    packagedManifest.contributes.themes.pop();
+
     packagedManifest.contributes.themes[2]!.path = "./themes/missing.json";
     await rebuildPackage();
     await expect(importOpenVsxThemeExtension(extension)).rejects.toThrow(

@@ -749,9 +749,20 @@ export async function importOpenVsxThemeExtension(
     throw new Error("That extension has no compatible color themes.");
   }
   const extensionId = extension.id.toLowerCase();
+  const sourcePathCounts = new Map<string, number>();
+  for (const { sourcePath } of parsed) {
+    sourcePathCounts.set(sourcePath, (sourcePathCounts.get(sourcePath) ?? 0) + 1);
+  }
+  const sourcePathOccurrences = new Map<string, number>();
+  const sourceIdentities = parsed.map(({ sourcePath }) => {
+    if (sourcePathCounts.get(sourcePath) === 1) return sourcePath;
+    const occurrence = sourcePathOccurrences.get(sourcePath) ?? 0;
+    sourcePathOccurrences.set(sourcePath, occurrence + 1);
+    return occurrence === 0 ? sourcePath : `${sourcePath}\0${occurrence}`;
+  });
   const resolved = resolveThemeLabelCollisions(parsed).map((theme, index) => ({
     ...theme,
-    id: openVsxThemeId(extensionId, parsed[index]!.sourcePath),
+    id: openVsxThemeId(extensionId, sourceIdentities[index]!),
   }));
   const paired = pairVsCodeThemes(resolved, {
     pairedId: (light, dark) => openVsxThemeId(extensionId, [light.id, dark.id].sort().join(":")),

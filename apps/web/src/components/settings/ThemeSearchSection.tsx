@@ -154,7 +154,14 @@ export function ThemeSearchSection({
 
   const handleInstall = useCallback(
     async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
-      const installedCollection = getStoredCustomThemeCollection(extension.collectionId);
+      setError(null);
+      let installedCollection: ReadonlyArray<ThemeDefinition>;
+      try {
+        installedCollection = getStoredCustomThemeCollection(extension.collectionId);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Installed themes could not be read.");
+        return;
+      }
       const updated = installedCollection.length > 0;
       if (updated && !allowUpdate) {
         setPendingUpdate(extension);
@@ -165,7 +172,6 @@ export function ThemeSearchSection({
       const controller = new AbortController();
       requestRef.current = controller;
       setInstallingId(extension.id);
-      setError(null);
       try {
         const themes = await importOpenVsxThemeExtension(extension, controller.signal);
         if (!controller.signal.aborted) {
