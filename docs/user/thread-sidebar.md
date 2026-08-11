@@ -8,8 +8,8 @@ On web and desktop, drag a pinned thread to change its position. On mobile, open
 and choose **Move up** or **Move down**. The order is stored by the server and appears on your
 other connected devices.
 
-In the native iPhone app, swipe a thread to reveal its lifecycle action and **Delete**. A full
-swipe settles or reopens a thread; it never deletes the thread.
+In the native iPhone app, swipe a thread to reveal its lifecycle action and **Delete**. On rows
+that offer **Settle** or **Reopen**, a full swipe performs that action; it never deletes the thread.
 Deleting asks for confirmation. After settling a thread, use the temporary **Undo** message to
 return it to active work and restore its previous pin and snooze state.
 

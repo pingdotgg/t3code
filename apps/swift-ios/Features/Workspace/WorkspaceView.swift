@@ -897,6 +897,7 @@ public struct WorkspaceView: View {
     }
 
     private func dismissTransientPresentations() {
+        deleteConfirmation.cancel()
         showingNewTask = false
         showingAddProject = false
         showingSettings = false
