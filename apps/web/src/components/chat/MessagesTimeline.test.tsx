@@ -478,6 +478,29 @@ describe("MessagesTimeline", () => {
     expect(markup).toMatch(/<code[^>]*whitespace-nowrap[^>]*>#0F172A/);
   });
 
+  it("renders color swatches in headings and table cells", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            ["## Accent #FF5733", "", "| Name | Hex |", "| --- | --- |", "| Ink | #00AABB |"].join(
+              "\n",
+            ),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("background-color:#FF5733");
+    expect(markup).toContain("background-color:#00AABB");
+    // Swatches add no text, so cell textContent — what CSV copy reads — is untouched.
+    const cellText = [...markup.matchAll(/<td[^>]*>(.*?)<\/td>/gs)].map((match) =>
+      (match[1] ?? "").replace(/<[^>]+>/g, ""),
+    );
+    expect(cellText).toEqual(["Ink", "#00AABB"]);
+  });
+
   it("renders inline terminal labels with the composer chip UI", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

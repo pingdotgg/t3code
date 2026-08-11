@@ -1480,9 +1480,39 @@ function ChatMarkdown({
       );
     };
 
+    // Headings and table cells sit outside the paragraph/list-item route, so a hex
+    // literal in one renders plain. Decorate them for colors only: passing no skills
+    // keeps chips out of table cells, whose CSV copy reads raw `textContent` and would
+    // otherwise serialize a chip's display name in place of its `$name`.
+    const hexOnly = (children: ReactNode) => renderSkillInlineMarkdownChildren(children, []);
+
     return {
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+      },
+      h1({ node: _node, children, ...props }) {
+        return <h1 {...props}>{hexOnly(children)}</h1>;
+      },
+      h2({ node: _node, children, ...props }) {
+        return <h2 {...props}>{hexOnly(children)}</h2>;
+      },
+      h3({ node: _node, children, ...props }) {
+        return <h3 {...props}>{hexOnly(children)}</h3>;
+      },
+      h4({ node: _node, children, ...props }) {
+        return <h4 {...props}>{hexOnly(children)}</h4>;
+      },
+      h5({ node: _node, children, ...props }) {
+        return <h5 {...props}>{hexOnly(children)}</h5>;
+      },
+      h6({ node: _node, children, ...props }) {
+        return <h6 {...props}>{hexOnly(children)}</h6>;
+      },
+      th({ node: _node, children, ...props }) {
+        return <th {...props}>{hexOnly(children)}</th>;
+      },
+      td({ node: _node, children, ...props }) {
+        return <td {...props}>{hexOnly(children)}</td>;
       },
       blockquote({ node: _node, children, ...props }) {
         const alert =
