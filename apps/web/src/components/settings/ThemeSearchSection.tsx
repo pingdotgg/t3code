@@ -225,23 +225,46 @@ export function ThemeSearchSection({
         </Button>
       </form>
 
-      <div className="flex items-center justify-end gap-2">
-        <span className="text-muted-foreground text-xs">Sort</span>
-        <Select disabled={installingId !== null} value={sortBy} onValueChange={handleSortChange}>
-          <SelectTrigger size="sm" className="w-40" aria-label="Sort themes">
-            <SelectValue>
-              {SORT_OPTIONS.find((option) => option.value === sortBy)?.label}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            {SORT_OPTIONS.map((option) => (
-              <SelectItem key={option.value} hideIndicator value={option.value}>
-                {option.label}
-              </SelectItem>
+      {!isSearching ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <p className="text-muted-foreground text-xs">Popular</p>
+            {SUGGESTED_SEARCHES.map((suggestion) => (
+              <Button
+                key={suggestion}
+                size="xs"
+                variant="ghost"
+                onClick={() => void runSearch(suggestion)}
+              >
+                {suggestion}
+              </Button>
             ))}
-          </SelectPopup>
-        </Select>
-      </div>
+          </div>
+          {results && results.length > 0 ? (
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              <p className="text-muted-foreground text-xs">Sort</p>
+              <Select
+                disabled={installingId !== null}
+                value={sortBy}
+                onValueChange={handleSortChange}
+              >
+                <SelectTrigger size="sm" className="w-40" aria-label="Sort themes">
+                  <SelectValue>
+                    {SORT_OPTIONS.find((option) => option.value === sortBy)?.label}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {SORT_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} hideIndicator value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="sr-only" role="status">
         {isSearching
@@ -257,22 +280,6 @@ export function ThemeSearchSection({
           className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive text-sm"
         >
           {error}
-        </div>
-      ) : null}
-
-      {results === null && !isSearching ? (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-muted-foreground text-xs">Popular</span>
-          {SUGGESTED_SEARCHES.map((suggestion) => (
-            <Button
-              key={suggestion}
-              size="xs"
-              variant="ghost"
-              onClick={() => void runSearch(suggestion)}
-            >
-              {suggestion}
-            </Button>
-          ))}
         </div>
       ) : null}
 
