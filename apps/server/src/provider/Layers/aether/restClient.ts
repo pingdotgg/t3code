@@ -321,13 +321,33 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
       }
     });
 
-  /** Execute with timeout, then map every non-2xx status to its typed error. */
+  /**
+   * ONE deadline over a COMPLETE exchange — request, response and body decode.
+   * `Effect.timeout` on the request alone expires when the response HEADERS
+   * arrive, so a server (or proxy) that answers and then stalls mid-body hung
+   * task create/respond/poll/project-lookup indefinitely despite the advertised
+   * per-request timeout. Every public method routes through this.
+   */
+  const withExchangeDeadline =
+    (endpoint: string) =>
+    <A>(exchange: Effect.Effect<A, AetherRestError>): Effect.Effect<A, AetherRestError> =>
+      exchange.pipe(
+        Effect.timeout(timeoutMs),
+        Effect.catchTags({
+          TimeoutError: () =>
+            new AetherApiTransportError({
+              endpoint,
+              detail: "The request did not complete before the deadline.",
+            }),
+        }),
+      );
+
+  /** Execute, then map every non-2xx status to its typed error. */
   const execute = (
     endpoint: string,
     request: HttpClientRequest.HttpClientRequest,
   ): Effect.Effect<HttpClientResponse.HttpClientResponse, AetherRestError> =>
     httpClient.execute(prepare(request)).pipe(
-      Effect.timeout(timeoutMs),
       Effect.mapError(
         (cause) =>
           new AetherApiTransportError({
@@ -380,6 +400,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
     execute(endpoint, HttpClientRequest.get(url)).pipe(
       Effect.flatMap((response) => readJson(endpoint, response)),
       Effect.flatMap(decodeWith(endpoint, decode)),
+      withExchangeDeadline(endpoint),
     );
 
   const requestWithJsonBody = (
@@ -410,6 +431,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
     requestWithJsonBody(endpoint, HttpClientRequest.post(url), body).pipe(
       Effect.flatMap((response) => readJson(endpoint, response)),
       Effect.flatMap(decodeWith(endpoint, decode)),
+      withExchangeDeadline(endpoint),
     );
 
   const postJsonVoid = (
@@ -417,7 +439,10 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
     url: string,
     body: unknown,
   ): Effect.Effect<void, AetherRestError> =>
-    requestWithJsonBody(endpoint, HttpClientRequest.post(url), body).pipe(Effect.asVoid);
+    requestWithJsonBody(endpoint, HttpClientRequest.post(url), body).pipe(
+      Effect.asVoid,
+      withExchangeDeadline(endpoint),
+    );
 
   // The task union needs a two-stage decode (envelope, then status-probe
   // dispatch); these wrap `decodeAetherTask` for the flattened
@@ -488,6 +513,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
       ).pipe(
         Effect.flatMap((response) => readJson(endpoint, response)),
         Effect.flatMap(decodeTaskResponse(endpoint)),
+        withExchangeDeadline(endpoint),
       );
     },
 
@@ -495,6 +521,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
       execute("GET /tasks/{id}", HttpClientRequest.get(`${baseUrl}/tasks/${taskId}`)).pipe(
         Effect.flatMap((response) => readJson("GET /tasks/{id}", response)),
         Effect.flatMap(decodeTaskResponse("GET /tasks/{id}")),
+        withExchangeDeadline("GET /tasks/{id}"),
       ),
 
     getConversationMessages: (taskId, before) => {
@@ -509,6 +536,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
       ).pipe(
         Effect.flatMap((response) => readJson(endpoint, response)),
         Effect.flatMap(decodeMessagesPage(endpoint)),
+        withExchangeDeadline(endpoint),
       );
     },
 
@@ -522,6 +550,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
       ).pipe(
         Effect.flatMap((response) => readJson(endpoint, response)),
         Effect.flatMap(decodeDelta(endpoint)),
+        withExchangeDeadline(endpoint),
       );
     },
 
@@ -531,7 +560,6 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
       // The 409 conflict union is a decoded OUTCOME here, so this request
       // cannot go through `execute` (which maps every non-2xx to an error).
       return httpClient.execute(prepare(HttpClientRequest.post(url))).pipe(
-        Effect.timeout(timeoutMs),
         Effect.mapError(
           (cause) =>
             new AetherApiTransportError({
@@ -554,6 +582,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
           }
           return mapErrorStatus(endpoint, response);
         }),
+        withExchangeDeadline(endpoint),
       );
     },
 

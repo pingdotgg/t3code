@@ -361,7 +361,7 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
     readonly rows: number;
   }) =>
     Effect.gen(function* () {
-      const lock = yield* Semaphore.make(1);
+      const lock = Semaphore.makeUnsafe(1);
       const session: AetherTerminalSession = {
         threadId: input.threadId,
         terminalId: input.terminalId,
@@ -384,7 +384,29 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       return session;
     });
 
-  const open: AetherTerminalManager["Service"]["open"] = (input) =>
+  /**
+   * One creation slot per terminal key. `open`'s "is there a session?" check
+   * and `createSession`'s `sessions.set` are separated by yields, so two
+   * concurrent opens for the SAME new terminal both saw nothing, both built a
+   * session, and the second `set` orphaned the first — along with its
+   * standalone Scope, which neither `close` nor the shutdown finalizer can
+   * reach afterwards, leaking a live cloud shell and its socket. Serializing
+   * per key makes the second caller observe the first's session and take the
+   * reuse path. Built with `makeUnsafe` so the map lookup that hands out the
+   * lock cannot itself yield between its get and set.
+   */
+  const openLocks = new Map<string, Semaphore.Semaphore>();
+  const openLockFor = (key: string): Semaphore.Semaphore => {
+    const existing = openLocks.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = Semaphore.makeUnsafe(1);
+    openLocks.set(key, created);
+    return created;
+  };
+
+  const openSerialized: AetherTerminalManager["Service"]["open"] = (input) =>
     Effect.gen(function* () {
       const key = sessionKey(input.threadId, input.terminalId);
       const cols = input.cols ?? DEFAULT_COLS;
@@ -428,6 +450,13 @@ export const make = Effect.fn("AetherTerminalManager.make")(function* () {
       });
       return snapshotOf(session);
     });
+
+  const open: AetherTerminalManager["Service"]["open"] = (input) =>
+    Effect.suspend(() =>
+      openLockFor(sessionKey(input.threadId, input.terminalId)).withPermits(1)(
+        openSerialized(input),
+      ),
+    );
 
   const attachStream: AetherTerminalManager["Service"]["attachStream"] = (input, listener) =>
     Effect.gen(function* () {
