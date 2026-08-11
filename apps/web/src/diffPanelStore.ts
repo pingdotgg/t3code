@@ -29,6 +29,7 @@ interface DiffPanelStoreState {
   reconcileCommitSelection: (
     ref: ScopedThreadRef,
     availableCommitShas: ReadonlyArray<string>,
+    listIsComplete: boolean,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -137,11 +138,18 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             },
           };
         }),
-      reconcileCommitSelection: (ref, availableCommitShas) =>
+      reconcileCommitSelection: (ref, availableCommitShas, listIsComplete) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
-          if (previous?.kind !== "commit" || availableCommitShas.includes(previous.commitSha)) {
+          // Only a complete, non-empty listing proves the commit left the range. A capped
+          // listing, a failed one, and one that has not loaded yet all look empty here.
+          if (
+            previous?.kind !== "commit" ||
+            !listIsComplete ||
+            availableCommitShas.length === 0 ||
+            availableCommitShas.includes(previous.commitSha)
+          ) {
             return state;
           }
           return {

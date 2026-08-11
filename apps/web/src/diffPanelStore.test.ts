@@ -109,7 +109,7 @@ describe("diffPanelStore", () => {
   it("falls back to branch changes when a selected commit leaves the branch range", () => {
     useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/main");
     useDiffPanelStore.getState().selectCommit(THREAD_REF, COMMIT_SHA);
-    useDiffPanelStore.getState().reconcileCommitSelection(THREAD_REF, [OTHER_COMMIT_SHA]);
+    useDiffPanelStore.getState().reconcileCommitSelection(THREAD_REF, [OTHER_COMMIT_SHA], true);
 
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
@@ -120,7 +120,25 @@ describe("diffPanelStore", () => {
     useDiffPanelStore.getState().selectCommit(THREAD_REF, COMMIT_SHA);
     useDiffPanelStore
       .getState()
-      .reconcileCommitSelection(THREAD_REF, [OTHER_COMMIT_SHA, COMMIT_SHA]);
+      .reconcileCommitSelection(THREAD_REF, [OTHER_COMMIT_SHA, COMMIT_SHA], true);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "commit", commitSha: COMMIT_SHA, baseRef: null });
+  });
+
+  it("keeps a commit selection when the listed commits are capped", () => {
+    useDiffPanelStore.getState().selectCommit(THREAD_REF, COMMIT_SHA);
+    useDiffPanelStore.getState().reconcileCommitSelection(THREAD_REF, [OTHER_COMMIT_SHA], false);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "commit", commitSha: COMMIT_SHA, baseRef: null });
+  });
+
+  it("keeps a commit selection when no commits were listed", () => {
+    useDiffPanelStore.getState().selectCommit(THREAD_REF, COMMIT_SHA);
+    useDiffPanelStore.getState().reconcileCommitSelection(THREAD_REF, [], true);
 
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),

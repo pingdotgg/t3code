@@ -866,6 +866,25 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps a truncated prefix when the branch commit listing exceeds its cap", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/long-subject"]);
+        // A single subject past the output cap: the listing degrades to a truncated
+        // prefix instead of collapsing to no commits at all.
+        yield* writeTextFile(cwd, "message.txt", `${"long subject ".repeat(25_000)}\n`);
+        yield* git(cwd, ["add", "message.txt"]);
+        yield* git(cwd, ["commit", "-F", "message.txt"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+
+        assert.strictEqual(preview.branchCommits.length, 1);
+        assert.isTrue(preview.branchCommitsTruncated);
+      }),
+    );
+
     it.effect("previews a root commit against the empty tree", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

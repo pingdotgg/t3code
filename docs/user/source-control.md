@@ -48,7 +48,8 @@ T3 Code works with the platforms your team already uses:
 
 - Open the Diff pane's scope menu and pick a commit under **Commits** to see only the changes that
   commit introduced
-- The list covers the commits in the current branch comparison, so changing the base ref rescopes it
+- The list covers the commits in the current branch comparison (up to the 100 most recent), so
+  changing the base ref rescopes it
 
 ### Know Your Setup at a Glance
 

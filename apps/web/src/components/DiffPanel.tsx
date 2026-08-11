@@ -254,8 +254,10 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
+  // Runs for every selection: the scope menu lists this preview's commits even while a
+  // turn or a single commit is being viewed.
   const primaryBranchDiffPreview = useEnvironmentQuery(
-    selectedTurnId === null && activeThread && activeCwd
+    activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
@@ -267,7 +269,6 @@ export default function DiffPanel({
       : null,
   );
   const shouldRetryBranchDiffAtEnvironmentCwd =
-    selectedTurnId === null &&
     primaryBranchDiffPreview.error?.includes("configured workspace root") === true &&
     serverConfig?.cwd !== undefined &&
     serverConfig.cwd !== activeCwd;
@@ -302,13 +303,14 @@ export default function DiffPanel({
   const branchCommits = branchDiffPreview.data?.branchCommits ?? [];
 
   useEffect(() => {
-    const commits = branchDiffPreview.data?.branchCommits;
-    if (!routeThreadRef || diffSelection.kind !== "commit" || !commits) return;
+    const preview = branchDiffPreview.data;
+    if (!routeThreadRef || diffSelection.kind !== "commit" || !preview) return;
     useDiffPanelStore.getState().reconcileCommitSelection(
       routeThreadRef,
-      commits.map((commit) => commit.sha),
+      preview.branchCommits.map((commit) => commit.sha),
+      !preview.branchCommitsTruncated,
     );
-  }, [branchDiffPreview.data?.branchCommits, diffSelection.kind, routeThreadRef]);
+  }, [branchDiffPreview.data, diffSelection.kind, routeThreadRef]);
 
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
   const refreshCommitDiffPreview = commitDiffPreview.refresh;

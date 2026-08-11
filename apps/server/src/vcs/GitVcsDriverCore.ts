@@ -2359,11 +2359,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               `${baseRef}..HEAD`,
               "--",
             ],
-            { maxOutputBytes: REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES },
-          ).pipe(Effect.orElseSucceed(() => ({ stdout: "" })))
+            {
+              maxOutputBytes: REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES,
+              appendTruncationMarker: true,
+            },
+          ).pipe(Effect.orElseSucceed(() => ({ stdout: "", stdoutTruncated: false })))
         : null;
     const parsedBranchCommits = parseReviewBranchCommits(branchCommitResult?.stdout ?? "");
-    const branchCommitsTruncated = parsedBranchCommits.length > REVIEW_BRANCH_COMMIT_LIMIT;
+    const branchCommitsTruncated =
+      parsedBranchCommits.length > REVIEW_BRANCH_COMMIT_LIMIT ||
+      (branchCommitResult?.stdoutTruncated ?? false);
     const branchCommits = parsedBranchCommits.slice(0, REVIEW_BRANCH_COMMIT_LIMIT);
     const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff),

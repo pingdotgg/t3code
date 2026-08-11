@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { GitCommandError } from "./git.ts";
@@ -64,9 +65,14 @@ export const ReviewDiffPreviewResult = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   generatedAt: Schema.DateTimeUtc,
   sources: Schema.Array(ReviewDiffPreviewSource),
-  /** Newest first, capped by the server; empty while a single commit is being previewed. */
-  branchCommits: Schema.Array(ReviewBranchCommit),
-  branchCommitsTruncated: Schema.Boolean,
+  /**
+   * Newest first, capped by the server; empty while a single commit is being previewed.
+   * Absent from servers that predate commit previews, so both keys decode to a default.
+   */
+  branchCommits: Schema.Array(ReviewBranchCommit).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  branchCommitsTruncated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ReviewDiffPreviewResult = typeof ReviewDiffPreviewResult.Type;
 
