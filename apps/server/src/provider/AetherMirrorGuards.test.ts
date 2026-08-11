@@ -82,8 +82,8 @@ describe("AetherMirrorGuards", () => {
   it("aetherMirrorWriteFileError carries the refusal as its message", () => {
     const error = aetherMirrorWriteFileError({ cwd: "/repos/mirror", relativePath: "src/a.ts" });
     expect(error._tag).toBe("ProjectWriteFileError");
-    expect(error.failure).toBe("operation_failed");
-    // Pins decodedProjectErrorMessage honoring the caller-provided message —
+    expect(error.failure).toBe("aether_mirror_read_only");
+    // The message is derived from the aether_mirror_read_only failure literal —
     // the web UI renders exactly this text.
     expect(error.message).toBe(AETHER_MIRROR_REFUSAL);
   });

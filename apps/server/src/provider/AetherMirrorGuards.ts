@@ -13,17 +13,16 @@
  *
  * @module provider/AetherMirrorGuards
  */
-import { GitCommandError, ProjectWriteFileError } from "@t3tools/contracts";
+import { AETHER_MIRROR_REFUSAL, GitCommandError, ProjectWriteFileError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+
+export { AETHER_MIRROR_REFUSAL };
 
 /** The ownership queries the guards need — structurally AetherMirrorRegistry. */
 export interface AetherMirrorOwnership {
   readonly ownsCwd: (cwd: string) => Effect.Effect<boolean>;
   readonly ownsTargetPath: (cwd: string, target: string) => Effect.Effect<boolean>;
 }
-
-export const AETHER_MIRROR_REFUSAL =
-  "This checkout is mirrored from an Aether cloud task. Local saves, commits, pulls and branch changes are unavailable while the cloud session is active — changes flow one way, from the cloud workspace into this checkout.";
 
 /** Refuse a cwd-scoped VCS mutation while an Aether thread owns the cwd. */
 export const guardAetherVcsMutation = <A, E, R>(
@@ -78,6 +77,5 @@ export const aetherMirrorWriteFileError = (input: {
   new ProjectWriteFileError({
     cwd: input.cwd,
     relativePath: input.relativePath,
-    failure: "operation_failed",
-    message: AETHER_MIRROR_REFUSAL,
+    failure: "aether_mirror_read_only",
   });
