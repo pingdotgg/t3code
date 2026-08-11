@@ -338,6 +338,75 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(processLayer));
   });
 
+  it.effect("recreates a stale local tunnel without stopping the remote server", () => {
+    let localTunnelReady = true;
+    let remoteLaunchCount = 0;
+    let tunnelKillCount = 0;
+    let stopCommandCount = 0;
+    const conditionalHttpClient = HttpClient.make((request) =>
+      localTunnelReady
+        ? Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 })))
+        : Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 503 }))),
+    );
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          localTunnelReady = true;
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          remoteLaunchCount += 1;
+          return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
+        }
+        if (args.includes("sh")) {
+          stopCommandCount += 1;
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }
+        return makeSuccessfulProcess("\n");
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, conditionalHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(target);
+        localTunnelReady = false;
+        const reconnectFiber = yield* Effect.forkChild(manager.ensureEnvironment(target));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(2_500));
+        yield* Fiber.join(reconnectFiber);
+
+        assert.equal(remoteLaunchCount, 2);
+        assert.equal(tunnelKillCount, 1);
+        assert.equal(stopCommandCount, 0);
+      }).pipe(Effect.provide(layer)),
+    ).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          assert.equal(tunnelKillCount, 2);
+          assert.equal(stopCommandCount, 0);
+        }),
+      ),
+    );
+  });
+
   it.effect("closes the tunnel scope and starts fresh after disconnect", () => {
     const spawnedCommands: Array<ReadonlyArray<string>> = [];
     let tunnelKillCount = 0;
