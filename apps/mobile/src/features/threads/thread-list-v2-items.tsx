@@ -484,7 +484,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         title: preset.label,
         subtitle: preset.whenLabel,
       })),
-      { id: "snooze-for", title: "Snooze for…" },
+      { id: "snooze-for", title: "Until…" },
     ],
     [snoozePresets],
   );

@@ -434,7 +434,7 @@ function SnoozePopoverButton(props: {
           }}
           className="flex w-full cursor-pointer items-center rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 hover:bg-accent hover:text-foreground"
         >
-          Snooze for…
+          Until…
         </button>
       </PopoverPopup>
     </Popover>
@@ -2917,7 +2917,7 @@ export default function Sidebar() {
                         id: `snooze:${preset.id}`,
                         label: `${preset.label} (${preset.whenLabel})`,
                       })),
-                      { id: "snooze-for", label: "Snooze for…" },
+                      { id: "snooze-for", label: "Until…" },
                     ],
                   },
                 ]
