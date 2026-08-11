@@ -175,20 +175,22 @@ public struct SettingsView: View {
                 settingsDivider
                 SettingsValueRow(title: "Version", value: appVersionLabel)
                 settingsDivider
-                NavigationLink {
-                    BuildChangelogView(
-                        changelog: buildChangelog,
-                        versionLabel: appVersionLabel
-                    )
-                } label: {
-                    SettingsNavigationRow(
-                        title: "Build changelog",
-                        systemImage: "clock.arrow.circlepath",
-                        trailingSystemImage: "chevron.right"
-                    )
+                if buildChangelog != nil {
+                    NavigationLink {
+                        BuildChangelogView(
+                            changelog: buildChangelog,
+                            versionLabel: appVersionLabel
+                        )
+                    } label: {
+                        SettingsNavigationRow(
+                            title: "Build changelog",
+                            systemImage: "clock.arrow.circlepath",
+                            trailingSystemImage: "chevron.right"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    settingsDivider
                 }
-                .buttonStyle(.plain)
-                settingsDivider
                 SettingsValueRow(title: "Platform", value: "Native SwiftUI")
                 settingsDivider
                 Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
@@ -256,11 +258,6 @@ enum SettingsAboutMetadata {
         else { return nil }
         return value
     }
-}
-private struct EnvironmentStatusPresentation {
-    let title: String
-    let symbol: String
-    let color: Color
 }
 
 private struct SettingsSection<Content: View>: View {

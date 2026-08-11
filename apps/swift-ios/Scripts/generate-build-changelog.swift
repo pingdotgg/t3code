@@ -8,7 +8,6 @@ struct Entry: Codable {
     let summary: String
     let pullRequest: Int?
     let pullRequestURL: String?
-    let committedAt: String?
 }
 
 struct Changelog: Codable {
@@ -16,6 +15,7 @@ struct Changelog: Codable {
     let baseRevision: String?
     let repositoryURL: String?
     let generatedBy: String
+    let omittedCount: Int
     let entries: [Entry]
 }
 
@@ -30,7 +30,7 @@ func git(_ arguments: [String], repository: String, required: Bool = true) -> St
     process.arguments = ["-C", repository] + arguments
     let output = Pipe()
     process.standardOutput = output
-    process.standardError = required ? FileHandle.standardError : Pipe()
+    process.standardError = required ? FileHandle.standardError : FileHandle.nullDevice
     do { try process.run() } catch { fail("could not launch git: \(error)") }
     let data = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
@@ -52,11 +52,11 @@ let baseRef = arguments[2]
 let outputURL = URL(fileURLWithPath: arguments[3])
 let revision = git(["rev-parse", "HEAD"], repository: repository, required: false) ?? "unknown"
 let baseRevision = git(["rev-parse", baseRef], repository: repository, required: false)
-let rawRepositoryURL = git(
+let rawPullRequestRepositoryURL = git(
     ["remote", "get-url", "upstream"], repository: repository, required: false
 ) ?? git(["remote", "get-url", "origin"], repository: repository, required: false)
-let repositoryURL: String? = {
-    guard var value = rawRepositoryURL else { return nil }
+func normalizedRepositoryURL(_ rawValue: String?) -> String? {
+    guard var value = rawValue else { return nil }
     value = value.replacingOccurrences(of: #"\.git$"#, with: "", options: .regularExpression)
     if value.hasPrefix("git@") {
         value = "https://" + value.dropFirst("git@".count).replacingOccurrences(of: ":", with: "/")
@@ -64,7 +64,21 @@ let repositoryURL: String? = {
         value = "https://" + value.dropFirst("ssh://git@".count)
     }
     return value.hasPrefix("https://") ? value : nil
-}()
+}
+let pullRequestRepositoryURL = normalizedRepositoryURL(rawPullRequestRepositoryURL)
+let containingRemoteNames = git([
+    "for-each-ref", "--contains", revision,
+    "--format=%(refname:short)", "refs/remotes",
+], repository: repository, required: false)?
+    .split(separator: "\n")
+    .compactMap { $0.split(separator: "/", maxSplits: 1).first.map(String.init) }
+    ?? []
+let commitRemoteName = ["upstream", "contrib", "origin"].first {
+    containingRemoteNames.contains($0)
+}
+let repositoryURL = normalizedRepositoryURL(commitRemoteName.flatMap {
+    git(["remote", "get-url", $0], repository: repository, required: false)
+})
 let fieldSeparator = Character("\u{1f}")
 let recordSeparator = Character("\u{1e}")
 let log: String
@@ -75,31 +89,31 @@ if baseRevision == nil || revision == "unknown" {
     log = ""
 } else {
     log = git([
-        "log", "--reverse", "--date=iso-strict",
-        "--format=%H%x1f%s%x1f%b%x1f%cI%x1e", "\(baseRef)..HEAD",
-    ], repository: repository)!
+        "log", "--reverse",
+        "--format=%H%x1f%s%x1f%b%x1e", "\(baseRef)..HEAD",
+    ], repository: repository, required: false) ?? ""
 }
 let pullRequestPattern = try! NSRegularExpression(pattern: #"\(#(\d+)\)$"#)
 var entries = log.split(separator: recordSeparator).compactMap { record -> Entry? in
     let fields = record.split(separator: fieldSeparator, omittingEmptySubsequences: false)
-    guard fields.count >= 4 else { return nil }
+    guard fields.count >= 3 else { return nil }
     let commit = String(fields[0]).trimmingCharacters(in: .whitespacesAndNewlines)
     let title = String(fields[1]).trimmingCharacters(in: .whitespacesAndNewlines)
     let body = String(fields[2]).trimmingCharacters(in: .whitespacesAndNewlines)
-    let date = String(fields[3]).trimmingCharacters(in: .whitespacesAndNewlines)
     let range = NSRange(title.startIndex..<title.endIndex, in: title)
     let pullRequest = pullRequestPattern.firstMatch(in: title, range: range).flatMap { match in
         Range(match.range(at: 1), in: title).flatMap { Int(title[$0]) }
     }
-    let pullRequestURL = pullRequest.flatMap { number in repositoryURL.map { "\($0)/pull/\(number)" } }
+    let pullRequestURL = pullRequest.flatMap { number in
+        pullRequestRepositoryURL.map { "\($0)/pull/\(number)" }
+    }
     let fallback = body.split(separator: "\n").first.map(String.init) ?? ""
     return Entry(
         commit: commit,
         title: title,
         summary: fallback,
         pullRequest: pullRequest,
-        pullRequestURL: pullRequestURL,
-        committedAt: date.isEmpty ? nil : date
+        pullRequestURL: pullRequestURL
     )
 }
 
@@ -109,14 +123,12 @@ do {
     var omittedCount = 0
     var data: Data
     repeat {
-        let generatedBy = omittedCount == 0
-            ? "Git history"
-            : "Git history · \(omittedCount) older changes omitted"
         data = try encoder.encode(Changelog(
             revision: revision,
             baseRevision: baseRevision,
             repositoryURL: repositoryURL,
-            generatedBy: generatedBy,
+            generatedBy: "Git history",
+            omittedCount: omittedCount,
             entries: entries
         ))
         guard data.base64EncodedString().utf8.count > 49_152,

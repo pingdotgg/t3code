@@ -8,7 +8,6 @@ struct BuildChangelog: Codable, Equatable, Sendable {
         let summary: String
         let pullRequest: Int?
         let pullRequestURL: URL?
-        let committedAt: Date?
 
         var id: String { commit }
         var shortCommit: String { String(commit.prefix(7)) }
@@ -28,6 +27,7 @@ struct BuildChangelog: Codable, Equatable, Sendable {
     let baseRevision: String?
     let repositoryURL: URL?
     let generatedBy: String
+    let omittedCount: Int
     let entries: [Entry]
 
     static let embedded = load(info: Bundle.main.infoDictionary)
@@ -39,9 +39,7 @@ struct BuildChangelog: Codable, Equatable, Sendable {
               let data = Data(base64Encoded: encoded)
         else { return nil }
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(BuildChangelog.self, from: data)
+        return try? JSONDecoder().decode(BuildChangelog.self, from: data)
     }
 }
 
@@ -65,6 +63,7 @@ struct BuildChangelogView: View {
                         Text("Earlier in this build")
                             .font(T3Typography.homeTitle)
                             .foregroundStyle(T3Colors.textPrimary)
+                            .accessibilityAddTraits(.isHeader)
                             .padding(.bottom, 16)
                     }
                     ForEach(Array(earlierEntries.enumerated()), id: \.element.id) { index, entry in
@@ -73,6 +72,13 @@ struct BuildChangelogView: View {
                             repositoryURL: changelog.repositoryURL,
                             isLast: index == earlierEntries.count - 1
                         )
+                    }
+                    if changelog.omittedCount > 0 {
+                        Text("\(changelog.omittedCount) older changes omitted")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 20)
                     }
                 } else if changelog == nil {
                     ContentUnavailableView(
@@ -108,6 +114,7 @@ struct BuildChangelogView: View {
             Text("Version \(versionLabel)")
                 .font(T3Typography.homeTitle)
                 .foregroundStyle(T3Colors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             if let changelog {
                 Text("Revision \(String(changelog.revision.prefix(7))) · Summaries by \(changelog.generatedBy)")
                     .font(T3Typography.supporting)
@@ -189,6 +196,8 @@ struct BuildChangelogView: View {
                 Link(destination: repositoryURL.appending(path: "commit/\(entry.commit)")) {
                     Label(entry.shortCommit, systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                 }
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .accessibilityLabel("Open commit \(entry.shortCommit) on GitHub")
             } else {
                 Text(entry.shortCommit)
             }
@@ -196,9 +205,11 @@ struct BuildChangelogView: View {
                 Link(destination: pullRequestURL) {
                     Label("PR #\(pullRequest)", systemImage: "arrow.triangle.pull")
                 }
+                .frame(minHeight: T3Metrics.minimumTapTarget)
+                .accessibilityLabel("Open pull request \(pullRequest) on GitHub")
             }
         }
-        .font(.caption.monospaced())
+        .font(T3Typography.supporting.monospaced())
         .foregroundStyle(T3Colors.accent)
     }
 }
