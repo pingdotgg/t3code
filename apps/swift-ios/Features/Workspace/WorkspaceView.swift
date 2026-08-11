@@ -34,6 +34,8 @@ struct HomeThreadSettleUndoRestoration: Equatable, Sendable {
         let restoresPin = thread.pinnedAt != nil
         return Self(
             restoresPin: restoresPin,
+            // Restoring a pin clears snooze state, so preserve snooze only
+            // when Undo will re-pin the thread.
             restoresSnoozeUntil: restoresPin ? thread.snoozedUntil : nil
         )
     }
@@ -43,6 +45,7 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
     private(set) var notice: HomeThreadSettleUndoNotice?
     private(set) var latestSettleRequestID: UUID?
     private(set) var latestSettleThreadID: String?
+    private(set) var undoInProgressID: UUID?
 
     @discardableResult
     mutating func beginSettleRequest(
@@ -88,14 +91,25 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
     }
 
     mutating func expire(id: UUID) {
-        guard notice?.id == id else { return }
+        guard notice?.id == id, undoInProgressID != id else { return }
         notice = nil
     }
 
-    mutating func takeUndo(id: UUID) -> HomeThreadSettleUndoNotice? {
-        guard notice?.id == id else { return nil }
-        defer { notice = nil }
+    mutating func beginUndo(id: UUID) -> HomeThreadSettleUndoNotice? {
+        guard notice?.id == id, undoInProgressID == nil else { return nil }
+        undoInProgressID = id
         return notice
+    }
+
+    mutating func finishUndo(id: UUID) {
+        guard undoInProgressID == id else { return }
+        undoInProgressID = nil
+        if notice?.id == id { notice = nil }
+    }
+
+    func isUndoInProgress(threadID: String) -> Bool {
+        guard let notice else { return false }
+        return notice.threadID == threadID && undoInProgressID == notice.id
     }
 
     mutating func dismiss(threadID: String) {
@@ -104,7 +118,15 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
             latestSettleThreadID = nil
         }
         guard notice?.threadID == threadID else { return }
+        undoInProgressID = nil
         notice = nil
+    }
+
+    mutating func dismissAll() {
+        notice = nil
+        latestSettleRequestID = nil
+        latestSettleThreadID = nil
+        undoInProgressID = nil
     }
 
     static func shouldPresent(
@@ -141,6 +163,13 @@ struct HomeThreadDeleteConfirmation: Equatable, Sendable {
 
     mutating func cancel() {
         request = nil
+    }
+
+    static func targetIsValid(
+        request: HomeThreadDeleteRequest,
+        in threads: [FeatureThread]
+    ) -> Bool {
+        threads.contains { $0.id == request.id }
     }
 }
 
@@ -419,6 +448,7 @@ public struct WorkspaceView: View {
                     Task { await model.setArchived(thread.id, archived: archived) }
                 },
                 onSettle: { thread, settled in
+                    guard !settleUndo.isUndoInProgress(threadID: thread.id) else { return }
                     if !settled { settleUndo.dismiss(threadID: thread.id) }
                     let requestID = settleUndo.beginSettleRequest(
                         ifSettling: settled,
@@ -441,17 +471,19 @@ public struct WorkspaceView: View {
                             settleUndo.present(
                                 requestID: requestID,
                                 threadID: thread.id,
-                                title: thread.title,
+                                title: updatedThread?.title ?? thread.title,
                                 restoresPin: restoration.restoresPin,
                                 restoresSnoozeUntil: restoration.restoresSnoozeUntil
                             )
                         }
                         guard notice != nil else { return }
-                        var announcement = AttributedString(
-                            "\(thread.title) settled. Undo available."
-                        )
-                        announcement.accessibilitySpeechAnnouncementPriority = .high
-                        AccessibilityNotification.Announcement(announcement).post()
+                        if preferredCompactColumn != .detail {
+                            var announcement = AttributedString(
+                                "\(updatedThread?.title ?? thread.title) settled. Undo available."
+                            )
+                            announcement.accessibilitySpeechAnnouncementPriority = .high
+                            AccessibilityNotification.Announcement(announcement).post()
+                        }
                     }
                 },
                 onSnooze: { thread, until in
@@ -520,21 +552,33 @@ public struct WorkspaceView: View {
     }
 
     private func settleUndoButton(_ notice: HomeThreadSettleUndoNotice) -> some View {
-        Button("Undo") {
-            guard settleUndo.notice?.id == notice.id else { return }
-            withAnimation(accessibilityReduceMotion ? nil : .easeIn(duration: 0.16)) {
-                _ = settleUndo.takeUndo(id: notice.id)
-            }
+        let isUndoing = settleUndo.undoInProgressID == notice.id
+        return Button {
+            guard let undo = settleUndo.beginUndo(id: notice.id) else { return }
             Task {
-                let didReopen = await model.setSettled(notice.threadID, settled: false)
-                let reopened = model.snapshot.threads.first { $0.id == notice.threadID }
-                guard didReopen, reopened?.isSettled == false, notice.restoresPin else { return }
-                guard await model.setPinned(notice.threadID, pinned: true) else { return }
-                if let snoozeUntil = notice.restoresSnoozeUntil {
-                    guard await model.setSnoozed(notice.threadID, until: snoozeUntil) else { return }
+                defer {
+                    withAnimation(accessibilityReduceMotion ? nil : .easeIn(duration: 0.16)) {
+                        settleUndo.finishUndo(id: undo.id)
+                    }
+                }
+                let didReopen = await model.setSettled(undo.threadID, settled: false)
+                let reopened = model.snapshot.threads.first { $0.id == undo.threadID }
+                guard didReopen, reopened?.isSettled == false, undo.restoresPin else { return }
+                guard await model.setPinned(undo.threadID, pinned: true) else { return }
+                if let snoozeUntil = undo.restoresSnoozeUntil {
+                    guard await model.setSnoozed(undo.threadID, until: snoozeUntil) else { return }
                 }
             }
+        } label: {
+            if isUndoing {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityHidden(true)
+            } else {
+                Text("Undo")
+            }
         }
+        .disabled(isUndoing)
         .font(T3Typography.supportingStrong)
         .buttonStyle(.bordered)
         .frame(minHeight: T3Metrics.minimumTapTarget)
@@ -838,11 +882,15 @@ public struct WorkspaceView: View {
 
     private var deleteConfirmationTargetIsValid: Bool {
         guard let request = deleteConfirmation.request else { return true }
-        return model.snapshot.threads.contains { $0.id == request.id }
+        return HomeThreadDeleteConfirmation.targetIsValid(
+            request: request,
+            in: model.snapshot.threads
+        )
     }
 
     private var settleUndoTargetIsValid: Bool {
         guard let notice = settleUndo.notice else { return true }
+        if settleUndo.isUndoInProgress(threadID: notice.threadID) { return true }
         return HomeThreadSettleUndoState.targetIsValid(
             notice: notice,
             in: model.snapshot.threads
@@ -906,6 +954,7 @@ public struct WorkspaceView: View {
 
     private func dismissTransientPresentations() {
         deleteConfirmation.cancel()
+        settleUndo.dismissAll()
         showingNewTask = false
         showingAddProject = false
         showingSettings = false

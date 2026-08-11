@@ -90,7 +90,7 @@ struct DailyUXSidebarTests {
 
         #expect(activePlan.actions == [.settle, .delete])
         #expect(settledPlan.actions == [.reopen, .delete])
-        #expect(settledButWorkingPlan.actions == [.reopen, .delete])
+        #expect(settledButWorkingPlan.actions == [.settle, .delete])
         #expect(archivedPlan.actions == [.restore, .delete])
         #expect(pinnedPlan.actions == [.unpin, .delete])
         #expect(archiveOnlyPlan.actions == [.archive, .delete])
@@ -103,7 +103,7 @@ struct DailyUXSidebarTests {
     }
 
     @Test
-    func settleUndoCapturesOnlyStateThatSettlementClears() {
+    func settleUndoPreservesStateThatRepinningWouldClear() {
         let snoozeUntil = now.addingTimeInterval(300)
         let pinnedAndSnoozed = thread(
             id: "pinned",
@@ -261,11 +261,16 @@ struct DailyUXSidebarTests {
 
         state.expire(id: firstID)
         #expect(state.notice?.threadID == "second")
-        #expect(state.takeUndo(id: firstID) == nil)
-        let undo = state.takeUndo(id: secondID)
+        #expect(state.beginUndo(id: firstID) == nil)
+        let undo = state.beginUndo(id: secondID)
         #expect(undo?.restoresPin == true)
         #expect(undo?.restoresSnoozeUntil == now.addingTimeInterval(300))
-        #expect(state.takeUndo(id: secondID) == nil)
+        #expect(state.beginUndo(id: secondID) == nil)
+        #expect(state.notice?.id == secondID)
+        #expect(state.isUndoInProgress(threadID: "second"))
+        state.finishUndo(id: secondID)
+        #expect(state.notice == nil)
+        #expect(!state.isUndoInProgress(threadID: "second"))
     }
 
     @Test
@@ -285,6 +290,47 @@ struct DailyUXSidebarTests {
         state.expire(id: noticeID)
 
         #expect(state.notice == nil)
+    }
+
+    @Test
+    func settleUndoDoesNotExpireWhileUndoIsRunning() {
+        let noticeID = UUID()
+        var state = HomeThreadSettleUndoState()
+        let requestID = state.beginSettleRequest(threadID: "thread")
+        state.present(
+            requestID: requestID,
+            threadID: "thread",
+            title: "Thread",
+            restoresPin: false,
+            restoresSnoozeUntil: nil,
+            id: noticeID
+        )
+
+        #expect(state.beginUndo(id: noticeID) != nil)
+        state.expire(id: noticeID)
+        #expect(state.notice?.id == noticeID)
+        state.finishUndo(id: noticeID)
+        #expect(state.notice == nil)
+    }
+
+    @Test
+    func deleteConfirmationTargetMustRemainInTheSnapshot() {
+        let request = HomeThreadDeleteRequest(id: "target", title: "Target")
+        let target = thread(id: "target", created: -20, updated: -10)
+        let other = thread(id: "other", created: -20, updated: -10)
+
+        #expect(
+            HomeThreadDeleteConfirmation.targetIsValid(
+                request: request,
+                in: [target, other]
+            )
+        )
+        #expect(
+            !HomeThreadDeleteConfirmation.targetIsValid(
+                request: request,
+                in: [other]
+            )
+        )
     }
 
     @Test

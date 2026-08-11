@@ -25,7 +25,7 @@ struct HomeThreadSwipeActionPlan: Equatable, Sendable {
         } else if thread.pinnedAt != nil, thread.canTogglePin {
             primary = .unpin
         } else if thread.canToggleSettlement {
-            primary = thread.isSettled || thread.isEffectivelySettled(at: now)
+            primary = thread.isEffectivelySettled(at: now)
                 ? .reopen
                 : .settle
         } else {
