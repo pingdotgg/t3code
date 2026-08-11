@@ -239,8 +239,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 primaryAction.backgroundColor = .systemGray
             }
 
-            let configuration = UISwipeActionsConfiguration(actions: [delete, primaryAction])
-            configuration.performsFirstActionWithFullSwipe = false
+            let configuration = UISwipeActionsConfiguration(actions: [primaryAction, delete])
+            configuration.performsFirstActionWithFullSwipe = true
             return configuration
         }
 
