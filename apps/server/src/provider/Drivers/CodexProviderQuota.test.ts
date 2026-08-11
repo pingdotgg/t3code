@@ -211,7 +211,7 @@ it("clamps derived remaining capacity for out-of-range provider usage", () => {
   NodeAssert.equal(snapshot.headlineMetricKey, "secondary");
 });
 
-it("truncates provider-derived display strings before contract encoding", () => {
+it("bounds provider-derived display strings and opaque identities before contract encoding", () => {
   const longIdentifier = "i".repeat(200);
   const longLabel = "l".repeat(400);
   const longDescription = "d".repeat(700);
@@ -247,15 +247,178 @@ it("truncates provider-derived display strings before contract encoding", () => 
   );
 
   NodeAssert.doesNotThrow(() => decodeProviderQuotaSnapshot(snapshot));
-  NodeAssert.equal(snapshot.metrics[0]?.key, `limit:${"i".repeat(111)}:primary`);
+  NodeAssert.ok((snapshot.metrics[0]?.key.length ?? Infinity) <= 128);
   NodeAssert.equal(snapshot.metrics[0]?.label.length, 256);
   NodeAssert.equal(snapshot.credits?.balance?.length, 256);
-  NodeAssert.equal(snapshot.bankedResets?.resets[0]?.id.length, 128);
+  const resetId = snapshot.bankedResets?.resets[0]?.id;
+  NodeAssert.ok(resetId);
+  NodeAssert.ok(resetId.length <= 128);
+  NodeAssert.match(resetId, /^t3q_reset_[0-9a-f]{64}$/u);
+  NodeAssert.notEqual(resetId, longIdentifier);
   NodeAssert.equal(snapshot.bankedResets?.resets[0]?.title?.length, 256);
   NodeAssert.equal(snapshot.bankedResets?.resets[0]?.description?.length, 512);
   NodeAssert.equal(snapshot.detail.limitId?.length, 160);
   NodeAssert.equal(snapshot.detail.limitName?.length, 160);
 });
+
+it("keeps same-prefix overlong multi-limit keys distinct and maps the headline to the limiting metric", () => {
+  const sharedPrefix = "limit-" + "x".repeat(180);
+  const firstLimitId = `${sharedPrefix}-first`;
+  const secondLimitId = `${sharedPrefix}-second`;
+  const snapshot = normalizeCodexProviderQuota(
+    {
+      rateLimits: {},
+      rateLimitsByLimitId: {
+        [firstLimitId]: { primary: { usedPercent: 40 } },
+        [secondLimitId]: { primary: { usedPercent: 95 } },
+      },
+    },
+    instanceId,
+    readAt,
+  );
+
+  const [first, second] = snapshot.metrics;
+  NodeAssert.ok(first);
+  NodeAssert.ok(second);
+  NodeAssert.notEqual(first.key, second.key);
+  NodeAssert.ok(first.key.length <= 128);
+  NodeAssert.ok(second.key.length <= 128);
+  NodeAssert.equal(snapshot.headlineMetricKey, second.key);
+  NodeAssert.equal(
+    snapshot.metrics.find((metric) => metric.key === snapshot.headlineMetricKey)?.remainingPercent,
+    5,
+  );
+});
+
+it.effect("round-trips an overlong reset token to the original provider credit ID", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const rawCreditId = `credit-${"x".repeat(180)}`;
+    let consumedCreditId: string | null | undefined;
+    const request = ((method: string, payload: unknown) => {
+      switch (method) {
+        case "account/read":
+          return Effect.succeed({
+            account: { type: "chatgpt", email: null, planType: "plus" },
+            requiresOpenaiAuth: false,
+          });
+        case "account/rateLimits/read":
+          return Effect.succeed({
+            rateLimits: {},
+            rateLimitResetCredits: {
+              availableCount: 1,
+              credits: [
+                {
+                  id: rawCreditId,
+                  grantedAt: 1_700_000_000,
+                  resetType: "codexRateLimits",
+                  status: "available",
+                },
+              ],
+            },
+          });
+        case "account/rateLimitResetCredit/consume":
+          consumedCreditId = (payload as { readonly creditId: string | null }).creditId;
+          return Effect.succeed({ outcome: "reset" });
+        default:
+          return Effect.die(`Unexpected method ${method}`);
+      }
+    }) as CodexClient.CodexAppServerClient["Service"]["request"];
+    const quota = yield* makeCodexProviderQuota(decodeCodexSettings({}), {}, instanceId, spawner, {
+      openClient: Effect.succeed({ request }),
+    });
+    NodeAssert.ok(quota.consumeBankedReset);
+
+    const token = (yield* quota.read).bankedResets?.resets[0]?.id;
+    NodeAssert.ok(token);
+    NodeAssert.ok(token.length <= 128);
+    NodeAssert.notEqual(token, rawCreditId);
+    yield* quota.consumeBankedReset({ creditId: token, idempotencyKey: "attempt-long" });
+
+    NodeAssert.equal(consumedCreditId, rawCreditId);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
+);
+
+it.effect("keeps same-prefix overlong reset IDs distinct and actionable", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const sharedPrefix = "credit-" + "x".repeat(180);
+    const rawCreditIds = [`${sharedPrefix}-first`, `${sharedPrefix}-second`] as const;
+    const consumedCreditIds: Array<string | null> = [];
+    const request = ((method: string, payload: unknown) => {
+      switch (method) {
+        case "account/read":
+          return Effect.succeed({
+            account: { type: "chatgpt", email: null, planType: "plus" },
+            requiresOpenaiAuth: false,
+          });
+        case "account/rateLimits/read":
+          return Effect.succeed({
+            rateLimits: {},
+            rateLimitResetCredits: {
+              availableCount: 2,
+              credits: rawCreditIds.map((id) => ({
+                id,
+                grantedAt: 1_700_000_000,
+                resetType: "codexRateLimits" as const,
+                status: "available" as const,
+              })),
+            },
+          });
+        case "account/rateLimitResetCredit/consume":
+          consumedCreditIds.push((payload as { readonly creditId: string | null }).creditId);
+          return Effect.succeed({ outcome: "reset" });
+        default:
+          return Effect.die(`Unexpected method ${method}`);
+      }
+    }) as CodexClient.CodexAppServerClient["Service"]["request"];
+    const quota = yield* makeCodexProviderQuota(decodeCodexSettings({}), {}, instanceId, spawner, {
+      openClient: Effect.succeed({ request }),
+    });
+    const consumeBankedReset = quota.consumeBankedReset;
+    NodeAssert.ok(consumeBankedReset);
+
+    const tokens = (yield* quota.read).bankedResets?.resets.map((reset) => reset.id) ?? [];
+    NodeAssert.equal(tokens.length, 2);
+    NodeAssert.notEqual(tokens[0], tokens[1]);
+    yield* Effect.forEach(tokens, (creditId, index) =>
+      consumeBankedReset({ creditId, idempotencyKey: `attempt-${index}` }),
+    );
+
+    NodeAssert.deepStrictEqual(consumedCreditIds, rawCreditIds);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
+);
+
+it.effect("rejects an unknown reset token without forwarding it to Codex", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let consumeCalls = 0;
+    const request = ((method: string) => {
+      if (method === "account/read") {
+        return Effect.succeed({
+          account: { type: "chatgpt", email: null, planType: "plus" },
+          requiresOpenaiAuth: false,
+        });
+      }
+      if (method === "account/rateLimitResetCredit/consume") consumeCalls += 1;
+      return Effect.succeed({ outcome: "reset" });
+    }) as CodexClient.CodexAppServerClient["Service"]["request"];
+    const quota = yield* makeCodexProviderQuota(decodeCodexSettings({}), {}, instanceId, spawner, {
+      openClient: Effect.succeed({ request }),
+    });
+    NodeAssert.ok(quota.consumeBankedReset);
+
+    const error = yield* quota
+      .consumeBankedReset({
+        creditId: `t3q_reset_${"0".repeat(64)}`,
+        idempotencyKey: "attempt-unknown",
+      })
+      .pipe(Effect.flip);
+
+    NodeAssert.equal(error.reason, "providerFailed");
+    NodeAssert.equal(consumeCalls, 0);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
+);
 
 it.effect("classifies a signed-out Codex account as authentication required", () =>
   Effect.gen(function* () {

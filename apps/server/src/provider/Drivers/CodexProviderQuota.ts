@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import {
   type CodexSettings,
   ProviderDriverKind,
@@ -36,8 +37,58 @@ import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
 const DRIVER = ProviderDriverKind.make("codex");
 const CACHE_TTL = "30 seconds" as const;
 const DETAIL_VALUE_MAX_LENGTH = 160;
+const MULTI_LIMIT_ID_MAX_LENGTH = PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH - "limit::individual".length;
+const OPAQUE_TOKEN_PREFIX = "t3q";
+const RESET_TOKEN_PREFIX = `${OPAQUE_TOKEN_PREFIX}_reset_`;
 
 type CodexQuotaClient = Pick<CodexClient.CodexAppServerClient["Service"], "request">;
+
+interface StableOpaqueTokenIndex {
+  readonly tokenByRaw: ReadonlyMap<string, string>;
+  readonly rawByToken: ReadonlyMap<string, string>;
+}
+
+const opaqueTokenCandidate = (namespace: "limit" | "reset", raw: string, salt: number): string => {
+  const digest = NodeCrypto.createHash("sha256")
+    .update(namespace)
+    .update("\0")
+    .update(String(salt))
+    .update("\0")
+    .update(raw)
+    .digest("hex");
+  return `${OPAQUE_TOKEN_PREFIX}_${namespace}_${digest}`;
+};
+
+const buildStableOpaqueTokenIndex = (
+  rawValues: ReadonlyArray<string>,
+  namespace: "limit" | "reset",
+  safeLength: number,
+): StableOpaqueTokenIndex => {
+  const tokenByRaw = new Map<string, string>();
+  const rawByToken = new Map<string, string>();
+  const uniqueRawValues = [...new Set(rawValues)].filter((raw) => raw.trim().length > 0);
+
+  for (const raw of uniqueRawValues) {
+    if (raw === raw.trim() && raw.length <= safeLength) {
+      tokenByRaw.set(raw, raw);
+      rawByToken.set(raw, raw);
+    }
+  }
+
+  for (const raw of uniqueRawValues.toSorted()) {
+    if (tokenByRaw.has(raw)) continue;
+    let salt = 0;
+    let token = opaqueTokenCandidate(namespace, raw, salt);
+    while (rawByToken.has(token) && rawByToken.get(token) !== raw) {
+      salt += 1;
+      token = opaqueTokenCandidate(namespace, raw, salt);
+    }
+    tokenByRaw.set(raw, token);
+    rawByToken.set(token, raw);
+  }
+
+  return { tokenByRaw, rawByToken };
+};
 
 export interface CodexProviderQuotaOptions {
   /** Narrow injection seam for typed client boundary tests. */
@@ -156,12 +207,12 @@ const boundedNullableLongText = (value: string | null | undefined): string | nul
 
 const normalizeBankedReset = (
   reset: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitResetCredit,
+  token: string | undefined,
 ): ProviderBankedReset | null => {
-  const id = reset.id.trim();
   const grantedAt = unixSecondsToIso(reset.grantedAt);
-  if (id.length === 0 || grantedAt === null) return null;
+  if (token === undefined || grantedAt === null) return null;
   return {
-    id: truncateProviderQuotaIdentifier(id),
+    id: token,
     title: boundedNullableDisplayText(reset.title),
     description: boundedNullableLongText(reset.description),
     grantedAt,
@@ -188,11 +239,16 @@ const boundedDetail = (
   return detail;
 };
 
-export const normalizeCodexProviderQuota = (
+interface NormalizedCodexProviderQuota {
+  readonly snapshot: ProviderQuotaSnapshot;
+  readonly resetIdsByToken: ReadonlyMap<string, string>;
+}
+
+const normalizeCodexProviderQuotaWithIdentities = (
   response: CodexSchema.V2GetAccountRateLimitsResponse,
   instanceId: ProviderInstanceId,
   readAt: string,
-): ProviderQuotaSnapshot => {
+): NormalizedCodexProviderQuota => {
   const metrics: Array<ProviderQuotaMetric> = [];
   appendRateLimitMetrics(metrics, response.rateLimits, {
     keyPrefix: "",
@@ -201,12 +257,16 @@ export const normalizeCodexProviderQuota = (
     individualLabel: "Individual limit",
   });
 
-  for (const [limitId, rateLimits] of Object.entries(response.rateLimitsByLimitId ?? {})) {
+  const rateLimitsByLimitId = response.rateLimitsByLimitId ?? {};
+  const limitTokens = buildStableOpaqueTokenIndex(
+    Object.keys(rateLimitsByLimitId),
+    "limit",
+    MULTI_LIMIT_ID_MAX_LENGTH,
+  );
+  for (const [limitId, rateLimits] of Object.entries(rateLimitsByLimitId)) {
     const name = boundedNullableDisplayText(rateLimits.limitName) ?? "Limit";
-    const boundedLimitId = truncateProviderQuotaIdentifier(limitId).slice(
-      0,
-      PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH - "limit::individual".length,
-    );
+    const boundedLimitId = limitTokens.tokenByRaw.get(limitId);
+    if (boundedLimitId === undefined) continue;
     appendRateLimitMetrics(metrics, rateLimits, {
       keyPrefix: `limit:${boundedLimitId}:`,
       primaryLabel: `${name} primary`,
@@ -216,48 +276,64 @@ export const normalizeCodexProviderQuota = (
   }
 
   const resetSummary = response.rateLimitResetCredits;
-  const resets = (resetSummary?.credits ?? [])
-    .map(normalizeBankedReset)
+  const resetCredits = resetSummary?.credits ?? [];
+  const resetTokens = buildStableOpaqueTokenIndex(
+    resetCredits.map((reset) => reset.id),
+    "reset",
+    PROVIDER_QUOTA_IDENTIFIER_MAX_LENGTH,
+  );
+  const resets = resetCredits
+    .map((reset) => normalizeBankedReset(reset, resetTokens.tokenByRaw.get(reset.id)))
     .filter((reset): reset is ProviderBankedReset => reset !== null);
   const availableCount = Math.max(0, resetSummary?.availableCount ?? 0);
 
   return {
-    instanceId,
-    driver: DRIVER,
-    status: "current",
-    source: "codex-app-server",
-    readAt,
-    lastSuccessfulReadAt: readAt,
-    headlineMetricKey: resolveHeadlineMetricKey(metrics),
-    metrics,
-    credits: response.rateLimits.credits
-      ? {
-          hasCredits: response.rateLimits.credits.hasCredits,
-          unlimited: response.rateLimits.credits.unlimited,
-          balance:
-            response.rateLimits.credits.balance === null ||
-            response.rateLimits.credits.balance === undefined
-              ? null
-              : response.rateLimits.credits.balance.slice(
-                  0,
-                  PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH,
-                ),
-        }
-      : null,
-    bankedResets: resetSummary
-      ? {
-          availableCount,
-          resets,
-          detailsComplete:
-            resetSummary.credits !== null &&
-            resetSummary.credits !== undefined &&
-            resets.length === availableCount,
-        }
-      : null,
-    detail: boundedDetail(response.rateLimits),
-    message: null,
+    snapshot: {
+      instanceId,
+      driver: DRIVER,
+      status: "current",
+      source: "codex-app-server",
+      readAt,
+      lastSuccessfulReadAt: readAt,
+      headlineMetricKey: resolveHeadlineMetricKey(metrics),
+      metrics,
+      credits: response.rateLimits.credits
+        ? {
+            hasCredits: response.rateLimits.credits.hasCredits,
+            unlimited: response.rateLimits.credits.unlimited,
+            balance:
+              response.rateLimits.credits.balance === null ||
+              response.rateLimits.credits.balance === undefined
+                ? null
+                : response.rateLimits.credits.balance.slice(
+                    0,
+                    PROVIDER_QUOTA_DISPLAY_TEXT_MAX_LENGTH,
+                  ),
+          }
+        : null,
+      bankedResets: resetSummary
+        ? {
+            availableCount,
+            resets,
+            detailsComplete:
+              resetSummary.credits !== null &&
+              resetSummary.credits !== undefined &&
+              resets.length === availableCount,
+          }
+        : null,
+      detail: boundedDetail(response.rateLimits),
+      message: null,
+    },
+    resetIdsByToken: resetTokens.rawByToken,
   };
 };
+
+export const normalizeCodexProviderQuota = (
+  response: CodexSchema.V2GetAccountRateLimitsResponse,
+  instanceId: ProviderInstanceId,
+  readAt: string,
+): ProviderQuotaSnapshot =>
+  normalizeCodexProviderQuotaWithIdentities(response, instanceId, readAt).snapshot;
 
 const quotaRequestError = (
   cause: CodexErrors.CodexAppServerError | ProviderQuotaAdapterError,
@@ -309,6 +385,7 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
       Effect.map(({ client }) => client),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
+  const resetIdsByTokenRef = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
 
   const readUncached = Effect.scoped(
     openClient.pipe(
@@ -321,9 +398,16 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
           ),
       ),
       Effect.flatMap((response) =>
-        Effect.map(DateTime.now, (now) =>
-          normalizeCodexProviderQuota(response, instanceId, DateTime.formatIso(now)),
-        ),
+        Effect.flatMap(DateTime.now, (now) => {
+          const normalized = normalizeCodexProviderQuotaWithIdentities(
+            response,
+            instanceId,
+            DateTime.formatIso(now),
+          );
+          return Ref.set(resetIdsByTokenRef, normalized.resetIdsByToken).pipe(
+            Effect.as(normalized.snapshot),
+          );
+        }),
       ),
     ),
   ).pipe(Effect.mapError(quotaRequestError));
@@ -333,6 +417,24 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
   const consumeBankedReset: NonNullable<ProviderQuotaCapability["consumeBankedReset"]> = Effect.fn(
     "CodexProviderQuota.consumeBankedReset",
   )(function* (input) {
+    const requestedCreditId = input.creditId;
+    const creditId =
+      requestedCreditId === null
+        ? null
+        : yield* Ref.get(resetIdsByTokenRef).pipe(
+            Effect.flatMap((resetIdsByToken) => {
+              const rawId = resetIdsByToken.get(requestedCreditId);
+              if (rawId !== undefined) return Effect.succeed(rawId);
+              return requestedCreditId.startsWith(RESET_TOKEN_PREFIX)
+                ? Effect.fail(
+                    new ProviderQuotaAdapterError({
+                      reason: "providerFailed",
+                      detail: "The selected Codex reset is no longer available.",
+                    }),
+                  )
+                : Effect.succeed(requestedCreditId);
+            }),
+          );
     const response = yield* Effect.scoped(
       openClient.pipe(
         Effect.flatMap((client) =>
@@ -340,7 +442,7 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
             Effect.flatMap(requireAuthenticatedAccount),
             Effect.andThen(
               client.request("account/rateLimitResetCredit/consume", {
-                creditId: input.creditId,
+                creditId,
                 idempotencyKey: input.idempotencyKey,
               }),
             ),
@@ -348,12 +450,23 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
         ),
       ),
     ).pipe(Effect.mapError(quotaRequestError));
+    if (requestedCreditId !== null) {
+      yield* Ref.update(resetIdsByTokenRef, (resetIdsByToken) => {
+        if (!resetIdsByToken.has(requestedCreditId)) return resetIdsByToken;
+        const remainingResetIds = new Map(resetIdsByToken);
+        remainingResetIds.delete(requestedCreditId);
+        return remainingResetIds;
+      });
+    }
+    yield* invalidate;
+    yield* Ref.update(revisionRef, (revision) => revision + 1);
     return response.outcome;
   });
 
   const onRateLimitsUpdated = Effect.fn("CodexProviderQuota.onRateLimitsUpdated")(function* (
     _update: CodexSchema.V2AccountRateLimitsUpdatedNotification,
   ) {
+    yield* Ref.set(resetIdsByTokenRef, new Map());
     yield* invalidate;
     yield* Ref.update(revisionRef, (revision) => revision + 1);
   });
