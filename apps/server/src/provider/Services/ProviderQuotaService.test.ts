@@ -221,6 +221,94 @@ describe("ProviderQuotaService", () => {
     }).pipe(provideService(() => instances));
   });
 
+  it.effect("does not strand later readers when an in-flight owner is interrupted", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      let attempts = 0;
+      const firstStarted = yield* Deferred.make<void>();
+      const instance = makeInstance({
+        id: "codex-interrupted",
+        quota: {
+          read: Effect.gen(function* () {
+            attempts += 1;
+            if (attempts === 1) {
+              yield* Deferred.succeed(firstStarted, undefined);
+              return yield* Effect.never;
+            }
+            return snapshot("codex-interrupted");
+          }),
+          revision: Effect.succeed(0),
+        },
+      });
+      instances = [instance];
+      const service = yield* ProviderQuotaService;
+
+      const owner = yield* service.readSummary.pipe(Effect.forkChild);
+      yield* Deferred.await(firstStarted);
+      yield* Fiber.interrupt(owner);
+
+      const laterRead = yield* service.readSummary.pipe(
+        Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(null) }),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("10 seconds");
+      const result = yield* Fiber.join(laterRead);
+
+      expect(result?.instances[0]).toMatchObject({
+        instanceId: instance.instanceId,
+        status: "current",
+      });
+      expect(attempts).toBe(2);
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("retries obsolete owners and waiters against a rebuilt instance identity", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      const oldStarted = yield* Deferred.make<void>();
+      const releaseOld = yield* Deferred.make<void>();
+      const oldInstance = makeInstance({
+        id: "codex-rebuilt",
+        quota: {
+          read: Effect.gen(function* () {
+            yield* Deferred.succeed(oldStarted, undefined);
+            yield* Deferred.await(releaseOld);
+            return { ...snapshot("codex-rebuilt"), detail: { account: "old" } };
+          }),
+          revision: Effect.succeed(0),
+        },
+      });
+      const newInstance = makeInstance({
+        id: "codex-rebuilt",
+        quota: {
+          read: Effect.succeed({
+            ...snapshot("codex-rebuilt"),
+            detail: { account: "new" },
+          }),
+          revision: Effect.succeed(0),
+        },
+      });
+      instances = [oldInstance];
+      const service = yield* ProviderQuotaService;
+
+      const oldOwner = yield* service.readSummary.pipe(Effect.forkChild);
+      yield* Deferred.await(oldStarted);
+      const oldWaiter = yield* service.readSummary.pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      instances = [newInstance];
+      const newResult = yield* service.readSummary;
+      yield* Deferred.succeed(releaseOld, undefined);
+      const ownerResult = yield* Fiber.join(oldOwner);
+      const waiterResult = yield* Fiber.join(oldWaiter);
+
+      for (const result of [newResult, ownerResult, waiterResult]) {
+        expect(result.instances[0]?.detail).toEqual({ account: "new" });
+      }
+    }).pipe(provideService(() => instances));
+  });
+
   it.effect(
     "bypasses cached data after revision, identity, and explicit invalidation changes",
     () => {

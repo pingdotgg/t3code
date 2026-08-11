@@ -35,16 +35,23 @@ interface CacheEntry {
   readonly snapshot?: ProviderQuotaSnapshot;
   readonly cachedAtMs?: number;
   readonly lastSuccess?: ProviderQuotaSnapshot;
-  readonly inFlight?: Deferred.Deferred<ProviderQuotaSnapshot>;
+  readonly inFlight?: Deferred.Deferred<CacheReadOutcome>;
 }
+
+type CacheReadOutcome =
+  | { readonly _tag: "snapshot"; readonly snapshot: ProviderQuotaSnapshot }
+  | { readonly _tag: "obsolete" };
+
+const obsoleteCacheRead: CacheReadOutcome = { _tag: "obsolete" };
 
 type CacheSelection =
   | { readonly _tag: "cached"; readonly snapshot: ProviderQuotaSnapshot }
-  | { readonly _tag: "waiting"; readonly deferred: Deferred.Deferred<ProviderQuotaSnapshot> }
+  | { readonly _tag: "waiting"; readonly deferred: Deferred.Deferred<CacheReadOutcome> }
   | {
       readonly _tag: "owner";
-      readonly deferred: Deferred.Deferred<ProviderQuotaSnapshot>;
+      readonly deferred: Deferred.Deferred<CacheReadOutcome>;
       readonly previous?: ProviderQuotaSnapshot;
+      readonly retired?: Deferred.Deferred<CacheReadOutcome>;
     };
 
 export class ProviderQuotaService extends Context.Service<
@@ -81,20 +88,27 @@ export const make = Effect.gen(function* () {
   const invalidate = Effect.fn("ProviderQuotaService.invalidate")(function* (
     instanceId?: ProviderInstanceId,
   ) {
-    yield* cacheMutex.withPermits(1)(
+    const retired = yield* cacheMutex.withPermits(1)(
       Effect.sync(() => {
+        const deferreds: Array<Deferred.Deferred<CacheReadOutcome>> = [];
         const ids = instanceId === undefined ? Array.from(cache.keys()) : [instanceId];
         for (const id of ids) {
           const entry = cache.get(id);
           if (entry === undefined) continue;
+          if (entry.inFlight !== undefined) deferreds.push(entry.inFlight);
           cache.set(id, {
             instance: entry.instance,
             revision: entry.revision,
             ...(entry.lastSuccess ? { lastSuccess: entry.lastSuccess } : {}),
           });
         }
+        return deferreds;
       }),
     );
+    yield* Effect.forEach(retired, (deferred) => Deferred.succeed(deferred, obsoleteCacheRead), {
+      concurrency: "unbounded",
+      discard: true,
+    });
   });
 
   const readCached = Effect.fn("ProviderQuotaService.readCached")(function* (
@@ -121,120 +135,180 @@ export const make = Effect.gen(function* () {
           return { _tag: "waiting", deferred: existing.inFlight };
         }
 
-        const deferred = yield* Deferred.make<ProviderQuotaSnapshot>();
+        const deferred = yield* Deferred.make<CacheReadOutcome>();
         const previous = sameIdentity ? existing?.lastSuccess : undefined;
+        const retired = existing?.inFlight;
         cache.set(instance.instanceId, {
           instance,
           revision,
           ...(previous ? { lastSuccess: previous } : {}),
           inFlight: deferred,
         });
-        return { _tag: "owner", deferred, ...(previous ? { previous } : {}) };
+        return {
+          _tag: "owner",
+          deferred,
+          ...(previous ? { previous } : {}),
+          ...(retired ? { retired } : {}),
+        };
       }),
     );
 
-    if (selection._tag === "cached") return selection.snapshot;
+    if (selection._tag === "cached") {
+      return { _tag: "snapshot", snapshot: selection.snapshot } satisfies CacheReadOutcome;
+    }
     if (selection._tag === "waiting") return yield* Deferred.await(selection.deferred);
+    if (selection.retired !== undefined) {
+      yield* Deferred.succeed(selection.retired, obsoleteCacheRead);
+    }
 
-    const quota = instance.quota;
-    const refreshed =
-      quota === undefined
-        ? unknownProviderQuotaSnapshot(instance, readAt)
-        : yield* quota.read.pipe(
-            Effect.timeoutOrElse({
-              duration: PROVIDER_READ_TIMEOUT,
-              orElse: () =>
-                Effect.fail(
-                  new ProviderQuotaAdapterError({
-                    reason: "timeout",
-                    detail: "The provider quota read timed out.",
-                  }),
-                ),
-            }),
-            Effect.catch((error) =>
-              Effect.succeed(
-                errorProviderQuotaSnapshot(instance, readAt, error, selection.previous),
-              ),
-            ),
-            Effect.catchCause(() =>
-              Effect.succeed(
-                errorProviderQuotaSnapshot(
-                  instance,
-                  readAt,
-                  new ProviderQuotaAdapterError({
-                    reason: "providerFailed",
-                    detail: "The provider quota read failed.",
-                  }),
-                  selection.previous,
-                ),
-              ),
-            ),
-          );
+    const retireOwnedGeneration = cacheMutex
+      .withPermits(1)(
+        Effect.sync(() => {
+          const current = cache.get(instance.instanceId);
+          if (
+            current?.instance !== instance ||
+            current.revision !== revision ||
+            current.inFlight !== selection.deferred
+          ) {
+            return;
+          }
+          cache.set(instance.instanceId, {
+            instance,
+            revision,
+            ...(current.lastSuccess ? { lastSuccess: current.lastSuccess } : {}),
+          });
+        }),
+      )
+      .pipe(Effect.andThen(Deferred.succeed(selection.deferred, obsoleteCacheRead)), Effect.asVoid);
 
-    const completedAtMs = yield* Clock.currentTimeMillis;
-    yield* cacheMutex.withPermits(1)(
-      Effect.sync(() => {
-        const current = cache.get(instance.instanceId);
-        if (
-          current?.instance !== instance ||
-          current.revision !== revision ||
-          current.inFlight !== selection.deferred
-        ) {
-          return;
-        }
-        const lastSuccess =
-          refreshed.lastSuccessfulReadAt !== null ? refreshed : current.lastSuccess;
-        cache.set(instance.instanceId, {
-          instance,
-          revision,
-          snapshot: refreshed,
-          cachedAtMs: completedAtMs,
-          ...(lastSuccess ? { lastSuccess } : {}),
-        });
-      }),
-    );
-    yield* Deferred.succeed(selection.deferred, refreshed);
-    return refreshed;
+    return yield* Effect.gen(function* () {
+      const quota = instance.quota;
+      const refreshed =
+        quota === undefined
+          ? unknownProviderQuotaSnapshot(instance, readAt)
+          : yield* quota.read.pipe(
+              Effect.timeoutOrElse({
+                duration: PROVIDER_READ_TIMEOUT,
+                orElse: () =>
+                  Effect.fail(
+                    new ProviderQuotaAdapterError({
+                      reason: "timeout",
+                      detail: "The provider quota read timed out.",
+                    }),
+                  ),
+              }),
+              Effect.catch((error) =>
+                Effect.succeed(
+                  errorProviderQuotaSnapshot(instance, readAt, error, selection.previous),
+                ),
+              ),
+              Effect.catchCause(() =>
+                Effect.succeed(
+                  errorProviderQuotaSnapshot(
+                    instance,
+                    readAt,
+                    new ProviderQuotaAdapterError({
+                      reason: "providerFailed",
+                      detail: "The provider quota read failed.",
+                    }),
+                    selection.previous,
+                  ),
+                ),
+              ),
+            );
+
+      const completedAtMs = yield* Clock.currentTimeMillis;
+      const published = yield* cacheMutex.withPermits(1)(
+        Effect.sync(() => {
+          const current = cache.get(instance.instanceId);
+          if (
+            current?.instance !== instance ||
+            current.revision !== revision ||
+            current.inFlight !== selection.deferred
+          ) {
+            return false;
+          }
+          const lastSuccess =
+            refreshed.lastSuccessfulReadAt !== null ? refreshed : current.lastSuccess;
+          cache.set(instance.instanceId, {
+            instance,
+            revision,
+            snapshot: refreshed,
+            cachedAtMs: completedAtMs,
+            ...(lastSuccess ? { lastSuccess } : {}),
+          });
+          return true;
+        }),
+      );
+      const outcome: CacheReadOutcome = published
+        ? { _tag: "snapshot", snapshot: refreshed }
+        : obsoleteCacheRead;
+      yield* Deferred.succeed(selection.deferred, outcome);
+      return outcome;
+    }).pipe(Effect.onInterrupt(() => retireOwnedGeneration));
   });
 
   const readSummary = Effect.fn("ProviderQuotaService.readSummary")(function* () {
-    const instances = yield* registry.listInstances.pipe(
-      Effect.catchCause(() =>
-        Effect.fail(
-          new ProviderQuotaReadError({
-            reason: "registryUnavailable",
-            detail: "Provider instances could not be listed.",
-          }),
+    while (true) {
+      const instances = yield* registry.listInstances.pipe(
+        Effect.catchCause(() =>
+          Effect.fail(
+            new ProviderQuotaReadError({
+              reason: "registryUnavailable",
+              detail: "Provider instances could not be listed.",
+            }),
+          ),
         ),
-      ),
-    );
-    const enabled = instances.filter((instance) => instance.enabled);
-    const enabledIdentities = new Map(enabled.map((instance) => [instance.instanceId, instance]));
-    yield* cacheMutex.withPermits(1)(
-      Effect.sync(() => {
-        for (const [id, entry] of cache) {
-          if (enabledIdentities.get(id) !== entry.instance) cache.delete(id);
-        }
-      }),
-    );
-
-    const readAt = DateTime.formatIso(yield* DateTime.now);
-    const snapshots = yield* Effect.forEach(
-      enabled,
-      (instance) =>
-        Effect.gen(function* () {
-          const revision =
-            instance.quota === undefined
-              ? null
-              : yield* instance.quota.revision.pipe(
-                  Effect.catchCause(() => Effect.succeed(Number.NaN)),
-                );
-          return yield* readCached(instance, revision, readAt);
+      );
+      const enabled = instances.filter((instance) => instance.enabled);
+      const enabledIdentities = new Map(enabled.map((instance) => [instance.instanceId, instance]));
+      const retired = yield* cacheMutex.withPermits(1)(
+        Effect.sync(() => {
+          const deferreds: Array<Deferred.Deferred<CacheReadOutcome>> = [];
+          for (const [id, entry] of cache) {
+            if (enabledIdentities.get(id) === entry.instance) continue;
+            cache.delete(id);
+            if (entry.inFlight !== undefined) deferreds.push(entry.inFlight);
+          }
+          return deferreds;
         }),
-      { concurrency: 3 },
-    );
+      );
+      yield* Effect.forEach(retired, (deferred) => Deferred.succeed(deferred, obsoleteCacheRead), {
+        concurrency: "unbounded",
+        discard: true,
+      });
 
-    return { readAt, instances: snapshots } satisfies ProviderQuotaSummary;
+      const readAt = DateTime.formatIso(yield* DateTime.now);
+      const outcomes = yield* Effect.forEach(
+        enabled,
+        (instance) =>
+          Effect.gen(function* () {
+            const revision =
+              instance.quota === undefined
+                ? null
+                : yield* instance.quota.revision.pipe(
+                    Effect.catchCause(() => Effect.succeed(Number.NaN)),
+                  );
+            return yield* readCached(instance, revision, readAt);
+          }),
+        { concurrency: 3 },
+      );
+      const snapshots: Array<ProviderQuotaSnapshot> = [];
+      let obsolete = false;
+      for (const outcome of outcomes) {
+        if (outcome._tag === "obsolete") {
+          obsolete = true;
+          break;
+        }
+        snapshots.push(outcome.snapshot);
+      }
+      if (obsolete) continue;
+
+      return {
+        readAt,
+        instances: snapshots,
+      } satisfies ProviderQuotaSummary;
+    }
   });
 
   const consumeBankedReset = Effect.fn("ProviderQuotaService.consumeBankedReset")(function* (
