@@ -27,6 +27,22 @@
       "types": "./src/canonicalStore.ts",
       "import": "./src/canonicalStore.ts"
     },
+    "./evidence-context": {
+      "types": "./src/evidenceContext.ts",
+      "import": "./src/evidenceContext.ts"
+    },
+    "./evidence-context-errors": {
+      "types": "./src/evidenceContextErrors.ts",
+      "import": "./src/evidenceContextErrors.ts"
+    },
+    "./evidence-canonical-registry": {
+      "types": "./src/evidenceCanonicalRegistry.ts",
+      "import": "./src/evidenceCanonicalRegistry.ts"
+    },
+    "./evidence-context-service": {
+      "types": "./src/evidenceContextService.ts",
+      "import": "./src/evidenceContextService.ts"
+    },
     "./workspace-store": {
       "types": "./src/workspaceStore.ts",
       "import": "./src/workspaceStore.ts"

@@ -28,6 +28,10 @@ machine-verifiable baseline.
   reviews, decisions, and next actions, with expected-version conflicts, idempotency, typed lineage,
   registered-view isolation, sealed revision children, workspace-wide canonical claims, canonical
   read-back, and strict organization schema v3 migration.
+- The issue #9 bounded evidence-context core in the same package: exact-source allowlists,
+  independent source states, deterministic whole-item budgets, evidence receipts, registered
+  source/fact schemas, and explicit accepted-fact transitions over the canonical store. No T3
+  production request or prompt path imports it; #6 composition remains pending.
 - This reviewed Marketing-domain authority and requirements spine.
 
 ## Capability status
@@ -37,7 +41,7 @@ machine-verifiable baseline.
 | Explicit `dev \| marketing` product-domain seam     | #4       | Boundary implemented; #21 UI pending                           |
 | Marketing identities and authorization              | #5, #6   | #5 storage boundary implemented; #6 server composition pending |
 | Canonical organization-owned Marketing persistence  | #8       | Store/read-back foundation implemented; composition pending    |
-| Bounded Marketing evidence context                  | #9       | Not implemented                                                |
+| Bounded Marketing evidence context                  | #9       | Package core implemented; #6 production composition pending    |
 | Marketing continuity and immutable provenance       | #7, #11  | Not implemented                                                |
 | Day 0, Marketing Strategy, GTM, and typed artifacts | #18, #19 | Not implemented                                                |
 | Approved Marketing-to-Dev brief handoff             | #20      | Not implemented                                                |

@@ -1,9 +1,10 @@
 # Marketing data and evidence
 
-This document preserves the ownership rules for issues #5, #6, #8, and #9. Issues #5 and #8 now
-provide the isolated identity-routing, physical organization-database, and canonical Marketing
-content foundations. The production T3 request-authority/role composition (#6) and evidence path
-(#9) remain pending.
+This document preserves the ownership rules for issues #5, #6, #8, and #9. Issues #5 and #8 provide
+the isolated identity-routing, physical organization-database, and canonical Marketing content
+foundations. Issue #9 now provides the bounded evidence compiler, canonical evidence registry, and
+authorized package service. Production T3 request-authority/role composition remains owned by #6;
+no provider, prompt, session, transport, or client integration is claimed here.
 
 ## Implemented issue #5 boundary
 
@@ -51,9 +52,9 @@ content foundations. The production T3 request-authority/role composition (#6) a
 - Registered outputs are revisioned under saved-output identities and may project an exact
   canonical revision; they cannot overwrite artifact heads or chain through another saved output.
 
-This is canonical persistence, conflict, and read-back infrastructure. It is not proof that the #9
-evidence compiler, #11 consequential audit, #18 Day 0 kernel, or #19 workflow/artifact catalogs
-exist.
+That boundary is canonical persistence, conflict, and read-back infrastructure; the separate #9
+package boundary is described below. Neither boundary proves that #11 consequential audit, #18 Day
+0, or #19 workflow/artifact catalogs exist.
 
 ## Ownership target
 
@@ -93,3 +94,37 @@ Source content is evidence, not instruction. Retrieval is bounded to the authori
 workspace. Missing evidence lowers confidence or blocks only dependent claims/actions. It never
 causes invented evidence, silent mutation, whole-corpus injection, cross-organization access, or a
 fallback into Dev.
+
+## Implemented issue #9 package boundary
+
+- Source observations keep capability, access, import, index, and freshness as independent tagged
+  states. Access state contains bounded status codes, never credentials or raw provider failures.
+- Compilation requires an explicit allowlist of exact source revisions. The service resolves those
+  heads through the authorized organization store, rejects mismatches before calling an adapter,
+  enforces adapter item/byte limits, and verifies the selected heads again before returning.
+- Retrieved evidence carries an exact source revision, stable locator, excerpt, content digest,
+  observation time, quality dimensions, relation, and integer decision/relevance signals. Source
+  text remains a string-valued evidence field and cannot become a system role, tool, or approval.
+- The versioned `auldric/evidence-context@1` policy uses locale-independent ordering, NFC and line-
+  ending normalization, tuple deduplication, locator/hash conflict rejection, stable integer
+  ranking, fixed-envelope accounting, and whole-item admission under hard source, item, byte, and
+  token ceilings.
+- Every packet contains an optional exact plan/stage selection, accepted facts, assumptions,
+  conflicts, truthful gaps, decision-changing questions, disconfirmation signals, readiness,
+  unresolved decisions, the applied budget, and an auditable receipt. Missing plan state is an
+  explicit gap; readiness is `not-evaluated` unless an injected domain projector supplies it. The
+  receipt pins exact inputs, candidate digests, inclusion/exclusion reasons, token counts,
+  policy/tokenizer references, and the canonical packet digest.
+- Evidence source heads use the registered `evidence/source-state@1` schema. A reusable accepted
+  fact is a canonical decision under `evidence/fact/<stable-key>` with schema
+  `evidence.fact-acceptance@1`, exact source lineage, optional reviews, and explicit accepted,
+  superseded, or withdrawn transitions. Only the current accepted head enters a packet; stale
+  support remains visible.
+- `inspectSources` and `compileContext` do not write. Durable changes require an explicit
+  `acceptFact`, `supersedeFact`, or `withdrawFact` call with expected version, idempotency key, and
+  canonical read-back. Missing or failed sources add gaps; they never trigger fallback retrieval or
+  silent persistence.
+
+The compiler is not imported by any T3 Dev request, provider, prompt, transport, session, or client
+path, so this package change cannot alter a Dev payload. Production invocation remains closed until
+#6 supplies an approved, verified Marketing-domain authority seam.

@@ -1,8 +1,8 @@
 # Auldric Marketing organization storage boundary
 
-This package owns the issue #5 identity-routing and physical organization-database foundation and
-the issue #8 canonical Marketing content store. It does not authenticate a request and cannot
-decode or mint a T3 actor.
+This package owns the issue #5 identity-routing and physical organization-database foundation, the
+issue #8 canonical Marketing content store, and the issue #9 bounded evidence-context core. It does
+not authenticate a request and cannot decode or mint a T3 actor.
 
 The server composition root must instantiate `makeOrganizationWorkspaceStore` with an
 `authorize(requestAuthority, requirement)` adapter. `requestAuthority` is generic so the adapter
@@ -91,3 +91,30 @@ consequential audit model, and issue #19 owns exact workflow/artifact families, 
 renderers, and rollup semantics. This package supplies their fail-closed persistence seam without
 claiming those layers are implemented. Content never falls back to T3 `state.sqlite`, browser state,
 another organization, or documentation.
+
+## Bounded evidence context
+
+`compileMarketingEvidenceContext` builds a transient, Marketing-only packet from one exact
+organization snapshot. Callers must supply an explicit allowlist of source revisions. The compiler
+keeps an optional exact plan/stage selection and source capability, access, import, index, and
+freshness separate from retrieved evidence, accepted facts, assumptions, conflicts, gaps,
+questions, disconfirmation signals, and readiness.
+It normalizes text deterministically, rejects locator/hash conflicts and non-allowlisted evidence,
+ranks with a versioned integer policy, admits whole items only, and returns a SHA-256 receipt for
+every inclusion and exclusion under explicit item, source, byte, and token ceilings.
+
+`makeMarketingEvidenceContextService` composes only over the existing authorized canonical store
+and injected source adapters. It checks exact heads before adapters run and again before returning a
+packet. Inaccessible, unindexed, stale, or failed sources produce truthful gaps without fabricated
+evidence. A missing plan is explicit, and readiness remains `not-evaluated` unless an injected
+domain projector supplies it. Compilation and source inspection are read-only. The only durable evidence operations are
+explicit `acceptFact`, `supersedeFact`, and `withdrawFact` calls; each writes a canonical decision,
+exact source lineage, optional exact reviews, an expected version, an idempotency receipt, and a
+committed read-back.
+
+Evidence-owned source heads use `evidence/source-state@1`. Accepted reusable facts use
+`evidence.fact-acceptance@1` and the workspace-wide canonical key
+`evidence/fact/<stable-key>`. The exported schema-handler composition keeps this namespace separate
+from #11 review/audit and #19 workflow/artifact registrations. There is no provider, prompt,
+session, transport, client, Dev, or production endpoint integration in this package. Issue #6 must
+provide the approved Marketing request seam before a production caller can use it.
