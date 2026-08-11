@@ -1,0 +1,236 @@
+diff --git a/esm/floating-ui-react/hooks/useListNavigation.js b/esm/floating-ui-react/hooks/useListNavigation.js
+index e7adca5a55c3906462b320b9488e1ff07642d32f..c3ff8b2c356240078aface81583ee2f71ee99981 100644
+--- a/esm/floating-ui-react/hooks/useListNavigation.js
++++ b/esm/floating-ui-react/hooks/useListNavigation.js
+@@ -16,6 +16,69 @@ import { activeElement, contains, getFloatingFocusElement, getTarget, isTypeable
+ import { enqueueFocus } from "../utils/enqueueFocus.js";
+ import { isVirtualClick, isVirtualPointerEvent, stopEvent } from "../utils/event.js";
+ export const ESCAPE = 'Escape';
++const PAGE_UP = 'PageUp';
++const PAGE_DOWN = 'PageDown';
++
++// Returns the height of the closest scrolling ancestor, which is the area a
++// page key moves through. An ancestor counts as scrolling when it clips its
++// content and its content is taller than it is, which also covers containers
++// scrolled programmatically behind `overflow: hidden`. Falls back to the window
++// height when the list is not inside a scroll container. The element's own view
++// is used rather than the global one so the measurement is correct for a list
++// rendered inside an iframe.
++function getListViewportHeight(element) {
++  const view = element.ownerDocument.defaultView;
++  if (!view) {
++    return 0;
++  }
++  let node = element.parentElement;
++  while (node) {
++    const overflowY = view.getComputedStyle(node).overflowY;
++    if (
++      overflowY !== 'visible' &&
++      node.clientHeight > 0 &&
++      node.scrollHeight > node.clientHeight
++    ) {
++      return node.clientHeight;
++    }
++    node = node.parentElement;
++  }
++  return view.innerHeight;
++}
++
++// Counts how many items fit in the viewport starting from the current one, so
++// a page key moves by a screenful of items. Items are compared by their laid-out
++// position rather than by summing their heights, so group headings, separators,
++// margins and gaps between items all count towards the screenful.
++function getListPageSize(list, startIndex, decrement) {
++  const startElement = list[startIndex];
++  if (!startElement) {
++    return 1;
++  }
++  const viewportHeight = getListViewportHeight(startElement);
++  if (viewportHeight <= 0) {
++    return 1;
++  }
++  const startRect = startElement.getBoundingClientRect();
++  const edge = decrement ? startRect.bottom - viewportHeight : startRect.top + viewportHeight;
++  let count = 0;
++  for (
++    let index = startIndex;
++    decrement ? index >= 0 : index < list.length;
++    index += decrement ? -1 : 1
++  ) {
++    const element = list[index];
++    if (!element) {
++      continue;
++    }
++    const rect = element.getBoundingClientRect();
++    if (decrement ? rect.top < edge : rect.bottom > edge) {
++      break;
++    }
++    count += 1;
++  }
++  return Math.max(1, count);
++}
+ function doSwitch(orientation, vertical, horizontal) {
+   switch (orientation) {
+     case 'vertical':
+@@ -332,6 +395,41 @@ export function useListNavigation(context, props) {
+       }
+     }
+ 
++    // Page keys move the highlight by a screenful of items. They step through
++    // the list in a straight line, so they are only handled for a vertical
++    // single-column list; a grid or a horizontal list keeps the key's default
++    // behaviour. They are handled outside the block above because PageUp and
++    // PageDown do not move the caret in a single-line input, so a typeable
++    // reference does not need to keep them.
++    if (
++      (event.key === PAGE_UP || event.key === PAGE_DOWN) &&
++      cols <= 1 &&
++      orientation === 'vertical'
++    ) {
++      stopEvent(event);
++      const decrement = event.key === PAGE_UP;
++      if (isIndexOutOfListBounds(listRef.current, currentIndex)) {
++        indexRef.current = decrement ? maxIndex : minIndex;
++      } else {
++        const pageSize = getListPageSize(listRef.current, currentIndex, decrement);
++        const targetIndex = decrement
++          ? Math.max(minIndex, currentIndex - pageSize)
++          : Math.min(maxIndex, currentIndex + pageSize);
++        indexRef.current = isListIndexDisabled(listRef.current, targetIndex, disabledIndices)
++          ? findNonDisabledListIndex(listRef.current, {
++              startingIndex: targetIndex,
++              decrement,
++              disabledIndices
++            })
++          : targetIndex;
++        if (isIndexOutOfListBounds(listRef.current, indexRef.current)) {
++          indexRef.current = decrement ? minIndex : maxIndex;
++        }
++      }
++      onNavigate(event);
++      return;
++    }
++
+     // Grid navigation.
+     if (cols > 1) {
+       const sizes = Array.from({
+diff --git a/floating-ui-react/hooks/useListNavigation.js b/floating-ui-react/hooks/useListNavigation.js
+index e4bcab6cebb00aeb9b83aaf70e9ceb91c23e5e08..391aa1165202b88b2e266d6362c528dcb4cd2a1f 100644
+--- a/floating-ui-react/hooks/useListNavigation.js
++++ b/floating-ui-react/hooks/useListNavigation.js
+@@ -23,6 +23,69 @@ var _element = require("../utils/element");
+ var _enqueueFocus = require("../utils/enqueueFocus");
+ var _event = require("../utils/event");
+ const ESCAPE = exports.ESCAPE = 'Escape';
++const PAGE_UP = 'PageUp';
++const PAGE_DOWN = 'PageDown';
++
++// Returns the height of the closest scrolling ancestor, which is the area a
++// page key moves through. An ancestor counts as scrolling when it clips its
++// content and its content is taller than it is, which also covers containers
++// scrolled programmatically behind `overflow: hidden`. Falls back to the window
++// height when the list is not inside a scroll container. The element's own view
++// is used rather than the global one so the measurement is correct for a list
++// rendered inside an iframe.
++function getListViewportHeight(element) {
++  const view = element.ownerDocument.defaultView;
++  if (!view) {
++    return 0;
++  }
++  let node = element.parentElement;
++  while (node) {
++    const overflowY = view.getComputedStyle(node).overflowY;
++    if (
++      overflowY !== 'visible' &&
++      node.clientHeight > 0 &&
++      node.scrollHeight > node.clientHeight
++    ) {
++      return node.clientHeight;
++    }
++    node = node.parentElement;
++  }
++  return view.innerHeight;
++}
++
++// Counts how many items fit in the viewport starting from the current one, so
++// a page key moves by a screenful of items. Items are compared by their laid-out
++// position rather than by summing their heights, so group headings, separators,
++// margins and gaps between items all count towards the screenful.
++function getListPageSize(list, startIndex, decrement) {
++  const startElement = list[startIndex];
++  if (!startElement) {
++    return 1;
++  }
++  const viewportHeight = getListViewportHeight(startElement);
++  if (viewportHeight <= 0) {
++    return 1;
++  }
++  const startRect = startElement.getBoundingClientRect();
++  const edge = decrement ? startRect.bottom - viewportHeight : startRect.top + viewportHeight;
++  let count = 0;
++  for (
++    let index = startIndex;
++    decrement ? index >= 0 : index < list.length;
++    index += decrement ? -1 : 1
++  ) {
++    const element = list[index];
++    if (!element) {
++      continue;
++    }
++    const rect = element.getBoundingClientRect();
++    if (decrement ? rect.top < edge : rect.bottom > edge) {
++      break;
++    }
++    count += 1;
++  }
++  return Math.max(1, count);
++}
+ function doSwitch(orientation, vertical, horizontal) {
+   switch (orientation) {
+     case 'vertical':
+@@ -339,6 +402,45 @@ function useListNavigation(context, props) {
+       }
+     }
+ 
++    // Page keys move the highlight by a screenful of items. They step through
++    // the list in a straight line, so they are only handled for a vertical
++    // single-column list; a grid or a horizontal list keeps the key's default
++    // behaviour. They are handled outside the block above because PageUp and
++    // PageDown do not move the caret in a single-line input, so a typeable
++    // reference does not need to keep them.
++    if (
++      (event.key === PAGE_UP || event.key === PAGE_DOWN) &&
++      cols <= 1 &&
++      orientation === 'vertical'
++    ) {
++      (0, _event.stopEvent)(event);
++      const decrement = event.key === PAGE_UP;
++      if ((0, _composite.isIndexOutOfListBounds)(listRef.current, currentIndex)) {
++        indexRef.current = decrement ? maxIndex : minIndex;
++      } else {
++        const pageSize = getListPageSize(listRef.current, currentIndex, decrement);
++        const targetIndex = decrement
++          ? Math.max(minIndex, currentIndex - pageSize)
++          : Math.min(maxIndex, currentIndex + pageSize);
++        indexRef.current = (0, _composite.isListIndexDisabled)(
++          listRef.current,
++          targetIndex,
++          disabledIndices
++        )
++          ? (0, _composite.findNonDisabledListIndex)(listRef.current, {
++              startingIndex: targetIndex,
++              decrement,
++              disabledIndices
++            })
++          : targetIndex;
++        if ((0, _composite.isIndexOutOfListBounds)(listRef.current, indexRef.current)) {
++          indexRef.current = decrement ? minIndex : maxIndex;
++        }
++      }
++      onNavigate(event);
++      return;
++    }
++
+     // Grid navigation.
+     if (cols > 1) {
+       const sizes = Array.from({
