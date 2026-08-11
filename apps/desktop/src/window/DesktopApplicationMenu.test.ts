@@ -48,10 +48,17 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   on: () => Effect.void,
 } satisfies ElectronApp.ElectronApp["Service"]);
 
-const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
+const makeDesktopWindowLayer = (
+  selectedAction: Deferred.Deferred<string>,
+  ensureMainRequested?: Deferred.Deferred<void>,
+) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
     createMain: Effect.die("unexpected createMain"),
-    ensureMain: Effect.die("unexpected ensureMain"),
+    ensureMain: ensureMainRequested
+      ? Deferred.succeed(ensureMainRequested, undefined).pipe(
+          Effect.as({} as Electron.BrowserWindow),
+        )
+      : Effect.die("unexpected ensureMain"),
     revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
     activate: Effect.void,
     createMainIfBackendReady: Effect.void,
@@ -78,6 +85,7 @@ const makeElectronMenuLayer = (
 const configureMenu = (
   selectedAction: Deferred.Deferred<string>,
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
+  ensureMainRequested?: Deferred.Deferred<void>,
 ) =>
   Effect.gen(function* () {
     const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
@@ -86,7 +94,7 @@ const configureMenu = (
     Effect.provide(
       DesktopApplicationMenu.layer.pipe(
         Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
-        Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
+        Layer.provideMerge(makeDesktopWindowLayer(selectedAction, ensureMainRequested)),
         Layer.provideMerge(electronAppLayer),
         Layer.provideMerge(
           DesktopEnvironment.layer(environmentInput).pipe(
@@ -124,13 +132,14 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
-  it.effect("routes update checks through the renderer dialog host", () =>
+  it.effect("ensures the main window before routing update checks to the renderer", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();
       const applicationMenuTemplate =
         yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const ensureMainRequested = yield* Deferred.make<void>();
 
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
+      yield* configureMenu(selectedAction, applicationMenuTemplate, ensureMainRequested);
 
       const template = yield* Deferred.await(applicationMenuTemplate);
       const helpMenu = template.find((item) => item.role === "help");
@@ -151,6 +160,7 @@ describe("DesktopApplicationMenu", () => {
         {} as Electron.BrowserWindow,
         {} as KeyboardEvent,
       );
+      yield* Deferred.await(ensureMainRequested);
       assert.equal(yield* Deferred.await(selectedAction), "check-for-updates");
     }),
   );

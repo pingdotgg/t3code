@@ -48,6 +48,12 @@ const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
   yield* desktopWindow.zoomMain(direction);
 });
 
+const checkForUpdatesFromMenu = Effect.fn("desktop.menu.checkForUpdatesFromMenu")(function* () {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.ensureMain;
+  yield* desktopWindow.dispatchMenuAction("check-for-updates");
+});
+
 export const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
@@ -74,7 +80,7 @@ export const make = Effect.gen(function* () {
 
   const configure = Effect.gen(function* () {
     const checkForUpdatesClick = () => {
-      runMenuEffect("check-for-updates", dispatchMenuAction("check-for-updates"));
+      runMenuEffect("check-for-updates", checkForUpdatesFromMenu());
     };
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));

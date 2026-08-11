@@ -112,13 +112,16 @@ export function getDesktopUpdateInstallConfirmationMessage(
 
 export function getDesktopUpdateCheckAlertMessage(result: DesktopUpdateCheckResult): string | null {
   const { state } = result;
-  if (state.status === "up-to-date") {
-    return `You're up to date!\n\nT3 Code ${state.currentVersion} is currently the newest version available.`;
-  }
   if (!state.enabled || state.status === "disabled") {
     return `Updates unavailable\n\n${state.message ?? "Automatic updates are not available right now."}`;
   }
-  if (!result.checked || state.status === "error") {
+  if (!result.checked) {
+    return `Update check failed\n\n${state.message ?? "Could not check for updates. Please try again later."}`;
+  }
+  if (state.status === "up-to-date") {
+    return `You're up to date!\n\nT3 Code ${state.currentVersion} is currently the newest version available.`;
+  }
+  if (state.status === "error") {
     return `Update check failed\n\n${state.message ?? "Could not check for updates. Please try again later."}`;
   }
   return null;

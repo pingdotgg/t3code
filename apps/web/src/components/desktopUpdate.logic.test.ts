@@ -178,6 +178,15 @@ describe("desktop update UI helpers", () => {
     ).toBeNull();
   });
 
+  it("does not report stale up-to-date state when the check was skipped", () => {
+    expect(
+      getDesktopUpdateCheckAlertMessage({
+        checked: false,
+        state: { ...baseState, status: "up-to-date", currentVersion: "1.2.3" },
+      }),
+    ).toBe("Update check failed\n\nCould not check for updates. Please try again later.");
+  });
+
   it("builds the stable release URL for a downloaded version", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30")).toBe(
       "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",
