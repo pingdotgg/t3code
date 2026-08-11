@@ -158,6 +158,7 @@ const decodePayload = Schema.decodeUnknownEffect(Payload);
 const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
 const registeredSchemas = new Map<string, MarketingCanonicalObjectIdentity["kind"]>([
   ["source/basic@1", "source"],
+  ["source/unicode@1", "source"],
   ["workflow/instance@1", "workflow-instance"],
   ["plan/basic@1", "plan"],
   ["artifact/basic@1", "artifact"],
@@ -190,6 +191,26 @@ const registry: MarketingCanonicalRegistry = {
       return Effect.fail(
         new MarketingCanonicalValidationError({
           reason: "schema_reference_incompatible",
+          reference: key,
+        }),
+      );
+    }
+    if (key === "source/unicode@1") {
+      const record =
+        payload !== null && typeof payload === "object" && !Array.isArray(payload)
+          ? (payload as Readonly<Record<string, unknown>>)
+          : undefined;
+      if (
+        record !== undefined &&
+        Object.keys(record).length === 2 &&
+        typeof record["\u00e9"] === "number" &&
+        typeof record["e\u0301"] === "number"
+      ) {
+        return Effect.succeed(payload);
+      }
+      return Effect.fail(
+        new MarketingCanonicalValidationError({
+          reason: "payload_schema_invalid",
           reference: key,
         }),
       );
@@ -1071,6 +1092,58 @@ describe("canonical Marketing organization store", () => {
     }),
   );
 
+  it.effect("normalizes distinct Unicode keys deterministically across idempotent reopen", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now.epochMilliseconds);
+      const root = makeRoot();
+      const ownerAuthority = requestAuthority(14);
+      const owner = bootstrapInput(14, ownerAuthority);
+      const first = makeStores(root);
+      yield* first.workspaceStore.bootstrap(owner);
+      const input = {
+        ...baseWrite(ownerAuthority, owner.selection, 14),
+        object: { kind: "source" as const, id: MarketingSourceId.make(`msrc_${uuid(14)}`) },
+        canonicalKey: MarketingCanonicalKey.make("sources/unicode-order"),
+        schema: ref("source/unicode"),
+        payload: { "\u00e9": 1, "e\u0301": 2 },
+      };
+
+      const original = yield* first.canonicalStore.write(input);
+      const reopened = makeStores(root);
+      const replay = yield* reopened.canonicalStore.write({
+        ...input,
+        payload: { "e\u0301": 2, "\u00e9": 1 },
+      });
+      assert.deepEqual(replay, original);
+      assert.deepEqual(
+        yield* reopened.canonicalStore.read({
+          requestAuthority: ownerAuthority,
+          selection: owner.selection,
+          object: original.object,
+        }),
+        original,
+      );
+      assert.equal(
+        (yield* reopened.canonicalStore.listRevisions({
+          requestAuthority: ownerAuthority,
+          selection: owner.selection,
+          object: original.object,
+        })).length,
+        1,
+      );
+
+      const database = new NodeSqlite.DatabaseSync(
+        organizationWorkspaceDatabasePath(root, owner.selection.organizationId),
+        { readOnly: true },
+      );
+      const stored = database
+        .prepare("SELECT payload_json AS payloadJson FROM auldric_canonical_revisions")
+        .get() as unknown as { readonly payloadJson: string };
+      database.close();
+      assert.equal(stored.payloadJson, '{"e\u0301":2,"\u00e9":1}');
+    }),
+  );
+
   it.effect("serializes concurrent expected-version writes across store factories", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now.epochMilliseconds);
@@ -1513,7 +1586,10 @@ describe("canonical Marketing organization store", () => {
           selection: owner.selection,
         })
         .pipe(Effect.flip);
-      assert.equal(failure._tag, "MarketingWorkspaceStoreError");
+      assert.equal(failure._tag, "MarketingWorkspaceUnavailableError");
+      if (failure._tag === "MarketingWorkspaceUnavailableError") {
+        assert.equal(failure.reason, "workspace_database_schema_stale");
+      }
 
       const inspection = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
       const versions = inspection
@@ -1633,6 +1709,80 @@ describe("canonical Marketing organization store", () => {
         .get() as unknown as { readonly count: number };
       inspection.close();
       assert.deepEqual(versions, [{ version: 1 }, { version: 2 }]);
+      assert.equal(v3Objects.count, 0);
+    }),
+  );
+
+  it.effect("rejects malformed base-table DDL in v2 without activating v3", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now.epochMilliseconds);
+      const root = makeRoot();
+      const ownerAuthority = requestAuthority(55);
+      const owner = bootstrapInput(55, ownerAuthority);
+      const stores = makeStores(root);
+      yield* stores.workspaceStore.bootstrap(owner);
+      const databasePath = organizationWorkspaceDatabasePath(root, owner.selection.organizationId);
+      const database = new NodeSqlite.DatabaseSync(databasePath);
+      restoreExactV2Schema(database);
+      database.exec(`
+        CREATE TABLE malformed_workspace_registry (
+          workspace_id TEXT,
+          organization_id TEXT,
+          project_id TEXT,
+          created_at TEXT
+        );
+        INSERT INTO malformed_workspace_registry
+          SELECT workspace_id, organization_id, project_id, created_at
+          FROM auldric_marketing_workspace_registry;
+        DROP TABLE auldric_marketing_workspace_registry;
+        ALTER TABLE malformed_workspace_registry
+          RENAME TO auldric_marketing_workspace_registry;
+      `);
+      const malformedSql = (
+        database
+          .prepare(
+            `SELECT sql FROM sqlite_master
+             WHERE type = 'table' AND name = 'auldric_marketing_workspace_registry'`,
+          )
+          .get() as unknown as { readonly sql: string }
+      ).sql;
+      database.close();
+
+      const failure = yield* makeStores(root)
+        .canonicalStore.listInventory({
+          requestAuthority: ownerAuthority,
+          selection: owner.selection,
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "MarketingWorkspaceUnavailableError");
+      if (failure._tag === "MarketingWorkspaceUnavailableError") {
+        assert.equal(failure.reason, "workspace_database_schema_stale");
+      }
+
+      const inspection = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+      const versions = inspection
+        .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+        .all() as unknown as ReadonlyArray<{ readonly version: number }>;
+      const retainedSql = (
+        inspection
+          .prepare(
+            `SELECT sql FROM sqlite_master
+             WHERE type = 'table' AND name = 'auldric_marketing_workspace_registry'`,
+          )
+          .get() as unknown as { readonly sql: string }
+      ).sql;
+      const v3Objects = inspection
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sqlite_master
+           WHERE name IN (
+             'auldric_canonical_revision_seals',
+             'auldric_canonical_workspace_key_unique'
+           )`,
+        )
+        .get() as unknown as { readonly count: number };
+      inspection.close();
+      assert.deepEqual(versions, [{ version: 1 }, { version: 2 }]);
+      assert.equal(retainedSql, malformedSql);
       assert.equal(v3Objects.count, 0);
     }),
   );

@@ -593,29 +593,38 @@ const organizationSchemaV1Columns = {
   ],
 } as const;
 
+const organizationSchemaV1Triggers = [] as const;
+
+function createOrganizationSchemaV1Objects(database: NodeSqlite.DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE auldric_organization_schema_migrations (
+      version INTEGER PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+
+    CREATE TABLE auldric_organization_identity (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      organization_id TEXT NOT NULL,
+      database_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE auldric_marketing_workspace_registry (
+      workspace_id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+}
+
 function verifyOrganizationSchemaV1(database: NodeSqlite.DatabaseSync): void {
-  const expectedTables = Object.keys(organizationSchemaV1Columns).sort();
-  const actualTables = userTableNames(database);
-  if (expectedTables.some((table) => !actualTables.includes(table))) {
-    throw new MarketingWorkspaceUnavailableError({
-      reason: "workspace_database_schema_stale",
-    });
-  }
-  for (const [table, columns] of Object.entries(organizationSchemaV1Columns)) {
-    if (!hasExactRequiredColumns(database, table, columns)) {
-      throw new MarketingWorkspaceUnavailableError({
-        reason: "workspace_database_schema_stale",
-      });
-    }
-  }
-  const versions = database
-    .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
-    .all() as unknown as ReadonlyArray<SchemaVersionRow>;
-  if (versions.length !== 1 || versions[0]?.version !== 1) {
-    throw new MarketingWorkspaceUnavailableError({
-      reason: "workspace_database_schema_stale",
-    });
-  }
+  verifyOrganizationSchemaVersion(
+    database,
+    1,
+    organizationSchemaV1Columns,
+    organizationSchemaV1Triggers,
+  );
 }
 
 function createManagedOrganizationSchemaV1(
@@ -623,26 +632,7 @@ function createManagedOrganizationSchemaV1(
   input: { readonly selection: MarketingWorkspaceSelection; readonly databaseKey: string },
 ): void {
   runTransaction(database, () => {
-    database.exec(`
-      CREATE TABLE auldric_organization_schema_migrations (
-        version INTEGER PRIMARY KEY,
-        applied_at TEXT NOT NULL
-      );
-
-      CREATE TABLE auldric_organization_identity (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        organization_id TEXT NOT NULL,
-        database_key TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL
-      );
-
-      CREATE TABLE auldric_marketing_workspace_registry (
-        workspace_id TEXT PRIMARY KEY,
-        organization_id TEXT NOT NULL,
-        project_id TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-    `);
+    createOrganizationSchemaV1Objects(database);
 
     database
       .prepare(
@@ -767,7 +757,7 @@ function normalizeSchemaSql(sql: string): string {
   return sql.replace(/\s+/gu, " ").trim().replace(/;$/u, "");
 }
 
-function canonicalSchemaDefinitions(
+function organizationSchemaDefinitions(
   database: NodeSqlite.DatabaseSync,
 ): ReadonlyArray<SqliteSchemaDefinitionRow> {
   return (
@@ -776,35 +766,46 @@ function canonicalSchemaDefinitions(
         `SELECT type, name, tbl_name AS tableName, sql
          FROM sqlite_master
          WHERE sql IS NOT NULL
-           AND (name GLOB 'auldric_canonical_*' OR tbl_name GLOB 'auldric_canonical_*')
+           AND name NOT LIKE 'sqlite_%'
+           AND type IN ('table', 'index', 'trigger', 'view')
          ORDER BY type, name`,
       )
       .all() as unknown as ReadonlyArray<SqliteSchemaDefinitionRow>
   ).map((row) => ({ ...row, sql: normalizeSchemaSql(row.sql) }));
 }
 
-let expectedCanonicalSchemaDefinitionsV2: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
-let expectedCanonicalSchemaDefinitionsV3: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
+let expectedOrganizationSchemaDefinitionsV1: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
+let expectedOrganizationSchemaDefinitionsV2: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
+let expectedOrganizationSchemaDefinitionsV3: ReadonlyArray<SqliteSchemaDefinitionRow> | undefined;
 
-function getExpectedCanonicalSchemaDefinitions(
-  version: 2 | 3,
+function getExpectedOrganizationSchemaDefinitions(
+  version: 1 | 2 | 3,
 ): ReadonlyArray<SqliteSchemaDefinitionRow> {
   const existing =
-    version === 2 ? expectedCanonicalSchemaDefinitionsV2 : expectedCanonicalSchemaDefinitionsV3;
+    version === 1
+      ? expectedOrganizationSchemaDefinitionsV1
+      : version === 2
+        ? expectedOrganizationSchemaDefinitionsV2
+        : expectedOrganizationSchemaDefinitionsV3;
   if (existing !== undefined) {
     return existing;
   }
   const database = new NodeSqlite.DatabaseSync(":memory:");
   try {
-    createOrganizationSchemaV2Objects(database);
+    createOrganizationSchemaV1Objects(database);
+    if (version >= 2) {
+      createOrganizationSchemaV2Objects(database);
+    }
     if (version === 3) {
       createOrganizationSchemaV3Objects(database);
     }
-    const definitions = canonicalSchemaDefinitions(database);
-    if (version === 2) {
-      expectedCanonicalSchemaDefinitionsV2 = definitions;
+    const definitions = organizationSchemaDefinitions(database);
+    if (version === 1) {
+      expectedOrganizationSchemaDefinitionsV1 = definitions;
+    } else if (version === 2) {
+      expectedOrganizationSchemaDefinitionsV2 = definitions;
     } else {
-      expectedCanonicalSchemaDefinitionsV3 = definitions;
+      expectedOrganizationSchemaDefinitionsV3 = definitions;
     }
     return definitions;
   } finally {
@@ -814,7 +815,7 @@ function getExpectedCanonicalSchemaDefinitions(
 
 function verifyOrganizationSchemaVersion(
   database: NodeSqlite.DatabaseSync,
-  version: 2 | 3,
+  version: 1 | 2 | 3,
   columns: Readonly<Record<string, ReadonlyArray<string>>>,
   triggers: ReadonlyArray<string>,
 ): void {
@@ -848,8 +849,8 @@ function verifyOrganizationSchemaVersion(
       reason: "workspace_database_schema_stale",
     });
   }
-  const actualDefinitions = canonicalSchemaDefinitions(database);
-  const expectedDefinitions = getExpectedCanonicalSchemaDefinitions(version);
+  const actualDefinitions = organizationSchemaDefinitions(database);
+  const expectedDefinitions = getExpectedOrganizationSchemaDefinitions(version);
   if (
     actualDefinitions.length !== expectedDefinitions.length ||
     actualDefinitions.some((definition, index) => {

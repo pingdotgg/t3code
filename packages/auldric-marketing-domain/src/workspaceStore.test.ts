@@ -1173,6 +1173,68 @@ describe("organization Marketing workspace store", () => {
     }),
   );
 
+  it.effect("rejects a constraintless v1 organization schema without migrating it", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now.epochMilliseconds);
+      const root = makeRoot();
+      const input = bootstrapInput(117);
+      const databasePath = createOrganizationSchemaV1(root, input.selection);
+      const malformed = new NodeSqlite.DatabaseSync(databasePath);
+      malformed.exec(`
+        CREATE TABLE malformed_organization_identity (
+          singleton INTEGER,
+          organization_id TEXT,
+          database_key TEXT,
+          created_at TEXT
+        );
+        INSERT INTO malformed_organization_identity
+          SELECT singleton, organization_id, database_key, created_at
+          FROM auldric_organization_identity;
+        DROP TABLE auldric_organization_identity;
+        ALTER TABLE malformed_organization_identity
+          RENAME TO auldric_organization_identity;
+      `);
+      const malformedSql = (
+        malformed
+          .prepare(
+            `SELECT sql FROM sqlite_master
+             WHERE type = 'table' AND name = 'auldric_organization_identity'`,
+          )
+          .get() as unknown as { readonly sql: string }
+      ).sql;
+      malformed.close();
+
+      const failure = yield* makeStore(root).backfill(input).pipe(Effect.flip);
+      assert.equal(failure._tag, "MarketingWorkspaceUnavailableError");
+      if (failure._tag === "MarketingWorkspaceUnavailableError") {
+        assert.equal(failure.reason, "workspace_database_schema_stale");
+      }
+
+      const inspection = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+      const versions = inspection
+        .prepare("SELECT version FROM auldric_organization_schema_migrations ORDER BY version")
+        .all() as unknown as ReadonlyArray<{ readonly version: number }>;
+      const retainedSql = (
+        inspection
+          .prepare(
+            `SELECT sql FROM sqlite_master
+             WHERE type = 'table' AND name = 'auldric_organization_identity'`,
+          )
+          .get() as unknown as { readonly sql: string }
+      ).sql;
+      const canonicalTables = inspection
+        .prepare(
+          `SELECT COUNT(*) AS count FROM sqlite_master
+           WHERE type = 'table' AND name GLOB 'auldric_canonical_*'`,
+        )
+        .get() as unknown as { readonly count: number };
+      inspection.close();
+      assert.deepEqual(versions, [{ version: 1 }]);
+      assert.equal(retainedSql, malformedSql);
+      assert.equal(canonicalTables.count, 0);
+    }),
+  );
+
   it.effect("includes expiresAt in T3-reference idempotency semantics", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now.epochMilliseconds);

@@ -49,6 +49,7 @@ import {
   canonicalRevisionChildrenSha256,
   type CanonicalSealFact,
   type CanonicalSealReference,
+  compareCanonicalText,
 } from "./canonicalSeal.ts";
 import { getCanonicalWorkspaceResolver } from "./canonicalWorkspaceAccess.ts";
 import {
@@ -331,7 +332,7 @@ function normalizeJson(value: MarketingCanonicalJson): MarketingCanonicalJson {
   if (Array.isArray(value)) return value.map(normalizeJson);
   return Object.fromEntries(
     Object.entries(value)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareCanonicalText(left, right))
       .map(([key, entry]) => [key, normalizeJson(entry)]),
   );
 }
@@ -1108,7 +1109,7 @@ export function makeMarketingCanonicalStore<RequestAuthority>(
         Effect.try({
           try: () =>
             [...decodeProjectionFacts(projected)].sort((left, right) =>
-              left.key.localeCompare(right.key),
+              compareCanonicalText(left.key, right.key),
             ),
           catch: () => validationFailure("projection_fact_invalid", referenceText(schema)),
         }),

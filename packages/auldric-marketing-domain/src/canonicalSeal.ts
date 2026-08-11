@@ -15,7 +15,8 @@ export interface CanonicalSealFact {
   readonly valueSha256: string;
 }
 
-function compareText(left: string, right: string): number {
+/** Locale-independent UTF-16 code-unit ordering for every persisted canonical digest. */
+export function compareCanonicalText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
@@ -30,10 +31,10 @@ export function canonicalRevisionChildrenSha256(
   const normalizedReferences = [...references]
     .sort(
       (left, right) =>
-        compareText(left.referenceKind, right.referenceKind) ||
+        compareCanonicalText(left.referenceKind, right.referenceKind) ||
         left.ordinal - right.ordinal ||
-        compareText(left.targetObjectId, right.targetObjectId) ||
-        compareText(left.targetRevisionId, right.targetRevisionId) ||
+        compareCanonicalText(left.targetObjectId, right.targetObjectId) ||
+        compareCanonicalText(left.targetRevisionId, right.targetRevisionId) ||
         left.targetVersion - right.targetVersion,
     )
     .map((reference) => ({
@@ -46,9 +47,9 @@ export function canonicalRevisionChildrenSha256(
   const normalizedFacts = [...facts]
     .sort(
       (left, right) =>
-        compareText(left.factKey, right.factKey) ||
-        compareText(left.valueSha256, right.valueSha256) ||
-        compareText(left.valueJson, right.valueJson),
+        compareCanonicalText(left.factKey, right.factKey) ||
+        compareCanonicalText(left.valueSha256, right.valueSha256) ||
+        compareCanonicalText(left.valueJson, right.valueJson),
     )
     .map((fact) => ({
       factKey: fact.factKey,
