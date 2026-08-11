@@ -82,11 +82,16 @@ function elapsedBetween(startedAt: string, endIso: string | null): string {
 /**
  * Elapsed time for the current activation. Live agents self-tick via DOM
  * writes (zero React commits per tick); settled agents freeze at completedAt.
+ * Idle is resumable and carries no end stamp of its own, so its last update is
+ * the closest end signal we have. Without it the label measures against the
+ * current time and climbs forever.
  */
 function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
+  const settledEnd = agent.status === "idle" ? agent.updatedAt : agent.completedAt;
+  const endedAt = live ? null : settledEnd;
 
   useEffect(() => {
     if (!live || !startedAt) {
@@ -107,7 +112,7 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   }
   return (
     <span ref={textRef} className="tabular-nums">
-      {elapsedBetween(startedAt, live ? null : agent.completedAt)}
+      {elapsedBetween(startedAt, endedAt)}
     </span>
   );
 }
