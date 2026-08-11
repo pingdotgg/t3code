@@ -11,6 +11,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function finiteNonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const int = Math.floor(value);
+  return int >= 0 ? int : undefined;
+}
+
 function isSessionModelState(value: unknown): value is EffectAcpSchema.SessionModelState {
   if (!isRecord(value) || typeof value.currentModelId !== "string") {
     return false;
@@ -108,6 +114,16 @@ export type AcpParsedSessionEvent =
       readonly itemId?: string;
       readonly text: string;
       readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly used: number;
+      readonly size: number;
+      readonly cost: number | null;
+      readonly inputTokens: number | undefined;
+      readonly outputTokens: number | undefined;
+      readonly cachedReadTokens: number | undefined;
+      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -120,11 +136,22 @@ type AcpToolCallUpdate = Extract<
   { readonly sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
+const MODEL_CONFIG_OPTION_IDS = new Set(["model", "models", "modelid", "modelids"]);
+
+function isModelConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
+  if (option.category === "model") return true;
+  const id = option.id
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+  return MODEL_CONFIG_OPTION_IDS.has(id);
+}
+
 export function extractModelConfigId(sessionResponse: AcpSessionSetupResponse): string | undefined {
   const configOptions = sessionResponse.configOptions;
   if (!configOptions) return undefined;
   for (const opt of configOptions) {
-    if (opt.category === "model" && opt.id.trim().length > 0) {
+    if (isModelConfigOption(opt) && opt.id.trim().length > 0) {
       return opt.id.trim();
     }
   }
@@ -572,6 +599,20 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           rawPayload: params,
         });
       }
+      break;
+    }
+    case "usage_update": {
+      const meta = isRecord(upd._meta) ? upd._meta : {};
+      events.push({
+        _tag: "UsageUpdated",
+        used: finiteNonNegativeInteger(upd.used) ?? 0,
+        size: finiteNonNegativeInteger(upd.size) ?? 0,
+        cost: upd.cost && typeof upd.cost.amount === "number" ? upd.cost.amount : null,
+        inputTokens: finiteNonNegativeInteger(meta["cognition.ai/inputTokens"]),
+        outputTokens: finiteNonNegativeInteger(meta["cognition.ai/outputTokens"]),
+        cachedReadTokens: finiteNonNegativeInteger(meta["cognition.ai/cachedReadTokens"]),
+        rawPayload: params,
+      });
       break;
     }
     default:

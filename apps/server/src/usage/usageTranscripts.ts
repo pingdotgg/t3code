@@ -68,7 +68,9 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * an order of magnitude.
  */
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  return provider === "claude" ? line.includes('"usage"') : line.includes('"token_count"');
+  if (provider === "claude") return line.includes('"usage"');
+  if (provider === "devin") return line.includes('"devin_usage"');
+  return line.includes('"token_count"');
 }
 
 /* -------------------------------------------------------------------------- */
@@ -295,6 +297,62 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     // rollout, so they need no global dedup.
     dedupeKey: null,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Devin                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Parses one line from a Devin usage transcript written by T3 Code.
+ *
+ * Each line is an independent, delta-normalized record keyed by
+ * `sessionId:turnId` so the aggregator can de-duplicate retries.
+ */
+export function parseDevinLine(line: string): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  if (record["type"] !== "devin_usage") return null;
+
+  const timestampMs = parseTimestampMs(record["timestamp"]);
+  if (timestampMs === null) return null;
+
+  const sessionId = typeof record["sessionId"] === "string" ? record["sessionId"] : "";
+  const turnId = typeof record["turnId"] === "string" ? record["turnId"] : "";
+  const model = typeof record["model"] === "string" ? record["model"] : "";
+  if (model.length === 0) return null;
+
+  const totals = record["totals"];
+  if (typeof totals !== "object" || totals === null) return null;
+  const totalsRecord = totals as Record<string, unknown>;
+
+  const cost = record["reportedCostUsd"];
+
+  const result: UsageRecord = {
+    provider: "devin",
+    timestampMs,
+    model,
+    sessionId,
+    totals: {
+      uncachedInputTokens: int(totalsRecord["uncachedInputTokens"]),
+      cachedInputTokens: int(totalsRecord["cachedInputTokens"]),
+      cacheCreationTokens: int(totalsRecord["cacheCreationTokens"]),
+      outputTokens: int(totalsRecord["outputTokens"]),
+      reasoningTokens: int(totalsRecord["reasoningTokens"]),
+    },
+    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
+    dedupeKey: sessionId.length > 0 && turnId.length > 0 ? `${sessionId}:${turnId}` : null,
+  };
+
+  if (totalTokens(result.totals) === 0) return null;
+  return result;
 }
 
 export { EMPTY_TOTALS };

@@ -23,6 +23,7 @@ const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const DEVIN_DRIVER = ProviderDriverKind.make("devin");
 
 const makeProvider = (
   provider: ProviderDriverKind,
@@ -55,7 +56,9 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-invalid-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-provider-cache-invalid-",
+      });
       const cachePath = `${tempDir}/provider.json`;
       const secretCacheValue = "secret-cache-value";
       yield* fs.writeFileString(cachePath, `{ "token": "${secretCacheValue}" }`);
@@ -79,7 +82,9 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
   it.effect("writes and reads provider status snapshots", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-provider-cache-",
+      });
       const codexProvider = makeProvider(CODEX_DRIVER);
       const claudeProvider = makeProvider(CLAUDE_AGENT_DRIVER, {
         status: "warning",
@@ -266,6 +271,142 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         fallbackProvider: fallbackCodex,
       }),
       fallbackCodex,
+    );
+  });
+
+  it("deduplicates Devin variant models cached before the family filter", () => {
+    const cachedDevin = makeProvider(DEVIN_DRIVER, {
+      models: [
+        {
+          slug: "claude-opus-5-medium",
+          name: "Claude Opus 5 Medium",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "claude-opus-5-low",
+          name: "Claude Opus 5 Low",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "claude-opus-5-high",
+          name: "Claude Opus 5 High",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "gpt-5-6-sol-none",
+          name: "GPT-5.6 Sol No Thinking",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "gpt-5-6-sol-high",
+          name: "GPT-5.6 Sol High Thinking",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "adaptive",
+          name: "Adaptive",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackDevin = makeProvider(DEVIN_DRIVER, {
+      models: [
+        {
+          slug: "adaptive",
+          name: "Adaptive",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+
+    const hydrated = hydrateCachedProvider({
+      cachedProvider: cachedDevin,
+      fallbackProvider: fallbackDevin,
+    });
+
+    assert.deepStrictEqual(
+      hydrated.models.map((m) => ({ slug: m.slug, name: m.name })),
+      [
+        { slug: "adaptive", name: "Adaptive" },
+        { slug: "claude-opus-5", name: "Claude Opus 5" },
+        { slug: "gpt-5-6-sol", name: "GPT-5.6 Sol" },
+      ],
+    );
+  });
+
+  it("deduplicates Devin legacy opaque model ids using the model name", () => {
+    const cachedDevin = makeProvider(DEVIN_DRIVER, {
+      models: [
+        {
+          slug: "MODEL_PRIVATE_11",
+          name: "Claude Haiku 4.5",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "MODEL_PRIVATE_2",
+          name: "Claude Sonnet 4.5",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "MODEL_GPT_5_2_LOW",
+          name: "GPT-5.2 Low Thinking",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "MODEL_GPT_5_2_MEDIUM",
+          name: "GPT-5.2 Medium Thinking",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "claude-fable-5",
+          name: "Claude Fable 5",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+    const fallbackDevin = makeProvider(DEVIN_DRIVER, {
+      models: [
+        {
+          slug: "adaptive",
+          name: "Adaptive",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+        {
+          slug: "claude-haiku-4-5",
+          name: "Claude Haiku 4.5",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ],
+    });
+
+    const hydrated = hydrateCachedProvider({
+      cachedProvider: cachedDevin,
+      fallbackProvider: fallbackDevin,
+    });
+
+    assert.deepStrictEqual(
+      hydrated.models.map((m) => ({ slug: m.slug, name: m.name })),
+      [
+        { slug: "adaptive", name: "Adaptive" },
+        { slug: "claude-fable-5", name: "Claude Fable 5" },
+        { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+        { slug: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+        { slug: "gpt-5-2", name: "GPT-5.2" },
+      ],
     );
   });
 });

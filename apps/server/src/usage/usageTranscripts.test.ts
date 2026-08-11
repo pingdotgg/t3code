@@ -2,8 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   initialCodexScanState,
+  mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
+  parseDevinLine,
   totalTokens,
 } from "./usageTranscripts.ts";
 
@@ -71,7 +73,10 @@ describe("parseCodexLine", () => {
   const sessionMeta = JSON.stringify({
     type: "session_meta",
     timestamp: "2026-08-01T05:17:41.289Z",
-    payload: { type: "session_meta", id: "019fbbc1-b12c-7360-a685-28c181f0025f" },
+    payload: {
+      type: "session_meta",
+      id: "019fbbc1-b12c-7360-a685-28c181f0025f",
+    },
   });
   const turnContext = JSON.stringify({
     type: "turn_context",
@@ -158,7 +163,9 @@ describe("parseCodexLine", () => {
             ? {}
             : {
                 source: {
-                  subagent: { thread_spawn: { parent_thread_id: overrides.spawnParentId } },
+                  subagent: {
+                    thread_spawn: { parent_thread_id: overrides.spawnParentId },
+                  },
                 },
               }),
         },
@@ -247,5 +254,41 @@ describe("totalTokens", () => {
         reasoningTokens: 25,
       }),
     ).toBe(100);
+  });
+});
+
+describe("parseDevinLine", () => {
+  it("extracts token totals from a T3 Code devin_usage line", () => {
+    const line = JSON.stringify({
+      type: "devin_usage",
+      timestamp: "2026-08-11T16:44:06.637Z",
+      sessionId: "aloud-lantana",
+      turnId: "af6deae3-30ba-42d4-aab7-c6908d04361d",
+      model: "swe-1-7",
+      totals: {
+        uncachedInputTokens: 21239,
+        cachedInputTokens: 448,
+        cacheCreationTokens: 0,
+        outputTokens: 89,
+        reasoningTokens: 0,
+      },
+      reportedCostUsd: null,
+    });
+
+    expect(mightCarryUsage(line, "devin")).toBe(true);
+
+    const record = parseDevinLine(line);
+    expect(record).not.toBeNull();
+    expect(record?.provider).toBe("devin");
+    expect(record?.model).toBe("swe-1-7");
+    expect(record?.sessionId).toBe("aloud-lantana");
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 21239,
+      cachedInputTokens: 448,
+      cacheCreationTokens: 0,
+      outputTokens: 89,
+      reasoningTokens: 0,
+    });
+    expect(record?.dedupeKey).toBe("aloud-lantana:af6deae3-30ba-42d4-aab7-c6908d04361d");
   });
 });

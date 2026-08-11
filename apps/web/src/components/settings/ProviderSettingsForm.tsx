@@ -12,6 +12,7 @@ import type {
 import { cn } from "../../lib/utils";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import type { ProviderClientDefinition } from "./providerDriverMeta";
@@ -24,6 +25,7 @@ export interface ProviderSettingsFieldModel {
   readonly placeholder?: string | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
   readonly defaultBooleanValue?: boolean | undefined;
+  readonly options?: ReadonlyArray<{ readonly value: string; readonly label: string }> | undefined;
 }
 
 function titleizeFieldKey(key: string): string {
@@ -106,6 +108,7 @@ export function deriveProviderSettingsFields(
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
+          ...(formAnnotation.options !== undefined ? { options: formAnnotation.options } : {}),
         } satisfies ProviderSettingsFieldModel,
       ];
     });
@@ -232,6 +235,42 @@ function ProviderSettingsFieldRow({
             placeholder={field.placeholder}
             spellCheck={false}
           />
+          {description}
+        </label>
+      </FieldFrame>
+    );
+  }
+
+  if (field.control === "select") {
+    const currentValue = readProviderConfigString(value, field.key);
+    const selectedOption = field.options?.find((option) => option.value === currentValue);
+    return (
+      <FieldFrame variant={variant}>
+        <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
+          {label}
+          <Select
+            value={currentValue}
+            onValueChange={(next) => {
+              if (next === null) return;
+              onChange(nextProviderConfigWithFieldValue(value, field, next));
+            }}
+          >
+            <SelectTrigger
+              id={inputId}
+              className={cn("mt-1.5 w-full bg-background", variant !== "card" && "bg-background")}
+            >
+              <SelectValue placeholder={field.placeholder ?? field.label}>
+                {selectedOption?.label ?? currentValue}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              {field.options?.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
           {description}
         </label>
       </FieldFrame>

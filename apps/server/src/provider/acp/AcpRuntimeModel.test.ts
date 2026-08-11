@@ -299,7 +299,11 @@ describe("AcpRuntimeModel", () => {
           update: {
             sessionUpdate: "plan",
             entries: [
-              { content: " Inspect state ", priority: "high", status: "completed" },
+              {
+                content: " Inspect state ",
+                priority: "high",
+                status: "completed",
+              },
               { content: "", priority: "medium", status: "in_progress" },
             ],
           },
@@ -373,5 +377,46 @@ describe("AcpRuntimeModel", () => {
         command: "cat package.json",
       },
     });
+  });
+
+  it("projects ACP usage_update notifications into runtime events", () => {
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 21776,
+        size: 262000,
+        _meta: {
+          "cognition.ai/inputTokens": 21687,
+          "cognition.ai/outputTokens": 89,
+          "cognition.ai/cachedReadTokens": 448,
+        },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(result.events).toEqual([
+      {
+        _tag: "UsageUpdated",
+        used: 21776,
+        size: 262000,
+        cost: null,
+        inputTokens: 21687,
+        outputTokens: 89,
+        cachedReadTokens: 448,
+        rawPayload: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "usage_update",
+            used: 21776,
+            size: 262000,
+            _meta: {
+              "cognition.ai/inputTokens": 21687,
+              "cognition.ai/outputTokens": 89,
+              "cognition.ai/cachedReadTokens": 448,
+            },
+          },
+        },
+      },
+    ]);
   });
 });

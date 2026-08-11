@@ -98,6 +98,7 @@ export function ProviderModelsSection({
   onModelOrderChange,
 }: ProviderModelsSectionProps) {
   const [input, setInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
@@ -109,6 +110,15 @@ export function ProviderModelsSection({
       modelOrder,
     });
   }, [favoriteModelSet, modelOrder, models]);
+
+  const filteredModels = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return orderedModels;
+    return orderedModels.filter(
+      (model) =>
+        model.slug.toLowerCase().includes(query) || model.name.toLowerCase().includes(query),
+    );
+  }, [orderedModels, searchQuery]);
 
   const handleAdd = () => {
     const normalized = normalizeCustomModelSlug(input);
@@ -190,8 +200,15 @@ export function ProviderModelsSection({
       <div className="mt-1 text-xs text-muted-foreground">
         {models.length} model{models.length === 1 ? "" : "s"} available.
       </div>
+      <Input
+        value={searchQuery}
+        onChange={(event) => setSearchQuery(event.target.value)}
+        placeholder="Search models..."
+        className="mt-2"
+        spellCheck={false}
+      />
       <div ref={listRef} className="mt-2 max-h-40 overflow-y-auto pb-1">
-        {orderedModels.map((model, index) => {
+        {filteredModels.map((model, index) => {
           const caps = model.capabilities;
           const capLabels: string[] = [];
           const isHidden = !model.isCustom && hiddenModelSet.has(model.slug);
@@ -257,6 +274,9 @@ export function ProviderModelsSection({
                     <TooltipPopup side="top" className="max-w-56">
                       <div className="space-y-1">
                         <code className="block text-[11px] text-foreground">{model.slug}</code>
+                        {model.description ? (
+                          <p className="text-[11px] text-muted-foreground">{model.description}</p>
+                        ) : null}
                         {capLabels.length > 0 ? (
                           <div className="flex flex-wrap gap-x-2 gap-y-0.5">
                             {capLabels.map((label) => (

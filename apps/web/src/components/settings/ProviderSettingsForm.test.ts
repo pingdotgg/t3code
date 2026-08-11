@@ -22,6 +22,30 @@ describe("ProviderSettingsForm helpers", () => {
     ]);
   });
 
+  it("derives Devin settings fields in the configured order", () => {
+    const devin = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("devin")];
+
+    expect(devin).toBeDefined();
+    expect(deriveProviderSettingsFields(devin!).map((field) => field.key)).toEqual([
+      "binaryPath",
+      "permissionMode",
+    ]);
+
+    const permissionMode = deriveProviderSettingsFields(devin!).find(
+      (field) => field.key === "permissionMode",
+    );
+    expect(permissionMode).toMatchObject({
+      control: "select",
+      options: [
+        { value: "normal", label: "Normal" },
+        { value: "accept-edits", label: "Accept edits" },
+        { value: "smart", label: "Smart" },
+        { value: "dangerous", label: "Dangerous" },
+        { value: "autonomous", label: "Autonomous" },
+      ],
+    });
+  });
+
   it("sources labels and descriptions from schema annotations", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

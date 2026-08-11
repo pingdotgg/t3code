@@ -22,6 +22,7 @@ import {
   mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
+  parseDevinLine,
   type UsageRecord,
 } from "./usageTranscripts.ts";
 
@@ -125,6 +126,13 @@ export async function readTranscriptRecords(
           continue;
         }
         const record = parseCodexLine(line, codexState);
+        if (record !== null) records.push(record);
+        continue;
+      }
+
+      if (provider === "devin") {
+        if (!mightCarryUsage(line, provider)) continue;
+        const record = parseDevinLine(line);
         if (record !== null) records.push(record);
         continue;
       }

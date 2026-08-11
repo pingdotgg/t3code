@@ -289,9 +289,13 @@ export const make = (
           }),
       ),
     );
-    const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
+    const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({
+      nextSegmentIndex: 0,
+    });
     const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
-    const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
+    const startStateRef = yield* Ref.make<AcpStartState>({
+      _tag: "NotStarted",
+    });
     const promptSerializationSemaphore = yield* Semaphore.make(1);
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
@@ -541,15 +545,24 @@ export const make = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      const authMethods = initializeResult.authMethods ?? [];
+      if (authMethods.length > 0) {
+        const requestedAuthMethodId = options.authMethodId;
+        const effectiveAuthMethodId =
+          authMethods.find((method) => method.id === requestedAuthMethodId)?.id ??
+          authMethods[0]?.id;
+        if (effectiveAuthMethodId !== undefined) {
+          const authenticatePayload = {
+            methodId: effectiveAuthMethodId,
+          } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+          yield* runLoggedRequest(
+            "authenticate",
+            authenticatePayload,
+            acp.agent.authenticate(authenticatePayload),
+          );
+        }
+      }
 
       let sessionId: string;
       let sessionSetupResult:
