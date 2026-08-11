@@ -332,7 +332,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
         (cause) =>
           new AetherApiTransportError({
             endpoint,
-            detail: `Request failed before a response arrived: ${String(cause)}`,
+            detail: "Request failed before a response arrived.",
             cause,
           }),
       ),
@@ -394,7 +394,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
           new AetherApiRequestError({
             endpoint,
             status: 0,
-            detail: `Request body could not be encoded as JSON: ${String(cause)}`,
+            detail: "Request body could not be encoded as JSON.",
             cause,
           }),
       ),
@@ -536,7 +536,7 @@ export function makeAetherRestClient(options: AetherRestClientOptions): AetherRe
           (cause) =>
             new AetherApiTransportError({
               endpoint,
-              detail: `Request failed before a response arrived: ${String(cause)}`,
+              detail: "Request failed before a response arrived.",
               cause,
             }),
         ),
