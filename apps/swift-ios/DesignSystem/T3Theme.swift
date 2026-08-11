@@ -82,9 +82,9 @@ enum T3BuildChrome {
 
         var accessibilityName: String {
             switch self {
-            case .home: String(localized: "Home")
-            case .newTask: String(localized: "New task")
-            case .thread: String(localized: "Thread")
+            case .home: "Home"
+            case .newTask: "New task"
+            case .thread: "Thread"
             }
         }
     }
@@ -114,7 +114,7 @@ enum T3BuildChrome {
         guard presentation(for: surface, isDebugBuild: isDebugBuild) == .warning else {
             return nil
         }
-        return "\(surface.accessibilityName), \(String(localized: "Development build"))"
+        return "\(surface.accessibilityName), Development build"
     }
 
     static func background(
@@ -199,6 +199,8 @@ extension View {
         _ surface: T3BuildChrome.Surface,
         standard: Color
     ) -> some View {
+        // Keep the Home/New Task warning inside their bars; unlike navigation
+        // chrome, those surfaces do not own the status-bar safe area.
         background(
             T3BuildChrome.background(for: surface, standard: standard),
             ignoresSafeAreaEdges: []
@@ -225,6 +227,8 @@ private struct T3BuildNavigationChromeModifier: ViewModifier {
                 background: T3BuildChrome.background(
                     for: surface,
                     standard: T3Colors.sheet,
+                    // Resolve before toolbarColorScheme(.light) changes the
+                    // navigation bar's environment and flattens the warning.
                     warning: T3Colors.warning(for: colorScheme)
                 )
             )

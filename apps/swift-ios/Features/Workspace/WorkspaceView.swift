@@ -295,7 +295,6 @@ public struct WorkspaceView: View {
         HStack(spacing: 2) {
             connectionBrand
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .t3BuildChromeMarker(.home)
 
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -349,6 +348,7 @@ public struct WorkspaceView: View {
                 Text(unreachableBrandLabel)
                     .lineLimit(2)
                     .font(.system(size: 13, weight: .semibold))
+                    .t3BuildChromeMarker(.home)
                 Button("Reconnect") {
                     Task { await model.reload() }
                 }
@@ -386,6 +386,7 @@ public struct WorkspaceView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(reconnecting.name) reconnecting")
+            .t3BuildChromeMarker(.home)
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("T3")
@@ -402,6 +403,7 @@ public struct WorkspaceView: View {
             .font(.system(size: 16))
             .accessibilityElement(children: .combine)
             .accessibilityLabel("T3 Code")
+            .t3BuildChromeMarker(.home)
         }
     }
 

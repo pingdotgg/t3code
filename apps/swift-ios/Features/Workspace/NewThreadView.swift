@@ -171,7 +171,6 @@ public struct NewThreadView: View {
                     T3BuildChrome.foreground(for: .newTask, standard: T3Colors.textSecondary)
                 )
                 .disabled(isSubmitting)
-                .t3BuildChromeMarker(.newTask)
             Spacer()
         }
         .padding(.horizontal, 16)
@@ -182,6 +181,7 @@ public struct NewThreadView: View {
     private var hero: some View {
         VStack(spacing: 10) {
             Text("What should we build")
+                .t3BuildChromeMarker(.newTask)
             HStack(spacing: 0) {
                 Text("in")
                 Button {

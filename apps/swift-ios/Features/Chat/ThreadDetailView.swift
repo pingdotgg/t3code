@@ -153,7 +153,6 @@ public struct ThreadDetailView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(1)
-                .t3BuildChromeMarker(.thread)
 
             HStack(spacing: 5) {
                 HStack(spacing: 5) {
@@ -192,6 +191,7 @@ public struct ThreadDetailView: View {
         .padding(.trailing, horizontalSizeClass == .compact ? 10 : 0)
         .frame(maxWidth: horizontalSizeClass == .compact ? 260 : 460, alignment: .leading)
         .accessibilityElement(children: .combine)
+        .t3BuildChromeMarker(.thread)
         .accessibilityAddTraits(.isHeader)
     }
 
