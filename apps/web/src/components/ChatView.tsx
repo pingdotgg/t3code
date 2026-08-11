@@ -5071,18 +5071,42 @@ function ChatViewContent(props: ChatViewProps) {
         return next;
       });
       setThreadError(threadId, null);
-      const draft = await draftPromise;
+      const resultPromise = revertThreadCheckpoint({
+        environmentId,
+        input: {
+          threadId,
+          turnCount,
+        },
+      });
+      const [draft, result] = await Promise.all([draftPromise, resultPromise]);
+      const finishRevert = () => {
+        setRevertingCheckpointThreadKeys((current) => {
+          const next = new Set(current);
+          next.delete(sourceThreadKey);
+          return next;
+        });
+      };
+      if (result._tag === "Failure") {
+        releaseRevertedMessageDraft(draft);
+        if (chatViewMountedRef.current) {
+          finishRevert();
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            setThreadError(
+              threadId,
+              error instanceof Error ? error.message : "Failed to revert thread state.",
+            );
+          }
+        }
+        return;
+      }
       if (!chatViewMountedRef.current) {
         releaseRevertedMessageDraft(draft);
         return;
       }
       if (routeThreadKeyRef.current !== sourceThreadKey) {
         releaseRevertedMessageDraft(draft);
-        setRevertingCheckpointThreadKeys((current) => {
-          const next = new Set(current);
-          next.delete(sourceThreadKey);
-          return next;
-        });
+        finishRevert();
         return;
       }
       const pendingRestore: PendingRevertedMessageRestore = {
@@ -5098,33 +5122,7 @@ function ChatViewContent(props: ChatViewProps) {
       };
       pendingRevertedMessageRestoreRef.current = pendingRestore;
       setPendingRevertedMessageRestore(pendingRestore);
-      const result = await revertThreadCheckpoint({
-        environmentId,
-        input: {
-          threadId,
-          turnCount,
-        },
-      });
-      if (result._tag === "Failure") {
-        setPendingRevertedMessageRestore((current) => {
-          if (current !== pendingRestore) return current;
-          releaseRevertedMessageDraft(current.draft);
-          pendingRevertedMessageRestoreRef.current = null;
-          return null;
-        });
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          setThreadError(
-            threadId,
-            error instanceof Error ? error.message : "Failed to revert thread state.",
-          );
-        }
-      }
-      setRevertingCheckpointThreadKeys((current) => {
-        const next = new Set(current);
-        next.delete(sourceThreadKey);
-        return next;
-      });
+      finishRevert();
     },
     [
       activeThread,

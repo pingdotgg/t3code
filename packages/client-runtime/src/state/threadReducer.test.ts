@@ -927,7 +927,7 @@ describe("applyThreadDetailEvent", () => {
           checkpointRef: CheckpointRef.make(`ref-${turnCount}`),
           status: "ready",
           files: [],
-          assistantMessageId: null,
+          assistantMessageId: MessageId.make(`assistant-${turnCount}`),
           completedAt: `2026-04-01T00:01:0${index}.000Z`,
         })),
       };
@@ -952,6 +952,76 @@ describe("applyThreadDetailEvent", () => {
           "assistant-90",
           "user-91",
           "assistant-91",
+        ]);
+      }
+    });
+
+    it("retains every message before the latest retained checkpoint", () => {
+      const message = (
+        id: string,
+        role: "user" | "assistant",
+        createdAt: string,
+      ): OrchestrationThread["messages"][number] => ({
+        id: MessageId.make(id),
+        role,
+        text: id,
+        turnId: null,
+        streaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      const threadWithSteering: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          message("user-1", "user", "2026-04-01T01:00:00.000Z"),
+          message("assistant-commentary-1", "assistant", "2026-04-01T01:01:00.000Z"),
+          message("user-steering-1", "user", "2026-04-01T01:02:00.000Z"),
+          message("assistant-final-1", "assistant", "2026-04-01T01:03:00.000Z"),
+          message("user-2", "user", "2026-04-01T02:00:00.000Z"),
+          message("assistant-final-2", "assistant", "2026-04-01T02:01:00.000Z"),
+        ],
+        checkpoints: [
+          {
+            turnId: TurnId.make("turn-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-04-01T01:04:00.000Z",
+          },
+          {
+            turnId: TurnId.make("turn-2"),
+            checkpointTurnCount: 2,
+            checkpointRef: CheckpointRef.make("ref-2"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-04-01T02:02:00.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithSteering, {
+        ...baseEventFields,
+        sequence: 16,
+        occurredAt: "2026-04-01T03:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 1,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((entry) => entry.id)).toEqual([
+          "user-1",
+          "assistant-commentary-1",
+          "user-steering-1",
+          "assistant-final-1",
         ]);
       }
     });
