@@ -1,21 +1,27 @@
 import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
-import type { GitHubAccountSelection, GitHubAuthAccount } from "@t3tools/contracts";
+import type {
+  GitHubAccountRouting,
+  GitHubAccountSelection,
+  GitHubAuthAccount,
+} from "@t3tools/contracts";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
-function accountKey(account: GitHubAccountSelection): string {
-  return `${account.host}\n${account.login}\n${account.tokenSource}`;
+type RoutedAccount = GitHubAccountSelection & { readonly host: string };
+
+function accountKey(account: RoutedAccount): string {
+  return `${account.host.toLowerCase()}\n${account.login.toLowerCase()}\n${account.tokenSource}`;
 }
 
 function tokenSourceLabel(tokenSource: string): string {
   return tokenSource === "keyring" ? "GitHub CLI" : tokenSource;
 }
 
-function accountLabel(account: GitHubAccountSelection, includeHost: boolean): string {
+function accountLabel(account: RoutedAccount, includeHost: boolean): string {
   return [
     account.login,
     ...(includeHost ? [account.host] : []),
@@ -23,12 +29,12 @@ function accountLabel(account: GitHubAccountSelection, includeHost: boolean): st
   ].join(" · ");
 }
 
-function accountSelection(account: GitHubAuthAccount): GitHubAccountSelection {
-  return {
-    host: account.host,
-    login: account.login,
-    tokenSource: account.tokenSource,
-  };
+function accountSelection(account: RoutedAccount): GitHubAccountSelection {
+  return { login: account.login, tokenSource: account.tokenSource };
+}
+
+function routedAccount(host: string, account: GitHubAccountSelection): RoutedAccount {
+  return { host, ...account };
 }
 
 export function hasMultipleGitHubAccountsOnHost(
@@ -49,19 +55,18 @@ function GitHubAccountSelect({
   includeHost = false,
   onChange,
 }: {
-  readonly accounts: ReadonlyArray<GitHubAuthAccount>;
-  readonly value: GitHubAccountSelection;
+  readonly accounts: ReadonlyArray<RoutedAccount>;
+  readonly value: RoutedAccount;
   readonly label: string;
   readonly includeHost?: boolean;
-  readonly onChange: (account: GitHubAccountSelection) => void;
+  readonly onChange: (account: RoutedAccount) => void;
 }) {
-  const selections = accounts.map(accountSelection);
-  const selected = selections.find((account) => accountKey(account) === accountKey(value)) ?? value;
+  const selected = accounts.find((account) => accountKey(account) === accountKey(value)) ?? value;
   return (
     <Select
       value={accountKey(selected)}
       onValueChange={(key) => {
-        const account = selections.find((entry) => accountKey(entry) === key);
+        const account = accounts.find((entry) => accountKey(entry) === key);
         if (account) onChange(account);
       }}
     >
@@ -69,7 +74,7 @@ function GitHubAccountSelect({
         <SelectValue>{accountLabel(selected, includeHost)}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
-        {selections.map((account) => (
+        {accounts.map((account) => (
           <SelectItem key={accountKey(account)} hideIndicator value={accountKey(account)}>
             {accountLabel(account, includeHost)}
           </SelectItem>
@@ -86,6 +91,7 @@ export function GitHubAccountSettings({
 }) {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const routing = settings.githubAccountRouting;
   const [owner, setOwner] = useState("");
   const uniqueAccounts = [
     ...new Map(accounts.map((account) => [accountKey(account), account])).values(),
@@ -101,18 +107,34 @@ export function GitHubAccountSettings({
     ([, hostAccounts]) => hostAccounts.length > 1,
   );
   const selectableHostKeys = new Set(selectableHosts.map(([host]) => host));
-  const hiddenDefaultHosts = Object.keys(settings.githubDefaultAccounts).filter(
-    (host) => !selectableHostKeys.has(host.toLowerCase()),
-  );
+  const hiddenDefaultHosts = Object.entries(routing)
+    .filter(
+      ([host, route]) =>
+        route.defaultAccount !== undefined && !selectableHostKeys.has(host.toLowerCase()),
+    )
+    .map(([host]) => host);
   const selectableAccounts = selectableHosts.flatMap(([, hostAccounts]) => hostAccounts);
   const initialAccount =
     selectableAccounts.find((account) => account.active) ?? selectableAccounts[0];
   const [accountKeyValue, setAccountKeyValue] = useState(
     initialAccount === undefined ? "" : accountKey(initialAccount),
   );
-  const hasSavedRouting =
-    Object.keys(settings.githubDefaultAccounts).length > 0 ||
-    Object.keys(settings.githubAccountOverrides).length > 0;
+  const hasSavedRouting = Object.keys(routing).length > 0;
+
+  const updateHostRouting = (
+    host: string,
+    update: (current: GitHubAccountRouting[string]) => GitHubAccountRouting[string],
+  ) => {
+    const hostKey = host.toLowerCase();
+    const nextRouting = { ...routing };
+    const next = update(routing[hostKey] ?? { ownerOverrides: {} });
+    if (next.defaultAccount === undefined && Object.keys(next.ownerOverrides).length === 0) {
+      delete nextRouting[hostKey];
+    } else {
+      nextRouting[hostKey] = next;
+    }
+    updateSettings({ githubAccountRouting: nextRouting });
+  };
 
   if (selectableAccounts.length === 0) {
     if (!hasSavedRouting) return null;
@@ -128,7 +150,7 @@ export function GitHubAccountSettings({
         <Button
           size="sm"
           variant="outline"
-          onClick={() => updateSettings({ githubDefaultAccounts: {}, githubAccountOverrides: {} })}
+          onClick={() => updateSettings({ githubAccountRouting: {} })}
         >
           Clear saved routing
         </Button>
@@ -144,15 +166,23 @@ export function GitHubAccountSettings({
 
   const addOverride = () => {
     if (!canAddOverride) return;
-    updateSettings({
-      githubAccountOverrides: {
-        ...settings.githubAccountOverrides,
-        [`${overrideAccount.host.toLowerCase()}/${normalizedOwner.toLowerCase()}`]:
-          accountSelection(overrideAccount),
+    updateHostRouting(overrideAccount.host, (current) => ({
+      ...current,
+      ownerOverrides: {
+        ...current.ownerOverrides,
+        [normalizedOwner.toLowerCase()]: accountSelection(overrideAccount),
       },
-    });
+    }));
     setOwner("");
   };
+
+  const savedOverrides = Object.entries(routing).flatMap(([host, route]) =>
+    Object.entries(route.ownerOverrides).map(([ownerKey, account]) => ({
+      host,
+      owner: ownerKey,
+      account,
+    })),
+  );
 
   return (
     <div className="grid gap-4 border-t border-border/60 pt-4">
@@ -165,7 +195,7 @@ export function GitHubAccountSettings({
       </div>
       {selectableHosts.map(([host, hostAccounts]) => {
         const active = hostAccounts.find((account) => account.active) ?? hostAccounts[0]!;
-        const selected = settings.githubDefaultAccounts[host] ?? accountSelection(active);
+        const selected = routedAccount(host, routing[host]?.defaultAccount ?? active);
         return (
           <div
             key={host}
@@ -182,12 +212,10 @@ export function GitHubAccountSettings({
               value={selected}
               label={`Default GitHub account for ${host}`}
               onChange={(account) =>
-                updateSettings({
-                  githubDefaultAccounts: {
-                    ...settings.githubDefaultAccounts,
-                    [host]: account,
-                  },
-                })
+                updateHostRouting(host, (current) => ({
+                  ...current,
+                  defaultAccount: accountSelection(account),
+                }))
               }
             />
           </div>
@@ -201,33 +229,37 @@ export function GitHubAccountSettings({
             Use another account for every repository owned by an organization or user.
           </div>
         </div>
-        {Object.entries(settings.githubAccountOverrides).map(([ownerKey, account]) => {
-          const hostAccounts = accountsByHost.get(account.host.toLowerCase()) ?? [];
+        {savedOverrides.map(({ host, owner: ownerKey, account }) => {
+          const hostAccounts = accountsByHost.get(host.toLowerCase()) ?? [];
+          const routeKey = `${host}/${ownerKey}`;
           return (
-            <div key={ownerKey} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <code className="min-w-0 flex-1 truncate text-xs">{ownerKey}</code>
+            <div key={routeKey} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <code className="min-w-0 flex-1 truncate text-xs">{routeKey}</code>
               <GitHubAccountSelect
                 accounts={hostAccounts}
-                value={account}
-                label={`GitHub account for ${ownerKey}`}
+                value={routedAccount(host, account)}
+                label={`GitHub account for ${routeKey}`}
                 onChange={(nextAccount) =>
-                  updateSettings({
-                    githubAccountOverrides: {
-                      ...settings.githubAccountOverrides,
-                      [ownerKey]: nextAccount,
+                  updateHostRouting(host, (current) => ({
+                    ...current,
+                    ownerOverrides: {
+                      ...current.ownerOverrides,
+                      [ownerKey]: accountSelection(nextAccount),
                     },
-                  })
+                  }))
                 }
               />
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label={`Remove GitHub account override for ${ownerKey}`}
-                onClick={() => {
-                  const next = { ...settings.githubAccountOverrides };
-                  delete next[ownerKey];
-                  updateSettings({ githubAccountOverrides: next });
-                }}
+                aria-label={`Remove GitHub account override for ${routeKey}`}
+                onClick={() =>
+                  updateHostRouting(host, (current) => {
+                    const ownerOverrides = { ...current.ownerOverrides };
+                    delete ownerOverrides[ownerKey];
+                    return { ...current, ownerOverrides };
+                  })
+                }
               >
                 <Trash2Icon className="size-3.5" />
               </Button>
@@ -251,7 +283,7 @@ export function GitHubAccountSettings({
           />
           <GitHubAccountSelect
             accounts={selectableAccounts}
-            value={accountSelection(overrideAccount)}
+            value={overrideAccount}
             label="GitHub account for new override"
             includeHost={selectableHosts.length > 1}
             onChange={(account) => setAccountKeyValue(accountKey(account))}
@@ -273,9 +305,14 @@ export function GitHubAccountSettings({
               size="sm"
               variant="outline"
               onClick={() => {
-                const next = { ...settings.githubDefaultAccounts };
-                for (const host of hiddenDefaultHosts) delete next[host];
-                updateSettings({ githubDefaultAccounts: next });
+                const next = { ...routing };
+                for (const host of hiddenDefaultHosts) {
+                  const route = next[host];
+                  if (route === undefined) continue;
+                  if (Object.keys(route.ownerOverrides).length === 0) delete next[host];
+                  else next[host] = { ownerOverrides: route.ownerOverrides };
+                }
+                updateSettings({ githubAccountRouting: next });
               }}
             >
               Clear unavailable defaults

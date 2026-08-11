@@ -118,23 +118,6 @@ export class GitHubAccountSelectionConflictError extends Schema.TaggedErrorClass
   }
 }
 
-export class GitHubAccountHostMismatchError extends Schema.TaggedErrorClass<GitHubAccountHostMismatchError>()(
-  "GitHubAccountHostMismatchError",
-  {
-    ...gitHubCredentialFields,
-    accountHost: Schema.String,
-    login: Schema.String,
-  },
-) {
-  get detail(): string {
-    return `GitHub account ${this.login} belongs to ${this.accountHost}, not ${this.host}.`;
-  }
-
-  override get message(): string {
-    return `GitHub CLI credential selection failed: ${this.detail}`;
-  }
-}
-
 export class GitHubTokenEnvironmentUnavailableError extends Schema.TaggedErrorClass<GitHubTokenEnvironmentUnavailableError>()(
   "GitHubTokenEnvironmentUnavailableError",
   {
@@ -234,7 +217,6 @@ export const GitHubCliError = Schema.Union([
   GitHubCliCommandError,
   GitHubAccountSettingsUnavailableError,
   GitHubAccountSelectionConflictError,
-  GitHubAccountHostMismatchError,
   GitHubTokenEnvironmentUnavailableError,
   GitHubTokenOutputEmptyError,
   GitHubPullRequestListDecodeError,
@@ -303,25 +285,35 @@ const GITHUB_TOKEN_ENV_SOURCES = new Set([
 ]);
 
 function definedAuthTarget(input: GitHubAuthTarget): GitHubAuthTarget {
+  if (input.repositories === undefined) return {};
   return {
     ...(input.host === undefined ? {} : { host: input.host }),
-    ...(input.repositories === undefined ? {} : { repositories: input.repositories }),
+    repositories: input.repositories,
   };
+}
+
+function repositoryAuthTarget(input: {
+  readonly host?: string | undefined;
+  readonly repository: string;
+}): GitHubAuthTarget {
+  return input.host === undefined
+    ? { repositories: [input.repository] }
+    : { host: input.host, repositories: [input.repository] };
 }
 
 export class GitHubCli extends Context.Service<
   GitHubCli,
   {
-    readonly execute: (input: {
-      readonly cwd: string;
-      readonly args: ReadonlyArray<string>;
-      readonly host?: string;
-      readonly repositories?: ReadonlyArray<string>;
-      readonly timeoutMs?: number;
-      /** Piped to the child's stdin, for payloads that must never appear in argv. */
-      readonly stdin?: string;
-      readonly maxOutputBytes?: number;
-    }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
+    readonly execute: (
+      input: {
+        readonly cwd: string;
+        readonly args: ReadonlyArray<string>;
+        readonly timeoutMs?: number;
+        /** Piped to the child's stdin, for payloads that must never appear in argv. */
+        readonly stdin?: string;
+        readonly maxOutputBytes?: number;
+      } & GitHubAuthTarget,
+    ) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     /** Stable, non-secret identity for the credential that will serve this target. */
     readonly getBatchKey: (
@@ -469,20 +461,13 @@ export const make = Effect.gen(function* () {
             host,
             repositories: [...selected.failure.repositories],
           });
-        case "HostMismatch":
-          return yield* new GitHubAccountHostMismatchError({
-            command: "gh",
-            cwd: input.cwd,
-            host,
-            accountHost: selected.failure.accountHost,
-            login: selected.failure.login,
-          });
       }
     }
     return selected.success;
   });
 
   const tokenFor = Effect.fn("GitHubCli.tokenFor")(function* (input: {
+    readonly host: string;
     readonly account: GitHubAccountSelection;
     readonly cwd: string;
   }) {
@@ -492,7 +477,7 @@ export const make = Effect.gen(function* () {
       return yield* new GitHubTokenEnvironmentUnavailableError({
         command: "gh",
         cwd: input.cwd,
-        host: input.account.host,
+        host: input.host,
         login: input.account.login,
         tokenSource: input.account.tokenSource,
       });
@@ -502,7 +487,7 @@ export const make = Effect.gen(function* () {
       .run({
         operation: "GitHubCli.authToken",
         command: "gh",
-        args: ["auth", "token", "--hostname", input.account.host, "--user", input.account.login],
+        args: ["auth", "token", "--hostname", input.host, "--user", input.account.login],
         cwd: input.cwd,
         timeoutMs: DEFAULT_TIMEOUT_MS,
       })
@@ -512,7 +497,7 @@ export const make = Effect.gen(function* () {
       return yield* new GitHubTokenOutputEmptyError({
         command: "gh",
         cwd: input.cwd,
-        host: input.account.host,
+        host: input.host,
         login: input.account.login,
         tokenSource: input.account.tokenSource,
       });
@@ -539,7 +524,7 @@ export const make = Effect.gen(function* () {
       const route = yield* credentialRoute(input);
       if (route.account === undefined) return yield* run(input);
 
-      const token = yield* tokenFor({ account: route.account, cwd: input.cwd });
+      const token = yield* tokenFor({ host: route.host, account: route.account, cwd: input.cwd });
       const tokenVariable =
         route.host === "github.com" || route.host.endsWith(".ghe.com")
           ? "GH_TOKEN"
@@ -627,8 +612,7 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        ...definedAuthTarget(input),
-        repositories: [input.repository],
+        ...repositoryAuthTarget(input),
         args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -649,8 +633,7 @@ export const make = Effect.gen(function* () {
     createRepository: (input) =>
       execute({
         cwd: input.cwd,
-        ...definedAuthTarget(input),
-        repositories: [input.repository],
+        ...repositoryAuthTarget(input),
         args: ["repo", "create", input.repository, `--${input.visibility}`],
       }).pipe(
         Effect.map((result) =>

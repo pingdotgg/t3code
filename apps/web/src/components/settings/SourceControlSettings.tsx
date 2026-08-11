@@ -579,8 +579,7 @@ export function SourceControlSettingsPanel() {
                 <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
                   {item.kind === "github" &&
                   (hasMultipleGitHubAccountsOnHost(item.auth.githubAccounts ?? []) ||
-                    Object.keys(settings.githubDefaultAccounts).length > 0 ||
-                    Object.keys(settings.githubAccountOverrides).length > 0) ? (
+                    Object.keys(settings.githubAccountRouting).length > 0) ? (
                     <GitHubAccountSettings accounts={item.auth.githubAccounts ?? []} />
                   ) : undefined}
                 </DiscoveryItemRow>

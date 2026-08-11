@@ -8,7 +8,10 @@ import { selectCredentialRoute } from "./GitHubCredentials.ts";
 describe("selectCredentialRoute", () => {
   it("uses the active account when no routing is saved", () => {
     assert.deepStrictEqual(
-      selectCredentialRoute(DEFAULT_SERVER_SETTINGS, { host: "GitHub.com" }),
+      selectCredentialRoute(DEFAULT_SERVER_SETTINGS, {
+        host: "GitHub.com",
+        repositories: [],
+      }),
       Result.succeed({ host: "github.com", key: "active:github.com", account: undefined }),
     );
   });
@@ -16,11 +19,11 @@ describe("selectCredentialRoute", () => {
   it("selects defaults and owner overrides", () => {
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
-      githubDefaultAccounts: {
-        "github.com": { host: "github.com", login: "personal", tokenSource: "keyring" },
-      },
-      githubAccountOverrides: {
-        "github.com/acme": { host: "github.com", login: "work", tokenSource: "keyring" },
+      githubAccountRouting: {
+        "github.com": {
+          defaultAccount: { login: "personal", tokenSource: "keyring" },
+          ownerOverrides: { acme: { login: "work", tokenSource: "keyring" } },
+        },
       },
     };
 
@@ -37,11 +40,11 @@ describe("selectCredentialRoute", () => {
     const selected = selectCredentialRoute(
       {
         ...DEFAULT_SERVER_SETTINGS,
-        githubDefaultAccounts: {
-          "github.com": { host: "github.com", login: "personal", tokenSource: "keyring" },
-        },
-        githubAccountOverrides: {
-          "github.com/acme": { host: "github.com", login: "work", tokenSource: "keyring" },
+        githubAccountRouting: {
+          "github.com": {
+            defaultAccount: { login: "personal", tokenSource: "keyring" },
+            ownerOverrides: { acme: { login: "work", tokenSource: "keyring" } },
+          },
         },
       },
       {
@@ -57,26 +60,23 @@ describe("selectCredentialRoute", () => {
     });
   });
 
-  it("rejects an account saved under another host", () => {
+  it("scopes the same owner independently per host", () => {
     const selected = selectCredentialRoute(
       {
         ...DEFAULT_SERVER_SETTINGS,
-        githubDefaultAccounts: {
+        githubAccountRouting: {
           "github.com": {
-            host: "github.example.test",
-            login: "enterprise-user",
-            tokenSource: "keyring",
+            ownerOverrides: { acme: { login: "public-user", tokenSource: "keyring" } },
+          },
+          "github.example.test": {
+            ownerOverrides: { acme: { login: "enterprise-user", tokenSource: "keyring" } },
           },
         },
       },
-      { host: "github.com", repositories: ["acme/widget"] },
+      { host: "github.example.test", repositories: ["acme/widget"] },
     );
 
-    assert(Result.isFailure(selected));
-    assert.deepStrictEqual(selected.failure, {
-      _tag: "HostMismatch",
-      accountHost: "github.example.test",
-      login: "enterprise-user",
-    });
+    assert(Result.isSuccess(selected));
+    assert.equal(selected.success.account?.login, "enterprise-user");
   });
 });

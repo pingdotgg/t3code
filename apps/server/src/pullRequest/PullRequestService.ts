@@ -563,6 +563,13 @@ export const make = Effect.gen(function* () {
     { readonly at: number; readonly result: Omit<ResolvedViewer, "projects"> }
   >();
 
+  const getBatchKey = (project: SupportedProject) =>
+    project.api.getBatchKey?.({
+      cwd: project.project.workspaceRoot,
+      host: project.host,
+      repository: project.repository,
+    }) ?? Effect.succeed(`host:${project.host}`);
+
   const resolveViewers = (
     projects: ReadonlyArray<SupportedProject>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
@@ -571,13 +578,7 @@ export const make = Effect.gen(function* () {
       const keyed = yield* Effect.forEach(
         projects,
         (project) =>
-          (
-            project.api.getBatchKey?.({
-              cwd: project.project.workspaceRoot,
-              host: project.host,
-              repository: project.repository,
-            }) ?? Effect.succeed(`host:${project.host}`)
-          ).pipe(
+          getBatchKey(project).pipe(
             Effect.match({
               onFailure: (error) => ({
                 project,
@@ -1502,13 +1503,7 @@ export const make = Effect.gen(function* () {
       const keyed = yield* Effect.forEach(
         [...wanted.values()],
         (entry) =>
-          (
-            entry.project.api.getBatchKey?.({
-              cwd: entry.project.project.workspaceRoot,
-              host: entry.project.host,
-              repository: entry.project.repository,
-            }) ?? Effect.succeed(`host:${entry.project.host}`)
-          ).pipe(
+          getBatchKey(entry.project).pipe(
             Effect.map((batchKey) => ({ ...entry, batchKey })),
             Effect.orElseSucceed(() => null),
           ),

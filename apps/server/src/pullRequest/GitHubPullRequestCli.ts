@@ -681,32 +681,34 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.asVoid);
 
   /** A GraphQL read whose answer is decoded, reporting a failure against the read that made it. */
-  const graphqlRead = <A>(input: {
-    readonly cwd: string;
-    readonly host: string;
-    readonly repositories?: ReadonlyArray<string>;
-    readonly repository?: string;
-    readonly operation: string;
-    /** Variables as `-f` flags, for values this module composed itself. */
-    readonly variables?: ReadonlyArray<readonly [string, string]>;
-    /**
-     * Variables carrying words the reader typed. Document and variables travel over stdin
-     * together, because argv is visible in process listings and is echoed back inside a
-     * process-runner failure message.
-     */
-    readonly privateVariables?: Readonly<Record<string, string>>;
-    readonly query: string;
-    readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, GitHubPullRequestCliError> => {
-    const repositories =
-      input.repositories ?? (input.repository === undefined ? undefined : [input.repository]);
+  const graphqlRead = <A>(
+    input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly operation: string;
+      /** Variables as `-f` flags, for values this module composed itself. */
+      readonly variables?: ReadonlyArray<readonly [string, string]>;
+      /**
+       * Variables carrying words the reader typed. Document and variables travel over stdin
+       * together, because argv is visible in process listings and is echoed back inside a
+       * process-runner failure message.
+       */
+      readonly privateVariables?: Readonly<Record<string, string>>;
+      readonly query: string;
+      readonly decode: (raw: string) => Result.Result<A, unknown>;
+    } & (
+      | { readonly repository: string; readonly repositories?: never }
+      | { readonly repository?: never; readonly repositories: ReadonlyArray<string> }
+    ),
+  ): Effect.Effect<A, GitHubPullRequestCliError> => {
+    const repositories = input.repositories ?? [input.repository];
     return github
       .execute(
         input.privateVariables === undefined
           ? {
               cwd: input.cwd,
               host: input.host,
-              ...(repositories === undefined ? {} : { repositories }),
+              repositories,
               args: [
                 "api",
                 "graphql",
@@ -720,7 +722,7 @@ export const make = Effect.gen(function* () {
           : {
               cwd: input.cwd,
               host: input.host,
-              ...(repositories === undefined ? {} : { repositories }),
+              repositories,
               args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
               stdin: encodeGraphQlRequestJson({
                 query: input.query,

@@ -61,11 +61,10 @@ describe("GitHubCli.layer", () => {
     process.env.GITHUB_TOKEN = "environment-token";
     mockRun.mockReturnValueOnce(Effect.succeed(processOutput("ok")));
     const selectedLayer = layerWithSettings({
-      githubDefaultAccounts: {
+      githubAccountRouting: {
         "github.com": {
-          host: "github.com",
-          login: "DominicVonk",
-          tokenSource: "GITHUB_TOKEN",
+          defaultAccount: { login: "DominicVonk", tokenSource: "GITHUB_TOKEN" },
+          ownerOverrides: {},
         },
       },
     });
@@ -95,11 +94,9 @@ describe("GitHubCli.layer", () => {
       .mockReturnValueOnce(Effect.succeed(processOutput("keyring-token\n")))
       .mockReturnValueOnce(Effect.succeed(processOutput("ok")));
     const selectedLayer = layerWithSettings({
-      githubAccountOverrides: {
-        "github.com/acme": {
-          host: "github.com",
-          login: "work-user",
-          tokenSource: "keyring",
+      githubAccountRouting: {
+        "github.com": {
+          ownerOverrides: { acme: { login: "work-user", tokenSource: "keyring" } },
         },
       },
     });
@@ -138,11 +135,10 @@ describe("GitHubCli.layer", () => {
       .mockReturnValueOnce(Effect.succeed(processOutput("rotated-token\n")))
       .mockReturnValueOnce(Effect.succeed(processOutput("ok")));
     const selectedLayer = layerWithSettings({
-      githubDefaultAccounts: {
+      githubAccountRouting: {
         "github.com": {
-          host: "github.com",
-          login: "work-user",
-          tokenSource: "keyring",
+          defaultAccount: { login: "work-user", tokenSource: "keyring" },
+          ownerOverrides: {},
         },
       },
     });
@@ -192,8 +188,11 @@ describe("GitHubCli.layer", () => {
     });
     mockRun.mockReturnValueOnce(Effect.fail(cause));
     const selectedLayer = layerWithSettings({
-      githubDefaultAccounts: {
-        "github.com": { host: "github.com", login: "work-user", tokenSource: "keyring" },
+      githubAccountRouting: {
+        "github.com": {
+          defaultAccount: { login: "work-user", tokenSource: "keyring" },
+          ownerOverrides: {},
+        },
       },
     });
 
@@ -217,11 +216,10 @@ describe("GitHubCli.layer", () => {
     process.env.GITHUB_TOKEN = "environment-token";
     mockRun.mockReturnValueOnce(Effect.succeed(processOutput("ok")));
     const selectedLayer = layerWithSettings({
-      githubDefaultAccounts: {
+      githubAccountRouting: {
         "github.com": {
-          host: "GitHub.com",
-          login: "work-user",
-          tokenSource: "GITHUB_TOKEN",
+          defaultAccount: { login: "work-user", tokenSource: "GITHUB_TOKEN" },
+          ownerOverrides: {},
         },
       },
     });
@@ -249,11 +247,10 @@ describe("GitHubCli.layer", () => {
   it.effect("reports unavailable token sources structurally", () => {
     delete process.env.GITHUB_TOKEN;
     const selectedLayer = layerWithSettings({
-      githubDefaultAccounts: {
+      githubAccountRouting: {
         "github.com": {
-          host: "github.com",
-          login: "environment-user",
-          tokenSource: "GITHUB_TOKEN",
+          defaultAccount: { login: "environment-user", tokenSource: "GITHUB_TOKEN" },
+          ownerOverrides: {},
         },
       },
     });
@@ -278,8 +275,11 @@ describe("GitHubCli.layer", () => {
   it.effect("reports empty keyring token output structurally", () => {
     mockRun.mockReturnValueOnce(Effect.succeed(processOutput("\n")));
     const selectedLayer = layerWithSettings({
-      githubDefaultAccounts: {
-        "github.com": { host: "github.com", login: "work-user", tokenSource: "keyring" },
+      githubAccountRouting: {
+        "github.com": {
+          defaultAccount: { login: "work-user", tokenSource: "keyring" },
+          ownerOverrides: {},
+        },
       },
     });
 
