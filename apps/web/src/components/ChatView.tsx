@@ -6322,7 +6322,7 @@ function ChatViewContent(props: ChatViewProps) {
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             canUseDesktopFilePaths={
-                              environmentId === primaryEnvironment?.environmentId
+                              activeThreadEnvironmentId === primaryEnvironment?.environmentId
                             }
                             phase={phase}
                             isConnecting={isConnecting}
