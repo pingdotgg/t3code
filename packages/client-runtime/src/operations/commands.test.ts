@@ -108,6 +108,7 @@ describe("environment commands", () => {
         commandId: CommandId.make("queued-command"),
         threadId: ThreadId.make("thread-1"),
         createdAt: "2026-06-06T00:01:00.000Z",
+        onlyIfIdle: true,
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(dispatched).toEqual([
@@ -116,6 +117,7 @@ describe("environment commands", () => {
           commandId: "queued-command",
           threadId: "thread-1",
           createdAt: "2026-06-06T00:01:00.000Z",
+          onlyIfIdle: true,
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

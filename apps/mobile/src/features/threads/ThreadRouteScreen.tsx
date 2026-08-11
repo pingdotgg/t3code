@@ -521,7 +521,7 @@ function ThreadRouteContent(
 
     const result = await stopThreadSession({
       environmentId: latestThread.environmentId,
-      input: { threadId: latestThread.id },
+      input: { threadId: latestThread.id, onlyIfIdle: true },
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {

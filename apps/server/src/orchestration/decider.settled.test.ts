@@ -569,4 +569,47 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       ]);
     }),
   );
+
+  it.effect("rejects an onlyIfIdle session stop when a turn became active", () =>
+    Effect.gen(function* () {
+      const stopCommand = (commandId: string) =>
+        ({
+          type: "thread.session.stop",
+          commandId: CommandId.make(commandId),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+          onlyIfIdle: true,
+        }) as const;
+
+      const stopped = yield* decideOrchestrationCommand({
+        command: stopCommand("cmd-stop-idle"),
+        readModel: makeReadModel(null, null, makeSession("ready")),
+      });
+      const stoppedEvents = Array.isArray(stopped) ? stopped : [stopped];
+      expect(stoppedEvents.map((event) => event.type)).toEqual(["thread.session-stop-requested"]);
+
+      for (const status of ["starting", "running"] as const) {
+        const error = yield* decideOrchestrationCommand({
+          command: stopCommand(`cmd-stop-active-${status}`),
+          readModel: makeReadModel(null, null, makeSession(status)),
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      }
+
+      const queuedMessage: OrchestrationThread["messages"][number] = {
+        id: MessageId.make("message-reload-race"),
+        role: "user",
+        text: "Continue",
+        turnId: null,
+        streaming: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
+      const queuedError = yield* decideOrchestrationCommand({
+        command: stopCommand("cmd-stop-queued-turn"),
+        readModel: makeReadModel(null, null, makeSession("ready"), [], [queuedMessage]),
+      }).pipe(Effect.flip);
+      expect(queuedError._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
 });

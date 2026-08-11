@@ -887,6 +887,9 @@ const ThreadSessionStopCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   createdAt: IsoDateTime,
+  // User-requested reloads must not interrupt work that became active after
+  // the client rendered or dispatched the action.
+  onlyIfIdle: Schema.optional(Schema.Boolean),
   // Settle-cleanup stops are conditional: the decider drops the stop if the
   // thread was re-engaged (unsettled, session starting/running, or a queued
   // turn start) between the settle and this command. Guarding in the decider

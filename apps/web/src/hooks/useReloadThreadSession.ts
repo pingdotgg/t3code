@@ -35,7 +35,7 @@ export function useReloadThreadSession() {
 
       const result = await stopThreadSession({
         environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId },
+        input: { threadId: threadRef.threadId, onlyIfIdle: true },
       });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {

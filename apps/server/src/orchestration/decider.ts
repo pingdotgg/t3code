@@ -1126,18 +1126,27 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      // Settle-cleanup stops are conditional: between the settle landing and
-      // this command, another client may have re-engaged the thread (a turn
-      // start unsettles it and brings the session alive). Commands are
-      // decided serially against this read model, so checking here — not in
-      // the dispatcher's pre-settle snapshot — closes that race.
-      if (command.onlyIfSettled === true) {
+      if (command.onlyIfIdle === true || command.onlyIfSettled === true) {
         const sessionComingAlive =
           thread.session?.status === "starting" || thread.session?.status === "running";
+        const queuedTurnStart = threadHasQueuedTurnStart(thread, command.createdAt);
+
+        // Reload actions are offered from a client snapshot, but another
+        // client may start a turn before the stop is decided. The decider is
+        // the atomic boundary: whichever command lands first wins without a
+        // stale reload interrupting work that is already in flight.
+        if (command.onlyIfIdle === true && (sessionComingAlive || queuedTurnStart)) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} has work in flight; skipping idle-only session stop`,
+          });
+        }
+
+        // Settle-cleanup stops are conditional: between the settle landing
+        // and this command, another client may have re-engaged the thread.
         if (
-          thread.settledOverride !== "settled" ||
-          sessionComingAlive ||
-          threadHasQueuedTurnStart(thread, command.createdAt)
+          command.onlyIfSettled === true &&
+          (thread.settledOverride !== "settled" || sessionComingAlive || queuedTurnStart)
         ) {
           return yield* Effect.fail(
             new OrchestrationCommandInvariantError({
