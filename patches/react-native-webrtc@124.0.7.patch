@@ -1,0 +1,14 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index 033a226218a5368efa99d686b9781d03caa86809..7114ab3fc5967de47d88081b94ecc06fd57732bb 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -34 +34 @@ dependencies {
+-    api 'org.jitsi:webrtc:124.+'
++    api 'org.jitsi:webrtc:124.0.0'
+diff --git a/react-native-webrtc.podspec b/react-native-webrtc.podspec
+index 51af1f00fdcdeac3dcfe74f10364a52152e558b9..c67ea146ecd37b8526ddc9f29c7964d38480dade 100644
+--- a/react-native-webrtc.podspec
++++ b/react-native-webrtc.podspec
+@@ -22 +22 @@ Pod::Spec.new do |s|
+-  s.dependency          'JitsiWebRTC', '~> 124.0.0'
++  s.dependency          'JitsiWebRTC', '= 124.0.2'
