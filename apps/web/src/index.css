@@ -265,6 +265,39 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @layer base {
+  :root {
+    /* Dev artwork defaults. Built-in themes override these seven pigments in
+       the components layer; Nightly derives a darker matching palette. */
+    --stage-art-top: #67c2ff;
+    --stage-art-mid: #347ff8;
+    --stage-art-bottom: #1538d0;
+    --stage-art-highlight: #d4f6ff;
+    --stage-art-secondary: #65c8ff;
+    --stage-art-tertiary: #7c8bff;
+    --stage-art-line: #ddf7ff;
+    --stage-night-top: color-mix(in oklch, var(--stage-art-top) 38%, #32155b);
+    --stage-night-mid: color-mix(in oklch, var(--stage-art-mid) 38%, #151443);
+    --stage-night-bottom: color-mix(in oklch, var(--stage-art-bottom) 38%, #07152f);
+    --stage-night-highlight: var(--stage-art-highlight);
+    --stage-night-secondary: color-mix(
+      in oklch,
+      var(--stage-art-secondary) 55%,
+      var(--stage-night-mid)
+    );
+    --stage-night-tertiary: color-mix(
+      in oklch,
+      var(--stage-art-tertiary) 60%,
+      var(--stage-night-top)
+    );
+    --stage-night-line: color-mix(in oklch, var(--stage-art-line) 82%, white);
+  }
+
+  .dark {
+    --stage-art-top: #3a7ad1;
+    --stage-art-mid: #2050ae;
+    --stage-art-bottom: #101f6e;
+  }
+
   * {
     @apply border-border outline-ring/50;
   }
@@ -335,16 +368,136 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     );
   }
 
-  .stage-blueprint {
-    --stage-bp-top: #67c2ff;
-    --stage-bp-mid: #347ff8;
-    --stage-bp-bottom: #1538d0;
+  /* Each maintainer palette gives the same line art its own material: rose
+     vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
+     These colors stay deliberately deep at the top edge so the white stage
+     wordmark and controls retain contrast in both appearance modes. */
+  html[data-theme-id="t3-chat"] {
+    --stage-art-top: #f28ac1;
+    --stage-art-mid: #cb3e86;
+    --stage-art-bottom: #73194f;
+    --stage-art-highlight: #ffe6f6;
+    --stage-art-secondary: #ff82bc;
+    --stage-art-tertiary: #c67bf1;
+    --stage-art-line: #ffe7f8;
   }
 
-  .dark .stage-blueprint {
-    --stage-bp-top: #3a7ad1;
-    --stage-bp-mid: #2050ae;
-    --stage-bp-bottom: #101f6e;
+  html.dark[data-theme-id="t3-chat"] {
+    --stage-art-top: #a8467e;
+    --stage-art-mid: #742253;
+    --stage-art-bottom: #390e2d;
+    --stage-art-highlight: #ffd8ee;
+    --stage-art-secondary: #de639e;
+    --stage-art-tertiary: #9c64cf;
+    --stage-art-line: #ffe4f4;
+  }
+
+  html[data-theme-id="grove"] {
+    --stage-art-top: #6cc492;
+    --stage-art-mid: #2d8a5e;
+    --stage-art-bottom: #174a33;
+    --stage-art-highlight: #e4fff0;
+    --stage-art-secondary: #79d8a5;
+    --stage-art-tertiary: #d5b563;
+    --stage-art-line: #eafff2;
+    --stage-night-top: #286548;
+    --stage-night-mid: #174a35;
+    --stage-night-bottom: #0a2c21;
+    --stage-night-highlight: #c4eed5;
+    --stage-night-secondary: #54a878;
+    --stage-night-tertiary: #b79b4d;
+    --stage-night-line: #d7f6e2;
+  }
+
+  html.dark[data-theme-id="grove"] {
+    --stage-art-top: #438e65;
+    --stage-art-mid: #286447;
+    --stage-art-bottom: #123525;
+    --stage-art-highlight: #d2fbe2;
+    --stage-art-secondary: #62bf88;
+    --stage-art-tertiary: #c99b45;
+    --stage-art-line: #e0fae9;
+    --stage-night-top: #24523a;
+    --stage-night-mid: #113323;
+    --stage-night-bottom: #071d16;
+    --stage-night-highlight: #b5dfc4;
+    --stage-night-secondary: #478d66;
+    --stage-night-tertiary: #a9853b;
+    --stage-night-line: #d0ead9;
+  }
+
+  html[data-theme-id="ocean"] {
+    --stage-art-top: #77c9e3;
+    --stage-art-mid: #3384bd;
+    --stage-art-bottom: #174d7a;
+    --stage-art-highlight: #e5faff;
+    --stage-art-secondary: #70c9df;
+    --stage-art-tertiary: #5cc7be;
+    --stage-art-line: #e9fbff;
+  }
+
+  html.dark[data-theme-id="ocean"] {
+    --stage-art-top: #4288ac;
+    --stage-art-mid: #285d84;
+    --stage-art-bottom: #132e49;
+    --stage-art-highlight: #d9f5ff;
+    --stage-art-secondary: #61b5d4;
+    --stage-art-tertiary: #51b8b3;
+    --stage-art-line: #dff7ff;
+  }
+
+  html[data-theme-id="ember"] {
+    --stage-art-top: #f4a26e;
+    --stage-art-mid: #d66036;
+    --stage-art-bottom: #7c291e;
+    --stage-art-highlight: #fff0df;
+    --stage-art-secondary: #ffad77;
+    --stage-art-tertiary: #ef6f69;
+    --stage-art-line: #fff3e7;
+    --stage-night-top: #8a442c;
+    --stage-night-mid: #5c271c;
+    --stage-night-bottom: #32100d;
+    --stage-night-highlight: #ffd6ba;
+    --stage-night-secondary: #cb7148;
+    --stage-night-tertiary: #ad4b45;
+    --stage-night-line: #ffe0c9;
+  }
+
+  html.dark[data-theme-id="ember"] {
+    --stage-art-top: #ba6540;
+    --stage-art-mid: #803a29;
+    --stage-art-bottom: #3c1916;
+    --stage-art-highlight: #ffe1cd;
+    --stage-art-secondary: #e68156;
+    --stage-art-tertiary: #d85b58;
+    --stage-art-line: #ffe8d7;
+    --stage-night-top: #6a3425;
+    --stage-night-mid: #3e1b15;
+    --stage-night-bottom: #1d0d0b;
+    --stage-night-highlight: #efc4a9;
+    --stage-night-secondary: #a85e3f;
+    --stage-night-tertiary: #8f413e;
+    --stage-night-line: #f2d2bc;
+  }
+
+  html[data-theme-id="iris"] {
+    --stage-art-top: #b49ae8;
+    --stage-art-mid: #7a5ac4;
+    --stage-art-bottom: #422d80;
+    --stage-art-highlight: #f2eaff;
+    --stage-art-secondary: #b79af1;
+    --stage-art-tertiary: #ec79c7;
+    --stage-art-line: #f6eeff;
+  }
+
+  html.dark[data-theme-id="iris"] {
+    --stage-art-top: #8063c4;
+    --stage-art-mid: #513990;
+    --stage-art-bottom: #261c53;
+    --stage-art-highlight: #e8ddff;
+    --stage-art-secondary: #9e83dc;
+    --stage-art-tertiary: #d96ab7;
+    --stage-art-line: #eee7ff;
   }
 
   .workspace-topbar {
