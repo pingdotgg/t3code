@@ -327,9 +327,15 @@ export default function DiffPanel({
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
   const refreshCommitDiffPreview = commitDiffPreview.refresh;
   const refreshGitDiff = useCallback(() => {
-    refreshBranchDiffPreview();
+    // The branch preview carries the commit list AND the full working-tree/branch-range
+    // patches. When a commit is selected it is not the rendered diff, so refresh it only
+    // while the Commits submenu is open — otherwise focusing or restoring a commit view
+    // re-fetches large unused patches over the wire.
+    if (selectedCommitSha === null || commitsMenuOpen) {
+      refreshBranchDiffPreview();
+    }
     if (selectedCommitSha) refreshCommitDiffPreview();
-  }, [refreshBranchDiffPreview, refreshCommitDiffPreview, selectedCommitSha]);
+  }, [refreshBranchDiffPreview, refreshCommitDiffPreview, selectedCommitSha, commitsMenuOpen]);
   const canRefreshGitDiff =
     isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
