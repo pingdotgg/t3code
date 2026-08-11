@@ -4,6 +4,7 @@ import {
   completeConfirmDialogClose,
   readConfirmDialogState,
   registerConfirmDialogHost,
+  requestAlertDialog,
   requestConfirmDialog,
   resetConfirmDialogForTests,
   respondToConfirmDialog,
@@ -14,6 +15,13 @@ function requireConfirmation(confirmation: Promise<boolean> | undefined): Promis
     throw new Error("Expected a registered confirmation host.");
   }
   return confirmation;
+}
+
+function requireAlert(alert: Promise<void> | undefined): Promise<void> {
+  if (!alert) {
+    throw new Error("Expected a registered dialog host.");
+  }
+  return alert;
 }
 
 describe("confirm dialog coordinator", () => {
@@ -34,6 +42,7 @@ describe("confirm dialog coordinator", () => {
 
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",
+      mode: "confirm",
       message: "Delete this thread?",
       variant: "destructive",
     });
@@ -42,12 +51,39 @@ describe("confirm dialog coordinator", () => {
     await expect(confirmation).resolves.toBe(true);
     expect(readConfirmDialogState()).toEqual({
       status: "closing",
+      mode: "confirm",
       message: "Delete this thread?",
       variant: "destructive",
     });
 
     completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({ status: "idle" });
+    unregister();
+  });
+
+  it("resolves a themed one-button alert", async () => {
+    const unregister = registerConfirmDialogHost();
+    const alert = requireAlert(
+      requestAlertDialog("You're up to date!\n\nT3 Code 1.2.3 is the newest version available."),
+    );
+
+    expect(readConfirmDialogState()).toEqual({
+      status: "confirming",
+      mode: "alert",
+      message: "You're up to date!\n\nT3 Code 1.2.3 is the newest version available.",
+      variant: "default",
+    });
+
+    respondToConfirmDialog(true);
+    await expect(alert).resolves.toBeUndefined();
+    expect(readConfirmDialogState()).toEqual({
+      status: "closing",
+      mode: "alert",
+      message: "You're up to date!\n\nT3 Code 1.2.3 is the newest version available.",
+      variant: "default",
+    });
+
+    completeConfirmDialogClose();
     unregister();
   });
 
@@ -60,6 +96,7 @@ describe("confirm dialog coordinator", () => {
     await expect(first).resolves.toBe(false);
     expect(readConfirmDialogState()).toEqual({
       status: "closing",
+      mode: "confirm",
       message: "Delete the project?",
       variant: "default",
     });
@@ -67,6 +104,7 @@ describe("confirm dialog coordinator", () => {
     completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",
+      mode: "confirm",
       message: "Delete the worktree too?",
       variant: "default",
     });

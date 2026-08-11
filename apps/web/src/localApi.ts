@@ -1,6 +1,6 @@
 import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
-import { requestConfirmDialog } from "./confirmDialog";
+import { requestAlertDialog, requestConfirmDialog } from "./confirmDialog";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
@@ -13,6 +13,9 @@ function createBrowserLocalApi(): LocalApi {
       pickFolder: async (options) => {
         if (!window.desktopBridge) return null;
         return window.desktopBridge.pickFolder(options);
+      },
+      alert: async (message) => {
+        await requestAlertDialog(message);
       },
       confirm: async (message, options?: ConfirmDialogOptions) => {
         return requestConfirmDialog(message, options) ?? false;

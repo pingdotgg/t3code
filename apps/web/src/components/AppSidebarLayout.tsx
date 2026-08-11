@@ -13,6 +13,7 @@ import { isElectron } from "../env";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
+import { ensureLocalApi } from "../localApi";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
 import LegacyThreadSidebar from "./LegacySidebar";
@@ -40,6 +41,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { getDesktopUpdateCheckAlertMessage } from "./desktopUpdate.logic";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -189,6 +191,25 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         if (!isSettingsRoute) {
           void navigate({ to: "/settings" });
         }
+        return;
+      }
+
+      if (action === "check-for-updates") {
+        const checkForUpdate = window.desktopBridge?.checkForUpdate;
+        if (typeof checkForUpdate !== "function") return;
+
+        void checkForUpdate()
+          .then((result) => {
+            const message = getDesktopUpdateCheckAlertMessage(result);
+            if (message) {
+              return ensureLocalApi().dialogs.alert(message);
+            }
+          })
+          .catch((error: unknown) =>
+            ensureLocalApi().dialogs.alert(
+              `Update check failed\n\n${error instanceof Error ? error.message : "Could not check for updates. Please try again later."}`,
+            ),
+          );
       }
     });
 

@@ -1155,6 +1155,7 @@ export interface ConfirmDialogOptions {
 export interface LocalApi {
   dialogs: {
     pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
+    alert: (message: string) => Promise<void>;
     confirm: (message: string, options?: ConfirmDialogOptions) => Promise<boolean>;
   };
   shell: {

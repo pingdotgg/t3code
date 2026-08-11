@@ -16,12 +16,14 @@ const showContextMenuFallbackMock =
 
 const requestConfirmDialogMock =
   vi.fn<(message: string, options?: ConfirmDialogOptions) => Promise<boolean> | undefined>();
+const requestAlertDialogMock = vi.fn<(message: string) => Promise<void> | undefined>();
 
 vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
 }));
 
 vi.mock("./confirmDialog", () => ({
+  requestAlertDialog: requestAlertDialogMock,
   requestConfirmDialog: requestConfirmDialogMock,
 }));
 
@@ -94,6 +96,14 @@ describe("LocalApi", () => {
       true,
     );
     expect(requestConfirmDialogMock).toHaveBeenCalledWith("Delete this thread?", options);
+  });
+
+  it("uses the themed alert host when it is available", async () => {
+    requestAlertDialogMock.mockResolvedValue(undefined);
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().dialogs.alert("You're up to date!")).resolves.toBeUndefined();
+    expect(requestAlertDialogMock).toHaveBeenCalledWith("You're up to date!");
   });
 
   it("fails closed in a browser when no themed host is available", async () => {

@@ -1,4 +1,8 @@
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopUpdateActionResult,
+  DesktopUpdateCheckResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
 import { isWindowsPlatform } from "../lib/utils";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
@@ -104,6 +108,20 @@ export function getDesktopUpdateInstallConfirmationMessage(
     ? "\n\nOn Windows, T3 Code may remain closed for several minutes while the update installs, and no installer window may appear. T3 Code will reopen automatically when installation finishes."
     : "";
   return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.${windowsInstallWarning}`;
+}
+
+export function getDesktopUpdateCheckAlertMessage(result: DesktopUpdateCheckResult): string | null {
+  const { state } = result;
+  if (state.status === "up-to-date") {
+    return `You're up to date!\n\nT3 Code ${state.currentVersion} is currently the newest version available.`;
+  }
+  if (!state.enabled || state.status === "disabled") {
+    return `Updates unavailable\n\n${state.message ?? "Automatic updates are not available right now."}`;
+  }
+  if (!result.checked || state.status === "error") {
+    return `Update check failed\n\n${state.message ?? "Could not check for updates. Please try again later."}`;
+  }
+  return null;
 }
 
 export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): string | null {

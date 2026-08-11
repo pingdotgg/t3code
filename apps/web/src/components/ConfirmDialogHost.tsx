@@ -23,6 +23,17 @@ type ConfirmationCopy = {
   readonly description: string | null;
 };
 
+export function resolveAlertDialogCopy(message: string): ConfirmationCopy {
+  const normalizedMessage = message.trim();
+  if (!normalizedMessage) {
+    return { title: "Notice", description: null };
+  }
+
+  const [title, ...descriptionLines] = normalizedMessage.split("\n");
+  const description = descriptionLines.join("\n").trim();
+  return { title: title!.trim(), description: description || null };
+}
+
 export function resolveConfirmDialogCopy(message: string): ConfirmationCopy {
   const normalizedMessage = message.trim();
   const lines = normalizedMessage.split("\n");
@@ -60,7 +71,10 @@ export function ConfirmDialogHost() {
 
   useEffect(() => registerConfirmDialogHost(), []);
 
-  const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
+  const mode = state.status === "idle" ? "confirm" : state.mode;
+  const message = state.status === "idle" ? "" : state.message;
+  const copy =
+    mode === "alert" ? resolveAlertDialogCopy(message) : resolveConfirmDialogCopy(message);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
   const onCancel = () => respondToConfirmDialog(false);
   const onConfirm = () => respondToConfirmDialog(true);
@@ -85,9 +99,11 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          {mode === "confirm" ? (
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          ) : null}
           <Button variant={confirmVariant} onClick={onConfirm}>
-            Confirm
+            {mode === "alert" ? "OK" : "Confirm"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

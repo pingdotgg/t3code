@@ -8,12 +8,10 @@ import * as Option from "effect/Option";
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
-import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopApplicationMenu from "./DesktopApplicationMenu.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
 const environmentInput = {
@@ -49,24 +47,6 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   removeCommandLineSwitch: () => Effect.void,
   on: () => Effect.void,
 } satisfies ElectronApp.ElectronApp["Service"]);
-
-const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
-  pickFolder: () => Effect.succeed(Option.none()),
-  pickFiles: () => Effect.succeed([]),
-  showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
-  showErrorBox: () => Effect.void,
-} satisfies ElectronDialog.ElectronDialog["Service"]);
-
-const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
-  getState: Effect.die("unexpected getState"),
-  emitState: Effect.void,
-  disabledReason: Effect.succeed(Option.none()),
-  configure: Effect.void,
-  setChannel: () => Effect.die("unexpected setChannel"),
-  check: () => Effect.die("unexpected check"),
-  download: Effect.die("unexpected download"),
-  install: Effect.die("unexpected install"),
-} satisfies DesktopUpdates.DesktopUpdates["Service"]);
 
 const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -107,8 +87,6 @@ const configureMenu = (
       DesktopApplicationMenu.layer.pipe(
         Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
         Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
-        Layer.provideMerge(desktopUpdatesLayer),
-        Layer.provideMerge(electronDialogLayer),
         Layer.provideMerge(electronAppLayer),
         Layer.provideMerge(
           DesktopEnvironment.layer(environmentInput).pipe(
@@ -143,6 +121,37 @@ describe("DesktopApplicationMenu", () => {
 
       settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "open-settings");
+    }),
+  );
+
+  it.effect("routes update checks through the renderer dialog host", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const helpMenu = template.find((item) => item.role === "help");
+      assert.isDefined(helpMenu);
+      if (!Array.isArray(helpMenu.submenu)) {
+        throw new Error("Expected Help menu submenu to be an array.");
+      }
+      const checkForUpdatesItem = helpMenu.submenu.find(
+        (item) => item.label === "Check for Updates...",
+      );
+      assert.isDefined(checkForUpdatesItem);
+      if (typeof checkForUpdatesItem.click !== "function") {
+        throw new Error("Expected Check for Updates menu item to have a click handler.");
+      }
+
+      checkForUpdatesItem.click(
+        {} as Electron.MenuItem,
+        {} as Electron.BrowserWindow,
+        {} as KeyboardEvent,
+      );
+      assert.equal(yield* Deferred.await(selectedAction), "check-for-updates");
     }),
   );
 
