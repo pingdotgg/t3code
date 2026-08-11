@@ -1971,6 +1971,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      agentRuntime: {
+        mcpServerInjection: true,
+        instructionDelivery: "prompt",
+        nativeToolPolicy: "sandbox-only",
+        tokenUsage: true,
+        monetaryCost: false,
+      },
     },
     startSession,
     sendTurn,

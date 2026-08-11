@@ -4,6 +4,7 @@ import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp
 import type { LegendListRef } from "@legendapp/list/react-native";
 import type {
   ApprovalRequestId,
+  AgentProfileRef,
   EnvironmentId,
   MessageId,
   ModelSelection,
@@ -87,6 +88,8 @@ export interface ThreadDetailScreenProps {
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly agentProfile: AgentProfileRef | null;
+  readonly onUpdateThreadAgentProfile: (agentProfile: AgentProfileRef | null) => void;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -454,6 +457,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               onUpdateModelSelection={props.onUpdateThreadModelSelection}
               onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
               onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+              agentProfile={props.agentProfile}
+              onUpdateAgentProfile={props.onUpdateThreadAgentProfile}
               onExpandedChange={setComposerExpanded}
             />
           </View>

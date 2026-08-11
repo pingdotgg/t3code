@@ -22,6 +22,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { AgentProfileRef } from "./agentRefs.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -372,6 +373,9 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // Optional for snapshots from before durable agent selection; new events
+  // write an explicit null when no profile is pinned.
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -442,6 +446,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -663,6 +668,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   createdAt: IsoDateTime,
 });
 
@@ -758,6 +764,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -790,6 +797,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   createdAt: IsoDateTime,
 });
 
@@ -826,6 +834,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   createdAt: IsoDateTime,
 });
 
@@ -845,6 +854,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   createdAt: IsoDateTime,
 });
 
@@ -1119,6 +1129,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1201,6 +1212,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   updatedAt: IsoDateTime,
 });
 
@@ -1240,6 +1252,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRef)),
   createdAt: IsoDateTime,
 });
 

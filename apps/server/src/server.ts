@@ -64,6 +64,13 @@ import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+import * as AgentPromptResolver from "./agents/AgentPromptResolver.ts";
+import * as AgentProfileServices from "./agents/AgentProfileServices.ts";
+import * as AgentHookRunner from "./agents/AgentHookRunner.ts";
+import * as AgentOrchestrationLive from "./agents/AgentOrchestrationLive.ts";
+import * as AgentRunRepository from "./agents/run/AgentRunRepository.ts";
+import * as AgentRunReactor from "./agents/run/AgentRunReactor.ts";
+import * as AgentRunDeadlineReactor from "./agents/run/AgentRunDeadlineReactor.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -347,6 +354,21 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
+const AgentHookRunnerLayerLive = AgentHookRunner.layer.pipe(
+  Layer.provideMerge(ProcessRunner.layer),
+);
+
+const AgentRuntimeLayerLive = Layer.mergeAll(
+  AgentOrchestrationLive.layer,
+  AgentRunReactor.layer,
+  AgentRunDeadlineReactor.layer,
+  AgentPromptResolver.layer,
+).pipe(Layer.provideMerge(AgentRunRepository.layer), Layer.provideMerge(AgentHookRunnerLayerLive));
+
+const AgentServicesLayerLive = AgentRuntimeLayerLive.pipe(
+  Layer.provideMerge(AgentProfileServices.layer),
+);
+
 const AuthLayerLive = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerSecretStore.layer),
@@ -365,7 +387,11 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+const ReactorWithAgentServicesLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(AgentServicesLayerLive),
+);
+
+const RuntimeCoreDependenciesLive = ReactorWithAgentServicesLive.pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),

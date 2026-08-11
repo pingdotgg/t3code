@@ -4572,6 +4572,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      agentRuntime: {
+        mcpServerInjection: true,
+        instructionDelivery: "prompt",
+        nativeToolPolicy: "sandbox-only",
+        tokenUsage: true,
+        monetaryCost: false,
+      },
     },
     startSession,
     sendTurn,

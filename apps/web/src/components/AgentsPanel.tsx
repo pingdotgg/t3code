@@ -147,9 +147,13 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       : agent.role;
   const metadata = [
     modelLabel,
+    agent.profileId ? `profile ${agent.profileId}` : null,
+    agent.profileId ? `run ${agent.id.slice(0, 8)}` : null,
     agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
-    agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
+    agent.activationCount > 1
+      ? `${agent.profileId === null ? "run" : "turn"} ${agent.activationCount}`
+      : null,
   ].filter((value): value is string => value !== null);
 
   return (

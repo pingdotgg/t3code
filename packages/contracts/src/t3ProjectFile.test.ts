@@ -43,6 +43,26 @@ describe("T3ProjectFile", () => {
     expect(decoded.scripts?.[0]).toEqual({ name: "Dev", command: "pnpm dev" });
   });
 
+  it("decodes bounded checked-in native agent and rule references", () => {
+    const decoded = decode({
+      agents: [{ id: " reviewer ", path: " .t3/agents/reviewer.md " }],
+      rules: [{ id: " review-rules ", path: " .t3/rules/review.md " }],
+    });
+
+    expect(decoded.agents).toEqual([{ id: "reviewer", path: ".t3/agents/reviewer.md" }]);
+    expect(decoded.rules).toEqual([{ id: "review-rules", path: ".t3/rules/review.md" }]);
+  });
+
+  it("rejects more than 100 native agent or rule references", () => {
+    const references = Array.from({ length: 101 }, (_, index) => ({
+      id: `agent-${index}`,
+      path: `.t3/agents/${index}.md`,
+    }));
+
+    expect(() => decode({ agents: references })).toThrow();
+    expect(() => decode({ rules: references })).toThrow();
+  });
+
   it("rejects scripts without a command", () => {
     expect(() => decode({ scripts: [{ name: "Dev" }] })).toThrow();
   });

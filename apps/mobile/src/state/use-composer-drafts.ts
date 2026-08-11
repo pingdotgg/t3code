@@ -4,7 +4,9 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode as ProviderInteractionModeSchema,
   RuntimeMode as RuntimeModeSchema,
+  AgentProfileRef as AgentProfileRefSchema,
   type EnvironmentId,
+  type AgentProfileRef,
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -44,6 +46,7 @@ export interface ComposerDraft {
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly agentProfile?: AgentProfileRef | null;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
 }
 
@@ -62,7 +65,7 @@ export interface ComposerDraftWorkspaceSelection {
 
 export type ComposerDraftSettingsUpdate = Pick<
   ComposerDraft,
-  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection"
+  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection" | "agentProfile"
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
@@ -79,6 +82,7 @@ const ComposerDraftSchema = Schema.Struct({
   modelSelection: Schema.optional(ModelSelectionSchema),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
+  agentProfile: Schema.optional(Schema.NullOr(AgentProfileRefSchema)),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
 });
 
@@ -131,6 +135,7 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
+    draft.agentProfile === undefined &&
     draft.workspaceSelection === undefined
   );
 }

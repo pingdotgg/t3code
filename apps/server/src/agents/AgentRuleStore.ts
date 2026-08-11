@@ -1,0 +1,490 @@
+/** Writable, revision-checked persistence for native Agent Rule Markdown. */
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { stringify as stringifyYaml } from "yaml";
+
+import {
+  AgentProfileLocator,
+  AgentProfileId,
+  AgentProfileRevision,
+  AgentRuleDocument,
+  T3ProjectFile,
+  T3_PROJECT_FILE_NAME,
+  type T3ProjectFile as T3ProjectFileType,
+} from "@t3tools/contracts";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+import { T3ProjectFileFromJson } from "@t3tools/shared/t3ProjectFile";
+
+import { writeFileStringAtomically } from "../atomicWrite.ts";
+import * as ServerConfig from "../config.ts";
+import * as AgentCatalog from "./AgentCatalog.ts";
+import * as AgentProjectFileCoordinator from "./AgentProjectFileCoordinator.ts";
+
+const MARKDOWN_EXTENSION = ".md";
+const encodeProjectFile = Schema.encodeUnknownEffect(fromJsonStringPretty(T3ProjectFile));
+const decodeProjectFile = Schema.decodeEffect(T3ProjectFileFromJson);
+
+export class AgentRuleStoreError extends Schema.TaggedErrorClass<AgentRuleStoreError>()(
+  "AgentRuleStoreError",
+  {
+    operation: Schema.Literals(["load", "resolve", "write-document", "write-project-file"]),
+    scope: AgentProfileLocator.fields.scope,
+    id: AgentProfileLocator.fields.id,
+    detail: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Failed to ${this.operation} ${this.scope}-scoped rule '${this.id}': ${this.detail}`;
+  }
+}
+
+export class AgentRuleStoreRevisionConflictError extends Schema.TaggedErrorClass<AgentRuleStoreRevisionConflictError>()(
+  "AgentRuleStoreRevisionConflictError",
+  {
+    scope: AgentProfileLocator.fields.scope,
+    id: AgentProfileLocator.fields.id,
+    expectedRevision: Schema.optionalKey(AgentProfileRevision),
+    actualRevision: Schema.optionalKey(AgentProfileRevision),
+  },
+) {
+  override get message(): string {
+    return `Rule '${this.scope}/${this.id}' revision conflict (expected ${this.expectedRevision ?? "a new rule"}, found ${this.actualRevision ?? "no rule"}).`;
+  }
+}
+
+export const AgentRuleStoreErrorSchema = Schema.Union([
+  AgentRuleStoreError,
+  AgentRuleStoreRevisionConflictError,
+]);
+export type AgentRuleStoreFailure = typeof AgentRuleStoreErrorSchema.Type;
+
+export class AgentRuleStore extends Context.Service<
+  AgentRuleStore,
+  {
+    readonly save: (input: {
+      readonly rule: AgentRuleDocument;
+      readonly expectedRevision?: AgentProfileRevision | undefined;
+      readonly workspaceRoot?: string | undefined;
+    }) => Effect.Effect<AgentRuleDocument, AgentRuleStoreFailure>;
+    readonly archive: (input: {
+      readonly ref: AgentProfileLocator;
+      readonly expectedRevision: AgentProfileRevision;
+      readonly workspaceRoot?: string | undefined;
+    }) => Effect.Effect<AgentRuleDocument, AgentRuleStoreFailure>;
+    readonly restore: (input: {
+      readonly ref: AgentProfileLocator;
+      readonly expectedRevision: AgentProfileRevision;
+      readonly workspaceRoot?: string | undefined;
+    }) => Effect.Effect<AgentRuleDocument, AgentRuleStoreFailure>;
+  }
+>()("t3/agents/AgentRuleStore") {}
+
+const isContained = (path: Path.Path, root: string, candidate: string): boolean => {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+  );
+};
+
+const renderRule = (rule: AgentRuleDocument): string => {
+  const {
+    id: _id,
+    scope: _scope,
+    revision: _revision,
+    sourcePath: _sourcePath,
+    body,
+    ...frontmatter
+  } = rule;
+  return `---\n${stringifyYaml(frontmatter).trimEnd()}\n---\n${body}`;
+};
+
+export const make = Effect.gen(function* () {
+  const catalog = yield* AgentCatalog.AgentCatalog;
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const mutex = yield* Semaphore.make(1);
+  const projectFileCoordinator = yield* AgentProjectFileCoordinator.AgentProjectFileCoordinator;
+
+  const storeError = (
+    operation: AgentRuleStoreError["operation"],
+    ref: AgentProfileLocator,
+    detail: string,
+    cause?: unknown,
+  ) =>
+    new AgentRuleStoreError({
+      operation,
+      scope: ref.scope,
+      id: ref.id,
+      detail,
+      ...(cause === undefined ? {} : { cause }),
+    });
+  const ruleRoot = (scope: AgentProfileLocator["scope"], workspaceRoot: string | undefined) =>
+    scope === "environment" ? config.stateDir : workspaceRoot;
+
+  const existingFile = Effect.fn("AgentRuleStore.existingFile")(function* (filePath: string) {
+    return yield* fileSystem.readFileString(filePath).pipe(
+      Effect.map(Option.some),
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(error),
+      }),
+    );
+  });
+
+  const restorePreviousFile = (input: {
+    readonly filePath: string;
+    readonly previous: Option.Option<string>;
+  }) =>
+    Option.isSome(input.previous)
+      ? writeFileStringAtomically({
+          filePath: input.filePath,
+          contents: input.previous.value,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        )
+      : fileSystem.remove(input.filePath, { force: true });
+
+  const resolveWritePath = Effect.fn("AgentRuleStore.resolveWritePath")(function* (input: {
+    readonly ref: AgentProfileLocator;
+    readonly workspaceRoot?: string | undefined;
+    readonly documentPath: string;
+  }) {
+    const root = ruleRoot(input.ref.scope, input.workspaceRoot);
+    if (!root)
+      return yield* storeError("resolve", input.ref, "Project rules require a workspace root.");
+    if (input.ref.scope === "environment") {
+      yield* fileSystem
+        .makeDirectory(root, { recursive: true })
+        .pipe(
+          Effect.mapError((cause) =>
+            storeError("resolve", input.ref, "Could not create rule root.", cause),
+          ),
+        );
+    }
+    const canonicalRoot = yield* fileSystem
+      .realPath(root)
+      .pipe(
+        Effect.mapError((cause) =>
+          storeError("resolve", input.ref, "Could not resolve rule root.", cause),
+        ),
+      );
+    if (path.isAbsolute(input.documentPath)) {
+      return yield* storeError("resolve", input.ref, "Rule source paths must be relative.");
+    }
+    const requested = path.resolve(canonicalRoot, input.documentPath);
+    if (
+      !isContained(path, canonicalRoot, requested) ||
+      path.extname(requested).toLowerCase() !== MARKDOWN_EXTENSION
+    ) {
+      return yield* storeError(
+        "resolve",
+        input.ref,
+        "Rule source path must be a contained Markdown file.",
+      );
+    }
+    yield* fileSystem
+      .makeDirectory(path.dirname(requested), { recursive: true })
+      .pipe(
+        Effect.mapError((cause) =>
+          storeError("resolve", input.ref, "Could not create rule directory.", cause),
+        ),
+      );
+    const canonicalParent = yield* fileSystem
+      .realPath(path.dirname(requested))
+      .pipe(
+        Effect.mapError((cause) =>
+          storeError("resolve", input.ref, "Could not resolve rule directory.", cause),
+        ),
+      );
+    if (!isContained(path, canonicalRoot, canonicalParent)) {
+      return yield* storeError(
+        "resolve",
+        input.ref,
+        "Rule directory resolves outside its allowed root.",
+      );
+    }
+    return { root: canonicalRoot, filePath: path.join(canonicalParent, path.basename(requested)) };
+  });
+
+  const writeContained = Effect.fn("AgentRuleStore.writeContained")(function* (input: {
+    readonly ref: AgentProfileLocator;
+    readonly root: string;
+    readonly filePath: string;
+    readonly contents: string;
+    readonly operation: AgentRuleStoreError["operation"];
+  }) {
+    const previous = yield* existingFile(input.filePath).pipe(
+      Effect.mapError((cause) =>
+        storeError(input.operation, input.ref, "Could not snapshot the existing file.", cause),
+      ),
+    );
+    yield* writeFileStringAtomically({ filePath: input.filePath, contents: input.contents }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError((cause) =>
+        storeError(
+          input.operation,
+          input.ref,
+          `Could not replace '${path.basename(input.filePath)}'.`,
+          cause,
+        ),
+      ),
+    );
+    const containmentFailure = (cause: unknown | undefined) =>
+      Effect.gen(function* () {
+        const rollback = yield* restorePreviousFile({
+          filePath: input.filePath,
+          previous,
+        }).pipe(Effect.result);
+        if (Result.isFailure(rollback)) {
+          return yield* storeError(
+            input.operation,
+            input.ref,
+            "Written file no longer resolves inside its allowed root and its previous contents could not be restored.",
+            new AggregateError(
+              [...(cause === undefined ? [] : [cause]), rollback.failure],
+              "Agent rule containment rollback failed.",
+            ),
+          );
+        }
+        return yield* storeError(
+          input.operation,
+          input.ref,
+          "Written file no longer resolves inside its allowed root.",
+          cause,
+        );
+      });
+    const canonicalFile = yield* fileSystem.realPath(input.filePath).pipe(Effect.result);
+    if (Result.isFailure(canonicalFile)) {
+      return yield* containmentFailure(canonicalFile.failure);
+    }
+    if (!isContained(path, input.root, canonicalFile.success)) {
+      return yield* containmentFailure(undefined);
+    }
+  });
+
+  const projectFile = Effect.fn("AgentRuleStore.projectFile")(function* (
+    ref: AgentProfileLocator,
+    workspaceRoot: string,
+  ) {
+    const canonicalRoot = yield* fileSystem
+      .realPath(workspaceRoot)
+      .pipe(
+        Effect.mapError((cause) =>
+          storeError("write-project-file", ref, "Could not resolve project root.", cause),
+        ),
+      );
+    const filePath = path.join(canonicalRoot, T3_PROJECT_FILE_NAME);
+    const exists = yield* fileSystem
+      .exists(filePath)
+      .pipe(
+        Effect.mapError((cause) =>
+          storeError("write-project-file", ref, "Could not inspect t3.json.", cause),
+        ),
+      );
+    if (exists) {
+      const canonicalFile = yield* fileSystem
+        .realPath(filePath)
+        .pipe(
+          Effect.mapError((cause) =>
+            storeError("write-project-file", ref, "Could not resolve t3.json.", cause),
+          ),
+        );
+      if (!isContained(path, canonicalRoot, canonicalFile)) {
+        return yield* storeError(
+          "write-project-file",
+          ref,
+          "t3.json resolves outside the project root.",
+        );
+      }
+    }
+    const raw = yield* fileSystem.readFileString(filePath).pipe(
+      Effect.map(Option.some),
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(error),
+      }),
+      Effect.mapError((cause) =>
+        storeError("write-project-file", ref, "Could not read t3.json.", cause),
+      ),
+    );
+    if (Option.isNone(raw)) return {} satisfies T3ProjectFileType;
+    return yield* decodeProjectFile(raw.value).pipe(
+      Effect.mapError((cause) =>
+        storeError("write-project-file", ref, "t3.json is invalid.", cause),
+      ),
+    );
+  });
+
+  const writeProjectReference = Effect.fn("AgentRuleStore.writeProjectReference")(
+    function* (input: {
+      readonly ref: AgentProfileLocator;
+      readonly workspaceRoot: string;
+      readonly documentPath: string;
+    }) {
+      const root = yield* fileSystem
+        .realPath(input.workspaceRoot)
+        .pipe(
+          Effect.mapError((cause) =>
+            storeError("write-project-file", input.ref, "Could not resolve project root.", cause),
+          ),
+        );
+      return yield* projectFileCoordinator.withWorkspaceLock(
+        root,
+        Effect.gen(function* () {
+          const current = yield* projectFile(input.ref, root);
+          const rules = [
+            ...(current.rules ?? []).filter((entry) => entry.id !== input.ref.id),
+            { id: AgentProfileId.make(input.ref.id), path: input.documentPath },
+          ];
+          const contents = yield* encodeProjectFile({ ...current, rules }).pipe(
+            Effect.map((encoded) => `${encoded}\n`),
+            Effect.mapError((cause) =>
+              storeError("write-project-file", input.ref, "Could not encode t3.json.", cause),
+            ),
+          );
+          return yield* writeContained({
+            ref: input.ref,
+            root,
+            filePath: path.join(root, T3_PROJECT_FILE_NAME),
+            contents,
+            operation: "write-project-file",
+          });
+        }),
+      );
+    },
+  );
+
+  const saveUnlocked = Effect.fn("AgentRuleStore.saveUnlocked")(function* (input: {
+    readonly rule: AgentRuleDocument;
+    readonly expectedRevision?: AgentProfileRevision | undefined;
+    readonly workspaceRoot?: string | undefined;
+  }) {
+    const ref: AgentProfileLocator = {
+      id: AgentProfileId.make(input.rule.id),
+      scope: input.rule.scope,
+    };
+    const current = yield* catalog
+      .getRule({ ref, workspaceRoot: input.workspaceRoot })
+      .pipe(Effect.result);
+    if (Result.isSuccess(current)) {
+      if (input.expectedRevision !== current.success.revision) {
+        return yield* new AgentRuleStoreRevisionConflictError({
+          scope: ref.scope,
+          id: ref.id,
+          ...(input.expectedRevision ? { expectedRevision: input.expectedRevision } : {}),
+          actualRevision: current.success.revision,
+        });
+      }
+    } else if (current.failure._tag !== "AgentCatalogNotFoundError") {
+      return yield* storeError("load", ref, "Could not load current rule.", current.failure);
+    } else if (input.expectedRevision !== undefined) {
+      return yield* new AgentRuleStoreRevisionConflictError({
+        scope: ref.scope,
+        id: ref.id,
+        expectedRevision: input.expectedRevision,
+      });
+    }
+    const defaultPath =
+      ref.scope === "environment"
+        ? path.join("rules", `${ref.id}.md`)
+        : `.t3code/rules/${ref.id}.md`;
+    const documentPath =
+      current._tag === "Success"
+        ? (current.success.sourcePath ?? defaultPath)
+        : (input.rule.sourcePath ?? defaultPath);
+    const target = yield* resolveWritePath({
+      ref,
+      workspaceRoot: input.workspaceRoot,
+      documentPath,
+    });
+    const previous = yield* existingFile(target.filePath).pipe(
+      Effect.mapError((cause) =>
+        storeError("write-document", ref, "Could not snapshot rule Markdown.", cause),
+      ),
+    );
+    yield* writeContained({
+      ref,
+      root: target.root,
+      filePath: target.filePath,
+      contents: renderRule(input.rule),
+      operation: "write-document",
+    });
+    if (ref.scope === "project") {
+      if (!input.workspaceRoot)
+        return yield* storeError("resolve", ref, "Project rules require a workspace root.");
+      const projectWrite = yield* writeProjectReference({
+        ref,
+        workspaceRoot: input.workspaceRoot,
+        documentPath,
+      }).pipe(Effect.result);
+      if (Result.isFailure(projectWrite)) {
+        const rollback = yield* restorePreviousFile({
+          filePath: target.filePath,
+          previous,
+        }).pipe(Effect.result);
+        if (Result.isFailure(rollback)) {
+          return yield* storeError(
+            "write-document",
+            ref,
+            "Could not roll back rule Markdown after t3.json failed to save.",
+            new AggregateError(
+              [projectWrite.failure, rollback.failure],
+              "Agent rule project-reference rollback failed.",
+            ),
+          );
+        }
+        return yield* projectWrite.failure;
+      }
+    }
+    return yield* catalog
+      .getRule({ ref, workspaceRoot: input.workspaceRoot })
+      .pipe(
+        Effect.mapError((cause) => storeError("load", ref, "Could not load saved rule.", cause)),
+      );
+  });
+
+  const save: AgentRuleStore["Service"]["save"] = (input) =>
+    mutex.withPermits(1)(saveUnlocked(input));
+  const updateArchived = Effect.fn("AgentRuleStore.updateArchived")(function* (input: {
+    readonly ref: AgentProfileLocator;
+    readonly expectedRevision: AgentProfileRevision;
+    readonly workspaceRoot?: string | undefined;
+    readonly archived: boolean;
+  }) {
+    const rule = yield* catalog
+      .getRule({ ref: input.ref, workspaceRoot: input.workspaceRoot })
+      .pipe(
+        Effect.mapError((cause) => storeError("load", input.ref, "Could not load rule.", cause)),
+      );
+    const now = DateTime.formatIso(yield* DateTime.now);
+    return yield* save({
+      rule: { ...rule, archivedAt: input.archived ? now : null, updatedAt: now },
+      expectedRevision: input.expectedRevision,
+      workspaceRoot: input.workspaceRoot,
+    });
+  });
+  const archive: AgentRuleStore["Service"]["archive"] = (input) =>
+    updateArchived({ ...input, archived: true });
+  const restore: AgentRuleStore["Service"]["restore"] = (input) =>
+    updateArchived({ ...input, archived: false });
+  return AgentRuleStore.of({ save, archive, restore });
+});
+
+export const layer = Layer.effect(AgentRuleStore, make);

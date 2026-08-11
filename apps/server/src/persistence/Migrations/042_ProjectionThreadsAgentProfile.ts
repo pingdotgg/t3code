@@ -1,0 +1,17 @@
+import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+/** Stores the agent profile selected for a projected thread. */
+export default Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_threads)
+  `;
+
+  if (!columns.some((column) => column.name === "agent_profile_json")) {
+    yield* sql`
+      ALTER TABLE projection_threads
+      ADD COLUMN agent_profile_json TEXT
+    `;
+  }
+});

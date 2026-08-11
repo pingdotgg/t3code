@@ -4,6 +4,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  AgentProfileId,
+  AgentProfileRevision,
+  type AgentProfileDocument,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -45,6 +48,7 @@ import {
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration, type TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { AgentPromptResolver } from "../../agents/AgentPromptResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -68,6 +72,31 @@ const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+const pinnedAgentProfile = {
+  id: AgentProfileId.make("reviewer"),
+  scope: "environment" as const,
+  revision: AgentProfileRevision.make("a".repeat(64)),
+};
+const pinnedAgentProfileDocument = {
+  ...pinnedAgentProfile,
+  name: "Reviewer",
+  chatSelectable: true,
+  defaultModelSelection: null,
+  sourcePath: null,
+  requirements: { toolRequirement: "none", t3McpCapabilities: [] },
+  archivedAt: null,
+  instructions: "Review the change.",
+  instructionPriority: "prompt",
+  runtime: { mode: "auto", interactionMode: "default" },
+  workspace: { mode: "shared", access: "read-only" },
+  tools: { policy: "inherit", allowed: [] },
+  delegation: { policy: "disabled", profiles: [] },
+  budgets: { maxRuns: 1, maxConcurrency: 1, maxDepth: 0, maxWallTimeMinutes: 10 },
+  hooks: [],
+  rules: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+} satisfies AgentProfileDocument;
 
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
@@ -150,6 +179,8 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly resolveAgentPrompt?: (message: string) => string;
+    readonly agentRuntimeDeclared?: boolean;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -298,6 +329,16 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
     );
+    const resolveAgentPrompt = vi.fn(
+      (resolverInput: Parameters<AgentPromptResolver["Service"]["resolve"]>[0]) =>
+        Effect.succeed({
+          message: input?.resolveAgentPrompt?.(resolverInput.message) ?? resolverInput.message,
+          profile: null,
+        }),
+    );
+    const loadAgentProfile = vi.fn<AgentPromptResolver["Service"]["loadProfile"]>(() =>
+      Effect.succeed(pinnedAgentProfileDocument),
+    );
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
@@ -319,6 +360,17 @@ describe("ProviderCommandReactor", () => {
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
+          ...(input?.agentRuntimeDeclared === false
+            ? {}
+            : {
+                agentRuntime: {
+                  mcpServerInjection: true,
+                  instructionDelivery: "system" as const,
+                  nativeToolPolicy: "exact" as const,
+                  tokenUsage: true,
+                  monetaryCost: true,
+                },
+              }),
         }),
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
@@ -413,6 +465,12 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        Layer.succeed(AgentPromptResolver, {
+          loadProfile: loadAgentProfile,
+          resolve: resolveAgentPrompt,
+        }),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -502,6 +560,8 @@ describe("ProviderCommandReactor", () => {
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
+      resolveAgentPrompt,
+      loadAgentProfile,
       runtimeSessions,
       stateDir,
       drain,
@@ -550,6 +610,71 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("resolves the pinned Agent prompt before sending the provider turn", async () => {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      resolveAgentPrompt: (message) => `agent envelope\n${message}`,
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-agent-prompt"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-agent-prompt"),
+          role: "user",
+          text: "delegate this",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        agentProfile: pinnedAgentProfile,
+        createdAt,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.resolveAgentPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "delegate this",
+        profileRef: pinnedAgentProfile,
+        workspaceRoot: "/tmp/provider-project",
+      }),
+    );
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: "agent envelope\ndelegate this",
+    });
+  });
+
+  it("rejects an incompatible Agent profile before promptBuild hooks can run", async () => {
+    const harness = await createHarness({ agentRuntimeDeclared: false });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-incompatible-agent-prompt"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-incompatible-agent-prompt"),
+          role: "user",
+          text: "do not run hooks",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        agentProfile: pinnedAgentProfile,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.loadAgentProfile).toHaveBeenCalledOnce();
+    expect(harness.resolveAgentPrompt).not.toHaveBeenCalled();
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
@@ -2793,21 +2918,21 @@ describe("ProviderCommandReactor", () => {
     expect(resolvedActivity).toBeUndefined();
   });
 
-  it("surfaces non-resumable provider user-input callbacks as stale failures", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-    harness.respondToUserInput.mockImplementation(() =>
-      Effect.fail(
-        new ProviderAdapterRequestError({
-          provider: ProviderDriverKind.make("claudeAgent"),
-          method: "item/tool/respondToUserInput",
-          detail: "Unknown pending Codex user input request: user-input-request-1",
-        }),
-      ),
-    );
+  effectIt.effect("surfaces non-resumable provider user-input callbacks as stale failures", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+      harness.respondToUserInput.mockImplementation(() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: ProviderDriverKind.make("claudeAgent"),
+            method: "item/tool/respondToUserInput",
+            detail: "Unknown pending Codex user input request: user-input-request-1",
+          }),
+        ),
+      );
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
+      yield* harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
         threadId: ThreadId.make("thread-1"),
@@ -2821,11 +2946,9 @@ describe("ProviderCommandReactor", () => {
           updatedAt: now,
         },
         createdAt: now,
-      }),
-    );
+      });
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
+      yield* harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
         threadId: ThreadId.make("thread-1"),
@@ -2854,11 +2977,9 @@ describe("ProviderCommandReactor", () => {
           createdAt: now,
         },
         createdAt: now,
-      }),
-    );
+      });
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
+      yield* harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),
         threadId: ThreadId.make("thread-1"),
@@ -2867,40 +2988,33 @@ describe("ProviderCommandReactor", () => {
           sandbox_mode: "workspace-write",
         },
         createdAt: now,
-      }),
-    );
+      });
 
-    await waitFor(async () => {
-      const readModel = await harness.readModel();
+      yield* Effect.promise(() => harness.drain());
+
+      const readModel = yield* Effect.promise(() => harness.readModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-      if (!thread) return false;
-      return thread.activities.some(
+      expect(thread).toBeDefined();
+
+      const failureActivity = thread?.activities.find(
         (activity) => activity.kind === "provider.user-input.respond.failed",
       );
-    });
+      expect(failureActivity).toBeDefined();
+      expect(failureActivity?.payload).toMatchObject({
+        requestId: "user-input-request-1",
+        detail: expect.stringContaining("Stale pending user-input request: user-input-request-1"),
+      });
 
-    const readModel = await harness.readModel();
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread).toBeDefined();
-
-    const failureActivity = thread?.activities.find(
-      (activity) => activity.kind === "provider.user-input.respond.failed",
-    );
-    expect(failureActivity).toBeDefined();
-    expect(failureActivity?.payload).toMatchObject({
-      requestId: "user-input-request-1",
-      detail: expect.stringContaining("Stale pending user-input request: user-input-request-1"),
-    });
-
-    const resolvedActivity = thread?.activities.find(
-      (activity) =>
-        activity.kind === "user-input.resolved" &&
-        typeof activity.payload === "object" &&
-        activity.payload !== null &&
-        (activity.payload as Record<string, unknown>).requestId === "user-input-request-1",
-    );
-    expect(resolvedActivity).toBeUndefined();
-  });
+      const resolvedActivity = thread?.activities.find(
+        (activity) =>
+          activity.kind === "user-input.resolved" &&
+          typeof activity.payload === "object" &&
+          activity.payload !== null &&
+          (activity.payload as Record<string, unknown>).requestId === "user-input-request-1",
+      );
+      expect(resolvedActivity).toBeUndefined();
+    }),
+  );
 
   it("reacts to thread.session.stop by stopping provider session and clearing thread session state", async () => {
     const harness = await createHarness();

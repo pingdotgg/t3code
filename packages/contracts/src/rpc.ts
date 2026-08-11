@@ -4,6 +4,35 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  AgentProfileCatalogError,
+  AgentProfileCatalogInput,
+  AgentProfileCatalogResult,
+  AgentProfileGetError,
+  AgentProfileGetInput,
+  AgentProfileGetResult,
+  AgentProfileSaveError,
+  AgentProfileSaveInput,
+  AgentProfileSaveResult,
+  AgentProfileArchiveError,
+  AgentProfileArchiveInput,
+  AgentProfileArchiveResult,
+  AgentProfileRestoreError,
+  AgentProfileRestoreInput,
+  AgentProfileRestoreResult,
+  AgentRuleGetError,
+  AgentRuleGetInput,
+  AgentRuleGetResult,
+  AgentRuleSaveError,
+  AgentRuleSaveInput,
+  AgentRuleSaveResult,
+  AgentRuleArchiveError,
+  AgentRuleArchiveInput,
+  AgentRuleArchiveResult,
+  AgentRuleRestoreError,
+  AgentRuleRestoreInput,
+  AgentRuleRestoreResult,
+} from "./agents.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -188,6 +217,17 @@ import {
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
+  // T3-owned Agent profiles
+  agentsCatalog: "agents.catalog",
+  agentsGetProfile: "agents.getProfile",
+  agentsSaveProfile: "agents.saveProfile",
+  agentsArchiveProfile: "agents.archiveProfile",
+  agentsRestoreProfile: "agents.restoreProfile",
+  agentsGetRule: "agents.getRule",
+  agentsSaveRule: "agents.saveRule",
+  agentsArchiveRule: "agents.archiveRule",
+  agentsRestoreRule: "agents.restoreRule",
+
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -304,6 +344,60 @@ export const WS_METHODS = {
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
 } as const;
+
+export const WsAgentsCatalogRpc = Rpc.make(WS_METHODS.agentsCatalog, {
+  payload: AgentProfileCatalogInput,
+  success: AgentProfileCatalogResult,
+  error: Schema.Union([AgentProfileCatalogError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentsGetProfileRpc = Rpc.make(WS_METHODS.agentsGetProfile, {
+  payload: AgentProfileGetInput,
+  success: AgentProfileGetResult,
+  error: Schema.Union([AgentProfileGetError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentsSaveProfileRpc = Rpc.make(WS_METHODS.agentsSaveProfile, {
+  payload: AgentProfileSaveInput,
+  success: AgentProfileSaveResult,
+  error: Schema.Union([AgentProfileSaveError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentsArchiveProfileRpc = Rpc.make(WS_METHODS.agentsArchiveProfile, {
+  payload: AgentProfileArchiveInput,
+  success: AgentProfileArchiveResult,
+  error: Schema.Union([AgentProfileArchiveError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentsRestoreProfileRpc = Rpc.make(WS_METHODS.agentsRestoreProfile, {
+  payload: AgentProfileRestoreInput,
+  success: AgentProfileRestoreResult,
+  error: Schema.Union([AgentProfileRestoreError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentsGetRuleRpc = Rpc.make(WS_METHODS.agentsGetRule, {
+  payload: AgentRuleGetInput,
+  success: AgentRuleGetResult,
+  error: Schema.Union([AgentRuleGetError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentsSaveRuleRpc = Rpc.make(WS_METHODS.agentsSaveRule, {
+  payload: AgentRuleSaveInput,
+  success: AgentRuleSaveResult,
+  error: Schema.Union([AgentRuleSaveError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentsArchiveRuleRpc = Rpc.make(WS_METHODS.agentsArchiveRule, {
+  payload: AgentRuleArchiveInput,
+  success: AgentRuleArchiveResult,
+  error: Schema.Union([AgentRuleArchiveError, EnvironmentAuthorizationError]),
+});
+
+export const WsAgentsRestoreRuleRpc = Rpc.make(WS_METHODS.agentsRestoreRule, {
+  payload: AgentRuleRestoreInput,
+  success: AgentRuleRestoreResult,
+  error: Schema.Union([AgentRuleRestoreError, EnvironmentAuthorizationError]),
+});
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -947,6 +1041,15 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsAgentsCatalogRpc,
+  WsAgentsGetProfileRpc,
+  WsAgentsSaveProfileRpc,
+  WsAgentsArchiveProfileRpc,
+  WsAgentsRestoreProfileRpc,
+  WsAgentsGetRuleRpc,
+  WsAgentsSaveRuleRpc,
+  WsAgentsArchiveRuleRpc,
+  WsAgentsRestoreRuleRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

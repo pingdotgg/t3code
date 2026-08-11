@@ -1,6 +1,7 @@
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type {
   EnvironmentId,
+  AgentProfileRef,
   MessageId,
   ModelSelection,
   OrchestrationThreadShell,
@@ -51,10 +52,14 @@ import {
   ComposerToolbarScroller,
   ComposerToolbarTrigger,
 } from "../../components/ComposerToolbarTrigger";
-import { ControlPill } from "../../components/ControlPill";
+import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  groupByProvider,
+  resolveSelectableModelSelection,
+} from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import {
@@ -65,6 +70,7 @@ import {
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { profileKey, selectChatAgentProfiles, useAgentProfileCatalog } from "../../state/agents";
 import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
 import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
@@ -111,6 +117,8 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly agentProfile: AgentProfileRef | null;
+  readonly onUpdateAgentProfile: (agentProfile: AgentProfileRef | null) => void;
   readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
 }
@@ -325,6 +333,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const currentInteractionMode = props.selectedThread.interactionMode ?? "default";
+  const agentCatalog = useAgentProfileCatalog(props.environmentId, props.selectedThread.projectId, {
+    includeArchived: true,
+  });
   const connectionStatus = composerConnectionStatus({
     connectionError: props.connectionError,
     connectionState: props.connectionState,
@@ -616,6 +627,64 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }),
     [currentModelOption?.capabilities, currentModelSelection.options],
   );
+  const agentMenuActions = useMemo(
+    () => [
+      {
+        id: "agent:none",
+        title: "No agent",
+        state: props.agentProfile === null ? ("on" as const) : undefined,
+      },
+      ...selectChatAgentProfiles(agentCatalog.data?.profiles ?? [], props.agentProfile).map(
+        (profile) => ({
+          id: `agent:${profileKey(profile)}`,
+          title: profile.name,
+          subtitle: profile.description ?? profile.id,
+          state:
+            props.agentProfile?.id === profile.id && props.agentProfile.scope === profile.scope
+              ? ("on" as const)
+              : undefined,
+        }),
+      ),
+    ],
+    [agentCatalog.data?.profiles, props.agentProfile],
+  );
+
+  // ── Agent menu ───────────────────────────────────────────
+  function handleAgentMenuAction(event: string) {
+    if (event === "agent:none") {
+      props.onUpdateAgentProfile(null);
+      return;
+    }
+    if (!event.startsWith("agent:")) return;
+    const profile = agentCatalog.data?.profiles.find(
+      (candidate) => profileKey(candidate) === event.slice("agent:".length),
+    );
+    if (profile) {
+      props.onUpdateAgentProfile({
+        id: profile.id,
+        scope: profile.scope,
+        revision: profile.revision,
+      });
+      const selectableDefault = resolveSelectableModelSelection(
+        props.serverConfig,
+        profile.defaultModelSelection,
+      );
+      if (selectableDefault?.instanceId === currentModelSelection.instanceId) {
+        const defaultOption = modelOptions.find(
+          (option) =>
+            option.selection.instanceId === selectableDefault.instanceId &&
+            option.selection.model === selectableDefault.model,
+        );
+        if (defaultOption) {
+          props.onUpdateModelSelection({
+            ...defaultOption.selection,
+            ...(selectableDefault.options ? { options: selectableDefault.options } : {}),
+          });
+        }
+      }
+    }
+  }
+
   const settingsSummaryLabel = threadSettingsSummaryLabel({
     modelLabel: currentModelOption?.label ?? currentModelSelection.model,
     optionDescriptors: providerOptionDescriptors,
@@ -792,6 +861,28 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   onPress={() => void props.onPickDraftImages()}
                   showChevron={false}
                 />
+                <ControlPillMenu
+                  actions={agentMenuActions}
+                  onPressAction={({ nativeEvent }) => handleAgentMenuAction(nativeEvent.event)}
+                >
+                  <ComposerToolbarTrigger
+                    accessibilityLabel="Agent"
+                    disabled={agentCatalog.isPending}
+                    icon="person.2"
+                    label={
+                      props.agentProfile === null
+                        ? "Agent"
+                        : (agentCatalog.data?.profiles.find(
+                            (profile) =>
+                              profileKey(profile) ===
+                              `${props.agentProfile?.scope}:${props.agentProfile?.id}`,
+                          )?.name ??
+                          (agentCatalog.isPending && agentCatalog.data === null
+                            ? "Loading agents…"
+                            : "Agent"))
+                    }
+                  />
+                </ControlPillMenu>
                 <ComposerToolbarTrigger
                   accessibilityLabel="Thread settings"
                   iconNode={

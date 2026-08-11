@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  AgentProfileInvalidError,
+  EnvironmentId,
+  PreviewTabId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -11,6 +17,7 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as AgentOrchestration from "../agents/AgentOrchestration.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -39,6 +46,31 @@ const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
 );
 
+const unusedAgentOperation = () => Effect.die("unused Agent test operation");
+const AgentFailureLayer = McpHttpServer.AgentToolkitRegistrationLive.pipe(
+  Layer.provide(
+    Layer.succeed(
+      AgentOrchestration.AgentOrchestration,
+      AgentOrchestration.AgentOrchestration.of({
+        list: unusedAgentOperation,
+        spawn: () =>
+          Effect.fail(
+            new AgentProfileInvalidError({
+              detail: "Agent 'Luna Orchestrator' may not delegate to 'project/fixture-doc-agent'.",
+            }),
+          ),
+        status: unusedAgentOperation,
+        wait: unusedAgentOperation,
+        result: unusedAgentOperation,
+        send: unusedAgentOperation,
+        cancel: unusedAgentOperation,
+        integrate: unusedAgentOperation,
+      }),
+    ),
+  ),
+  Layer.provideMerge(McpServer.McpServer.layer),
+);
+
 it("normalizes empty successful notification responses to accepted", () => {
   const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
     HttpServerResponse.text("", { status: 200, contentType: "application/json" }),
@@ -50,6 +82,35 @@ it("normalizes empty successful notification responses to accepted", () => {
   );
   expect(resultResponse.status).toBe(200);
 });
+
+it.effect("returns actionable Agent tool failure text", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "agent_spawn",
+        arguments: {
+          profile: { id: "fixture-doc-agent", scope: "project" },
+          task: "Say hello",
+        },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...invocation,
+          capabilities: new Set<McpInvocationContext.McpCapability>(["agents"]),
+        }),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: "Agent 'Luna Orchestrator' may not delegate to 'project/fixture-doc-agent'.",
+      },
+    ]);
+  }).pipe(Effect.provide(AgentFailureLayer)),
+);
 
 it.effect("returns bounded structural preview snapshot failures", () =>
   Effect.scoped(
@@ -89,6 +150,43 @@ it.effect("returns bounded structural preview snapshot failures", () =>
       expect(snapshot.structuredContent).toEqual({
         error: {
           _tag: "PreviewAutomationExecutionError",
+          operation: "snapshot",
+          failureCount: 1,
+        },
+      });
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("does not invoke preview tools for a credential without the toolkit capability", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server.callTool({ name: "preview_status", arguments: {} }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...invocation,
+          capabilities: new Set<McpInvocationContext.McpCapability>(),
+        }),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: "MCP credential does not grant the preview capability." },
+      ]);
+      expect(result.structuredContent).toBeUndefined();
+
+      const snapshot = yield* server.callTool({ name: "preview_snapshot", arguments: {} }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, {
+          ...invocation,
+          capabilities: new Set<McpInvocationContext.McpCapability>(),
+        }),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+      expect(snapshot.isError).toBe(true);
+      expect(snapshot.structuredContent).toEqual({
+        error: {
+          _tag: "PreviewAutomationUnavailableError",
           operation: "snapshot",
           failureCount: 1,
         },

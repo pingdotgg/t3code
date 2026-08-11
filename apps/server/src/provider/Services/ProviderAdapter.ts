@@ -25,11 +25,34 @@ import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
+export type ProviderInstructionDelivery = "developer" | "system" | "prompt" | "unsupported";
+export type ProviderNativeToolPolicy = "exact" | "sandbox-only" | "unsupported";
+
+/**
+ * Capabilities T3's provider-neutral Agent runtime can rely on.
+ *
+ * Adapters declare guarantees, not best-effort behavior. Agent profile
+ * validation rejects a run when the selected provider cannot satisfy a
+ * requested guarantee.
+ */
+export interface ProviderAgentRuntimeCapabilities {
+  readonly mcpServerInjection: boolean;
+  readonly instructionDelivery: ProviderInstructionDelivery;
+  readonly nativeToolPolicy: ProviderNativeToolPolicy;
+  readonly tokenUsage: boolean;
+  readonly monetaryCost: boolean;
+}
+
 export interface ProviderAdapterCapabilities {
   /**
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /**
+   * Omitted by legacy/test adapters. Omission is treated as unsupported by
+   * Agent profile compatibility checks.
+   */
+  readonly agentRuntime?: ProviderAgentRuntimeCapabilities;
 }
 
 export interface ProviderThreadTurnSnapshot {

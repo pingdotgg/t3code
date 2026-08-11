@@ -12,6 +12,7 @@ export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
+const T3_PROJECT_FILE_MAX_AGENT_REFERENCES = 100;
 
 // Annotations go on the encoded (string) side so they survive into the
 // published JSON Schema; decoding still trims and re-validates non-emptiness.
@@ -59,6 +60,23 @@ export const T3ProjectFileScript = Schema.Struct({
 });
 export type T3ProjectFileScript = typeof T3ProjectFileScript.Type;
 
+/** A workspace-relative pointer to a checked-in native agent or rule. */
+export const T3ProjectFileAgentReference = Schema.Struct({
+  id: trimmedNonEmpty({
+    description: "Stable identifier for the referenced native agent or rule.",
+  }),
+  path: trimmedNonEmpty(
+    {
+      description: "Workspace-relative path to the referenced native agent or rule document.",
+    },
+    T3_PROJECT_FILE_PATH_MAX_LENGTH,
+  ),
+});
+export type T3ProjectFileAgentReference = typeof T3ProjectFileAgentReference.Type;
+
+export const T3ProjectFileRuleReference = T3ProjectFileAgentReference;
+export type T3ProjectFileRuleReference = typeof T3ProjectFileRuleReference.Type;
+
 export const T3ProjectFile = Schema.Struct({
   $schema: Schema.optionalKey(
     Schema.String.annotate({
@@ -86,6 +104,22 @@ export const T3ProjectFile = Schema.Struct({
         description: "Project scripts shared with everyone who opens this repository in T3 Code.",
       })
       .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_SCRIPTS)),
+  ),
+  agents: Schema.optionalKey(
+    Schema.Array(T3ProjectFileAgentReference)
+      .annotate({
+        description:
+          "Native agent profiles shared with everyone who opens this repository in T3 Code.",
+      })
+      .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_AGENT_REFERENCES)),
+  ),
+  rules: Schema.optionalKey(
+    Schema.Array(T3ProjectFileRuleReference)
+      .annotate({
+        description:
+          "Native agent rules shared with everyone who opens this repository in T3 Code.",
+      })
+      .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_AGENT_REFERENCES)),
   ),
 }).annotate({
   title: "T3 project file",

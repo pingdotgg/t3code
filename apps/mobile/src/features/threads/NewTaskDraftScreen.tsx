@@ -49,6 +49,8 @@ import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { profileKey, selectChatAgentProfiles, useAgentProfileCatalog } from "../../state/agents";
+import { resolveAgentProfileSelection } from "../../state/agentProfileSelection";
 
 function formatWorkspaceLabel(input: {
   readonly workspaceMode: string;
@@ -565,6 +567,32 @@ export function NewTaskDraftScreen(props: {
       }),
     [flow.selectedModel?.options, flow.selectedModelOption?.capabilities],
   );
+  const agentCatalog = useAgentProfileCatalog(
+    flow.selectedProject?.environmentId ?? null,
+    flow.selectedProject?.id ?? null,
+    { includeArchived: true },
+  );
+  const agentMenuActions = useMemo(
+    () => [
+      {
+        id: "agent:none",
+        title: "No agent",
+        state: flow.agentProfile === null ? ("on" as const) : undefined,
+      },
+      ...selectChatAgentProfiles(agentCatalog.data?.profiles ?? [], flow.agentProfile).map(
+        (profile) => ({
+          id: `agent:${profileKey(profile)}`,
+          title: profile.name,
+          subtitle: profile.description ?? profile.id,
+          state:
+            flow.agentProfile?.id === profile.id && flow.agentProfile.scope === profile.scope
+              ? ("on" as const)
+              : undefined,
+        }),
+      ),
+    ],
+    [agentCatalog.data?.profiles, flow.agentProfile],
+  );
 
   const workspaceMenuActions = useMemo(() => {
     const branchActions =
@@ -651,6 +679,37 @@ export function NewTaskDraftScreen(props: {
       }),
     [currentBranchName, flow.selectedBranchName, flow.workspaceMode],
   );
+  function handleAgentMenuAction(event: string) {
+    if (isIncomingShareTransferPending) return;
+    if (event === "agent:none") {
+      flow.setAgentProfile(null);
+      return;
+    }
+    if (!event.startsWith("agent:")) return;
+    const key = event.slice("agent:".length);
+    const profile = agentCatalog.data?.profiles.find((candidate) => profileKey(candidate) === key);
+    if (profile) {
+      flow.setAgentProfile({ id: profile.id, scope: profile.scope, revision: profile.revision });
+      const selectableDefault = resolveSelectableModelSelection(
+        selectedEnvironmentServerConfig,
+        profile.defaultModelSelection,
+      );
+      if (selectableDefault) {
+        const defaultOption = flow.modelOptions.find(
+          (option) =>
+            option.selection.instanceId === selectableDefault.instanceId &&
+            option.selection.model === selectableDefault.model,
+        );
+        if (defaultOption) {
+          flow.setSelectedModelSelection({
+            ...defaultOption.selection,
+            ...(selectableDefault.options ? { options: selectableDefault.options } : {}),
+          });
+        }
+      }
+    }
+  }
+
   function handleEnvironmentMenuAction(event: string) {
     if (isIncomingShareTransferPending || !event.startsWith("environment:")) {
       return;
@@ -801,6 +860,7 @@ export function NewTaskDraftScreen(props: {
       startFromOrigin,
       runtimeMode,
       interactionMode,
+      agentProfile: resolveAgentProfileSelection(draft.agentProfile, flow.agentProfile),
       initialMessageText,
       initialAttachments: draft.attachments,
       ...(editingPendingTask
@@ -920,6 +980,27 @@ export function NewTaskDraftScreen(props: {
         showChevron={false}
         disabled={isIncomingShareTransferPending}
       />
+      <ControlPillMenu
+        actions={agentMenuActions}
+        onPressAction={({ nativeEvent }) => handleAgentMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Agent"
+          disabled={isIncomingShareTransferPending || agentCatalog.isPending}
+          icon="person.2"
+          label={
+            flow.agentProfile === null
+              ? "Agent"
+              : (agentCatalog.data?.profiles.find(
+                  (profile) =>
+                    profileKey(profile) === `${flow.agentProfile?.scope}:${flow.agentProfile?.id}`,
+                )?.name ??
+                (agentCatalog.isPending && agentCatalog.data === null
+                  ? "Loading agents…"
+                  : "Agent"))
+          }
+        />
+      </ControlPillMenu>
       <ComposerToolbarTrigger
         accessibilityLabel="Thread settings"
         disabled={isIncomingShareTransferPending}
