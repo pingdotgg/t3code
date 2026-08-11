@@ -22,7 +22,11 @@ export function isExplicitRelativePath(value: string): boolean {
 }
 
 function isRootPath(value: string): boolean {
-  return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]?$/.test(value);
+  // The drive separator is required: a bare `C:` is not the drive root (it
+  // means "current directory on C:"), and treating it as already-canonical
+  // would leave it as `C:` while `C:\` and `C:/` normalize to the drive root,
+  // so the same location would fail project identity/dedup comparisons.
+  return value === "/" || value === "\\" || /^[a-zA-Z]:[/\\]$/.test(value);
 }
 
 function trimTrailingPathSeparators(value: string): string {

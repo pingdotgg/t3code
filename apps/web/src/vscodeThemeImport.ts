@@ -2,6 +2,7 @@ import {
   createVividThemeColors,
   getThemeModes,
   parseThemeFile,
+  themeColorToHex,
   THEME_FILE_VERSION,
   type ThemeAppearance,
   type ThemeColorRole,
@@ -138,7 +139,7 @@ function contrastRatio(first: VsCodeRgb, second: VsCodeRgb): number {
 }
 
 function hexToRgb(value: string): VsCodeRgb {
-  return parseVsCodeColor(value) ?? { r: 0, g: 0, b: 0, a: 1 };
+  return parseVsCodeColor(themeColorToHex(value) ?? value) ?? { r: 0, g: 0, b: 0, a: 1 };
 }
 
 /**
