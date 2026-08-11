@@ -52,59 +52,32 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
-  it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
-    Effect.gen(function* () {
-      const secretStderr = "broken grok install: secret-token-value";
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-version-" });
-          const grokPath = path.join(dir, "grok");
-          yield* fs.writeFileString(
-            grokPath,
-            ["#!/bin/sh", `printf "%s\\n" "${secretStderr}" >&2`, "exit 2", ""].join("\n"),
-          );
-          yield* fs.chmod(grokPath, 0o755);
+  it.effect("checks availability without executing the CLI", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-probe-" });
+        const grokPath = path.join(dir, "grok");
+        const executionMarker = `${grokPath}.executed`;
+        yield* fs.writeFileString(
+          grokPath,
+          ["#!/bin/sh", 'touch "$0.executed"', "exit 0", ""].join("\n"),
+        );
+        yield* fs.chmod(grokPath, 0o755);
 
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-          );
-        }),
-      );
+        const snapshot = yield* checkGrokProviderStatus(
+          decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+        );
 
-      expect(snapshot.enabled).toBe(true);
-      expect(snapshot.installed).toBe(true);
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.message).toBe("Grok CLI is installed but failed to run.");
-      expect(snapshot.message).not.toContain(secretStderr);
-    }),
-  );
-
-  it.effect("reports an error when ACP model discovery is unavailable", () =>
-    Effect.gen(function* () {
-      const snapshot = yield* Effect.scoped(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-success-" });
-          const grokPath = path.join(dir, "grok");
-          yield* fs.writeFileString(
-            grokPath,
-            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
-          );
-          yield* fs.chmod(grokPath, 0o755);
-
-          return yield* checkGrokProviderStatus(
-            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-          );
-        }),
-      );
-
-      expect(snapshot.status).toBe("error");
-      expect(snapshot.installed).toBe(true);
-      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
-      expect(snapshot.message).toContain("ACP startup failed");
-    }),
+        expect(snapshot.enabled).toBe(true);
+        expect(snapshot.installed).toBe(true);
+        expect(snapshot.status).toBe("ready");
+        expect(snapshot.version).toBeNull();
+        expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
+        expect(snapshot.message).toContain("checked when a Grok thread starts");
+        expect(yield* fs.exists(executionMarker)).toBe(false);
+      }),
+    ),
   );
 });
