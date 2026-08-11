@@ -4,6 +4,7 @@ import {
   LIVE_REFRESH_IDLE_AFTER_MS,
   LIVE_REFRESH_INTERVAL_MS,
   LIVE_REFRESH_MIN_INTERVAL_MS,
+  resolveLiveRefreshCadence,
   shouldLiveRefresh,
   shouldRefreshOnArrival,
   shouldRefreshOnInterval,
@@ -52,6 +53,51 @@ describe("shouldLiveRefresh", () => {
     tick(hour, true);
 
     expect(reads).toBe(1);
+  });
+});
+
+describe("resolveLiveRefreshCadence", () => {
+  it("keeps existing callers on the 60-second interval and 10-second minimum", () => {
+    expect(resolveLiveRefreshCadence()).toEqual({
+      intervalMs: LIVE_REFRESH_INTERVAL_MS,
+      minimumIntervalMs: LIVE_REFRESH_MIN_INTERVAL_MS,
+    });
+  });
+
+  it("uses the quota cadence without reading hidden or idle windows", () => {
+    const cadence = resolveLiveRefreshCadence({
+      intervalMs: 30_000,
+      minimumIntervalMs: 10_000,
+    });
+
+    expect(cadence).toEqual({ intervalMs: 30_000, minimumIntervalMs: 10_000 });
+    expect(
+      shouldRefreshOnInterval({
+        visible: true,
+        now: cadence.intervalMs,
+        lastRefreshedAt: 0,
+        lastInteractedAt: cadence.intervalMs - 1,
+        minimumIntervalMs: cadence.minimumIntervalMs,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRefreshOnInterval({
+        visible: false,
+        now: cadence.intervalMs,
+        lastRefreshedAt: 0,
+        lastInteractedAt: cadence.intervalMs - 1,
+        minimumIntervalMs: cadence.minimumIntervalMs,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshOnInterval({
+        visible: true,
+        now: LIVE_REFRESH_IDLE_AFTER_MS + cadence.intervalMs,
+        lastRefreshedAt: 0,
+        lastInteractedAt: 0,
+        minimumIntervalMs: cadence.minimumIntervalMs,
+      }),
+    ).toBe(false);
   });
 });
 

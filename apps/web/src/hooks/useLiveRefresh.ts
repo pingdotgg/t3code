@@ -21,6 +21,20 @@ export const LIVE_REFRESH_MIN_INTERVAL_MS = 10_000;
 /** Slow enough to be cheap on the host, quick enough that a reader is not reading last minute. */
 export const LIVE_REFRESH_INTERVAL_MS = 60_000;
 
+export interface LiveRefreshCadenceOptions {
+  readonly intervalMs?: number;
+  readonly minimumIntervalMs?: number;
+}
+
+export function resolveLiveRefreshCadence(
+  options: LiveRefreshCadenceOptions = {},
+): Required<LiveRefreshCadenceOptions> {
+  return {
+    intervalMs: options.intervalMs ?? LIVE_REFRESH_INTERVAL_MS,
+    minimumIntervalMs: options.minimumIntervalMs ?? LIVE_REFRESH_MIN_INTERVAL_MS,
+  };
+}
+
 /**
  * How long a showing window goes untouched before it stops reading. A window left open on a
  * monitor nobody is sitting at is showing in every sense the browser knows about, and polling it
@@ -39,8 +53,12 @@ export function shouldLiveRefresh(input: {
   readonly visible: boolean;
   readonly now: number;
   readonly lastRefreshedAt: number;
+  readonly minimumIntervalMs?: number;
 }): boolean {
-  return input.visible && input.now - input.lastRefreshedAt >= LIVE_REFRESH_MIN_INTERVAL_MS;
+  return (
+    input.visible &&
+    input.now - input.lastRefreshedAt >= (input.minimumIntervalMs ?? LIVE_REFRESH_MIN_INTERVAL_MS)
+  );
 }
 
 /**
@@ -52,6 +70,7 @@ export function shouldRefreshOnArrival(input: {
   readonly visible: boolean;
   readonly now: number;
   readonly lastRefreshedAt: number | undefined;
+  readonly minimumIntervalMs?: number;
 }): boolean {
   return (
     input.lastRefreshedAt !== undefined &&
@@ -68,6 +87,7 @@ export function shouldRefreshOnInterval(input: {
   readonly now: number;
   readonly lastRefreshedAt: number;
   readonly lastInteractedAt: number;
+  readonly minimumIntervalMs?: number;
 }): boolean {
   return (
     input.now - input.lastInteractedAt < LIVE_REFRESH_IDLE_AFTER_MS && shouldLiveRefresh(input)
@@ -116,9 +136,10 @@ function watchInteraction(): () => void {
 
 export function useLiveRefresh(
   refresh: (() => void) | null,
-  options: { readonly enabled?: boolean; readonly key?: string } = {},
+  options: { readonly enabled?: boolean; readonly key?: string } & LiveRefreshCadenceOptions = {},
 ): void {
   const { enabled = true, key } = options;
+  const { intervalMs, minimumIntervalMs } = resolveLiveRefreshCadence(options);
   // Held in a ref so a caller can pass a fresh closure every render without re-arming the
   // listeners, which would otherwise refresh on every render that changed anything at all.
   const latest = useRef(refresh);
@@ -144,12 +165,29 @@ export function useLiveRefresh(
         lastRefreshedAtByView.set(viewId, now);
         return;
       }
-      if (shouldRefreshOnArrival({ visible: visible(), now, lastRefreshedAt })) read(now);
+      if (
+        shouldRefreshOnArrival({
+          visible: visible(),
+          now,
+          lastRefreshedAt,
+          minimumIntervalMs,
+        })
+      ) {
+        read(now);
+      }
     };
     const onInterval = () => {
       const now = Date.now();
       const lastRefreshedAt = lastRefreshedAtByView.get(viewId) ?? now;
-      if (shouldRefreshOnInterval({ visible: visible(), now, lastRefreshedAt, lastInteractedAt })) {
+      if (
+        shouldRefreshOnInterval({
+          visible: visible(),
+          now,
+          lastRefreshedAt,
+          lastInteractedAt,
+          minimumIntervalMs,
+        })
+      ) {
         read(now);
       }
     };
@@ -160,7 +198,7 @@ export function useLiveRefresh(
     // way back. Nothing else moves the window between showing and hidden, so nothing else re-arms.
     const syncTimer = () => {
       clearInterval(timer);
-      timer = visible() ? setInterval(onInterval, LIVE_REFRESH_INTERVAL_MS) : undefined;
+      timer = visible() ? setInterval(onInterval, intervalMs) : undefined;
     };
     const onVisibilityChange = () => {
       onArrival();
@@ -178,5 +216,5 @@ export function useLiveRefresh(
       document.removeEventListener("visibilitychange", onVisibilityChange);
       stopWatchingInteraction();
     };
-  }, [enabled, viewId]);
+  }, [enabled, intervalMs, minimumIntervalMs, viewId]);
 }
