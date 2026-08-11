@@ -193,30 +193,41 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
     });
   }
 
-  const candidates = [...overrideCandidates, ...bundledCandidates];
+  const candidates = [
+    ...overrideCandidates.map((path) => ({ path, bundled: false })),
+    ...bundledCandidates.map((path) => ({ path, bundled: true })),
+  ];
 
   const resolve: ResourceMonitorBinary["Service"]["resolve"] = Effect.gen(function* () {
     for (const candidate of candidates) {
-      const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+      const exists = yield* fileSystem
+        .exists(candidate.path)
+        .pipe(Effect.orElseSucceed(() => false));
       if (!exists) continue;
 
       if (platform !== "win32") {
-        const stat = yield* fileSystem.stat(candidate).pipe(Effect.option);
+        let stat = yield* fileSystem.stat(candidate.path).pipe(Effect.option);
+        if (candidate.bundled && Option.isSome(stat) && (stat.value.mode & 0o111) === 0) {
+          yield* fileSystem
+            .chmod(candidate.path, (stat.value.mode & 0o777) | 0o111)
+            .pipe(Effect.orElseSucceed(() => undefined));
+          stat = yield* fileSystem.stat(candidate.path).pipe(Effect.option);
+        }
         if (Option.isSome(stat) && (stat.value.mode & 0o111) === 0) {
           return yield* new ResourceMonitorBinaryNotExecutable({
-            path: candidate,
+            path: candidate.path,
             mode: stat.value.mode,
           });
         }
       }
 
-      return candidate;
+      return candidate.path;
     }
 
     return yield* new ResourceMonitorBinaryNotFound({
       platform,
       architecture,
-      candidates,
+      candidates: candidates.map((candidate) => candidate.path),
     });
   });
 
