@@ -1435,8 +1435,11 @@ describe("DesktopBackendManager", () => {
         });
 
         yield* instance.start;
+        yield* TestClock.adjust(Duration.millis(500));
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* TestClock.adjust(Duration.seconds(4));
         yield* Deferred.await(preflightFailed);
-        yield* TestClock.adjust(Duration.millis(1000));
 
         assert.equal(preflightFailedCount, 1);
         assert.equal(spawnCount, 5);
@@ -1501,6 +1504,10 @@ describe("DesktopBackendManager", () => {
         });
 
         yield* instance.start;
+        yield* TestClock.adjust(Duration.millis(500));
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* TestClock.adjust(Duration.seconds(4));
         // Wait for the 5th spawn to become ready
         yield* Deferred.await(readyDeferred);
         
@@ -1510,9 +1517,14 @@ describe("DesktopBackendManager", () => {
         // Trigger exit of the ready process
         yield* Deferred.succeed(closeReadyProcess, void 0);
 
-        // Now wait for the preflight failure which should happen after 5 more failed spawns
+        // Now advance time for the next 4 failures before readiness
+        yield* TestClock.adjust(Duration.millis(500));
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* TestClock.adjust(Duration.seconds(4));
+
+        // Wait for the preflight failure which should happen on the 10th spawn
         yield* Deferred.await(preflightFailed);
-        yield* TestClock.adjust(Duration.millis(1000));
 
         // Total spawns: 5 (initial) + 5 (new failures before readiness) = 10
         assert.equal(spawnCount, 10);
