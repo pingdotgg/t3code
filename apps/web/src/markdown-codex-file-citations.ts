@@ -17,10 +17,9 @@
 import { resolveMarkdownFileLinkMeta } from "./markdown-links";
 
 const CODEX_FILE_CITATION_PATTERN = /:codex-file-citation\{([^{}\r\n]*)\}/g;
-// The path ends at the quote closing its attribute — the one followed by the next attribute or by
-// the end of the directive. Matching lazily up to that lookahead keeps `report.docx" purpose="out`
-// out of the path while still allowing a quote inside the path itself.
-const CITATION_PATH_ATTRIBUTE_PATTERN = /(?:^|\s)path="(.*?)"(?=\s*$|\s+[A-Za-z_][\w-]*=)/;
+// The path ends at the first quote the directive did not escape. Everything before it belongs to
+// the path, including a `" purpose=` that only reads like the attribute after it.
+const CITATION_PATH_ATTRIBUTE_PATTERN = /(?:^|\s)path="((?:\\"|[^"])*)"/;
 // The directive quotes its path, so a quote inside the path arrives backslash-escaped. Every other
 // backslash is a separator: `C:\repo\.env` and `\\server\share\report.docx` are the Windows paths
 // they look like, not escape sequences.

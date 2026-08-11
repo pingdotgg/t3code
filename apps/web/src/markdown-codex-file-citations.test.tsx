@@ -41,6 +41,15 @@ describe("Codex file citations", () => {
     expect(html).toContain(">final &quot;v2&quot; (a b).docx</span>");
   });
 
+  it("keeps a path whose escaped quote is followed by the next attribute's shape", () => {
+    const html = renderMessage(
+      ':codex-file-citation{path="/tmp/report \\" purpose=notes.pdf" purpose="output"}',
+    );
+
+    expect(html).toContain("chat-markdown-file-link");
+    expect(html).toContain('href="/tmp/report &quot; purpose=notes.pdf"');
+  });
+
   it("links an artifact written outside the workspace", () => {
     const html = renderMessage(':codex-file-citation{path="/tmp/export.zip" purpose="output"}');
 
