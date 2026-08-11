@@ -19,10 +19,11 @@ export interface UsageDailyChartProps {
   readonly daily: readonly DailyTotals[];
   readonly metric: UsageChartMetric;
   readonly height: number;
+  readonly resolution: "day" | "hour";
 }
 
 /** The same layered provider paths as desktop, rendered natively on both platforms. */
-export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
+export function UsageDailyChart({ days, daily, metric, height, resolution }: UsageDailyChartProps) {
   const colors = useProviderColors();
   const borderColor = useThemeColor("--color-border");
   const { layers, ticks, toY } = useMemo(
@@ -47,7 +48,7 @@ export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChart
       viewBox={`0 0 ${USAGE_CHART_VIEW_WIDTH} ${USAGE_CHART_VIEW_HEIGHT}`}
       preserveAspectRatio="none"
       accessibilityRole="image"
-      accessibilityLabel={`Daily ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+      accessibilityLabel={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
     >
       {ticks.map((tick) => {
         const y = toY(tick);

@@ -229,6 +229,7 @@ function ChartCard(props: {
           daily={props.daily}
           metric={metric}
           height={CHART_HEIGHT}
+          resolution={props.isPast24Hours ? "hour" : "day"}
         />
       ) : (
         <View style={{ height: CHART_HEIGHT }} className="items-center justify-center">
