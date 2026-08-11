@@ -83,14 +83,14 @@ const sections = [
             </li>
             <li>
               <strong>Optional Voice Supervisor content.</strong> If you start Voice Supervisor in a
-              supported web or desktop client, the feature processes microphone audio, the voice
-              conversation, separate input transcripts, response audio and transcripts, and bounded
-              work context returned by supervisor tools. That context may include project and thread
-              labels, availability, and status from environments known to the client, including
-              cached stale or disconnected context. Current plan text is returned only after the
-              requested thread is revalidated as live. User-authored labels and plan text may
-              themselves contain sensitive information. When the selected environment requests a
-              voice-session credential, it also sends OpenAI a stable, hashed pseudonymous safety
+              supported web, desktop, or mobile client, the feature processes microphone audio, the
+              voice conversation, separate input transcripts, response audio and transcripts, and
+              bounded work context returned by supervisor tools. That context may include project
+              and thread labels, availability, and status from environments known to the client,
+              including cached stale or disconnected context. Current plan text is returned only
+              after the requested thread is revalidated as live. User-authored labels and plan text
+              may themselves contain sensitive information. When the selected environment requests
+              a voice-session credential, it also sends OpenAI a stable, hashed pseudonymous safety
               identifier derived from the environment ID.
             </li>
             <li>
@@ -139,12 +139,13 @@ const sections = [
               are processed on your device.
             </li>
             <li>
-              <strong>Microphone.</strong> Used only after you choose <strong>Start voice</strong> in
-              the optional Voice Supervisor. <strong>Mute</strong> stops sending microphone audio but
-              does not end the session or release microphone capture. <strong>Stop</strong> ends the
-              session and releases microphone capture, audio, and network resources.
-              <strong>Hide</strong> closes only the panel; it does not mute or stop an active session
-              or release microphone capture.
+              <strong>Microphone.</strong> Used only after you choose <strong>Start voice</strong> on
+              web or desktop, or <strong>Start</strong> on mobile, in the optional Voice Supervisor.
+              <strong>Mute</strong> stops sending microphone audio but does not end the session or
+              release microphone capture. <strong>Stop</strong> ends the session and releases
+              microphone capture, audio, and network resources. <strong>Hide</strong> on web or
+              desktop, or Back or navigation away on mobile, closes only the voice interface; it
+              does not mute or stop an active session or release microphone capture.
             </li>
             <li>
               <strong>Photos and files.</strong> Items you select are accessed only to preview them or
@@ -226,8 +227,8 @@ const sections = [
           <p>
             If you start Voice Supervisor, OpenAI Realtime is the fixed provider for the voice
             conversation even when the coding threads being supervised use another provider. The
-            web or desktop client sends microphone audio and bounded supervisor tool results
-            directly to OpenAI and receives response audio directly over WebRTC. OpenAI also
+            web, desktop, or mobile client sends microphone audio and bounded supervisor tool
+            results directly to OpenAI and receives response audio directly over WebRTC. OpenAI also
             processes the separate input transcript, response transcript, and stable hashed
             environment safety identifier described above. The selected T3 environment requests the
             short-lived session credential, but neither that environment nor T3 Connect proxies the
