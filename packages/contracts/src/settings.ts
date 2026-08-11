@@ -53,6 +53,17 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 export const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+export const DEFAULT_SIDEBAR_AUTO_SETTLE_ON_PULL_REQUEST_COMPLETION = true;
+export const THREAD_AUTO_SETTLE_MODES = [
+  "never",
+  "inactive",
+  "pull-request",
+  "inactive-or-pull-request",
+] as const;
+export const ThreadAutoSettleMode = Schema.Literals(THREAD_AUTO_SETTLE_MODES);
+export type ThreadAutoSettleMode = typeof ThreadAutoSettleMode.Type;
+export const isThreadAutoSettleMode = Schema.is(ThreadAutoSettleMode);
+export const DEFAULT_THREAD_AUTO_SETTLE_MODE: ThreadAutoSettleMode = "inactive-or-pull-request";
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -179,6 +190,11 @@ export const ClientSettingsSchema = Schema.Struct({
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
+  ),
+  sidebarAutoSettleOnPullRequestCompletion: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_ON_PULL_REQUEST_COMPLETION),
+    ),
   ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
@@ -793,6 +809,7 @@ export const ClientSettingsPatch = Schema.Struct({
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleOnPullRequestCompletion: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

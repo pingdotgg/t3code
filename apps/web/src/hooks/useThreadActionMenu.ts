@@ -33,7 +33,7 @@ import { readLocalApi } from "../localApi";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
-import { useClientSettings } from "./useSettings";
+import { useClientSettings, useClientThreadAutoSettlePolicy } from "./useSettings";
 import { useThreadActions } from "./useThreadActions";
 
 function failureToast(title: string, error: unknown) {
@@ -79,7 +79,7 @@ export function useThreadActionMenu(input: {
   });
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
+  const autoSettlePolicy = useClientThreadAutoSettlePolicy();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
@@ -131,7 +131,7 @@ export function useThreadActionMenu(input: {
               // can never disagree with the sidebar partition or ChatView's
               // parked-thread banner within the same minute.
               now: `${now.toISOString().slice(0, 16)}:00.000Z`,
-              autoSettleAfterDays,
+              autoSettlePolicy,
               changeRequestState,
             }),
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
@@ -283,7 +283,7 @@ export function useThreadActionMenu(input: {
       })();
     },
     [
-      autoSettleAfterDays,
+      autoSettlePolicy,
       changeRequestState,
       confirmThreadDelete,
       copyBranchToClipboard,

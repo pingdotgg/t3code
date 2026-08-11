@@ -182,6 +182,7 @@ import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
+  useClientThreadAutoSettlePolicy,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -4063,7 +4064,7 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const autoSettlePolicy = useClientThreadAutoSettlePolicy();
   const activeThreadPr = resolveThreadPr({
     threadBranch: activeThread?.branch ?? null,
     gitStatus: gitStatusQuery.data ?? null,
@@ -4139,16 +4140,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (activeThreadShell === null || !supportsSettlement) return false;
     return effectiveSettled(activeThreadShell, {
       now: `${nowMinute}:00.000Z`,
-      autoSettleAfterDays,
+      autoSettlePolicy,
       changeRequestState: activeThreadPr?.state ?? null,
     });
-  }, [
-    activeThreadPr?.state,
-    activeThreadShell,
-    autoSettleAfterDays,
-    nowMinute,
-    supportsSettlement,
-  ]);
+  }, [activeThreadPr?.state, activeThreadShell, autoSettlePolicy, nowMinute, supportsSettlement]);
   const unsettleThreadMutation = useAtomCommand(threadEnvironment.unsettle, {
     reportFailure: false,
   });

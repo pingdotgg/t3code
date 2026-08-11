@@ -1,6 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  resolveSnoozePresets,
+  threadAutoSettlePolicy,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
   EnvironmentId,
@@ -14,7 +17,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
-  buildThreadListV2Items,
+  buildThreadListV2Items as buildThreadListV2ItemsWithRequiredPolicy,
   buildThreadListV2ListItems,
   resolveThreadListV2Enabled,
   resolveThreadListV2SnoozeMenuSelection,
@@ -23,6 +26,20 @@ import {
   resolveThreadListV2SwipeActions,
   sortThreadsForListV2,
 } from "./threadListV2";
+
+const DEFAULT_AUTO_SETTLE_POLICY = threadAutoSettlePolicy({
+  mode: "inactive-or-pull-request",
+  afterDays: 3,
+});
+type ThreadListV2Input = Parameters<typeof buildThreadListV2ItemsWithRequiredPolicy>[0];
+function buildThreadListV2Items(
+  input: Omit<ThreadListV2Input, "autoSettlePolicy"> & {
+    readonly autoSettlePolicy?: ThreadListV2Input["autoSettlePolicy"];
+  },
+) {
+  const { autoSettlePolicy = DEFAULT_AUTO_SETTLE_POLICY, ...rest } = input;
+  return buildThreadListV2ItemsWithRequiredPolicy({ ...rest, autoSettlePolicy });
+}
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -263,6 +280,35 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("keeps completed-pull-request threads active when automatic settling is disabled", () => {
+    const thread = makeThread({
+      id: ThreadId.make("completed-pr"),
+      title: "Completed pull request",
+      latestUserMessageAt: "2026-06-01T12:00:00.000Z",
+    });
+    const changeRequestStateByKey = new Map([[`${environmentId}:${thread.id}`, "merged" as const]]);
+
+    const automatic = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey,
+      now: NOW,
+    });
+    const manual = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestStateByKey,
+      autoSettlePolicy: threadAutoSettlePolicy({ mode: "inactive", afterDays: 3 }),
+      now: NOW,
+    });
+
+    expect(automatic.settledCount).toBe(1);
+    expect(manual.settledCount).toBe(0);
+    expect(manual.items.map((item) => item.thread.id)).toEqual([thread.id]);
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

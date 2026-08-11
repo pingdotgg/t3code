@@ -32,6 +32,9 @@ import {
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_TERMINAL_FONT_SIZE,
+  THREAD_AUTO_SETTLE_MODES,
+  isThreadAutoSettleMode,
+  type ThreadAutoSettleMode,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -79,6 +82,10 @@ import { isMacPlatform } from "../../lib/utils";
 import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import {
+  clientThreadAutoSettlePatchForMode,
+  resolveClientThreadAutoSettleMode,
+} from "../../threadAutoSettleSettings";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -490,8 +497,10 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Project Grouping"]
         : []),
       ...(settings.sidebarAutoSettleAfterDays !==
-      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
-        ? ["Auto-settle inactive threads"]
+        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ||
+      settings.sidebarAutoSettleOnPullRequestCompletion !==
+        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnPullRequestCompletion
+        ? ["Auto-settle threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
@@ -547,6 +556,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
       settings.sidebarAutoSettleAfterDays,
+      settings.sidebarAutoSettleOnPullRequestCompletion,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
@@ -628,6 +638,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+      sidebarAutoSettleOnPullRequestCompletion:
+        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnPullRequestCompletion,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -1590,6 +1602,12 @@ function FontFamilySettingsRow({
 }
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_MODE_LABELS: Record<ThreadAutoSettleMode, string> = {
+  never: "Never",
+  inactive: "Inactivity",
+  "pull-request": "PR merge/close",
+  "inactive-or-pull-request": "Inactivity or PR merge/close",
+};
 
 function AutoSettleDaysInput({
   value,
@@ -1788,6 +1806,7 @@ export function GeneralSettingsPanel() {
     settings.backgroundActivity,
     DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
   );
+  const autoSettleMode = resolveClientThreadAutoSettleMode(settings);
 
   return (
     <SettingsPageContainer>
@@ -1829,40 +1848,58 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          {...searchableSetting("auto-settle-inactive-threads")}
-          description="Sidebar threads with no activity for this long settle automatically. Threads on merged or closed PRs always settle."
+          {...searchableSetting("auto-settle-threads")}
+          description="Choose when threads move into the settled section automatically."
           resetAction={
             settings.sidebarAutoSettleAfterDays !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
+              DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ||
+            settings.sidebarAutoSettleOnPullRequestCompletion !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnPullRequestCompletion ? (
               <SettingResetButton
-                label="auto-settle"
+                label="auto-settle threads"
                 onClick={() =>
                   updateSettings({
                     sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+                    sidebarAutoSettleOnPullRequestCompletion:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnPullRequestCompletion,
                   })
                 }
               />
             ) : null
           }
           control={
-            <Switch
-              checked={settings.sidebarAutoSettleAfterDays !== null}
-              onCheckedChange={(checked) =>
-                updateSettings({
-                  sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
-                })
-              }
-              aria-label="Auto-settle inactive threads"
-            />
+            <Select
+              value={autoSettleMode}
+              onValueChange={(value) => {
+                if (!isThreadAutoSettleMode(value)) return;
+                updateSettings(
+                  clientThreadAutoSettlePatchForMode({
+                    mode: value,
+                    currentAfterDays: settings.sidebarAutoSettleAfterDays,
+                  }),
+                );
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-64" aria-label="Auto-settle threads">
+                <SelectValue>{AUTO_SETTLE_MODE_LABELS[autoSettleMode]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THREAD_AUTO_SETTLE_MODES.map((mode) => (
+                  <SelectItem hideIndicator key={mode} value={mode}>
+                    {AUTO_SETTLE_MODE_LABELS[mode]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
-        {settings.sidebarAutoSettleAfterDays !== null ? (
+        {autoSettleMode === "inactive" || autoSettleMode === "inactive-or-pull-request" ? (
           <SettingsRow
             title="Days of inactivity before auto-settle"
             description="Any new activity un-settles a thread automatically."
             control={
               <AutoSettleDaysInput
-                value={settings.sidebarAutoSettleAfterDays}
+                value={settings.sidebarAutoSettleAfterDays ?? AUTO_SETTLE_DEFAULT_DAYS}
                 onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
               />
             }

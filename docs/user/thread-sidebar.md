@@ -18,3 +18,11 @@ Dev and Nightly environments can identify themselves with artwork at the top of 
 the send button. Choose **Artwork**, **Version pill**, or **None** in Settings under environment
 identification. Artwork is recolored to match each built-in theme. Custom themes use the **Version
 pill** fallback because their colors are not controlled by T3 Code.
+
+## Automatic settling
+
+Threads can move into the settled section automatically after a period of inactivity or when their
+pull request merges or closes. Choose **Never**, **Inactivity**, **PR merge/close**, or the combined
+mode under **Settings → General → Auto-settle threads**. Choosing **Never** leaves
+settling entirely manual. On mobile this preference is device-local, and its inactivity modes use
+the three-day window.

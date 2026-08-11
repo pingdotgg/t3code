@@ -5,7 +5,9 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
+  DEFAULT_THREAD_AUTO_SETTLE_MODE,
   DEFAULT_SERVER_SETTINGS,
+  isThreadAutoSettleMode,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -68,10 +70,19 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
+  it("defines the canonical auto-settle modes and combined default", () => {
+    expect(DEFAULT_THREAD_AUTO_SETTLE_MODE).toBe("inactive-or-pull-request");
+    for (const mode of ["never", "inactive", "pull-request", "inactive-or-pull-request"]) {
+      expect(isThreadAutoSettleMode(mode)).toBe(true);
+    }
+    expect(isThreadAutoSettleMode("sometimes")).toBe(false);
+  });
+
+  it("defaults to the current sidebar with automatic settling enabled", () => {
     const settings = decodeClientSettings({});
     expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
+    expect(settings.sidebarAutoSettleOnPullRequestCompletion).toBe(true);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -95,6 +106,17 @@ describe("ClientSettings sidebar", () => {
     expect(
       decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,
     ).toBeNull();
+  });
+
+  it("allows auto-settle on pull request completion to be disabled", () => {
+    expect(
+      decodeClientSettings({ sidebarAutoSettleOnPullRequestCompletion: false })
+        .sidebarAutoSettleOnPullRequestCompletion,
+    ).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ sidebarAutoSettleOnPullRequestCompletion: false })
+        .sidebarAutoSettleOnPullRequestCompletion,
+    ).toBe(false);
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {

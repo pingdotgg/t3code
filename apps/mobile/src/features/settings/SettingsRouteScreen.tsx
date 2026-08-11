@@ -3,6 +3,13 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
+import type { MenuAction } from "@react-native-menu/menu";
+import {
+  DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  THREAD_AUTO_SETTLE_MODES,
+  isThreadAutoSettleMode,
+  type ThreadAutoSettleMode,
+} from "@t3tools/contracts";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
@@ -19,6 +26,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { AppText as Text } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
@@ -35,6 +43,10 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import {
+  mobileThreadAutoSettleModePatch,
+  useMobileThreadAutoSettlePolicy,
+} from "../../state/thread-auto-settle";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
   type AppUpdateCheckState,
@@ -49,6 +61,13 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
+
+const AUTO_SETTLE_MODE_LABELS: Record<ThreadAutoSettleMode, string> = {
+  never: "Never",
+  inactive: `Inactivity (${DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS} days)`,
+  "pull-request": "PR merge/close",
+  "inactive-or-pull-request": "Inactivity or PR merge/close",
+};
 
 // Reflects whether the relay actually accepted this device's registration.
 // The notification and Live Activity switches are gated on this so they can
@@ -522,9 +541,40 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
+  const autoSettlePolicy = useMobileThreadAutoSettlePolicy();
+  const autoSettleActions: MenuAction[] = THREAD_AUTO_SETTLE_MODES.map((mode) => ({
+    id: mode,
+    title: AUTO_SETTLE_MODE_LABELS[mode],
+    state: mode === autoSettlePolicy.mode ? "on" : "off",
+  }));
+  const autoSettleRow = (
+    <SettingsRow
+      disabled={!preferencesReady}
+      icon="checkmark.circle"
+      label="Auto-settle Threads"
+      value={AUTO_SETTLE_MODE_LABELS[autoSettlePolicy.mode]}
+    />
+  );
+
   return (
     <SettingsSection title="General">
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
+      {preferencesReady ? (
+        <ControlPillMenu
+          actions={autoSettleActions}
+          onPressAction={({ nativeEvent }) => {
+            if (!isThreadAutoSettleMode(nativeEvent.event)) return;
+            savePreferences(mobileThreadAutoSettleModePatch(nativeEvent.event));
+          }}
+        >
+          {autoSettleRow}
+        </ControlPillMenu>
+      ) : (
+        autoSettleRow
+      )}
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>
   );

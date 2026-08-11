@@ -99,7 +99,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useClientThreadAutoSettlePolicy } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -1592,7 +1592,7 @@ export default function Sidebar() {
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
+  const autoSettlePolicy = useClientThreadAutoSettlePolicy();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -1947,7 +1947,11 @@ export default function Sidebar() {
         pinned.push(thread);
       } else if (
         supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+        effectiveSettled(thread, {
+          now,
+          autoSettlePolicy,
+          changeRequestState,
+        })
       ) {
         settled.push(thread);
       } else {
@@ -1981,7 +1985,7 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [
-    autoSettleAfterDays,
+    autoSettlePolicy,
     changeRequestStateByKey,
     nowMinute,
     scopedProjectKeys,

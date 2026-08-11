@@ -5,7 +5,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  isThreadAutoSettleMode,
+  type SidebarProjectGroupingMode,
+  type ThreadAutoSettleMode,
+} from "@t3tools/contracts";
 
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -34,6 +38,8 @@ export interface Preferences {
    * default flat list — see `resolveThreadListV2Enabled`.
    */
   readonly legacyThreadListEnabled?: boolean;
+  /** Device-local because mobile does not sync web client settings. */
+  readonly threadAutoSettleMode?: ThreadAutoSettleMode;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedErrorClass<MobilePreferencesLoadError>()(
@@ -86,6 +92,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     legacyThreadListEnabled?: boolean;
+    threadAutoSettleMode?: ThreadAutoSettleMode;
   } = {};
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
@@ -124,6 +131,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.legacyThreadListEnabled === "boolean") {
     preferences.legacyThreadListEnabled = parsed.legacyThreadListEnabled;
+  }
+  if (isThreadAutoSettleMode(parsed.threadAutoSettleMode)) {
+    preferences.threadAutoSettleMode = parsed.threadAutoSettleMode;
   }
   return preferences;
 }

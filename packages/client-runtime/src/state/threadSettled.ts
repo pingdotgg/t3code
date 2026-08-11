@@ -1,7 +1,27 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { OrchestrationThreadShell, ThreadAutoSettleMode } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
+
+export type ThreadAutoSettlePolicy =
+  | { readonly mode: "never" }
+  | { readonly mode: "inactive"; readonly afterDays: number }
+  | { readonly mode: "pull-request" }
+  | { readonly mode: "inactive-or-pull-request"; readonly afterDays: number };
+
+export function threadAutoSettlePolicy(input: {
+  readonly mode: ThreadAutoSettleMode;
+  readonly afterDays: number;
+}): ThreadAutoSettlePolicy {
+  switch (input.mode) {
+    case "never":
+    case "pull-request":
+      return { mode: input.mode };
+    case "inactive":
+    case "inactive-or-pull-request":
+      return { mode: input.mode, afterDays: input.afterDays };
+  }
+}
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
@@ -222,8 +242,9 @@ export function threadWokeAt(
  * override. Past the blockers, the explicit user override (thread.settle /
  * thread.unsettle commands, projected into settledOverride + settledAt)
  * wins in both directions; without one, a thread auto-settles on a
- * merged/closed PR immediately or on inactivity past the window — except
- * that an open PR blocks the inactivity path entirely. The server
+ * merged/closed PR immediately when that preference is enabled, or on
+ * inactivity past the window — except that an open PR blocks the inactivity
+ * path entirely. The server
  * un-settles on real activity (user message, session start, approval/
  * user-input request), so an override never goes stale silently.
  */
@@ -231,7 +252,7 @@ export function effectiveSettled(
   shell: OrchestrationThreadShell,
   options: {
     readonly now: string;
-    readonly autoSettleAfterDays: number | null;
+    readonly autoSettlePolicy: ThreadAutoSettlePolicy;
     readonly changeRequestState?: ChangeRequestStateLike | null;
   },
 ): boolean {
@@ -258,7 +279,11 @@ export function effectiveSettled(
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.
   if (shell.settledOverride === "active") return false;
-  if (options.changeRequestState === "merged" || options.changeRequestState === "closed") {
+  const policy = options.autoSettlePolicy;
+  if (
+    (policy.mode === "pull-request" || policy.mode === "inactive-or-pull-request") &&
+    (options.changeRequestState === "merged" || options.changeRequestState === "closed")
+  ) {
     return true;
   }
   // An open PR is unfinished business regardless of how long the thread has
@@ -266,7 +291,7 @@ export function effectiveSettled(
   // work waiting on it. Only merge/close (above) or an explicit user settle
   // resolves it.
   if (options.changeRequestState === "open") return false;
-  if (options.autoSettleAfterDays === null) return false;
+  if (policy.mode === "never" || policy.mode === "pull-request") return false;
 
   const lastActivityAt = threadLastActivityAt(shell);
   if (lastActivityAt === null) return false;
@@ -275,9 +300,7 @@ export function effectiveSettled(
   // -Infinity, so this parse is a real number; a malformed `now` yields NaN,
   // the comparison is false, and the thread stays active (never a surprise
   // auto-settle on bad input).
-  return (
-    Date.parse(lastActivityAt) < Date.parse(options.now) - options.autoSettleAfterDays * DAY_MS
-  );
+  return Date.parse(lastActivityAt) < Date.parse(options.now) - policy.afterDays * DAY_MS;
 }
 
 const HOUR_MS = 60 * 60 * 1_000;

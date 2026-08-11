@@ -32,6 +32,7 @@ import { useProjects, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { useMobileThreadAutoSettlePolicy } from "../../state/thread-auto-settle";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -213,6 +214,7 @@ function ThreadNavigationSidebarPane(
     movePinnedThread,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
+  const autoSettlePolicy = useMobileThreadAutoSettlePolicy();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -536,6 +538,7 @@ function ThreadNavigationSidebarPane(
       searchQuery: props.searchQuery,
       matchedThreadKeys,
       changeRequestStateByKey,
+      autoSettlePolicy,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
@@ -547,6 +550,7 @@ function ThreadNavigationSidebarPane(
     });
   }, [
     changeRequestStateByKey,
+    autoSettlePolicy,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,

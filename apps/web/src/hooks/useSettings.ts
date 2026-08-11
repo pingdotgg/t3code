@@ -38,6 +38,7 @@ import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
+import { resolveClientThreadAutoSettlePolicy } from "../threadAutoSettleSettings";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -227,6 +228,22 @@ export function useClientSettings<T = ClientSettings>(
 ): T {
   const settings = useClientSettingsValue();
   return useMemo(() => (selector ? selector(settings) : (settings as T)), [selector, settings]);
+}
+
+/** Canonical runtime policy resolved from the legacy-compatible client settings shape. */
+export function useClientThreadAutoSettlePolicy() {
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const autoSettleOnPullRequestCompletion = useClientSettings(
+    (settings) => settings.sidebarAutoSettleOnPullRequestCompletion,
+  );
+  return useMemo(
+    () =>
+      resolveClientThreadAutoSettlePolicy({
+        sidebarAutoSettleAfterDays: autoSettleAfterDays,
+        sidebarAutoSettleOnPullRequestCompletion: autoSettleOnPullRequestCompletion,
+      }),
+    [autoSettleAfterDays, autoSettleOnPullRequestCompletion],
+  );
 }
 
 export function resolveEnvironmentIdentificationMode(input: {

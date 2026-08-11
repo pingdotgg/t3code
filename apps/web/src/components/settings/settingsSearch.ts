@@ -99,8 +99,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
-    id: "auto-settle-inactive-threads",
-    title: "Auto-settle inactive threads",
+    id: "auto-settle-threads",
+    title: "Auto-settle threads",
     to: "/settings/general",
   },
   {
