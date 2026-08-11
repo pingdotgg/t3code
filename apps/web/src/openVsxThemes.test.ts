@@ -7,7 +7,7 @@ import {
   searchOpenVsxThemes,
   type OpenVsxThemeExtension,
 } from "./openVsxThemes";
-import { getThemeColorsForMode } from "./themePalette";
+import { getThemeColorsForMode, themeColorToHex } from "./themePalette";
 
 const ASSET_ROOT = "https://open-vsx.org/api/demo/theme/1.0.0/file";
 
@@ -402,9 +402,9 @@ describe("Open VSX themes", () => {
         getThemeColorsForMode(theme, "dark") !== null,
     )!;
     expect(paired.label).toBe("Demo");
-    expect(paired.colors.canvas).toBe("#fafafa");
-    expect(getThemeColorsForMode(paired, "dark")!.canvas).toBe("#111111");
-    expect(getThemeColorsForMode(paired, "dark")!.text).toBe("#eeeeee");
+    expect(themeColorToHex(paired.colors.canvas)).toBe("#fafafa");
+    expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.canvas)).toBe("#111111");
+    expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.text)).toBe("#eeeeee");
 
     packagedManifest.contributes.themes[0]!.label = "Renamed Dark";
     packagedManifest.contributes.themes[1]!.label = "Renamed Light";

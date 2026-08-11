@@ -553,11 +553,18 @@ describe("theme files", () => {
 
   it("atomically replaces an imported collection and removes stale variants", () => {
     const collection = { id: "open-vsx:demo.theme", label: "Demo Theme" };
+    const personalTheme = {
+      id: "personal",
+      label: "Personal",
+      appearance: "dark",
+      colors: { canvas: "#111111", futureRole: "hsl(10 20% 30%)" },
+      futureMetadata: { version: 2 },
+    };
     const stored = new Map<string, string>([
       [
         CUSTOM_THEMES_STORAGE_KEY,
         JSON.stringify([
-          { id: "personal", label: "Personal", appearance: "dark", colors: { canvas: "#111111" } },
+          personalTheme,
           {
             id: "old-light",
             label: "Old Light",
@@ -632,6 +639,7 @@ describe("theme files", () => {
       "other-tab",
     ]);
     expect(setItem).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(stored.get(CUSTOM_THEMES_STORAGE_KEY) ?? "[]")[0]).toEqual(personalTheme);
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();

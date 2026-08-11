@@ -250,6 +250,17 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   };
 }
 
+function parseStoredThemes(storedThemes: ReadonlyArray<unknown>): ReadonlyArray<ThemeDefinition> {
+  const themes: ThemeDefinition[] = [];
+  for (const value of storedThemes) {
+    const theme = parseStoredTheme(value);
+    if (theme && !themes.some((existing) => existing.id === theme.id)) {
+      themes.push(theme);
+    }
+  }
+  return themes;
+}
+
 function readCustomThemeLibrarySnapshot(): CustomThemeLibrarySnapshot {
   if (typeof window === "undefined") {
     return { status: "ready", storedThemes: [], themes: [] };
@@ -271,15 +282,7 @@ function readCustomThemeLibrarySnapshot(): CustomThemeLibrarySnapshot {
   }
   if (!Array.isArray(parsed)) return { status: "unavailable", reason: "malformed" };
 
-  const themes: ThemeDefinition[] = [];
-  for (const value of parsed) {
-    const theme = parseStoredTheme(value);
-    if (theme && !themes.some((existing) => existing.id === theme.id)) {
-      themes.push(theme);
-    }
-  }
-
-  return { status: "ready", storedThemes: parsed, themes };
+  return { status: "ready", storedThemes: parsed, themes: parseStoredThemes(parsed) };
 }
 
 function getCustomThemeLibrarySnapshot(): CustomThemeLibrarySnapshot {
@@ -306,7 +309,9 @@ export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
 export function getStoredCustomThemeCollection(
   collectionId: string,
 ): ReadonlyArray<ThemeDefinition> {
-  return readCustomThemesFromStorage().filter((theme) => theme.collection?.id === collectionId);
+  return readWritableCustomThemeLibrary().themes.filter(
+    (theme) => theme.collection?.id === collectionId,
+  );
 }
 
 export function subscribeToCustomThemes(listener: () => void): () => void {
@@ -1619,8 +1624,9 @@ function saveCustomThemes(
   notifyCustomThemeListeners();
 }
 
-function getWritableCustomThemeLibrary(): Extract<CustomThemeLibrarySnapshot, { status: "ready" }> {
-  const snapshot = getCustomThemeLibrarySnapshot();
+function requireWritableCustomThemeLibrary(
+  snapshot: CustomThemeLibrarySnapshot,
+): Extract<CustomThemeLibrarySnapshot, { status: "ready" }> {
   if (snapshot.status === "unavailable") {
     throw new ThemeLibraryStorageError({
       storageKey: CUSTOM_THEMES_STORAGE_KEY,
@@ -1632,8 +1638,23 @@ function getWritableCustomThemeLibrary(): Extract<CustomThemeLibrarySnapshot, { 
   return snapshot;
 }
 
+function getWritableCustomThemeLibrary(): Extract<CustomThemeLibrarySnapshot, { status: "ready" }> {
+  return requireWritableCustomThemeLibrary(getCustomThemeLibrarySnapshot());
+}
+
+function readWritableCustomThemeLibrary(): Extract<
+  CustomThemeLibrarySnapshot,
+  { status: "ready" }
+> {
+  return requireWritableCustomThemeLibrary(readCustomThemeLibrarySnapshot());
+}
+
 function storedThemeHasId(storedTheme: unknown, themeId: string): boolean {
   return isRecord(storedTheme) && storedTheme.id === themeId;
+}
+
+function storedThemeHasCollectionId(storedTheme: unknown, collectionId: string): boolean {
+  return isRecord(storedTheme) && parseThemeCollection(storedTheme.collection)?.id === collectionId;
 }
 
 export function installCustomTheme(theme: ThemeDefinition): ThemeDefinition {
@@ -1698,7 +1719,8 @@ export function replaceCustomThemeCollection(
     throw new Error("That theme collection is invalid.");
   }
   const replacement = validated as ThemeDefinition[];
-  const current = readCustomThemesFromStorage();
+  const library = readWritableCustomThemeLibrary();
+  const current = library.themes;
   const currentCollection = current.filter((theme) => theme.collection?.id === collectionId);
   if (
     options?.expectedCollection &&
@@ -1706,12 +1728,16 @@ export function replaceCustomThemeCollection(
   ) {
     throw new Error("Your installed themes changed while this package was downloading. Try again.");
   }
-  const firstCollectionIndex = current.findIndex((theme) => theme.collection?.id === collectionId);
-  const withoutCollection = current.filter((theme) => theme.collection?.id !== collectionId);
-  const occupiedIds = new Set([
-    ...BUILT_IN_THEME_DEFINITIONS.map((theme) => theme.id),
-    ...withoutCollection.map((theme) => theme.id),
-  ]);
+  const occupiedIds = new Set(BUILT_IN_THEME_DEFINITIONS.map((theme) => theme.id));
+  for (const storedTheme of library.storedThemes) {
+    if (
+      !storedThemeHasCollectionId(storedTheme, collectionId) &&
+      isRecord(storedTheme) &&
+      typeof storedTheme.id === "string"
+    ) {
+      occupiedIds.add(storedTheme.id);
+    }
+  }
   const conflictingTheme = replacement.find(
     (theme) => RESERVED_THEME_IDS.has(theme.id) || occupiedIds.has(theme.id),
   );
@@ -1719,11 +1745,19 @@ export function replaceCustomThemeCollection(
     throw new Error(`A theme named "${conflictingTheme.label}" is already installed.`);
   }
 
-  const insertionIndex =
-    firstCollectionIndex === -1 ? withoutCollection.length : firstCollectionIndex;
-  const nextThemes = [...withoutCollection];
-  nextThemes.splice(insertionIndex, 0, ...replacement);
-  saveCustomThemes(nextThemes);
+  const nextStoredThemes: unknown[] = [];
+  let insertedReplacement = false;
+  for (const storedTheme of library.storedThemes) {
+    if (!storedThemeHasCollectionId(storedTheme, collectionId)) {
+      nextStoredThemes.push(storedTheme);
+    } else if (!insertedReplacement) {
+      nextStoredThemes.push(...replacement);
+      insertedReplacement = true;
+    }
+  }
+  if (!insertedReplacement) nextStoredThemes.push(...replacement);
+
+  saveCustomThemes(nextStoredThemes, parseStoredThemes(nextStoredThemes));
   return replacement;
 }
 

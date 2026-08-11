@@ -123,11 +123,10 @@ export function ThemeSearchSection({
         if (!controller.signal.aborted) {
           setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
         }
-      } finally {
-        if (requestRef.current === controller) {
-          requestRef.current = null;
-          setIsSearching(false);
-        }
+      }
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setIsSearching(false);
       }
     },
     [sortBy],
@@ -169,20 +168,20 @@ export function ThemeSearchSection({
       setError(null);
       try {
         const themes = await importOpenVsxThemeExtension(extension, controller.signal);
-        if (controller.signal.aborted) return;
-        const imported = replaceCustomThemeCollection(extension.collectionId, themes, {
-          expectedCollection: installedCollection,
-        });
-        onInstalled(imported, { updated });
+        if (!controller.signal.aborted) {
+          const imported = replaceCustomThemeCollection(extension.collectionId, themes, {
+            expectedCollection: installedCollection,
+          });
+          onInstalled(imported, { updated });
+        }
       } catch (cause) {
         if (!controller.signal.aborted) {
           setError(cause instanceof Error ? cause.message : "That theme could not be added.");
         }
-      } finally {
-        if (requestRef.current === controller) {
-          requestRef.current = null;
-          setInstallingId(null);
-        }
+      }
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setInstallingId(null);
       }
     },
     [onInstalled],
