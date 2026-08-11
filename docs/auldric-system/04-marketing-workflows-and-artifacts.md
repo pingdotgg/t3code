@@ -38,16 +38,28 @@ parked until #14 classifies them and an executable issue owns them.
 
 ## Implemented pure Day 0 boundary
 
-The package-level `compileMarketingDay0` compiler consumes and verifies one exact #9 evidence packet
-and receipt. Useful context produces the complete point-of-view, hypothesis, disconfirmation,
-two-to-four action, and single-route recommendation contract. Contextless or unavailable-source
-input keeps the point of view, hypothesis, and route pending, creates no immediate action, and keeps
-at most three decision-changing questions. Both paths expose exact source/evidence references,
-assumptions, conflicts, gaps, unresolved decisions, readiness, pending review, and a deterministic
-receipt.
+The package-level `compileMarketingDay0` compiler consumes only the process-local verified packet
+capability returned by the authorized #9 service after canonical head rechecks. It semantically
+revalidates that exact object at use time, including excerpt digests, ordering and uniqueness,
+source/adapter allowlists, full inclusion/exclusion accounting, token counts, digest, and workspace.
+The output describes an `asOf` snapshot only; a later save or activation must revalidate current
+canonical heads.
 
-Marketing Strategy and GTM definitions/readiness are injected as versioned projections. The kernel
-does not implement #19's catalog. Route accept/override preparation is explicit and expected-version
-pinned, but remains `pending-canonical-save`; activation is always dormant. Therefore this boundary
-does not yet claim durable Day 0 revisions, saved route review, workflow activation, a 90-day plan,
-or a dashboard. #11 and #19 must provide their approved contracts before that composition can land.
+Useful context produces the complete point-of-view, hypothesis, disconfirmation, two-to-four
+action, and single-route recommendation contract. Contextless or unavailable-source input keeps the
+point of view, hypothesis, and route pending, creates no immediate action, and keeps at most three
+decision-changing questions. Both paths expose exact source states, selected evidence excerpts as
+inert typed data, the complete omission ledger and #9 receipt, accepted facts, assumptions,
+conflicts, gaps, unresolved decisions, readiness, pending review, and a bounded deterministic
+receipt. Prompt-like source text remains evidence data and cannot become an instruction or role.
+
+Marketing Strategy and GTM definitions/readiness are injected only as the exact
+`marketing/workflow/marketing-strategy@1` and `marketing/workflow/gtm@1` mappings within
+`marketing/workflow-catalog@1`. The injected snapshot verifier is explicitly unapproved, and the
+kernel does not implement #19's catalog. Route accept/override preparation produces only a
+normalized `unverified-pending-intent`; it makes no expected-version or stale-proof claim. A later
+adapter must bind a trusted current packet reference, workspace, version, idempotency key, verified
+actor review, canonical save/read-back, and approved catalog before activation. Activation is always
+dormant here. Therefore this boundary does not yet claim durable Day 0 revisions, saved route
+review, workflow activation, a 90-day plan, or a dashboard. #11 and #19 must provide their approved
+contracts before that composition can land.

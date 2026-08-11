@@ -33,10 +33,13 @@ machine-verifiable baseline.
   source/fact schemas, and explicit accepted-fact transitions over the canonical store. No T3
   production request or prompt path imports it; #6 composition remains pending.
 - The dependency-safe pure portion of issue #18's Day 0 kernel in the same package: exact #9 packet
-  and receipt verification, deterministic useful-context and contextless Operating Packets,
-  injected versioned Strategy/GTM route projections, pending route review, and dormant
-  expected-version accept/override intents. It performs no persistence or activation; #11 review
-  composition and #19 catalogs/readiness remain pending.
+  capabilities minted only after authorized canonical read-back, semantic packet and receipt
+  revalidation at use time, deterministic useful-context and contextless Operating Packets, inert
+  selected evidence and complete omission ledgers, exact injected-unapproved Strategy/GTM route
+  projections, pending route review, and dormant unverified accept/override intents. It performs no
+  persistence or activation; a later adapter must revalidate current heads, actor, workspace,
+  version, idempotency, save/read-back, and the approved #19 catalog. #11 review composition and #19
+  catalogs/readiness remain pending.
 - This reviewed Marketing-domain authority and requirements spine.
 
 ## Capability status

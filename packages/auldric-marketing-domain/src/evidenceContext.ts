@@ -1411,3 +1411,573 @@ export function compileMarketingEvidenceContext(
         : new MarketingEvidenceContextError({ reason: "invalid_context_input" }),
   });
 }
+
+export interface VerifyMarketingEvidenceContextPacketInput {
+  readonly packet: unknown;
+  /** The trusted service/read-back selection, not a caller-asserted packet field. */
+  readonly expectedWorkspace?: MarketingWorkspaceSelection;
+}
+
+function verificationFailure(reference: string): never {
+  throw new MarketingEvidenceContextError({
+    reason: "invalid_context_input",
+    reference: decodeSafeReference(reference),
+  });
+}
+
+function sameWorkspace(
+  left: MarketingWorkspaceSelection,
+  right: MarketingWorkspaceSelection,
+): boolean {
+  return (
+    left.organizationId === right.organizationId &&
+    left.projectId === right.projectId &&
+    left.workspaceId === right.workspaceId
+  );
+}
+
+function sameJson(left: Schema.Json, right: Schema.Json): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sourceObservationJson(source: MarketingSourceObservation): Schema.Json {
+  const index: Schema.Json = (() => {
+    if (source.index.state === "indexed") {
+      return { state: source.index.state, indexedAt: DateTime.formatIso(source.index.indexedAt) };
+    }
+    if (source.index.state === "stale") {
+      return source.index.indexedAt === undefined
+        ? { state: source.index.state }
+        : { state: source.index.state, indexedAt: DateTime.formatIso(source.index.indexedAt) };
+    }
+    return source.index;
+  })();
+  return {
+    source: sourceReferenceJson(source.source),
+    adapterKey: source.adapterKey,
+    capability: source.capability,
+    access: source.access,
+    import:
+      source.import.state === "imported"
+        ? { state: source.import.state, importedAt: DateTime.formatIso(source.import.importedAt) }
+        : source.import,
+    index,
+    freshness:
+      source.freshness.state === "unknown"
+        ? source.freshness
+        : {
+            state: source.freshness.state,
+            checkedAt: DateTime.formatIso(source.freshness.checkedAt),
+          },
+    observedAt: DateTime.formatIso(source.observedAt),
+  };
+}
+
+function adapterProvenanceJson(value: MarketingEvidenceAdapterProvenance): Schema.Json {
+  return {
+    source: sourceReferenceJson(value.source),
+    adapterKey: value.adapterKey,
+    adapterVersion: value.adapterVersion,
+    configurationSha256: value.configurationSha256,
+  };
+}
+
+function receiptIncludedJson(value: MarketingEvidenceReceiptIncludedItem): Schema.Json {
+  return {
+    subject: subjectJson(value.subject),
+    digest: value.digest,
+    required: value.required,
+    tokenCount: value.tokenCount,
+  };
+}
+
+function receiptExcludedJson(value: MarketingEvidenceReceiptExcludedItem): Schema.Json {
+  return {
+    subject: subjectJson(value.subject),
+    digest: value.digest,
+    reason: value.reason,
+    required: value.required,
+    tokenCount: value.tokenCount,
+  };
+}
+
+function stableKeyItemJson(
+  value:
+    | MarketingEvidenceAssumption
+    | MarketingEvidenceConflict
+    | MarketingDecisionChangingQuestion
+    | MarketingDisconfirmationSignal
+    | MarketingUnresolvedDecision,
+): Schema.Json {
+  if ("statement" in value) {
+    return {
+      key: value.key,
+      statement: value.statement,
+      risk: value.risk,
+      validationNeeded: value.validationNeeded,
+    };
+  }
+  if ("question" in value) {
+    return { key: value.key, question: value.question, decisionImpact: value.decisionImpact };
+  }
+  if ("signal" in value) {
+    return { key: value.key, signal: value.signal, consequence: value.consequence };
+  }
+  return { key: value.key, summary: value.summary, blocks: value.blocks };
+}
+
+function gapJson(value: MarketingEvidenceGap): Schema.Json {
+  return value.namespace === "system"
+    ? {
+        namespace: value.namespace,
+        category: value.category,
+        key: value.key,
+        summary: value.summary,
+        blocks: value.blocks,
+      }
+    : {
+        namespace: value.namespace,
+        key: value.key,
+        summary: value.summary,
+        blocks: value.blocks,
+      };
+}
+
+function assertSameJsonArray(
+  actual: ReadonlyArray<Schema.Json>,
+  expected: ReadonlyArray<Schema.Json>,
+  reference: string,
+): void {
+  if (
+    actual.length !== expected.length ||
+    actual.some((value, index) => !sameJson(value, expected[index] ?? null))
+  ) {
+    verificationFailure(reference);
+  }
+}
+
+/**
+ * Replays the #9 packet's semantic invariants. Passing this check proves self-consistency only;
+ * canonical current-head trust is added separately by the authorized evidence service.
+ */
+export function verifyMarketingEvidenceContextPacketSemantics(
+  input: VerifyMarketingEvidenceContextPacketInput,
+): Effect.Effect<MarketingEvidenceContextPacket, MarketingEvidenceContextError> {
+  return Effect.try({
+    try: () => {
+      const packet = decodePacket(input.packet);
+      if (
+        input.expectedWorkspace !== undefined &&
+        !sameWorkspace(packet.workspace, input.expectedWorkspace)
+      ) {
+        verificationFailure("verified-workspace-mismatch");
+      }
+      if (
+        packet.receipt.asOf.epochMilliseconds !== packet.asOf.epochMilliseconds ||
+        !sameJson(packet.budget, packet.receipt.budget) ||
+        packet.receipt.tokenizerRef !== packet.budget.tokenizerRef ||
+        packet.receipt.policyRef !== packet.budget.policyRef ||
+        (packet.plan === undefined) !== (packet.receipt.planInput === undefined) ||
+        (packet.plan !== undefined &&
+          packet.receipt.planInput !== undefined &&
+          !sameJson(
+            {
+              planId: packet.plan.planId,
+              revision: packet.plan.revision,
+              stageSemantics: packet.plan.stageSemantics,
+            },
+            {
+              planId: packet.receipt.planInput.planId,
+              revision: packet.receipt.planInput.revision,
+              stageSemantics: packet.receipt.planInput.stageSemantics,
+            },
+          ))
+      ) {
+        verificationFailure("packet-envelope-mismatch");
+      }
+
+      const sortedSources = [...packet.sources].sort((left, right) =>
+        compareSourceReference(left.source, right.source),
+      );
+      if (
+        new Set(packet.sources.map(({ source }) => sourceReferenceText(source))).size !==
+          packet.sources.length ||
+        packet.sources.some((source) => sourceTimestampAfterSnapshot(source, packet.asOf))
+      ) {
+        verificationFailure("source-order-or-snapshot");
+      }
+      assertSameJsonArray(
+        packet.sources.map(sourceObservationJson),
+        sortedSources.map(sourceObservationJson),
+        "source-total-order",
+      );
+      assertSameJsonArray(
+        packet.receipt.sourceInputs.map(sourceReferenceJson),
+        packet.sources.map(({ source }) => sourceReferenceJson(source)),
+        "source-allowlist-ledger",
+      );
+      const sourceObservationByKey = new Map(
+        packet.sources.map((source) => [sourceReferenceText(source.source), source]),
+      );
+
+      const sortedAdapters = [...packet.receipt.adapterInputs].sort(compareAdapterProvenance);
+      assertSameJsonArray(
+        packet.receipt.adapterInputs.map(adapterProvenanceJson),
+        sortedAdapters.map(adapterProvenanceJson),
+        "adapter-total-order",
+      );
+      const adapterBySource = new Map(
+        packet.receipt.adapterInputs.map((adapter) => [
+          sourceReferenceText(adapter.source),
+          adapter,
+        ]),
+      );
+      if (adapterBySource.size !== packet.receipt.adapterInputs.length) {
+        verificationFailure("duplicate-adapter-provenance");
+      }
+      for (const source of packet.sources) {
+        const adapter = adapterBySource.get(sourceReferenceText(source.source));
+        if (stateExclusion(source) === undefined) {
+          if (adapter === undefined || adapter.adapterKey !== source.adapterKey) {
+            verificationFailure("active-source-adapter-provenance");
+          }
+        } else if (adapter !== undefined) {
+          verificationFailure("inactive-source-adapter-provenance");
+        }
+      }
+
+      const normalizedEvidence = packet.evidence.map(normalizeEvidence);
+      const sortedEvidence = [...normalizedEvidence].sort(compareEvidence);
+      const evidenceTuples = new Set<string>();
+      const locatorBindings = new Map<string, string>();
+      for (const evidence of normalizedEvidence) {
+        const sourceKey = sourceReferenceText(evidence.source);
+        const source = sourceObservationByKey.get(sourceKey);
+        if (
+          evidence.observedAt.epochMilliseconds > packet.asOf.epochMilliseconds ||
+          source === undefined ||
+          stateExclusion(source) !== undefined
+        ) {
+          verificationFailure("included-evidence-source");
+        }
+        const tuple = `${sourceKey}\u0000${evidence.locator}\u0000${evidence.contentSha256}`;
+        if (evidenceTuples.has(tuple)) verificationFailure("duplicate-included-evidence");
+        evidenceTuples.add(tuple);
+        const locatorKey = `${sourceKey}\u0000${evidence.locator}`;
+        const binding = `${evidence.contentSha256}:${evidence.excerptSha256}`;
+        const existing = locatorBindings.get(locatorKey);
+        if (existing !== undefined && existing !== binding) {
+          verificationFailure("included-locator-rebinding");
+        }
+        locatorBindings.set(locatorKey, binding);
+      }
+      assertSameJsonArray(
+        packet.evidence.map(evidenceJson),
+        normalizedEvidence.map(evidenceJson),
+        "evidence-normalization",
+      );
+      assertSameJsonArray(
+        packet.evidence.map(evidenceJson),
+        sortedEvidence.map(evidenceJson),
+        "evidence-total-order",
+      );
+
+      const normalizedFacts = packet.acceptedFacts.map(normalizeFact);
+      const sortedFacts = [...normalizedFacts].sort((left, right) =>
+        compareCanonicalText(left.stableKey, right.stableKey),
+      );
+      if (
+        new Set(packet.acceptedFacts.map(({ stableKey }) => stableKey)).size !==
+          packet.acceptedFacts.length ||
+        new Set(
+          packet.acceptedFacts.map(
+            ({ decisionId, revision }) =>
+              `${decisionId}:${revision.revisionId}:${revision.version}`,
+          ),
+        ).size !== packet.acceptedFacts.length
+      ) {
+        verificationFailure("duplicate-included-fact");
+      }
+      assertSameJsonArray(
+        packet.acceptedFacts.map(factJson),
+        normalizedFacts.map(factJson),
+        "fact-normalization",
+      );
+      assertSameJsonArray(
+        packet.acceptedFacts.map(factJson),
+        sortedFacts.map(factJson),
+        "fact-total-order",
+      );
+
+      const normalizedCollections = [
+        {
+          actual: packet.assumptions,
+          normalized: packet.assumptions.map(normalizeAssumption),
+          reference: "assumption-order",
+        },
+        {
+          actual: packet.conflicts,
+          normalized: packet.conflicts.map(normalizeConflict),
+          reference: "conflict-order",
+        },
+        {
+          actual: packet.questions,
+          normalized: packet.questions.map(normalizeQuestion),
+          reference: "question-order",
+        },
+        {
+          actual: packet.disconfirmationSignals,
+          normalized: packet.disconfirmationSignals.map(normalizeSignal),
+          reference: "signal-order",
+        },
+        {
+          actual: packet.unresolvedDecisions,
+          normalized: packet.unresolvedDecisions.map(normalizeUnresolved),
+          reference: "unresolved-order",
+        },
+      ] as const;
+      for (const { actual, normalized, reference } of normalizedCollections) {
+        const sorted = [...normalized].sort((left, right) =>
+          compareCanonicalText(left.key, right.key),
+        );
+        if (new Set(actual.map(({ key }) => key)).size !== actual.length) {
+          verificationFailure(reference);
+        }
+        assertSameJsonArray(
+          actual.map(stableKeyItemJson),
+          normalized.map(stableKeyItemJson),
+          `${reference}-normalization`,
+        );
+        assertSameJsonArray(
+          actual.map(stableKeyItemJson),
+          sorted.map(stableKeyItemJson),
+          reference,
+        );
+      }
+
+      const normalizedGaps = packet.gaps.map((gap) =>
+        gap.namespace === "system" ? normalizeSystemGap(gap) : normalizeUserGap(gap),
+      );
+      const gapIdentity = (gap: MarketingEvidenceGap) =>
+        `${gap.namespace}:${gap.namespace === "system" ? gap.category : "user-authored"}:${gap.key}`;
+      const sortedGaps = [...normalizedGaps].sort((left, right) =>
+        compareCanonicalText(gapIdentity(left), gapIdentity(right)),
+      );
+      if (new Set(packet.gaps.map(gapIdentity)).size !== packet.gaps.length) {
+        verificationFailure("duplicate-gap-ledger");
+      }
+      assertSameJsonArray(
+        packet.gaps.map(gapJson),
+        normalizedGaps.map(gapJson),
+        "gap-normalization",
+      );
+      assertSameJsonArray(packet.gaps.map(gapJson), sortedGaps.map(gapJson), "gap-total-order");
+      if (!sameJson(packet.readiness, normalizeReadiness(packet.readiness))) {
+        verificationFailure("readiness-normalization");
+      }
+
+      const expectedIncluded: MarketingEvidenceReceiptIncludedItem[] = [
+        ...packet.acceptedFacts.map((fact) => ({
+          subject: {
+            kind: "accepted-fact" as const,
+            stableKey: fact.stableKey,
+            decisionId: fact.decisionId,
+            revision: fact.revision,
+          },
+          digest: factDigest(fact),
+          required: true,
+          tokenCount: estimateTokens(canonicalJson(factJson(fact))),
+        })),
+        ...packet.evidence.map((evidence) => ({
+          subject: {
+            kind: "retrieved-evidence" as const,
+            source: evidence.source,
+            locatorSha256: sha256(evidence.locator),
+          },
+          digest: evidenceDigest(evidence),
+          required: evidence.required,
+          tokenCount: estimateTokens(canonicalJson(evidenceJson(evidence))),
+        })),
+      ].sort(
+        (left, right) =>
+          compareCanonicalText(left.digest, right.digest) ||
+          compareReceiptSubject(left.subject, right.subject),
+      );
+      assertSameJsonArray(
+        packet.receipt.included.map(receiptIncludedJson),
+        expectedIncluded.map(receiptIncludedJson),
+        "included-evidence-ledger",
+      );
+      const includedEvidenceBytes = packet.evidence.reduce(
+        (total, evidence) =>
+          total + Buffer.byteLength(canonicalJson(evidenceJson(evidence)), "utf8"),
+        0,
+      );
+      const includedPerSource = new Map<string, number>();
+      for (const evidence of packet.evidence) {
+        const key = sourceReferenceText(evidence.source);
+        includedPerSource.set(key, (includedPerSource.get(key) ?? 0) + 1);
+      }
+      if (
+        packet.receipt.included.length > packet.budget.maxItems ||
+        includedEvidenceBytes > packet.budget.maxCandidateBytes ||
+        [...includedPerSource.values()].some((count) => count > packet.budget.maxPerSource)
+      ) {
+        verificationFailure("included-evidence-budget");
+      }
+
+      const sortedExcluded = [...packet.receipt.excluded].sort(
+        (left, right) =>
+          compareReceiptSubject(left.subject, right.subject) ||
+          compareCanonicalText(left.reason, right.reason) ||
+          compareCanonicalText(left.digest, right.digest),
+      );
+      assertSameJsonArray(
+        packet.receipt.excluded.map(receiptExcludedJson),
+        sortedExcluded.map(receiptExcludedJson),
+        "excluded-evidence-ledger-order",
+      );
+      const sourceKeys = new Set(packet.receipt.sourceInputs.map(sourceReferenceText));
+      const excludedSourceKeys = new Set<string>();
+      for (const excluded of packet.receipt.excluded) {
+        switch (excluded.subject.kind) {
+          case "source": {
+            const key = sourceReferenceText(excluded.subject.source);
+            const source = sourceObservationByKey.get(key);
+            const expectedReason = source === undefined ? undefined : stateExclusion(source);
+            if (
+              !sourceKeys.has(key) ||
+              source === undefined ||
+              excludedSourceKeys.has(key) ||
+              excluded.required ||
+              excluded.tokenCount !== 0 ||
+              excluded.digest !== sourceDigest(excluded.subject.source) ||
+              excluded.reason !== (expectedReason ?? "inaccessible")
+            ) {
+              verificationFailure("excluded-source-ledger");
+            }
+            excludedSourceKeys.add(key);
+            break;
+          }
+          case "accepted-fact":
+            if (
+              !excluded.required ||
+              (excluded.reason !== "budget" && excluded.reason !== "superseded") ||
+              (excluded.reason === "budget" && excluded.tokenCount < 1) ||
+              (excluded.reason === "superseded" &&
+                (excluded.tokenCount !== 0 ||
+                  excluded.digest !== sha256(canonicalJson(subjectJson(excluded.subject)))))
+            ) {
+              verificationFailure("excluded-fact-ledger");
+            }
+            break;
+          case "retrieved-evidence": {
+            const key = sourceReferenceText(excluded.subject.source);
+            const source = sourceObservationByKey.get(key);
+            if (
+              !sourceKeys.has(key) ||
+              source === undefined ||
+              stateExclusion(source) !== undefined ||
+              excluded.tokenCount < 1 ||
+              (excluded.reason !== "budget" && excluded.reason !== "duplicate")
+            ) {
+              verificationFailure("excluded-evidence-source");
+            }
+            break;
+          }
+        }
+      }
+      for (const source of packet.sources) {
+        if (
+          stateExclusion(source) !== undefined &&
+          !excludedSourceKeys.has(sourceReferenceText(source.source))
+        ) {
+          verificationFailure("missing-source-exclusion");
+        }
+      }
+      if (
+        packet.evidence.some(({ source }) => excludedSourceKeys.has(sourceReferenceText(source)))
+      ) {
+        verificationFailure("excluded-source-has-included-evidence");
+      }
+
+      const ledgerDigests = [
+        ...packet.receipt.included.map(({ digest }) => digest),
+        ...packet.receipt.excluded.flatMap(({ subject, digest }) =>
+          subject.kind === "source" ? [] : [digest],
+        ),
+      ].sort(compareCanonicalText);
+      if (
+        ledgerDigests.length !== packet.receipt.candidateDigests.length ||
+        ledgerDigests.some((digest, index) => digest !== packet.receipt.candidateDigests[index])
+      ) {
+        verificationFailure("candidate-digest-ledger");
+      }
+
+      const factInputs = [...packet.receipt.included, ...packet.receipt.excluded].flatMap(
+        ({ subject }) =>
+          subject.kind === "accepted-fact"
+            ? [
+                {
+                  stableKey: subject.stableKey,
+                  decisionId: subject.decisionId,
+                  revision: subject.revision,
+                },
+              ]
+            : [],
+      );
+      factInputs.sort((left, right) => compareCanonicalText(left.stableKey, right.stableKey));
+      if (
+        new Set(factInputs.map(({ stableKey }) => stableKey)).size !== factInputs.length ||
+        !sameJson(packet.receipt.factInputs, factInputs)
+      ) {
+        verificationFailure("fact-input-ledger");
+      }
+
+      const includedTokenCount = packet.receipt.included.reduce(
+        (total, item) => total + item.tokenCount,
+        0,
+      );
+      const includedDigests = new Set(packet.receipt.included.map(({ digest }) => digest));
+      const requiredOmitted = packet.receipt.excluded.some(
+        (item) =>
+          item.required && (item.reason !== "duplicate" || !includedDigests.has(item.digest)),
+      );
+      const omissionGap = packet.gaps.some(
+        (gap) =>
+          gap.namespace === "system" &&
+          gap.category === requiredOmissionGap.category &&
+          gap.key === requiredOmissionGap.key &&
+          gap.blocks,
+      );
+      const blockingGap = packet.gaps.some(({ blocks }) => blocks);
+      if (
+        includedTokenCount !== packet.receipt.includedTokenCount ||
+        requiredOmitted !== omissionGap ||
+        (blockingGap &&
+          (packet.readiness.state !== "blocked" ||
+            !packet.readiness.codes.includes(blockingGapCode))) ||
+        (requiredOmitted &&
+          (packet.readiness.state !== "blocked" ||
+            !packet.readiness.codes.includes(requiredOmissionCode)))
+      ) {
+        verificationFailure("required-omission-ledger");
+      }
+
+      const exactTokenCount = estimateTokens(canonicalJson(packetJson(packet)));
+      const exactPacketSha256 = sha256(canonicalJson(packetDigestJson(packet)));
+      if (
+        exactTokenCount !== packet.receipt.packetTokenCount ||
+        exactTokenCount > packet.budget.maxTokens ||
+        exactPacketSha256 !== packet.receipt.packetSha256
+      ) {
+        verificationFailure("complete-packet-receipt");
+      }
+      return packet;
+    },
+    catch: (cause) =>
+      isEvidenceContextError(cause)
+        ? cause
+        : new MarketingEvidenceContextError({ reason: "invalid_context_input" }),
+  });
+}

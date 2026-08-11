@@ -128,7 +128,12 @@ fallback into Dev.
   superseded, or withdrawn transitions. Only the current accepted head enters a packet; stale
   support remains visible.
 - `inspectSources` and `compileContext` use bounded exact reads of caller-selected heads and never
-  scan the workspace corpus. They do not write. Durable changes require an explicit
+  scan the workspace corpus. After source retrieval, `compileContext` re-reads every selected
+  source, fact, and plan head, semantically revalidates the complete packet, and returns a
+  process-local verified capability for that exact object. Cloning or serialization loses the
+  capability; mutation is rechecked at use time. This proves the origin and integrity of the exact
+  `asOf` snapshot, not that its canonical heads remain current for a later save or activation. They
+  do not write. Durable changes require an explicit
   `acceptFact`, `supersedeFact`, or `withdrawFact` call with expected version, idempotency key, and
   canonical read-back. Missing or failed sources add gaps; they never trigger fallback retrieval or
   silent persistence.

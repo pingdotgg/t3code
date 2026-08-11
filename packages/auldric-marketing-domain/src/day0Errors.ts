@@ -15,7 +15,6 @@ export const MarketingDay0FailureReason = Schema.Literals([
   "context_state_mismatch",
   "unsupported_evidence_reference",
   "route_not_registered",
-  "route_review_conflict",
   "output_budget_exceeded",
 ]);
 export type MarketingDay0FailureReason = typeof MarketingDay0FailureReason.Type;

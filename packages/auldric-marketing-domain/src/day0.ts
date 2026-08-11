@@ -1,40 +1,47 @@
 // @effect-diagnostics nodeBuiltinImport:off - Day 0 receipts are local deterministic integrity digests.
 import * as NodeCrypto from "node:crypto";
 
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  MarketingCanonicalDefinitionReference,
   MarketingCanonicalRegistryKey,
   MarketingCanonicalVersion,
-  MarketingExpectedVersion,
 } from "./canonical.ts";
 import { compareCanonicalText } from "./canonicalSeal.ts";
 import { MarketingDay0Error, MarketingDay0SafeReference } from "./day0Errors.ts";
 import {
   MarketingAcceptedFact,
   MarketingDecisionChangingQuestion,
-  MarketingEvidenceContextPacket,
   MarketingEvidenceGap,
   MarketingEvidenceReceipt,
-  MarketingEvidenceReceiptIncludedItem,
   MarketingEvidenceSha256,
   MarketingEvidenceStableKey,
   MarketingEvidenceStateCode,
   MarketingEvidenceAssumption,
   MarketingEvidenceConflict,
   MarketingPlanReadiness,
-  type MarketingRetrievedEvidence,
+  MarketingRetrievedEvidence,
   MarketingSourceObservation,
   MarketingUnresolvedDecision,
 } from "./evidenceContext.ts";
+import {
+  readVerifiedMarketingEvidenceContext,
+  type VerifiedMarketingEvidenceContextPacket,
+} from "./evidenceContextService.ts";
 import { MarketingWorkspaceSelection } from "./identity.ts";
 
 export const MARKETING_DAY0_FORMAT = "auldric/day0-operating-packet@1" as const;
 export const MARKETING_DAY0_POLICY_REF = "auldric/day0-kernel@1" as const;
-export const MARKETING_DAY0_REVIEW_INTENT_FORMAT = "auldric/day0-route-review-intent@1" as const;
-export const MARKETING_DAY0_MAX_PACKET_BYTES = 131_072;
+export const MARKETING_DAY0_ROUTE_CHOICE_INTENT_FORMAT =
+  "auldric/day0-route-choice-intent@1" as const;
+export const MARKETING_DAY0_MAX_PACKET_BYTES = 262_144;
+export const MARKETING_DAY0_ROUTE_CATALOG_KEY = "marketing/workflow-catalog" as const;
+export const MARKETING_DAY0_ROUTE_CATALOG_VERSION = 1 as const;
+export const MARKETING_DAY0_STRATEGY_DEFINITION_KEY =
+  "marketing/workflow/marketing-strategy" as const;
+export const MARKETING_DAY0_GTM_DEFINITION_KEY = "marketing/workflow/gtm" as const;
 
 const Day0Text = (maximum: number) =>
   Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty(), Schema.isMaxLength(maximum));
@@ -69,6 +76,30 @@ export const MarketingDay0RouteDefinition = Schema.Struct({
   readiness: MarketingDay0RouteReadiness,
 });
 export type MarketingDay0RouteDefinition = typeof MarketingDay0RouteDefinition.Type;
+
+export const MarketingDay0RouteCatalogSnapshot = Schema.Struct({
+  catalog: Schema.Struct({
+    key: MarketingCanonicalRegistryKey,
+    version: MarketingCanonicalVersion,
+  }),
+  routes: Schema.Array(MarketingDay0RouteDefinition).check(Schema.isMaxLength(2)),
+  snapshotSha256: MarketingEvidenceSha256,
+});
+export type MarketingDay0RouteCatalogSnapshot = typeof MarketingDay0RouteCatalogSnapshot.Type;
+
+export interface MarketingDay0RouteCatalogVerifier {
+  readonly reference: MarketingCanonicalDefinitionReference;
+  /** Purely returns the digest of the exact snapshot body accepted by the injected #19 adapter. */
+  readonly verify: (snapshot: MarketingDay0RouteCatalogSnapshot) => MarketingEvidenceSha256;
+}
+
+export const MarketingDay0RouteCatalogBinding = Schema.Struct({
+  catalog: MarketingDay0RouteCatalogSnapshot.fields.catalog,
+  verifier: MarketingCanonicalDefinitionReference,
+  snapshotSha256: MarketingEvidenceSha256,
+  trust: Schema.Literal("injected-unapproved"),
+});
+export type MarketingDay0RouteCatalogBinding = typeof MarketingDay0RouteCatalogBinding.Type;
 
 const MarketingDay0Support = Schema.Array(MarketingEvidenceSha256).check(
   Schema.isMinLength(1),
@@ -182,15 +213,16 @@ export type MarketingDay0RouteRecommendation = typeof MarketingDay0RouteRecommen
 
 export const MarketingDay0EvidenceSummary = Schema.Struct({
   contextPacketSha256: MarketingEvidenceSha256,
-  receiptSha256: MarketingEvidenceSha256,
+  snapshotAsOf: Schema.DateTimeUtc,
   sources: Schema.Array(MarketingSourceObservation).check(Schema.isMaxLength(24)),
-  evidence: Schema.Array(MarketingEvidenceReceiptIncludedItem).check(Schema.isMaxLength(64)),
+  selectedEvidence: Schema.Array(MarketingRetrievedEvidence).check(Schema.isMaxLength(64)),
   acceptedFacts: Schema.Array(MarketingAcceptedFact).check(Schema.isMaxLength(32)),
   assumptions: Schema.Array(MarketingEvidenceAssumption).check(Schema.isMaxLength(32)),
   conflicts: Schema.Array(MarketingEvidenceConflict).check(Schema.isMaxLength(32)),
   gaps: Schema.Array(MarketingEvidenceGap).check(Schema.isMaxLength(96)),
   readiness: MarketingPlanReadiness,
   unresolvedDecisions: Schema.Array(MarketingUnresolvedDecision).check(Schema.isMaxLength(32)),
+  receipt: MarketingEvidenceReceipt,
 });
 export type MarketingDay0EvidenceSummary = typeof MarketingDay0EvidenceSummary.Type;
 
@@ -235,6 +267,7 @@ export const MarketingDay0OperatingPacket = Schema.Struct({
   hypothesis: MarketingDay0Hypothesis,
   immediateActions: Schema.Array(MarketingDay0ImmediateAction).check(Schema.isMaxLength(4)),
   routeRecommendation: MarketingDay0RouteRecommendation,
+  routeCatalog: MarketingDay0RouteCatalogBinding,
   questions: Schema.Array(MarketingDecisionChangingQuestion).check(Schema.isMaxLength(3)),
   evidence: MarketingDay0EvidenceSummary,
   routeReview: MarketingDay0RouteReviewState,
@@ -244,61 +277,59 @@ export const MarketingDay0OperatingPacket = Schema.Struct({
 export type MarketingDay0OperatingPacket = typeof MarketingDay0OperatingPacket.Type;
 
 export interface CompileMarketingDay0Input {
-  readonly evidenceContext: MarketingEvidenceContextPacket;
-  readonly routes: ReadonlyArray<MarketingDay0RouteDefinition>;
+  readonly evidenceContext: VerifiedMarketingEvidenceContextPacket;
+  readonly routeCatalog: MarketingDay0RouteCatalogSnapshot;
+  readonly routeCatalogVerifier: MarketingDay0RouteCatalogVerifier;
   readonly draft: MarketingDay0Draft;
 }
 
-export const MarketingDay0RouteReviewChoice = Schema.Union([
+export const MarketingDay0RouteChoice = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("accept") }),
   Schema.Struct({ kind: Schema.Literal("override"), rationale: Day0Text(4_000) }),
 ]);
-export type MarketingDay0RouteReviewChoice = typeof MarketingDay0RouteReviewChoice.Type;
+export type MarketingDay0RouteChoice = typeof MarketingDay0RouteChoice.Type;
 
-export const MarketingDay0RouteReviewIntentReceipt = Schema.Struct({
+export const MarketingDay0RouteChoiceIntentReceipt = Schema.Struct({
   inputSha256: MarketingEvidenceSha256,
   intentSha256: MarketingEvidenceSha256,
 });
-export type MarketingDay0RouteReviewIntentReceipt =
-  typeof MarketingDay0RouteReviewIntentReceipt.Type;
+export type MarketingDay0RouteChoiceIntentReceipt =
+  typeof MarketingDay0RouteChoiceIntentReceipt.Type;
 
-export const MarketingDay0RouteReviewIntent = Schema.Struct({
-  format: Schema.Literal(MARKETING_DAY0_REVIEW_INTENT_FORMAT),
+export const MarketingDay0RouteChoiceIntent = Schema.Struct({
+  format: Schema.Literal(MARKETING_DAY0_ROUTE_CHOICE_INTENT_FORMAT),
   workspace: MarketingWorkspaceSelection,
   packetSha256: MarketingEvidenceSha256,
-  expectedVersion: MarketingExpectedVersion,
-  choice: MarketingDay0RouteReviewChoice,
+  choice: MarketingDay0RouteChoice,
   selectedRoute: MarketingDay0RouteDefinition,
-  state: Schema.Literal("pending-canonical-save"),
+  state: Schema.Literal("unverified-pending-intent"),
+  laterAdapterRequirements: Schema.Array(MarketingEvidenceStateCode).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(16),
+  ),
   activation: MarketingDay0ActivationState,
-  receipt: MarketingDay0RouteReviewIntentReceipt,
+  receipt: MarketingDay0RouteChoiceIntentReceipt,
 });
-export type MarketingDay0RouteReviewIntent = typeof MarketingDay0RouteReviewIntent.Type;
+export type MarketingDay0RouteChoiceIntent = typeof MarketingDay0RouteChoiceIntent.Type;
 
-export interface PrepareMarketingDay0RouteReviewInput {
+export interface PrepareUnverifiedMarketingDay0RouteChoiceInput {
   readonly packet: MarketingDay0OperatingPacket;
-  readonly expectedPacketSha256: MarketingEvidenceSha256;
-  readonly expectedVersion: MarketingExpectedVersion;
-  readonly choice: MarketingDay0RouteReviewChoice;
+  readonly choice: MarketingDay0RouteChoice;
 }
 
-const decodeEvidencePacket = Schema.decodeUnknownSync(MarketingEvidenceContextPacket);
-const encodeEvidencePacketJson = Schema.encodeSync(
-  Schema.toCodecJson(MarketingEvidenceContextPacket),
-);
+const decodeRouteCatalog = Schema.decodeUnknownSync(MarketingDay0RouteCatalogSnapshot);
+const decodeDefinitionReference = Schema.decodeUnknownSync(MarketingCanonicalDefinitionReference);
 const encodeEvidenceReceiptJson = Schema.encodeSync(Schema.toCodecJson(MarketingEvidenceReceipt));
-const encodeAcceptedFactJson = Schema.encodeSync(Schema.toCodecJson(MarketingAcceptedFact));
 const decodeRoutes = Schema.decodeUnknownSync(
   Schema.Array(MarketingDay0RouteDefinition).check(Schema.isMaxLength(2)),
 );
 const decodeDraft = Schema.decodeUnknownSync(MarketingDay0Draft);
 const decodePacket = Schema.decodeUnknownSync(MarketingDay0OperatingPacket);
 const encodePacketJson = Schema.encodeSync(Schema.toCodecJson(MarketingDay0OperatingPacket));
-const decodeChoice = Schema.decodeUnknownSync(MarketingDay0RouteReviewChoice);
-const decodeExpectedVersion = Schema.decodeUnknownSync(MarketingExpectedVersion);
-const decodeReviewIntent = Schema.decodeUnknownSync(MarketingDay0RouteReviewIntent);
-const encodeReviewIntentJson = Schema.encodeSync(
-  Schema.toCodecJson(MarketingDay0RouteReviewIntent),
+const decodeChoice = Schema.decodeUnknownSync(MarketingDay0RouteChoice);
+const decodeChoiceIntent = Schema.decodeUnknownSync(MarketingDay0RouteChoiceIntent);
+const encodeChoiceIntentJson = Schema.encodeSync(
+  Schema.toCodecJson(MarketingDay0RouteChoiceIntent),
 );
 const decodeJson = Schema.decodeUnknownSync(Schema.Json);
 const decodeSafeReference = Schema.decodeUnknownSync(MarketingDay0SafeReference);
@@ -343,142 +374,108 @@ function encodedJson<T>(encode: (value: T) => unknown, value: T): Schema.Json {
   return decodeJson(encode(value));
 }
 
-function evidencePacketDigestJson(packet: MarketingEvidenceContextPacket): Schema.Json {
-  const encoded = encodedJson(encodeEvidencePacketJson, packet);
-  if (encoded === null || Array.isArray(encoded) || typeof encoded !== "object") {
-    throw new MarketingDay0Error({ reason: "evidence_receipt_mismatch" });
-  }
-  const encodedObject = encoded as { readonly [key: string]: Schema.Json };
-  const receipt = encodedObject.receipt;
-  if (receipt === null || Array.isArray(receipt) || typeof receipt !== "object") {
-    throw new MarketingDay0Error({ reason: "evidence_receipt_mismatch" });
-  }
-  const receiptObject = receipt as { readonly [key: string]: Schema.Json };
-  const { packetSha256: _packetSha256, ...receiptWithoutDigest } = receiptObject;
-  return { ...encodedObject, receipt: receiptWithoutDigest };
-}
-
-function evidenceSubjectKey(item: MarketingEvidenceReceipt["included"][number]): string {
-  const { subject } = item;
-  switch (subject.kind) {
-    case "source":
-      return `source:${subject.source.sourceId}:${subject.source.revision.revisionId}:${subject.source.revision.version}`;
-    case "retrieved-evidence":
-      return `evidence:${subject.source.sourceId}:${subject.source.revision.revisionId}:${subject.source.revision.version}:${subject.locatorSha256}`;
-    case "accepted-fact":
-      return `fact:${subject.stableKey}:${subject.decisionId}:${subject.revision.revisionId}:${subject.revision.version}`;
-  }
-}
-
-function sourceReferenceJson(source: MarketingRetrievedEvidence["source"]): Schema.Json {
-  return {
-    sourceId: source.sourceId,
-    revision: {
-      revisionId: source.revision.revisionId,
-      version: source.revision.version,
-    },
-  };
-}
-
-function evidenceJson(evidence: MarketingRetrievedEvidence): Schema.Json {
-  return {
-    source: sourceReferenceJson(evidence.source),
-    locator: evidence.locator,
-    excerpt: evidence.excerpt,
-    excerptSha256: evidence.excerptSha256,
-    contentSha256: evidence.contentSha256,
-    observedAt: DateTime.formatIso(evidence.observedAt),
-    quality: evidence.quality,
-    relation: evidence.relation,
-    required: evidence.required,
-    decisionImpact: evidence.decisionImpact,
-    relevance: evidence.relevance,
-  };
-}
-
-function factJson(fact: MarketingAcceptedFact): Schema.Json {
-  return encodedJson(encodeAcceptedFactJson, fact);
-}
-
-function verifyEvidenceReceipt(packet: MarketingEvidenceContextPacket): MarketingEvidenceSha256 {
-  const expectedPacketSha256 = sha256(canonicalJson(evidencePacketDigestJson(packet)));
-  const encodedPacket = encodedJson(encodeEvidencePacketJson, packet);
-  const packetTokenCount = Math.max(
-    1,
-    Math.ceil(Buffer.byteLength(canonicalJson(encodedPacket), "utf8") / 4),
-  );
-  const includedTokenCount = packet.receipt.included.reduce(
-    (total, item) => total + item.tokenCount,
-    0,
-  );
-  if (
-    expectedPacketSha256 !== packet.receipt.packetSha256 ||
-    packetTokenCount !== packet.receipt.packetTokenCount ||
-    packetTokenCount > packet.receipt.budget.maxTokens ||
-    includedTokenCount !== packet.receipt.includedTokenCount ||
-    packet.receipt.budget.policyRef !== packet.budget.policyRef ||
-    packet.receipt.budget.tokenizerRef !== packet.budget.tokenizerRef
-  ) {
-    throw new MarketingDay0Error({ reason: "evidence_receipt_mismatch" });
-  }
-
-  const expectedItems = new Map<string, MarketingEvidenceSha256>();
-  for (const evidence of packet.evidence) {
-    const locatorSha256 = sha256(evidence.locator);
-    const key = `evidence:${evidence.source.sourceId}:${evidence.source.revision.revisionId}:${evidence.source.revision.version}:${locatorSha256}`;
-    if (expectedItems.has(key)) {
-      throw new MarketingDay0Error({ reason: "evidence_receipt_mismatch" });
-    }
-    expectedItems.set(key, sha256(canonicalJson(evidenceJson(evidence))));
-  }
-  for (const fact of packet.acceptedFacts) {
-    const key = `fact:${fact.stableKey}:${fact.decisionId}:${fact.revision.revisionId}:${fact.revision.version}`;
-    if (expectedItems.has(key)) {
-      throw new MarketingDay0Error({ reason: "evidence_receipt_mismatch" });
-    }
-    expectedItems.set(key, sha256(canonicalJson(factJson(fact))));
-  }
-
-  const receivedItems = new Map<string, MarketingEvidenceSha256>();
-  for (const item of packet.receipt.included) {
-    if (item.subject.kind === "source") continue;
-    const key = evidenceSubjectKey(item);
-    if (receivedItems.has(key)) {
-      throw new MarketingDay0Error({ reason: "evidence_receipt_mismatch" });
-    }
-    receivedItems.set(key, item.digest);
-  }
-  if (
-    receivedItems.size !== expectedItems.size ||
-    [...expectedItems].some(([key, digest]) => receivedItems.get(key) !== digest)
-  ) {
-    throw new MarketingDay0Error({ reason: "evidence_receipt_mismatch" });
-  }
-
-  return sha256(canonicalJson(encodedJson(encodeEvidenceReceiptJson, packet.receipt)));
-}
-
 function normalizeReadiness(readiness: MarketingDay0RouteReadiness): MarketingDay0RouteReadiness {
   return readiness.state === "blocked" || readiness.state === "partial"
     ? { ...readiness, codes: [...new Set(readiness.codes)].sort(compareCanonicalText) }
     : readiness;
 }
 
-function normalizeRoutes(
+function normalizeRouteDefinitions(
   rawRoutes: ReadonlyArray<MarketingDay0RouteDefinition>,
 ): ReadonlyArray<MarketingDay0RouteDefinition> {
   const routes = decodeRoutes(rawRoutes)
     .map((route) => ({ ...route, readiness: normalizeReadiness(route.readiness) }))
     .sort((left, right) => compareCanonicalText(left.key, right.key));
+  const gtm = routes[0];
+  const strategy = routes[1];
   if (
     routes.length !== 2 ||
-    routes[0]?.key !== "gtm" ||
-    routes[1]?.key !== "marketing-strategy" ||
-    routes[0].definition.key === routes[1].definition.key
+    gtm?.key !== "gtm" ||
+    strategy?.key !== "marketing-strategy" ||
+    gtm.definition.key !== MARKETING_DAY0_GTM_DEFINITION_KEY ||
+    strategy.definition.key !== MARKETING_DAY0_STRATEGY_DEFINITION_KEY ||
+    Number(gtm.definition.version) !== MARKETING_DAY0_ROUTE_CATALOG_VERSION ||
+    Number(strategy.definition.version) !== MARKETING_DAY0_ROUTE_CATALOG_VERSION
   ) {
     throw new MarketingDay0Error({ reason: "incomplete_route_contract" });
   }
   return routes;
+}
+
+/** Creates a deterministic but explicitly untrusted adapter envelope for the future #19 catalog. */
+export function makeInjectedMarketingDay0RouteCatalogSnapshot(
+  rawRoutes: ReadonlyArray<MarketingDay0RouteDefinition>,
+): MarketingDay0RouteCatalogSnapshot {
+  const routes = normalizeRouteDefinitions(rawRoutes);
+  const catalog = {
+    key: MarketingCanonicalRegistryKey.make(MARKETING_DAY0_ROUTE_CATALOG_KEY),
+    version: MarketingCanonicalVersion.make(MARKETING_DAY0_ROUTE_CATALOG_VERSION),
+  };
+  const snapshotSha256 = sha256(
+    canonicalJson(
+      decodeJson({
+        catalog,
+        routes,
+      }),
+    ),
+  );
+  return {
+    catalog,
+    routes,
+    snapshotSha256,
+  };
+}
+
+function normalizeRouteCatalog(input: {
+  readonly snapshot: MarketingDay0RouteCatalogSnapshot;
+  readonly verifier: MarketingDay0RouteCatalogVerifier;
+}): {
+  readonly routes: ReadonlyArray<MarketingDay0RouteDefinition>;
+  readonly binding: MarketingDay0RouteCatalogBinding;
+} {
+  const decoded = decodeRouteCatalog(input.snapshot);
+  const normalizedSnapshot = makeInjectedMarketingDay0RouteCatalogSnapshot(decoded.routes);
+  if (
+    decoded.catalog.key !== MARKETING_DAY0_ROUTE_CATALOG_KEY ||
+    Number(decoded.catalog.version) !== MARKETING_DAY0_ROUTE_CATALOG_VERSION
+  ) {
+    throw new MarketingDay0Error({ reason: "incomplete_route_contract" });
+  }
+  const verifier = decodeDefinitionReference(input.verifier.reference);
+  const verifierSnapshot = decodeRouteCatalog(normalizedSnapshot);
+  const acceptedSnapshotSha256 = input.verifier.verify(verifierSnapshot);
+  const verifierSnapshotAfter = decodeRouteCatalog(verifierSnapshot);
+  const normalizedVerifierSnapshotAfter = makeInjectedMarketingDay0RouteCatalogSnapshot(
+    verifierSnapshotAfter.routes,
+  );
+  if (
+    verifier.key !== MARKETING_DAY0_ROUTE_CATALOG_KEY ||
+    Number(verifier.version) !== MARKETING_DAY0_ROUTE_CATALOG_VERSION ||
+    canonicalJson(decodeJson(decoded.routes)) !==
+      canonicalJson(decodeJson(normalizedSnapshot.routes)) ||
+    decoded.snapshotSha256 !== normalizedSnapshot.snapshotSha256 ||
+    verifierSnapshotAfter.catalog.key !== MARKETING_DAY0_ROUTE_CATALOG_KEY ||
+    Number(verifierSnapshotAfter.catalog.version) !== MARKETING_DAY0_ROUTE_CATALOG_VERSION ||
+    verifierSnapshotAfter.snapshotSha256 !== normalizedSnapshot.snapshotSha256 ||
+    canonicalJson(decodeJson(verifierSnapshotAfter.routes)) !==
+      canonicalJson(decodeJson(normalizedSnapshot.routes)) ||
+    normalizedVerifierSnapshotAfter.snapshotSha256 !== normalizedSnapshot.snapshotSha256 ||
+    acceptedSnapshotSha256 !== normalizedSnapshot.snapshotSha256
+  ) {
+    throw new MarketingDay0Error({
+      reason: "incomplete_route_contract",
+      reference: decodeSafeReference("route-catalog-verification"),
+    });
+  }
+  return {
+    routes: normalizedSnapshot.routes,
+    binding: {
+      catalog: decoded.catalog,
+      verifier,
+      snapshotSha256: normalizedSnapshot.snapshotSha256,
+      trust: "injected-unapproved",
+    },
+  };
 }
 
 function normalizeSupport(
@@ -611,19 +608,53 @@ function normalizeUsefulDraft(
 }
 
 function activationBlockers(
+  contextState: MarketingDay0OperatingPacket["contextState"],
+  evidenceReadiness: MarketingPlanReadiness,
   route?: MarketingDay0RouteDefinition,
 ): ReadonlyArray<MarketingEvidenceStateCode> {
-  const blockers = [
+  const mandatory = [
     MarketingEvidenceStateCode.make("route-review-pending"),
     MarketingEvidenceStateCode.make("canonical-readback-required"),
+    MarketingEvidenceStateCode.make("canonical-current-head-revalidation-required"),
+    MarketingEvidenceStateCode.make("route-catalog-unapproved"),
     MarketingEvidenceStateCode.make("workflow-activation-adapter-unavailable"),
   ];
-  if (route?.readiness.state === "not-evaluated") {
-    blockers.push(MarketingEvidenceStateCode.make("route-readiness-not-evaluated"));
-  } else if (route?.readiness.state === "blocked" || route?.readiness.state === "partial") {
-    blockers.push(...route.readiness.codes);
+  const callerCodes: MarketingEvidenceStateCode[] = [];
+  if (contextState === "contextless") {
+    mandatory.push(MarketingEvidenceStateCode.make("useful-context-required"));
   }
-  return [...new Set(blockers)].sort(compareCanonicalText).slice(0, 16);
+  if (route === undefined) {
+    mandatory.push(MarketingEvidenceStateCode.make("route-recommendation-required"));
+  }
+  if (evidenceReadiness.state === "not-evaluated") {
+    mandatory.push(MarketingEvidenceStateCode.make("evidence-readiness-not-evaluated"));
+  } else if (evidenceReadiness.state === "blocked" || evidenceReadiness.state === "partial") {
+    mandatory.push(
+      MarketingEvidenceStateCode.make(
+        evidenceReadiness.state === "blocked"
+          ? "evidence-readiness-blocked"
+          : "evidence-readiness-partial",
+      ),
+    );
+    callerCodes.push(...evidenceReadiness.codes);
+  }
+  if (route?.readiness.state === "not-evaluated") {
+    mandatory.push(MarketingEvidenceStateCode.make("route-readiness-not-evaluated"));
+  } else if (route?.readiness.state === "blocked" || route?.readiness.state === "partial") {
+    mandatory.push(
+      MarketingEvidenceStateCode.make(
+        route.readiness.state === "blocked" ? "route-readiness-blocked" : "route-readiness-partial",
+      ),
+    );
+    callerCodes.push(...route.readiness.codes);
+  }
+  const reserved = [...new Set(mandatory)];
+  const remaining = Math.max(0, 16 - reserved.length);
+  const retainedCallerCodes = [...new Set(callerCodes)]
+    .filter((code) => !reserved.includes(code))
+    .sort(compareCanonicalText)
+    .slice(0, remaining);
+  return [...reserved, ...retainedCallerCodes];
 }
 
 function packetDigestJson(packet: MarketingDay0OperatingPacket): Schema.Json {
@@ -663,189 +694,227 @@ function verifyDay0Packet(packet: MarketingDay0OperatingPacket): void {
 export function compileMarketingDay0(
   rawInput: CompileMarketingDay0Input,
 ): Effect.Effect<MarketingDay0OperatingPacket, MarketingDay0Error> {
-  return Effect.try({
-    try: () => {
-      const evidenceContext = decodeEvidencePacket(rawInput.evidenceContext);
-      const evidenceReceiptSha256 = verifyEvidenceReceipt(evidenceContext);
-      const routes = normalizeRoutes(rawInput.routes);
-      const draft = decodeDraft(rawInput.draft);
-      const includedSupport = new Set(
-        evidenceContext.receipt.included
-          .filter(({ subject }) => subject.kind !== "source")
-          .map(({ digest }) => digest),
-      );
-      const usefulContext = includedSupport.size > 0;
-      if (
-        (usefulContext && draft.state !== "useful-context") ||
-        (!usefulContext && draft.state !== "contextless")
-      ) {
-        throw new MarketingDay0Error({ reason: "context_state_mismatch" });
-      }
-
-      const normalizedDraft =
-        draft.state === "useful-context"
-          ? normalizeUsefulDraft(draft, includedSupport)
-          : {
-              state: "contextless" as const,
-              questions: sortQuestions(draft.questions),
-            };
-      const selectedQuestions = selectQuestions(
-        evidenceContext.questions,
-        normalizedDraft.questions,
-      );
-      const routesJson = decodeJson(
-        routes.map((route) => ({
-          key: route.key,
-          definition: route.definition,
-          readiness: route.readiness,
-        })),
-      );
-      const routesSha256 = sha256(canonicalJson(routesJson));
-      const inputSha256 = sha256(
-        canonicalJson(
-          decodeJson({
-            evidenceContextSha256: evidenceContext.receipt.packetSha256,
-            evidenceReceiptSha256,
-            routes,
-            draft: normalizedDraft,
+  return Effect.flatMap(
+    readVerifiedMarketingEvidenceContext(rawInput.evidenceContext).pipe(
+      Effect.mapError(
+        () =>
+          new MarketingDay0Error({
+            reason: "evidence_receipt_mismatch",
+            reference: decodeSafeReference("canonical-current-head-capability-required"),
           }),
-        ),
-      );
-      const recommendedRoute =
-        normalizedDraft.state === "useful-context"
-          ? routes.find(({ key }) => key === normalizedDraft.routeRecommendation.route)
-          : undefined;
-      if (normalizedDraft.state === "useful-context" && recommendedRoute === undefined) {
-        throw new MarketingDay0Error({ reason: "route_not_registered" });
-      }
-      const alternativeRoute =
-        recommendedRoute === undefined
-          ? undefined
-          : routes.find(({ key }) => key !== recommendedRoute.key);
-      if (recommendedRoute !== undefined && alternativeRoute === undefined) {
-        throw new MarketingDay0Error({ reason: "incomplete_route_contract" });
-      }
+      ),
+    ),
+    (evidenceContext) =>
+      Effect.try({
+        try: () => {
+          const routeCatalog = normalizeRouteCatalog({
+            snapshot: rawInput.routeCatalog,
+            verifier: rawInput.routeCatalogVerifier,
+          });
+          const routes = routeCatalog.routes;
+          const draft = decodeDraft(rawInput.draft);
+          const includedSupport = new Set(
+            evidenceContext.receipt.included
+              .filter(({ subject }) => subject.kind !== "source")
+              .map(({ digest }) => digest),
+          );
+          const usefulContext = includedSupport.size > 0;
+          if (
+            (usefulContext && draft.state !== "useful-context") ||
+            (!usefulContext && draft.state !== "contextless")
+          ) {
+            throw new MarketingDay0Error({ reason: "context_state_mismatch" });
+          }
 
-      const zeroDigest = MarketingEvidenceSha256.make("0".repeat(64));
-      const evidenceSummary: MarketingDay0EvidenceSummary = {
-        contextPacketSha256: evidenceContext.receipt.packetSha256,
-        receiptSha256: evidenceReceiptSha256,
-        sources: evidenceContext.sources,
-        evidence: evidenceContext.receipt.included,
-        acceptedFacts: evidenceContext.acceptedFacts,
-        assumptions: evidenceContext.assumptions,
-        conflicts: evidenceContext.conflicts,
-        gaps: evidenceContext.gaps,
-        readiness: evidenceContext.readiness,
-        unresolvedDecisions: evidenceContext.unresolvedDecisions,
-      };
-      const buildPacket = (
-        packetByteCount: number,
-        packetSha256: MarketingEvidenceSha256,
-      ): MarketingDay0OperatingPacket => ({
-        format: MARKETING_DAY0_FORMAT,
-        workspace: evidenceContext.workspace,
-        asOf: evidenceContext.asOf,
-        contextState: normalizedDraft.state,
-        pointOfView:
-          normalizedDraft.state === "useful-context"
-            ? { state: "ready", ...normalizedDraft.pointOfView }
-            : { state: "pending", reason: "contextless" },
-        hypothesis:
-          normalizedDraft.state === "useful-context"
-            ? { state: "ready", ...normalizedDraft.hypothesis }
-            : { state: "pending", reason: "contextless" },
-        immediateActions:
-          normalizedDraft.state === "useful-context" ? normalizedDraft.immediateActions : [],
-        routeRecommendation:
-          normalizedDraft.state === "useful-context" &&
-          recommendedRoute !== undefined &&
-          alternativeRoute !== undefined
-            ? {
-                state: "recommended",
-                route: recommendedRoute,
-                rationale: normalizedDraft.routeRecommendation.rationale,
-                support: normalizedDraft.routeRecommendation.support,
-                alternative: alternativeRoute,
-                alternativeAvailability: "explicit-override-only",
-              }
-            : { state: "pending", reason: "contextless", candidates: routes },
-        questions: selectedQuestions.included,
-        evidence: evidenceSummary,
-        routeReview: { state: "pending", required: true },
-        activation: {
-          state: "dormant",
-          blockers: activationBlockers(recommendedRoute),
-        },
-        receipt: {
-          format: MARKETING_DAY0_FORMAT,
-          policyRef: MARKETING_DAY0_POLICY_REF,
-          compiledAsOf: evidenceContext.asOf,
-          evidenceContextSha256: evidenceContext.receipt.packetSha256,
-          evidenceReceiptSha256,
-          routesSha256,
-          inputSha256,
-          contextState: normalizedDraft.state,
-          questionInputCount: selectedQuestions.inputCount,
-          questionIncludedKeys: selectedQuestions.included.map(({ key }) => key),
-          questionExcludedKeys: selectedQuestions.excluded,
-          packetByteCount,
-          packetSha256,
-        },
-      });
+          const normalizedDraft =
+            draft.state === "useful-context"
+              ? normalizeUsefulDraft(draft, includedSupport)
+              : {
+                  state: "contextless" as const,
+                  questions: sortQuestions(draft.questions),
+                };
+          const selectedQuestions = selectQuestions(
+            evidenceContext.questions,
+            normalizedDraft.questions,
+          );
+          const evidenceReceiptSha256 = sha256(
+            canonicalJson(encodedJson(encodeEvidenceReceiptJson, evidenceContext.receipt)),
+          );
+          const routesSha256 = routeCatalog.binding.snapshotSha256;
+          const inputSha256 = sha256(
+            canonicalJson(
+              decodeJson({
+                evidenceContextSha256: evidenceContext.receipt.packetSha256,
+                evidenceReceiptSha256,
+                routeCatalog: routeCatalog.binding,
+                routes,
+                draft: normalizedDraft,
+              }),
+            ),
+          );
+          const recommendedRoute =
+            normalizedDraft.state === "useful-context"
+              ? routes.find(({ key }) => key === normalizedDraft.routeRecommendation.route)
+              : undefined;
+          if (normalizedDraft.state === "useful-context" && recommendedRoute === undefined) {
+            throw new MarketingDay0Error({ reason: "route_not_registered" });
+          }
+          const alternativeRoute =
+            recommendedRoute === undefined
+              ? undefined
+              : routes.find(({ key }) => key !== recommendedRoute.key);
+          if (recommendedRoute !== undefined && alternativeRoute === undefined) {
+            throw new MarketingDay0Error({ reason: "incomplete_route_contract" });
+          }
 
-      let packetByteCount = 0;
-      for (let attempt = 0; attempt < 16; attempt += 1) {
-        const packet = decodePacket(buildPacket(packetByteCount, zeroDigest));
-        const nextByteCount = Buffer.byteLength(
-          canonicalJson(encodedJson(encodePacketJson, packet)),
-          "utf8",
-        );
-        if (nextByteCount === packetByteCount) break;
-        packetByteCount = nextByteCount;
-      }
-      if (packetByteCount > MARKETING_DAY0_MAX_PACKET_BYTES) {
-        throw new MarketingDay0Error({ reason: "output_budget_exceeded" });
-      }
-      const measured = decodePacket(buildPacket(packetByteCount, zeroDigest));
-      const packetSha256 = sha256(canonicalJson(packetDigestJson(measured)));
-      const finalPacket = decodePacket(buildPacket(packetByteCount, packetSha256));
-      verifyDay0Packet(finalPacket);
-      return finalPacket;
-    },
-    catch: (cause) =>
-      isDay0Error(cause) ? cause : new MarketingDay0Error({ reason: "invalid_day0_input" }),
-  });
+          const zeroDigest = MarketingEvidenceSha256.make("0".repeat(64));
+          const evidenceSummary: MarketingDay0EvidenceSummary = {
+            contextPacketSha256: evidenceContext.receipt.packetSha256,
+            snapshotAsOf: evidenceContext.asOf,
+            sources: evidenceContext.sources,
+            selectedEvidence: evidenceContext.evidence,
+            acceptedFacts: evidenceContext.acceptedFacts,
+            assumptions: evidenceContext.assumptions,
+            conflicts: evidenceContext.conflicts,
+            gaps: evidenceContext.gaps,
+            readiness: evidenceContext.readiness,
+            unresolvedDecisions: evidenceContext.unresolvedDecisions,
+            receipt: evidenceContext.receipt,
+          };
+          const buildPacket = (
+            packetByteCount: number,
+            packetSha256: MarketingEvidenceSha256,
+          ): MarketingDay0OperatingPacket => ({
+            format: MARKETING_DAY0_FORMAT,
+            workspace: evidenceContext.workspace,
+            asOf: evidenceContext.asOf,
+            contextState: normalizedDraft.state,
+            pointOfView:
+              normalizedDraft.state === "useful-context"
+                ? { state: "ready", ...normalizedDraft.pointOfView }
+                : { state: "pending", reason: "contextless" },
+            hypothesis:
+              normalizedDraft.state === "useful-context"
+                ? { state: "ready", ...normalizedDraft.hypothesis }
+                : { state: "pending", reason: "contextless" },
+            immediateActions:
+              normalizedDraft.state === "useful-context" ? normalizedDraft.immediateActions : [],
+            routeRecommendation:
+              normalizedDraft.state === "useful-context" &&
+              recommendedRoute !== undefined &&
+              alternativeRoute !== undefined
+                ? {
+                    state: "recommended",
+                    route: recommendedRoute,
+                    rationale: normalizedDraft.routeRecommendation.rationale,
+                    support: normalizedDraft.routeRecommendation.support,
+                    alternative: alternativeRoute,
+                    alternativeAvailability: "explicit-override-only",
+                  }
+                : { state: "pending", reason: "contextless", candidates: routes },
+            routeCatalog: routeCatalog.binding,
+            questions: selectedQuestions.included,
+            evidence: evidenceSummary,
+            routeReview: { state: "pending", required: true },
+            activation: {
+              state: "dormant",
+              blockers: activationBlockers(
+                normalizedDraft.state,
+                evidenceContext.readiness,
+                recommendedRoute,
+              ),
+            },
+            receipt: {
+              format: MARKETING_DAY0_FORMAT,
+              policyRef: MARKETING_DAY0_POLICY_REF,
+              compiledAsOf: evidenceContext.asOf,
+              evidenceContextSha256: evidenceContext.receipt.packetSha256,
+              evidenceReceiptSha256,
+              routesSha256,
+              inputSha256,
+              contextState: normalizedDraft.state,
+              questionInputCount: selectedQuestions.inputCount,
+              questionIncludedKeys: selectedQuestions.included.map(({ key }) => key),
+              questionExcludedKeys: selectedQuestions.excluded,
+              packetByteCount,
+              packetSha256,
+            },
+          });
+
+          let packetByteCount = 0;
+          let packetByteCountConverged = false;
+          for (let attempt = 0; attempt < 16; attempt += 1) {
+            const packet = decodePacket(buildPacket(packetByteCount, zeroDigest));
+            const nextByteCount = Buffer.byteLength(
+              canonicalJson(encodedJson(encodePacketJson, packet)),
+              "utf8",
+            );
+            if (nextByteCount === packetByteCount) {
+              packetByteCountConverged = true;
+              break;
+            }
+            packetByteCount = nextByteCount;
+          }
+          if (!packetByteCountConverged) {
+            throw new MarketingDay0Error({ reason: "invalid_day0_input" });
+          }
+          if (packetByteCount > MARKETING_DAY0_MAX_PACKET_BYTES) {
+            throw new MarketingDay0Error({ reason: "output_budget_exceeded" });
+          }
+          const measured = decodePacket(buildPacket(packetByteCount, zeroDigest));
+          const packetSha256 = sha256(canonicalJson(packetDigestJson(measured)));
+          const finalPacket = decodePacket(buildPacket(packetByteCount, packetSha256));
+          verifyDay0Packet(finalPacket);
+          return finalPacket;
+        },
+        catch: (cause) =>
+          isDay0Error(cause) ? cause : new MarketingDay0Error({ reason: "invalid_day0_input" }),
+      }),
+  );
 }
 
 /**
- * Produces a version-pinned intent for a later canonical adapter. Accept and override are explicit,
- * but this pure result stays dormant and is not proof of review, persistence, or activation.
+ * Produces only an unverified choice intent. A later adapter must re-read the canonical packet head,
+ * bind actor/workspace/version/idempotency, save, and read back before review or activation.
  */
-export function prepareMarketingDay0RouteReview(
-  rawInput: PrepareMarketingDay0RouteReviewInput,
-): Effect.Effect<MarketingDay0RouteReviewIntent, MarketingDay0Error> {
+export function prepareUnverifiedMarketingDay0RouteChoice(
+  rawInput: PrepareUnverifiedMarketingDay0RouteChoiceInput,
+): Effect.Effect<MarketingDay0RouteChoiceIntent, MarketingDay0Error> {
   return Effect.try({
     try: () => {
       const packet = decodePacket(rawInput.packet);
       verifyDay0Packet(packet);
-      if (
-        rawInput.expectedPacketSha256 !== packet.receipt.packetSha256 ||
-        packet.routeRecommendation.state !== "recommended"
-      ) {
-        throw new MarketingDay0Error({ reason: "route_review_conflict" });
+      if (packet.routeRecommendation.state !== "recommended") {
+        throw new MarketingDay0Error({ reason: "route_not_registered" });
       }
-      const expectedVersion = decodeExpectedVersion(rawInput.expectedVersion);
-      const choice = decodeChoice(rawInput.choice);
+      const decodedChoice = decodeChoice(rawInput.choice);
+      const choice: MarketingDay0RouteChoice =
+        decodedChoice.kind === "override"
+          ? { kind: decodedChoice.kind, rationale: normalizeText(decodedChoice.rationale, true) }
+          : decodedChoice;
       const selectedRoute =
         choice.kind === "accept"
           ? packet.routeRecommendation.route
           : packet.routeRecommendation.alternative;
+      const laterAdapterRequirements = [
+        MarketingEvidenceStateCode.make("trusted-current-packet-reference-required"),
+        MarketingEvidenceStateCode.make("workspace-match-required"),
+        MarketingEvidenceStateCode.make("expected-version-required"),
+        MarketingEvidenceStateCode.make("idempotency-key-required"),
+        MarketingEvidenceStateCode.make("verified-actor-review-required"),
+        MarketingEvidenceStateCode.make("canonical-route-choice-save-required"),
+        MarketingEvidenceStateCode.make("canonical-readback-required"),
+        MarketingEvidenceStateCode.make("approved-route-catalog-snapshot-required"),
+      ];
       const activation: MarketingDay0ActivationState = {
         state: "dormant",
-        blockers: activationBlockers(selectedRoute).map((code) =>
+        blockers: activationBlockers(
+          packet.contextState,
+          packet.evidence.readiness,
+          selectedRoute,
+        ).map((code) =>
           code === "route-review-pending"
-            ? MarketingEvidenceStateCode.make("canonical-route-review-save-required")
+            ? MarketingEvidenceStateCode.make("unverified-route-choice-intent")
             : code,
         ),
       };
@@ -853,28 +922,28 @@ export function prepareMarketingDay0RouteReview(
         canonicalJson(
           decodeJson({
             packetSha256: packet.receipt.packetSha256,
-            expectedVersion,
             choice,
             selectedRoute,
+            laterAdapterRequirements,
           }),
         ),
       );
       const zeroDigest = MarketingEvidenceSha256.make("0".repeat(64));
       const buildIntent = (
         intentSha256: MarketingEvidenceSha256,
-      ): MarketingDay0RouteReviewIntent => ({
-        format: MARKETING_DAY0_REVIEW_INTENT_FORMAT,
+      ): MarketingDay0RouteChoiceIntent => ({
+        format: MARKETING_DAY0_ROUTE_CHOICE_INTENT_FORMAT,
         workspace: packet.workspace,
         packetSha256: packet.receipt.packetSha256,
-        expectedVersion,
         choice,
         selectedRoute,
-        state: "pending-canonical-save",
+        state: "unverified-pending-intent",
+        laterAdapterRequirements,
         activation,
         receipt: { inputSha256, intentSha256 },
       });
-      const measured = decodeReviewIntent(buildIntent(zeroDigest));
-      const measuredJson = encodedJson(encodeReviewIntentJson, measured);
+      const measured = decodeChoiceIntent(buildIntent(zeroDigest));
+      const measuredJson = encodedJson(encodeChoiceIntentJson, measured);
       if (
         measuredJson === null ||
         Array.isArray(measuredJson) ||
@@ -892,7 +961,7 @@ export function prepareMarketingDay0RouteReview(
       const intentSha256 = sha256(
         canonicalJson({ ...measuredObject, receipt: receiptWithoutDigest }),
       );
-      return decodeReviewIntent(buildIntent(intentSha256));
+      return decodeChoiceIntent(buildIntent(intentSha256));
     },
     catch: (cause) =>
       isDay0Error(cause) ? cause : new MarketingDay0Error({ reason: "invalid_day0_input" }),

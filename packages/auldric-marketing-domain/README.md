@@ -129,10 +129,20 @@ provide the approved Marketing request seam before a production caller can use i
 
 ## Pure Day 0 kernel
 
-`compileMarketingDay0` consumes one exact `auldric-marketing-evidence-context-v1` packet and
-verifies its packet digest, complete token count, budget, and included evidence/fact bindings before
-using it. The compiler accepts exactly two injected, versioned route projections—Marketing Strategy
-and GTM—with injected readiness. It deliberately does not own or seed issue #19's workflow catalog.
+`compileMarketingDay0` consumes only the process-local `VerifiedMarketingEvidenceContextPacket`
+capability returned by the authorized #9 service after its canonical source, fact, and plan head
+rechecks. At use time it replays the packet schema and semantic invariants, including normalized
+excerpt digests, total ordering and uniqueness, source/adapter allowlists, the complete
+inclusion/exclusion ledger, required and item token accounting, the full packet token count and
+digest, and the exact organization/project/workspace selection. A clone, serialized packet, or
+caller-reconstructed hash cannot mint that capability. The packet remains an `asOf` snapshot; a
+later persistence or activation adapter must revalidate current canonical heads.
+
+The compiler accepts exactly two injected, versioned route projections—Marketing Strategy at
+`marketing/workflow/marketing-strategy@1` and GTM at `marketing/workflow/gtm@1`—inside the exact
+`marketing/workflow-catalog@1` snapshot, with injected readiness. The snapshot verifier boundary is
+explicitly `injected-unapproved`, so it cannot confer activation authority before issue #19 lands.
+The kernel deliberately does not own or seed issue #19's workflow catalog.
 
 Receipt-backed commercial evidence selects the useful-context contract: a direct point of view,
 one confidence-bearing testable hypothesis with disconfirmation signals, two to four ordered
@@ -140,14 +150,18 @@ immediate actions, and exactly one recommended route. Every consequential statem
 an included evidence receipt digest. With no included evidence or accepted fact, the output remains
 contextless: point of view, hypothesis, and route stay pending, actions stay empty, and at most three
 deterministically ranked decision-changing questions remain. Both paths preserve exact source
-states, evidence references, accepted facts, assumptions, conflicts, gaps, readiness, unresolved
-decisions, and a deterministic Day 0 receipt.
+states, the selected evidence excerpts as inert typed data, the complete #9 receipt and omission
+ledger, accepted facts, assumptions, conflicts, gaps, readiness, unresolved decisions, and a
+deterministic bounded Day 0 receipt. Prompt-like text remains quoted evidence data and never becomes
+an instruction, role, tool call, or approval.
 
 The route review state is pending and activation is always dormant. The separate
-`prepareMarketingDay0RouteReview` function can produce an explicit accept or override intent pinned
-to the Day 0 digest and an expected canonical version, but that intent is only
-`pending-canonical-save`. It is not a persisted review, an approval, or an activation receipt. Issue
-#11 must supply consequential review/audit composition and #19 must supply approved workflow
-definitions/readiness before a later adapter can save the intent and activate a selected workflow.
-The pure kernel performs no I/O, persistence, provider/prompt/session/transport work, endpoint
-handling, UI work, 90-day planning, or Dev handoff.
+`prepareUnverifiedMarketingDay0RouteChoice` function can produce a normalized explicit accept or
+override choice, but the result is only an `unverified-pending-intent`. It does not claim a canonical
+head, expected-version conflict protection, actor review, persistence, approval, or activation. The
+intent enumerates the trusted current packet, workspace, version, idempotency, actor, save,
+read-back, and approved-catalog checks a later adapter must perform. Issue #11 must supply
+consequential review/audit composition and #19 must supply approved workflow definitions/readiness
+before that adapter can save the choice and activate a selected workflow. The pure kernel performs
+no I/O, persistence, provider/prompt/session/transport work, endpoint handling, UI work, 90-day
+planning, or Dev handoff.

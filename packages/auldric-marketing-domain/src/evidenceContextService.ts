@@ -59,9 +59,10 @@ import {
   MarketingRetrievedEvidence as MarketingRetrievedEvidenceSchema,
   type MarketingSourceObservation,
   type MarketingUnresolvedDecision,
+  verifyMarketingEvidenceContextPacketSemantics,
 } from "./evidenceContext.ts";
 import {
-  type MarketingEvidenceContextError,
+  MarketingEvidenceContextError,
   MarketingEvidenceSafeReference,
   MarketingEvidenceServiceError,
   MarketingEvidenceSourceAdapterError,
@@ -73,6 +74,71 @@ import {
 } from "./identity.ts";
 
 export { MarketingEvidenceRetrievalQuery } from "./evidenceContext.ts";
+
+declare const VerifiedMarketingEvidenceContextPacketTypeId: unique symbol;
+
+/**
+ * Process-local evidence capability returned only by the authorized #9 service after canonical
+ * head rechecks. Cloning, serializing, or reconstructing the packet loses the capability.
+ */
+export type VerifiedMarketingEvidenceContextPacket = MarketingEvidenceContextPacket & {
+  readonly [VerifiedMarketingEvidenceContextPacketTypeId]: true;
+};
+
+interface VerificationRecord {
+  readonly workspace: MarketingWorkspaceSelection;
+  readonly packetSha256: MarketingEvidenceSha256;
+}
+
+const verifiedPackets = new WeakMap<object, VerificationRecord>();
+
+function untrustedPacket(): MarketingEvidenceContextError {
+  return new MarketingEvidenceContextError({
+    reason: "invalid_context_input",
+    reference: MarketingEvidenceSafeReference.make("canonical-current-head-capability-required"),
+  });
+}
+
+/** Kept module-private so only this service can mint the process-local capability. */
+function trustMarketingEvidenceContextFromCanonicalReadback(input: {
+  readonly packet: MarketingEvidenceContextPacket;
+  readonly expectedWorkspace: MarketingWorkspaceSelection;
+}): Effect.Effect<VerifiedMarketingEvidenceContextPacket, MarketingEvidenceContextError> {
+  return Effect.map(
+    verifyMarketingEvidenceContextPacketSemantics({
+      packet: input.packet,
+      expectedWorkspace: input.expectedWorkspace,
+    }),
+    (packet) => {
+      verifiedPackets.set(packet, {
+        workspace: { ...input.expectedWorkspace },
+        packetSha256: packet.receipt.packetSha256,
+      });
+      return packet as VerifiedMarketingEvidenceContextPacket;
+    },
+  );
+}
+
+/**
+ * Semantically re-verifies the exact capability object at use time. This proves the packet's
+ * trusted snapshot origin and integrity, never that its canonical heads remain current later.
+ */
+export function readVerifiedMarketingEvidenceContext(
+  packet: VerifiedMarketingEvidenceContextPacket,
+): Effect.Effect<MarketingEvidenceContextPacket, MarketingEvidenceContextError> {
+  const record = verifiedPackets.get(packet);
+  if (record === undefined) return Effect.fail(untrustedPacket());
+  return Effect.flatMap(
+    verifyMarketingEvidenceContextPacketSemantics({
+      packet,
+      expectedWorkspace: record.workspace,
+    }),
+    (verified) =>
+      verified.receipt.packetSha256 === record.packetSha256
+        ? Effect.succeed(verified)
+        : Effect.fail(untrustedPacket()),
+  );
+}
 
 export interface MarketingEvidenceSourceAdapter<RequestAuthority> {
   readonly key: MarketingCanonicalRegistryKey;
@@ -165,7 +231,7 @@ export interface MarketingEvidenceContextService<RequestAuthority> {
   >;
   readonly compileContext: (
     input: CompileMarketingEvidenceServiceInput<RequestAuthority>,
-  ) => Effect.Effect<MarketingEvidenceContextPacket, MarketingEvidenceContextServiceError>;
+  ) => Effect.Effect<VerifiedMarketingEvidenceContextPacket, MarketingEvidenceContextServiceError>;
   readonly acceptFact: (
     input: AcceptMarketingEvidenceFactInput<RequestAuthority>,
   ) => Effect.Effect<MarketingAcceptedFact, MarketingEvidenceContextServiceError>;
@@ -758,7 +824,7 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         }
       }
 
-      return yield* compileMarketingEvidenceContext({
+      const packet: MarketingEvidenceContextPacket = yield* compileMarketingEvidenceContext({
         workspace: input.selection,
         asOf,
         ...(plan === undefined ? {} : { plan }),
@@ -783,6 +849,10 @@ export function makeMarketingEvidenceContextService<RequestAuthority>(
         budget,
         sourceExclusions,
         supersededFacts,
+      });
+      return yield* trustMarketingEvidenceContextFromCanonicalReadback({
+        packet,
+        expectedWorkspace: input.selection,
       });
     });
 
