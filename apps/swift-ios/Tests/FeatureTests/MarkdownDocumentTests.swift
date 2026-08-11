@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import T3Code
 
 @Suite("Chat Markdown")
@@ -262,5 +263,137 @@ struct MarkdownDocumentTests {
         #expect(runs.contains { $0.inlinePresentationIntent?.contains(.emphasized) == true })
         #expect(runs.contains { $0.inlinePresentationIntent?.contains(.code) == true })
         #expect(runs.contains { $0.link == URL(string: "https://example.com") })
+    }
+
+    @Test @MainActor
+    func selectableTextAttributesPreserveInlineFormatting() throws {
+        let revision = MarkdownContentRevision(
+            "Use **bold**, *emphasis*, `code`, ~~removed~~, and [docs](https://example.com)."
+        )
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(for: revision)
+        )
+        guard case let .paragraph(inline) = document.blocks.first else {
+            Issue.record("Expected a rendered paragraph")
+            return
+        }
+
+        let attributed = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 4,
+            foregroundColor: T3Colors.uiTextSecondary
+        )
+        let text = attributed.string as NSString
+        let boldIndex = try #require(index(of: "bold", in: text))
+        let emphasisIndex = try #require(index(of: "emphasis", in: text))
+        let codeIndex = try #require(index(of: "code", in: text))
+        let removedIndex = try #require(index(of: "removed", in: text))
+        let linkIndex = try #require(index(of: "docs", in: text))
+
+        let boldFont = try #require(
+            attributed.attribute(.font, at: boldIndex, effectiveRange: nil) as? UIFont
+        )
+        let emphasisFont = try #require(
+            attributed.attribute(.font, at: emphasisIndex, effectiveRange: nil) as? UIFont
+        )
+        let codeFont = try #require(
+            attributed.attribute(.font, at: codeIndex, effectiveRange: nil) as? UIFont
+        )
+        let paragraphStyle = try #require(
+            attributed.attribute(.paragraphStyle, at: 0, effectiveRange: nil)
+                as? NSParagraphStyle
+        )
+
+        #expect(boldFont.fontDescriptor.symbolicTraits.contains(.traitBold))
+        #expect(emphasisFont.fontDescriptor.symbolicTraits.contains(.traitItalic))
+        #expect(codeFont.fontDescriptor.symbolicTraits.contains(.traitMonoSpace))
+        #expect(attributed.attribute(.backgroundColor, at: codeIndex, effectiveRange: nil) != nil)
+        #expect(
+            attributed.attribute(.strikethroughStyle, at: removedIndex, effectiveRange: nil)
+                as? Int == NSUnderlineStyle.single.rawValue
+        )
+        #expect(
+            attributed.attribute(.foregroundColor, at: boldIndex, effectiveRange: nil)
+                as? UIColor == T3Colors.uiTextSecondary
+        )
+        #expect(
+            attributed.attribute(.link, at: linkIndex, effectiveRange: nil) as? URL
+                == URL(string: "https://example.com")
+        )
+        #expect(
+            attributed.string
+                == "Use bold, emphasis, code, removed, and docs."
+        )
+        #expect(paragraphStyle.lineSpacing == 4)
+    }
+
+    @Test @MainActor
+    func codeBlocksReuseSelectableInlineRendering() throws {
+        let literalCode = "x = arr[i](fn)\na **b** c\nprintf(\\\"a\\\\tb\\\");"
+        let cache = MarkdownRenderCache()
+        let first = try #require(
+            cache.documentImmediately(
+                for: MarkdownContentRevision("```swift\n\(literalCode)\n```")
+            )
+        )
+        let second = try #require(
+            cache.documentImmediately(
+                for: MarkdownContentRevision("Before\n\n```swift\n\(literalCode)\n```")
+            )
+        )
+
+        guard case let .codeBlock(_, firstCode, firstInline) = first.blocks.first,
+            case let .codeBlock(_, secondCode, secondInline) = second.blocks.last
+        else {
+            Issue.record("Expected rendered code blocks")
+            return
+        }
+
+        #expect(firstCode == literalCode)
+        #expect(secondCode == firstCode)
+        #expect(firstInline === secondInline)
+        #expect(firstInline.style == .code)
+
+        let attributed = MarkdownSelectableTextAttributes.make(
+            from: firstInline,
+            lineSpacing: 3
+        )
+        let font = try #require(
+            attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        )
+        #expect(attributed.string == firstCode)
+        #expect(font.fontDescriptor.symbolicTraits.contains(.traitMonoSpace))
+    }
+
+    @Test
+    func restoresSelectionOnlyWhenTextIsExtended() {
+        let selection = NSRange(location: 7, length: 5)
+
+        #expect(
+            MarkdownSelectionRestoration.range(
+                previousText: "Hello, world",
+                previousRange: selection,
+                newText: "Hello, world!"
+            ) == selection
+        )
+        #expect(
+            MarkdownSelectionRestoration.range(
+                previousText: "Hello, world",
+                previousRange: selection,
+                newText: "Different text"
+            ) == NSRange(location: 0, length: 0)
+        )
+        #expect(
+            MarkdownSelectionRestoration.range(
+                previousText: "Hello, world",
+                previousRange: NSRange(location: 7, length: 20),
+                newText: "Hello, world!"
+            ) == NSRange(location: 0, length: 0)
+        )
+    }
+
+    private func index(of substring: String, in text: NSString) -> Int? {
+        let range = text.range(of: substring)
+        return range.location == NSNotFound ? nil : range.location
     }
 }

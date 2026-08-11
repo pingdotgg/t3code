@@ -7,6 +7,7 @@ enum T3Colors {
     // system appearance changes as SwiftUI views.
     static let uiBackground = adaptive(light: rgb(0xF2F2F7), dark: rgb(0x0A0A0A))
     static let uiTextPrimary = adaptive(light: rgb(0x262626), dark: rgb(0xF5F5F5))
+    static let uiTextSecondary = adaptive(light: rgb(0x525252), dark: rgb(0xA3A3A3))
 
     static let background = Color(uiColor: uiBackground)
     static let sheet = color(light: rgb(0xF2F2F7, alpha: 0.98), dark: rgb(0x0E0E0E, alpha: 0.98))
@@ -26,7 +27,7 @@ enum T3Colors {
     static let ledgerSelected = surfaceRaised
 
     static let textPrimary = Color(uiColor: uiTextPrimary)
-    static let textSecondary = color(light: rgb(0x525252), dark: rgb(0xA3A3A3))
+    static let textSecondary = Color(uiColor: uiTextSecondary)
     static let textTertiary = color(light: rgb(0x737373), dark: rgb(0x8E8E93))
     static let placeholder = color(light: rgb(0xA3A3A3), dark: rgb(0x8E8E93))
 

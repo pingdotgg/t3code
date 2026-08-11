@@ -187,7 +187,10 @@ private struct FeatureFilePreviewView: View {
                     switch previewKind {
                     case .markdown:
                         ScrollView {
-                            MarkdownMessageView(content.text)
+                            MarkdownMessageView(
+                                content.text,
+                                copyActionTitle: "Copy file contents"
+                            )
                                 .frame(maxWidth: T3Metrics.readingWidth, alignment: .leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 18)

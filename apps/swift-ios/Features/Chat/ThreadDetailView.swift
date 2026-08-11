@@ -1155,7 +1155,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             (scrollView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor = false
-            scrollView.window?.endEditing(false)
             onDismissKeyboard?()
         }
 
