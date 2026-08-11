@@ -51,7 +51,7 @@ export function parseSnoozeForInput(
   input: string,
   options: { readonly now: Date },
 ): SnoozeForInputResult {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(input);
+  const match = /^(\d{4,})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(input);
   if (!match) return { ok: false, error: "Choose a valid date and time." };
   const parts = match.slice(1).map(Number) as unknown as readonly [
     number,
