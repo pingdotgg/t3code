@@ -721,6 +721,60 @@ it.effect("carries persisted cursor and cwd across continuation-compatible insta
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("carries Claude Code history across account instances sharing a home", () => {
+  const sourceInstanceId = ProviderInstanceId.make("claude_personal");
+  const targetInstanceId = ProviderInstanceId.make("claude_proxy");
+  const source = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const target = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+  const registry = makeMultiInstanceRegistry([
+    {
+      instanceId: sourceInstanceId,
+      adapter: source.adapter,
+      continuationKey: "claude:home:/tmp/shared-claude-home",
+    },
+    {
+      instanceId: targetInstanceId,
+      adapter: target.adapter,
+      continuationKey: "claude:home:/tmp/shared-claude-home",
+    },
+  ]);
+  const layer = makeIsolatedProviderServiceLayer(registry.registry);
+
+  return Effect.gen(function* () {
+    const provider = yield* ProviderService.ProviderService;
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+    const threadId = asThreadId("thread-compatible-claude-account-switch");
+    const resumeCursor = { resume: "47e58912-274d-49fe-94c7-95b8c817f115" };
+    yield* directory.upsert({
+      threadId,
+      provider: CLAUDE_AGENT_DRIVER,
+      providerInstanceId: sourceInstanceId,
+      runtimeMode: "full-access",
+      status: "stopped",
+      resumeCursor,
+      runtimePayload: { cwd: "/tmp/original-project" },
+    });
+    target.startSession.mockClear();
+
+    yield* provider.startSession(threadId, {
+      threadId,
+      provider: CLAUDE_AGENT_DRIVER,
+      providerInstanceId: targetInstanceId,
+      runtimeMode: "full-access",
+    });
+
+    assert.equal(target.startSession.mock.calls.length, 1);
+    assert.deepEqual(target.startSession.mock.calls[0]?.[0], {
+      threadId,
+      provider: CLAUDE_AGENT_DRIVER,
+      providerInstanceId: targetInstanceId,
+      runtimeMode: "full-access",
+      cwd: "/tmp/original-project",
+      resumeCursor,
+    });
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("preserves a persisted binding when continuation identities are incompatible", () => {
   const sourceInstanceId = ProviderInstanceId.make("codex_personal");
   const targetInstanceId = ProviderInstanceId.make("codex_proxy");
