@@ -151,6 +151,18 @@ export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   return raw;
 }
 
+/**
+ * What the file was called before the change. Only a rename makes it differ from the current
+ * path, and the hosts that resolve a diff position against both sides need both names.
+ */
+export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string {
+  const raw = fileDiff.prevName ?? fileDiff.name ?? "";
+  if (raw.startsWith("a/") || raw.startsWith("b/")) {
+    return raw.slice(2);
+  }
+  return raw;
+}
+
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   const cacheKey = fileDiff.cacheKey;
   if (!cacheKey) return `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
