@@ -484,8 +484,11 @@ export const make = Effect.gen(function* () {
               });
               const entry = lsTree.stdout.trim();
               if (entry.length === 0) {
-                // Deleted locally: drop it from the final tree too.
-                indexInfoLines.push(`000000 ${"0".repeat(40)}\t${conflictPath}`);
+                // Deleted locally: drop it from the final tree too. The zero
+                // OID width must match the repo's hash algorithm (64 hex
+                // chars for SHA-256, not just SHA-1's 40) — mergedTree is a
+                // real oid from this same repo, so its length is authoritative.
+                indexInfoLines.push(`000000 ${"0".repeat(mergedTree.length)}\t${conflictPath}`);
               } else {
                 // Matches both plain blobs and submodule gitlinks (mode
                 // 160000, type commit) — a conflicted gitlink otherwise

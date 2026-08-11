@@ -2145,9 +2145,21 @@ const makeWsRpcLayer = (
               if (!isMirrored) {
                 return yield* new MirrorProjectNotMirroredError({ projectId: input.projectId });
               }
+              const peerSubject = `mirror-peer:${input.projectId}`;
+              // Reissuing a credential (e.g. moving the mirror to a new
+              // origin) must not leave the previous origin's token live:
+              // mirrorConnect authorizes solely by matching this subject, so
+              // an un-revoked prior token could still reconnect and displace
+              // the new origin's live connection.
+              const existingSessions = yield* serverAuth.listSessions().pipe(Effect.orDie);
+              yield* Effect.forEach(
+                existingSessions.filter((session) => session.subject === peerSubject),
+                (session) => serverAuth.revokeSession(session.sessionId).pipe(Effect.orDie),
+                { discard: true },
+              );
               const issued = yield* serverAuth
                 .issueSession({
-                  subject: `mirror-peer:${input.projectId}`,
+                  subject: peerSubject,
                   scopes: [AuthMirrorSyncScope],
                   label: `Mirror peer (${input.originEnvironmentId})`,
                   ttl: Duration.days(365),

@@ -82,9 +82,16 @@ function EnvironmentMirrorLinks({
   );
 
   const links = linksQuery.data?.links ?? [];
-  if (links.length === 0) return null;
+  if (links.length === 0 && linksQuery.error === null) return null;
   return (
     <>
+      {linksQuery.error !== null ? (
+        <SettingsRow
+          title={`Shared folders on ${environmentLabel} are unavailable`}
+          description={linksQuery.error}
+          className="text-warning"
+        />
+      ) : null}
       {links.map((link) => (
         <SettingsRow
           key={`${environmentId}:${link.projectId}`}

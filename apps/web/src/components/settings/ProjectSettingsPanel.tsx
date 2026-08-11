@@ -450,7 +450,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   // ----- mirror: sync gitignored env files -----
-  const isMirrored = representative.origin != null;
+  const isMirrored = group.memberProjects.some((member) => member.origin != null);
   const mirrorIncludeIgnoredFiles = representative.mirrorIncludeIgnoredFiles ?? false;
   const setMirrorIncludeIgnoredFiles = useCallback(
     (enabled: boolean) =>

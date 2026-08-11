@@ -678,7 +678,6 @@ export const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const client = yield* RpcClient.make(WsRpcGroup);
       const connectionIdRef = yield* Ref.make<string | null>(null);
-      const revoked = yield* Ref.make(false);
       yield* client[WS_METHODS.mirrorConnect]({
         projectId: link.projectId,
         supportsSubmodules: true,
@@ -712,7 +711,12 @@ export const make = Effect.gen(function* () {
             const connectionId = yield* Ref.get(connectionIdRef);
             if (connectionId === null || event.connectionId !== connectionId) return;
             if (event.directive.type === "link-revoked") {
-              yield* Ref.set(revoked, true);
+              // Delete the link row here, not after the stream fails below:
+              // failing this Effect.gen short-circuits past the post-stream
+              // wasRevoked check, so runAgent's retry schedule would
+              // otherwise reconnect with the revoked token every 15 seconds
+              // forever instead of ever dropping the stale link.
+              yield* deleteLink(link.projectId);
               return yield* new MirrorSyncFailedError({
                 projectId: link.projectId,
                 detail: "The host revoked this mirror link.",
@@ -745,10 +749,6 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
-      const wasRevoked = yield* Ref.get(revoked);
-      if (wasRevoked) {
-        yield* deleteLink(link.projectId);
-      }
     }).pipe(Effect.provide(protocolLayer), Effect.scoped);
   });
 

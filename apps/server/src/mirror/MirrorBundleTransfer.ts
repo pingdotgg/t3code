@@ -125,9 +125,14 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const stagingDir = path.join(config.mirrorsDir, ".staging");
-  yield* fileSystem.makeDirectory(stagingDir, { recursive: true }).pipe(Effect.ignore);
+  yield* fileSystem.makeDirectory(stagingDir, { recursive: true });
 
   // Single-use guard keyed by token payload; entries expire with the token.
+  // In-memory only: a server restart within a token's (now 30-minute) TTL
+  // clears this and lets an already-consumed token be replayed once more.
+  // Accepted trade-off — the replay window is bounded by the TTL and
+  // requires the attacker to already hold a captured signed URL; closing it
+  // fully would mean persisting consumed-token state.
   const usedTokens = yield* SynchronizedRef.make<ReadonlyMap<string, number>>(new Map());
 
   const loadSigningSecret = secretStore

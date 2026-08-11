@@ -94,6 +94,7 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 /** How long an offline-gate failure keeps offering the stale-run override. */
 const STALE_RUN_OFFER_WINDOW_MS = Duration.toMillis(Duration.minutes(10));
+const STALE_RUN_OFFER_WINDOW_NANOS = Duration.toNanosUnsafe(Duration.minutes(10));
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
 const MAX_REGENERATION_ATTACHMENTS = 4;
@@ -331,9 +332,11 @@ const make = Effect.gen(function* () {
   // just threadId) so a different message on the same thread — from this
   // user or another client — can't silently ride the open offer into a
   // stale-run turn.
+  // offeredAt is monotonic-clock nanoseconds, not wall-clock time: a system
+  // clock correction must not extend (or shrink) the acceptance window.
   const staleRunOffers = new Map<
     string,
-    { readonly messageId: string; readonly offeredAt: number }
+    { readonly messageId: string; readonly offeredAt: bigint }
   >();
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
@@ -1181,12 +1184,12 @@ const make = Effect.gen(function* () {
     // baseline, which is captured on the provider's turn.started event.
     const gateProject = yield* resolveProject(thread.projectId);
     if (gateProject?.origin != null) {
-      const now = yield* Clock.currentTimeMillis;
+      const now = yield* Clock.monotonicTimeNanos;
       const offer = staleRunOffers.get(event.payload.threadId);
       const staleRunApproved =
         offer !== undefined &&
         offer.messageId === event.payload.messageId &&
-        now - offer.offeredAt <= STALE_RUN_OFFER_WINDOW_MS;
+        now - offer.offeredAt <= STALE_RUN_OFFER_WINDOW_NANOS;
       staleRunOffers.delete(event.payload.threadId);
       if (staleRunApproved) {
         yield* appendProviderFailureActivity({

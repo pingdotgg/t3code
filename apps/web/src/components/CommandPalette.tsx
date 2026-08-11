@@ -596,6 +596,9 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const deleteProject = useAtomCommand(projectEnvironment.delete, {
+    reportFailure: false,
+  });
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -1950,11 +1953,22 @@ function OpenCommandPaletteDialog(props: {
           return;
         }
 
+        // The host project already exists past this point: any failure
+        // below must roll it back, or a broken/non-git origin folder (and
+        // every retry, since each mints a fresh projectId) leaves an
+        // orphaned mirrored project persisted on the host forever.
+        const rollbackHostProject = () =>
+          void deleteProject({
+            environmentId: flow.hostEnvironmentId,
+            input: { projectId },
+          });
+
         const credentialResult = await createMirrorPeerCredential({
           environmentId: flow.hostEnvironmentId,
           input: { projectId, originEnvironmentId: flow.originEnvironmentId },
         });
         if (credentialResult._tag === "Failure") {
+          rollbackHostProject();
           if (!isAtomCommandInterrupted(credentialResult)) {
             toastManager.add(
               stackedThreadToast({
@@ -1977,6 +1991,7 @@ function OpenCommandPaletteDialog(props: {
           },
         });
         if (attachResult._tag === "Failure") {
+          rollbackHostProject();
           if (!isAtomCommandInterrupted(attachResult)) {
             const error = squashAtomCommandFailure(attachResult);
             toastManager.add(
@@ -2015,6 +2030,7 @@ function OpenCommandPaletteDialog(props: {
       attachMirrorOrigin,
       createMirrorPeerCredential,
       createProject,
+      deleteProject,
       environments,
       handleNewThread,
       isMirrorProjectLinking,

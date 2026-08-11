@@ -647,13 +647,27 @@ export const make = Effect.gen(function* () {
       ref: `refs/heads/${entry.ref.slice("refs/t3/mirror/incoming/".length)}`,
       oid: entry.oid,
     }));
-    yield* gitSync.applyBranchUpdates({ root, refUpdates: updates });
+    // The checked-out branch must be fast-forwarded via
+    // applyBranchUpdatesToCurrent (which also updates the working tree and
+    // index) — applyBranchUpdates alone parks any checked-out branch instead
+    // of advancing it, since it isn't safe to move refs/heads/<name> for a
+    // branch that's the current HEAD without also touching the worktree.
+    const currentBranch = yield* gitSync.symbolicHead(root);
+    const currentUpdate = updates.find((update) => update.ref === currentBranch);
+    const remainingUpdates =
+      currentUpdate !== undefined
+        ? updates.filter((update) => update.ref !== currentBranch)
+        : updates;
+    if (currentUpdate !== undefined) {
+      yield* gitSync.applyBranchUpdatesToCurrent({
+        root,
+        ref: currentUpdate.ref,
+        oid: currentUpdate.oid,
+      });
+    }
+    yield* gitSync.applyBranchUpdates({ root, refUpdates: remainingUpdates });
     for (const entry of incoming) {
       yield* gitSync.updateRef(root, entry.ref, null);
-    }
-    const currentBranch = yield* gitSync.symbolicHead(root);
-    if (currentBranch !== null && updates.some((update) => update.ref === currentBranch)) {
-      yield* gitSync.resetIndexToHead(root);
     }
     return updates;
   });
@@ -750,12 +764,14 @@ export const make = Effect.gen(function* () {
     readonly gitlinkPath: string;
     readonly fullPath: string;
     readonly priorOid: string | null;
+    readonly priorState: SubmoduleState;
     readonly nextState: Record<string, { lastSyncedSnapshotOid: string }>;
     readonly warnings: Array<{ path: string; detail: string }>;
     readonly depth: number;
   }): Effect.Effect<void> =>
     Effect.gen(function* () {
-      const { ctx, root, gitlinkPath, fullPath, priorOid, nextState, warnings, depth } = params;
+      const { ctx, root, gitlinkPath, fullPath, priorOid, priorState, nextState, warnings, depth } =
+        params;
       const syncId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const nestedRoot = path.join(root, gitlinkPath);
       const outcome = yield* Effect.gen(function* () {
@@ -839,7 +855,12 @@ export const make = Effect.gen(function* () {
         targetTreeOid: nestedTargetTree,
         pathPrefix: fullPath,
         depth: depth + 1,
-        priorState: {},
+        // priorState is keyed by full root-relative path (walkGitlinks
+        // reconstructs the same fullPath at any depth via pathPrefix), so
+        // the original flat state — not an empty object — is what lets an
+        // unchanged nested gitlink resolve its real priorOid instead of
+        // being treated as never-synced and re-seeded from scratch.
+        priorState,
         nextState,
         warnings,
       });
@@ -888,6 +909,7 @@ export const make = Effect.gen(function* () {
           gitlinkPath: entry.path,
           fullPath,
           priorOid,
+          priorState,
           nextState,
           warnings,
           depth,
@@ -912,6 +934,7 @@ export const make = Effect.gen(function* () {
           gitlinkPath: link.path,
           fullPath,
           priorOid: null,
+          priorState,
           nextState,
           warnings,
           depth,
