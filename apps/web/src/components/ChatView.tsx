@@ -2352,6 +2352,7 @@ function ChatViewContent(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
+  const hasRevertingCheckpoint = revertingCheckpointThreadKeys.size > 0;
   const isRevertingCheckpoint = revertingCheckpointThreadKeys.has(routeThreadKey);
   const isRestoringRevertedMessage =
     pendingRevertedMessageRestore !== null &&
@@ -4082,6 +4083,7 @@ function ChatViewContent(props: ChatViewProps) {
     const pending = pendingRevertedMessageRestore;
     if (
       !pending ||
+      threadDetailLoading ||
       revertObservedThreadId !== pending.threadRef.threadId ||
       !revertObservedActivities ||
       !revertObservedMessages
@@ -4259,6 +4261,7 @@ function ChatViewContent(props: ChatViewProps) {
     setComposerDraftPrompt,
     setComposerDraftReviewComments,
     setComposerDraftTerminalContexts,
+    threadDetailLoading,
   ]);
 
   useEffect(() => {
@@ -5069,7 +5072,7 @@ function ChatViewContent(props: ChatViewProps) {
   const onRevertToTurnCount = useCallback(
     async (turnCount: number, message: ChatMessage) => {
       const localApi = readLocalApi();
-      if (!localApi || !activeThread || isRevertingCheckpoint || pendingRevertedMessageRestore) {
+      if (!localApi || !activeThread || hasRevertingCheckpoint || pendingRevertedMessageRestore) {
         return;
       }
       const threadId = activeThread.id;
@@ -5169,7 +5172,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeEnvironmentUnavailableLabel,
       environmentId,
       isConnecting,
-      isRevertingCheckpoint,
+      hasRevertingCheckpoint,
       isSendBusy,
       pendingRevertedMessageRestore,
       phase,
@@ -6542,7 +6545,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenTurnDiff={onOpenTurnDiff}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
-                isRevertingCheckpoint={isRevertingCheckpoint}
+                isRevertingCheckpoint={hasRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
                 resolvedTheme={resolvedTheme}
