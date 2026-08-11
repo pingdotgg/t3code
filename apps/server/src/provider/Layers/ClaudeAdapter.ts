@@ -3520,6 +3520,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // message types fail typecheck here instead of warning at runtime.
         message satisfies never;
         const unknownMessage = message as never as { type: string };
+        // `command_lifecycle` ships in newer SDK builds than the
+        // `@anthropic-ai/claude-agent-sdk` version types this file against,
+        // so it isn't (yet) a real case above. It's internal bookkeeping
+        // (command_uuid/state) with no T3 surface — consume it deliberately
+        // instead of surfacing an opaque runtime-warning work-log row.
+        if (unknownMessage.type === "command_lifecycle") {
+          return;
+        }
         yield* emitRuntimeWarning(
           context,
           describeUnknownSdkMessage(`Claude SDK message '${unknownMessage.type}'`, message),
