@@ -1,8 +1,14 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useMemo, useRef, useState } from "react";
 
-import type { DailyTotals } from "@t3tools/shared/usageMerge";
-import { formatDayShort, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
+import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
+import {
+  formatDayShort,
+  formatHourShort,
+  formatRelativeHourShort,
+  formatTokens,
+  formatUsd,
+} from "@t3tools/shared/usageFormat";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
@@ -15,7 +21,12 @@ export type UsageChartMetric = "tokens" | "cost";
 interface UsageProviderChartProps {
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
+  readonly hours: readonly string[];
+  readonly hourly: readonly HourlyTotals[];
   readonly metric: UsageChartMetric;
+  readonly referenceTime: string | undefined;
+  readonly resolution: "day" | "hour";
+  readonly timeZone: string;
 }
 
 /** One day's per-provider values, shared by the paths and the hover readout. */
@@ -33,13 +44,28 @@ interface Point {
 }
 
 function valueFor(
-  daily: DailyTotals | undefined,
+  totals: DailyTotals | HourlyTotals | undefined,
   provider: UsageProviderKind,
   metric: UsageChartMetric,
 ): number {
-  const entry = daily?.byProvider.get(provider);
+  const entry = totals?.byProvider.get(provider);
   if (entry === undefined) return 0;
   return metric === "tokens" ? entry.totalTokens : entry.costUsd;
+}
+
+function buildPeriodColumns(
+  periods: readonly string[],
+  byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
+  metric: UsageChartMetric,
+): readonly DayColumn[] {
+  return periods.map((period) => {
+    const entry = byPeriod.get(period);
+    const bands = PROVIDER_ORDER.map((provider) => ({
+      provider,
+      value: valueFor(entry, provider, metric),
+    }));
+    return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
+  });
 }
 
 /**
@@ -167,23 +193,32 @@ export function buildDayColumns(
   byDay: ReadonlyMap<string, DailyTotals>,
   metric: UsageChartMetric,
 ): readonly DayColumn[] {
-  return days.map((day) => {
-    const entry = byDay.get(day);
-    const bands = PROVIDER_ORDER.map((provider) => ({
-      provider,
-      value: valueFor(entry, provider, metric),
-    }));
-    return { bands, total: bands.reduce((sum, band) => sum + band.value, 0) };
-  });
+  return buildPeriodColumns(days, byDay, metric);
 }
 
-export function UsageProviderChart({ days, daily, metric }: UsageProviderChartProps) {
-  const byDay = useMemo(() => new Map(daily.map((entry) => [entry.day, entry])), [daily]);
+export function UsageProviderChart({
+  days,
+  daily,
+  hours,
+  hourly,
+  metric,
+  referenceTime,
+  resolution,
+  timeZone,
+}: UsageProviderChartProps) {
+  const periods = resolution === "hour" ? hours : days;
+  const byPeriod = useMemo(
+    () =>
+      resolution === "hour"
+        ? new Map(hourly.map((entry) => [entry.hourStart, entry]))
+        : new Map(daily.map((entry) => [entry.day, entry])),
+    [daily, hourly, resolution],
+  );
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
 
   const { paths, ticks, stepX, toY, series } = useMemo(() => {
-    if (days.length === 0) {
+    if (periods.length === 0) {
       return {
         paths: [],
         ticks: [0] as readonly number[],
@@ -193,7 +228,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
       };
     }
 
-    const columns = buildDayColumns(days, byDay, metric);
+    const columns = buildPeriodColumns(periods, byPeriod, metric);
 
     // The scale tops out at the largest single provider-day, not the largest
     // sum: layered series each measure from zero, so a combined peak would
@@ -203,7 +238,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
       0,
     );
     const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
-    const step = days.length === 1 ? 0 : VIEW_WIDTH / (days.length - 1);
+    const step = periods.length === 1 ? 0 : VIEW_WIDTH / (periods.length - 1);
     // Reserve a sliver above the top gridline so the series stroke, which is
     // drawn at constant screen width, is not shaved off at a peak.
     const toY = (value: number) =>
@@ -231,24 +266,30 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
     const ordered = [...built].sort((a, b) => b.total - a.total);
 
     return { paths: ordered, ticks: tickValues, stepX: step, toY, series: columns };
-  }, [byDay, days, metric]);
+  }, [byPeriod, metric, periods]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
   const handleMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const bounds = plotRef.current?.getBoundingClientRect();
-      if (bounds === undefined || bounds.width === 0 || days.length === 0) return;
+      if (bounds === undefined || bounds.width === 0 || periods.length === 0) return;
       const fraction = (event.clientX - bounds.left) / bounds.width;
-      const index = Math.round(fraction * (days.length - 1));
-      setHoverIndex(Math.min(days.length - 1, Math.max(0, index)));
+      const index = Math.round(fraction * (periods.length - 1));
+      setHoverIndex(Math.min(periods.length - 1, Math.max(0, index)));
     },
-    [days.length],
+    [periods.length],
   );
 
-  const hoveredDay = hoverIndex === null ? undefined : days[hoverIndex];
+  const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
-  const hoverLeft = days.length <= 1 ? 0 : ((hoverIndex ?? 0) / (days.length - 1)) * 100;
+  const hoverLeft = periods.length <= 1 ? 0 : ((hoverIndex ?? 0) / (periods.length - 1)) * 100;
+  const formatPeriod = (period: string) =>
+    resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
+  const formatTooltipPeriod = (period: string) =>
+    resolution === "hour" && referenceTime !== undefined
+      ? formatRelativeHourShort(period, referenceTime, timeZone)
+      : formatPeriod(period);
 
   return (
     <div className="flex flex-col gap-1">
@@ -277,7 +318,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             role="img"
-            aria-label={`Daily ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+            aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
           >
             {ticks.map((tick) => {
               const y = toY(tick);
@@ -325,7 +366,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
             )}
           </svg>
 
-          {hoveredDay === undefined ? null : (
+          {hoveredPeriod === undefined ? null : (
             <div
               className="pointer-events-none absolute top-0 z-10 min-w-36 border border-border bg-background/95 px-2 py-1.5 text-xs"
               style={{
@@ -333,7 +374,7 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
                 transform: hoverLeft > 60 ? "translateX(-100%)" : "translateX(0)",
               }}
             >
-              <div className="mb-1 text-muted-foreground">{formatDayShort(hoveredDay)}</div>
+              <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
               {PROVIDER_ORDER.map((provider) => {
                 const Mark = PROVIDER_MARK[provider];
                 return (
@@ -362,14 +403,16 @@ export function UsageProviderChart({ days, daily, metric }: UsageProviderChartPr
       </div>
 
       <div className="flex justify-between pl-16 text-[10px] text-muted-foreground uppercase">
-        <span>{days[0] === undefined ? "" : formatDayShort(days[0])}</span>
+        <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
         <span>
-          {days[Math.floor(days.length / 2)] === undefined
+          {periods[Math.floor(periods.length / 2)] === undefined
             ? ""
-            : formatDayShort(days[Math.floor(days.length / 2)] ?? "")}
+            : formatPeriod(periods[Math.floor(periods.length / 2)] ?? "")}
         </span>
         <span>
-          {days[days.length - 1] === undefined ? "" : formatDayShort(days[days.length - 1] ?? "")}
+          {periods[periods.length - 1] === undefined
+            ? ""
+            : formatPeriod(periods[periods.length - 1] ?? "")}
         </span>
       </div>
     </div>

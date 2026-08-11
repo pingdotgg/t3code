@@ -45,6 +45,14 @@ export interface DailyTotals {
   readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
 }
 
+export interface HourlyTotals {
+  readonly day: string;
+  readonly hourStart: string;
+  readonly costUsd: number;
+  readonly totalTokens: number;
+  readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+}
+
 export interface CostQuality {
   readonly providerReportedShare: number;
   readonly modelPricedShare: number;
@@ -65,6 +73,7 @@ export interface MergedUsage {
   readonly providers: readonly ProviderTotals[];
   readonly models: readonly ModelTotals[];
   readonly daily: readonly DailyTotals[];
+  readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
@@ -168,6 +177,7 @@ const EMPTY_MERGED: MergedUsage = {
   providers: [],
   models: [],
   daily: [],
+  hourly: [],
   costQuality: {
     providerReportedShare: 0,
     modelPricedShare: 0,
@@ -232,6 +242,16 @@ export function mergeUsage(
       byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
     }
   >();
+  const hourlyAccumulator = new Map<
+    string,
+    {
+      day: string;
+      hourStart: string;
+      costUsd: number;
+      totalTokens: number;
+      byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+    }
+  >();
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
@@ -290,6 +310,26 @@ export function mergeUsage(
       dayProvider.totalTokens += tokens;
       day.byProvider.set(bucket.provider, dayProvider);
       dailyAccumulator.set(bucket.day, day);
+
+      if (bucket.hourStart !== undefined) {
+        const hour = hourlyAccumulator.get(bucket.hourStart) ?? {
+          day: bucket.day,
+          hourStart: bucket.hourStart,
+          costUsd: 0,
+          totalTokens: 0,
+          byProvider: new Map<UsageProviderKind, { costUsd: number; totalTokens: number }>(),
+        };
+        hour.costUsd += bucket.costUsd;
+        hour.totalTokens += tokens;
+        const hourProvider = hour.byProvider.get(bucket.provider) ?? {
+          costUsd: 0,
+          totalTokens: 0,
+        };
+        hourProvider.costUsd += bucket.costUsd;
+        hourProvider.totalTokens += tokens;
+        hour.byProvider.set(bucket.provider, hourProvider);
+        hourlyAccumulator.set(bucket.hourStart, hour);
+      }
     }
   }
 
@@ -326,6 +366,10 @@ export function mergeUsage(
     }))
     .sort((a, b) => a.day.localeCompare(b.day));
 
+  const hourly: HourlyTotals[] = [...hourlyAccumulator.values()].sort((a, b) =>
+    a.hourStart.localeCompare(b.hourStart),
+  );
+
   return {
     costUsd,
     uncachedInputTokens,
@@ -339,6 +383,7 @@ export function mergeUsage(
     providers,
     models,
     daily,
+    hourly,
     costQuality: {
       providerReportedShare: records === 0 ? 0 : providerReportedRecords / records,
       unpricedShare: records === 0 ? 0 : unpricedRecords / records,

@@ -1,9 +1,11 @@
 import { useNavigation } from "@react-navigation/native";
-import type { MergedUsage } from "@t3tools/shared/usageMerge";
+import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
+  enumerateHourStarts,
   formatCount,
   formatDayShort,
+  formatHourShort,
   formatPercent,
   formatTokens,
   formatUsd,
@@ -23,6 +25,7 @@ import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
 
 const WINDOW_OPTIONS = [
+  { days: 1, label: "Past 24h" },
   { days: 7, label: "7 days" },
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
@@ -33,23 +36,62 @@ const CHART_HEIGHT = 180;
 export function UsageRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const [windowDays, setWindowDays] = useState<number>(30);
+  const [windowSelection, setWindowSelection] = useState(() => ({
+    days: 30,
+    window: makeWindow(30),
+  }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
-
-  // Recomputed only when the window length changes, so a re-render does not
-  // shift the range and refetch every environment.
-  const window = useMemo(() => makeWindow(windowDays), [windowDays]);
+  const { days: windowDays, window } = windowSelection;
+  const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
     [window.sinceDay, window.untilDay],
   );
+  const chartDays = useMemo(
+    () =>
+      isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
+        ? enumerateHourStarts(window.sinceTime, window.untilTime)
+        : days,
+    [days, isPast24Hours, window.sinceTime, window.untilTime],
+  );
+  const chartTotals = useMemo(
+    (): readonly DailyTotals[] =>
+      isPast24Hours
+        ? merged.hourly.map((hour) => ({
+            day: hour.hourStart,
+            costUsd: hour.costUsd,
+            totalTokens: hour.totalTokens,
+            byProvider: hour.byProvider,
+          }))
+        : merged.daily,
+    [isPast24Hours, merged.daily, merged.hourly],
+  );
 
   // The pull spinner tracks re-scans of environments that have answered
   // before. The initial scan renders its own placeholder, and an unreachable
   // environment stays pending forever — neither may pin the spinner on.
   const refreshing = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const selectWindow = (days: number) => {
+    setWindowSelection({
+      days,
+      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+    });
+  };
+  const refreshWindow = () => {
+    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    if (
+      nextWindow.sinceDay === window.sinceDay &&
+      nextWindow.untilDay === window.untilDay &&
+      nextWindow.sinceTime === window.sinceTime &&
+      nextWindow.untilTime === window.untilTime
+    ) {
+      refresh();
+    } else {
+      setWindowSelection({ days: windowDays, window: nextWindow });
+    }
+  };
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -65,12 +107,12 @@ export function UsageRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshWindow} />}
       >
         <SegmentedControl
           options={WINDOW_OPTIONS.map((option) => ({ value: option.days, label: option.label }))}
           selected={windowDays}
-          onSelect={setWindowDays}
+          onSelect={selectWindow}
         />
 
         <UsageCoverageNotice environments={environments} merged={merged} isPartial={isPartial} />
@@ -87,14 +129,17 @@ export function UsageRouteScreen() {
           <>
             <ChartCard
               merged={merged}
-              days={days}
+              days={chartDays}
+              daily={chartTotals}
               metric={metric}
               onMetricChange={setMetric}
               sinceDay={window.sinceDay}
               untilDay={window.untilDay}
+              isPast24Hours={isPast24Hours}
+              timeZone={window.timeZone}
             />
             <ProviderSection merged={merged} metric={metric} />
-            <TotalsSection merged={merged} />
+            <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
             <ModelsSection merged={merged} />
           </>
         )}
@@ -142,14 +187,17 @@ function SegmentedControl<Value extends number | string>(props: {
 function ChartCard(props: {
   readonly merged: MergedUsage;
   readonly days: readonly string[];
+  readonly daily: readonly DailyTotals[];
   readonly metric: UsageChartMetric;
   readonly onMetricChange: (metric: UsageChartMetric) => void;
   readonly sinceDay: string;
   readonly untilDay: string;
+  readonly isPast24Hours: boolean;
+  readonly timeZone: string;
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
-  const hasActivity = merged.daily.some((day) => day.totalTokens > 0);
+  const hasActivity = props.daily.some((period) => period.totalTokens > 0);
 
   return (
     <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
@@ -173,7 +221,7 @@ function ChartCard(props: {
       {hasActivity ? (
         <UsageDailyChart
           days={props.days}
-          daily={merged.daily}
+          daily={props.daily}
           metric={metric}
           height={CHART_HEIGHT}
         />
@@ -184,7 +232,11 @@ function ChartCard(props: {
       )}
 
       <View className="flex-row items-center justify-between">
-        <Text className="text-xs text-foreground-tertiary">{formatDayShort(props.sinceDay)}</Text>
+        <Text className="text-xs text-foreground-tertiary">
+          {props.isPast24Hours
+            ? formatHourShort(props.days[0] ?? "", props.timeZone)
+            : formatDayShort(props.sinceDay)}
+        </Text>
         <View className="flex-row items-center gap-4">
           {merged.providers.map((provider) => (
             <View key={provider.provider} className="flex-row items-center gap-1.5">
@@ -198,7 +250,11 @@ function ChartCard(props: {
             </View>
           ))}
         </View>
-        <Text className="text-xs text-foreground-tertiary">{formatDayShort(props.untilDay)}</Text>
+        <Text className="text-xs text-foreground-tertiary">
+          {props.isPast24Hours
+            ? formatHourShort(props.days[props.days.length - 1] ?? "", props.timeZone)
+            : formatDayShort(props.untilDay)}
+        </Text>
       </View>
     </View>
   );
@@ -292,10 +348,12 @@ function ProviderSection(props: {
   );
 }
 
-function TotalsSection(props: { readonly merged: MergedUsage }) {
+function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24Hours: boolean }) {
   const { merged } = props;
-  const activeDays = merged.daily.filter((day) => day.totalTokens > 0).length;
-  const dailyAverage = activeDays === 0 ? 0 : merged.totalTokens / activeDays;
+  const activePeriods = (props.isPast24Hours ? merged.hourly : merged.daily).filter(
+    (period) => period.totalTokens > 0,
+  ).length;
+  const periodAverage = activePeriods === 0 ? 0 : merged.totalTokens / activePeriods;
   const observedInput = merged.uncachedInputTokens + merged.cachedInputTokens;
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
@@ -305,7 +363,7 @@ function TotalsSection(props: { readonly merged: MergedUsage }) {
         <MetricCell
           label="Processed tokens"
           value={formatTokens(merged.totalTokens)}
-          detail={`${formatTokens(dailyAverage)} per active day`}
+          detail={`${formatTokens(periodAverage)} per active ${props.isPast24Hours ? "hour" : "day"}`}
         />
         <MetricCell
           label="Cache savings"
