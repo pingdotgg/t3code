@@ -12,7 +12,10 @@ import {
 import { useSettings } from "../hooks/useSettings";
 import { resolveShortcutCommand } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { isPreviewFocused } from "../lib/previewFocus";
+import { handleMenuZoomAction } from "../menuZoomAction";
 import { useServerKeybindings } from "../rpc/serverState";
+import { dispatchPreviewAction } from "./preview/previewActionBus";
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
@@ -88,6 +91,17 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     }
 
     const unsubscribe = onMenuAction((action) => {
+      if (
+        handleMenuZoomAction(action, {
+          dispatchPreviewAction,
+          previewFocused: isPreviewFocused(),
+          zoomWindow: (direction) => {
+            void window.desktopBridge?.zoomWindow(direction);
+          },
+        })
+      ) {
+        return;
+      }
       if (action === "open-settings") {
         void navigate({ to: "/settings" });
       }

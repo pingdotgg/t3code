@@ -3,7 +3,7 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Grip, PanelRight, PictureInPicture2, X } from "lucide-react";
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
@@ -19,11 +19,13 @@ import {
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
+import { subscribePreviewAction } from "./previewActionBus";
 import {
   clampPreviewMiniPlayerPosition,
   clampPreviewMiniPlayerSize,
   PREVIEW_MINI_PLAYER_DEFAULT_SIZE,
 } from "./previewMiniPlayerLayout";
+import { handlePreviewZoomAction } from "./previewZoomAction";
 
 interface PointerState {
   readonly pointerId: number;
@@ -58,6 +60,14 @@ export function ThreadPreviewMiniPlayer(props: {
   const isOpen =
     tabId != null && runtimeTabId != null && miniPlayer?.tabId === tabId && snapshot != null;
   const preserveSourceViewport = snapshot?.viewport != null && snapshot.viewport._tag !== "fill";
+
+  useEffect(() => {
+    const bridge = previewBridge;
+    if (!isOpen || !bridge || !runtimeTabId) return;
+    return subscribePreviewAction((action) => {
+      handlePreviewZoomAction(action, bridge, runtimeTabId);
+    });
+  }, [isOpen, runtimeTabId]);
 
   useLayoutEffect(() => {
     if (!isOpen || !tabId) return;

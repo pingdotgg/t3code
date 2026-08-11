@@ -239,6 +239,7 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     setVibrancy: async () => false,
     showContextMenu: async () => null,
     openExternal: async () => true,
+    zoomWindow: async () => undefined,
     onMenuAction: () => () => undefined,
     getUpdateState: async () => {
       throw new Error("getUpdateState not implemented in test");

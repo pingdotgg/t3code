@@ -14,6 +14,7 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const WINDOW_ZOOM_CHANNEL = "desktop:window-zoom";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
@@ -172,6 +173,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setVibrancy: (enabled, options) => ipcRenderer.invoke(SET_VIBRANCY_CHANNEL, enabled, options),
   showContextMenu: (items, position) => ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items, position),
   openExternal: (url: string) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url),
+  zoomWindow: (direction) => ipcRenderer.invoke(WINDOW_ZOOM_CHANNEL, direction),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

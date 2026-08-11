@@ -93,7 +93,11 @@ import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { createMainWindowWebPreferences } from "./mainWindowPreferences.ts";
 import { trafficLightPositionForZoom } from "./titleBarGeometry.ts";
-import { DEFAULT_ZOOM_FACTOR, nextZoomLevel, type ZoomDirection } from "./zoomLevels.ts";
+import { DEFAULT_ZOOM_FACTOR, nextZoomLevel } from "./zoomLevels.ts";
+import {
+  dispatchZoomMenuAction as dispatchZoomMenuActionToWindow,
+  type ZoomMenuAction,
+} from "./zoomMenuAction.ts";
 import { startPreviewRuntime, type PreviewRuntimeHandle } from "./preview/Runtime.ts";
 import { resolveDesktopCliPassthrough } from "./desktopCliPassthrough.ts";
 import {
@@ -135,6 +139,7 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const SET_VIBRANCY_CHANNEL = "desktop:set-vibrancy";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const WINDOW_ZOOM_CHANNEL = "desktop:window-zoom";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
@@ -928,6 +933,10 @@ function dispatchMenuAction(action: string): void {
   send();
 }
 
+function dispatchZoomMenuAction(action: ZoomMenuAction): void {
+  dispatchZoomMenuActionToWindow(mainWindow, MENU_ACTION_CHANNEL, action);
+}
+
 function handleCheckForUpdatesMenuClick(): void {
   const hasUpdateFeedConfig =
     readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
@@ -1039,16 +1048,24 @@ function configureApplicationMenu(): void {
         {
           label: "Actual Size",
           accelerator: "CmdOrCtrl+0",
-          click: () => zoomFocusedWindow("reset"),
+          click: () => dispatchZoomMenuAction("reset-zoom"),
         },
-        { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: () => zoomFocusedWindow("in") },
+        {
+          label: "Zoom In",
+          accelerator: "CmdOrCtrl+=",
+          click: () => dispatchZoomMenuAction("zoom-in"),
+        },
         {
           label: "Zoom In",
           accelerator: "CmdOrCtrl+Plus",
           visible: false,
-          click: () => zoomFocusedWindow("in"),
+          click: () => dispatchZoomMenuAction("zoom-in"),
         },
-        { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: () => zoomFocusedWindow("out") },
+        {
+          label: "Zoom Out",
+          accelerator: "CmdOrCtrl+-",
+          click: () => dispatchZoomMenuAction("zoom-out"),
+        },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
@@ -1901,6 +1918,20 @@ function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.removeHandler(WINDOW_ZOOM_CHANNEL);
+  ipcMain.handle(WINDOW_ZOOM_CHANNEL, (event, rawDirection: unknown) => {
+    if (rawDirection !== "in" && rawDirection !== "out" && rawDirection !== "reset") {
+      return;
+    }
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || window.isDestroyed()) return;
+    const current = window.webContents.getZoomFactor();
+    applyWindowZoom(
+      window,
+      rawDirection === "reset" ? DEFAULT_ZOOM_FACTOR : nextZoomLevel(current, rawDirection),
+    );
+  });
+
   ipcMain.removeHandler(SHOW_NOTIFICATION_CHANNEL);
   ipcMain.handle(SHOW_NOTIFICATION_CHANNEL, async (_event, rawRequest: unknown) => {
     const request = decodeDesktopNotificationRequest(rawRequest);
@@ -2098,18 +2129,6 @@ function applyWindowZoom(window: BrowserWindow, zoomFactor: number): void {
   }
   window.webContents.setZoomFactor(zoomFactor);
   syncTrafficLightPosition(window);
-}
-
-function zoomFocusedWindow(direction: ZoomDirection | "reset"): void {
-  const window = BrowserWindow.getFocusedWindow();
-  if (!window) {
-    return;
-  }
-  const current = window.webContents.getZoomFactor();
-  applyWindowZoom(
-    window,
-    direction === "reset" ? DEFAULT_ZOOM_FACTOR : nextZoomLevel(current, direction),
-  );
 }
 
 function syncWindowAppearance(window: BrowserWindow): void {
