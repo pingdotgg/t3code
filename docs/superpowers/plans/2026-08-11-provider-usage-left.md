@@ -269,7 +269,7 @@ Both the existing provider probe and the new quota module must use this helper. 
 `makeCodexProviderQuota` accepts the effective `CodexSettings`, per-instance environment, `instanceId`, and the captured `ChildProcessSpawner`. Its `read` calls:
 
 ```ts
-client.request("account/rateLimits/read", undefined)
+client.request("account/rateLimits/read", undefined);
 ```
 
 Normalize the generated response as follows:
@@ -291,7 +291,7 @@ The consume closure calls:
 client.request("account/rateLimitResetCredit/consume", {
   creditId: input.creditId,
   idempotencyKey: input.idempotencyKey,
-})
+});
 ```
 
 Return the generated typed outcome without translation. Never retry inside the server with a new key.
