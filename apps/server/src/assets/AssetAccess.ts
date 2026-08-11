@@ -38,6 +38,7 @@ import {
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
+import { SAFE_IMAGE_FILE_EXTENSIONS } from "../imageMime.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -95,7 +96,20 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset = {
+  readonly kind: "file";
+  readonly path: string;
+  readonly download?: boolean;
+  readonly downloadName?: string;
+};
+
+function sanitizeDownloadFileName(name: string): string {
+  // Keep the original display name when possible, but never allow a path or
+  // header control character into Content-Disposition.
+  // eslint-disable-next-line no-control-regex
+  const sanitized = name.replace(/[\u0000-\u001f\u007f"\\/]+/gu, " ").trim();
+  return sanitized.length > 0 ? sanitized.slice(0, 255) : "attachment.bin";
+}
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -275,7 +289,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         attachmentId: input.resource.attachmentId,
         expiresAt,
       };
-      fileName = path.basename(attachmentPath);
+      fileName = sanitizeDownloadFileName(input.resource.fileName ?? path.basename(attachmentPath));
       break;
     }
     case "project-favicon": {
@@ -304,7 +318,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (relativePath && !isWorkspaceImagePreviewPath(relativePath)) {
         return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
       }
-      sourcePath = relativePath ?? undefined;
+      sourcePath = relativePath?.replaceAll(path.sep, "/") ?? undefined;
       const canonicalFaviconPath = relativePath
         ? yield* resolveCanonicalWorkspaceFile({ workspaceRoot, relativePath }).pipe(
             Effect.mapError(
@@ -427,9 +441,26 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => Option.none()),
     );
-    return Option.isSome(info) && info.value.type === "File"
-      ? ({ kind: "file", path: attachmentPath } satisfies ResolvedAsset)
-      : null;
+    if (!Option.isSome(info) || info.value.type !== "File") {
+      return null;
+    }
+    // Never render an uploaded non-image inline through the same-origin asset
+    // route. This prevents HTML/XML-like content from becoming active page
+    // content while preserving normal image previews.
+    const extension = attachmentPath.slice(attachmentPath.lastIndexOf(".")).toLowerCase();
+    const requestedFileName = decodeRelativePath(relativePath);
+    const download = !SAFE_IMAGE_FILE_EXTENSIONS.has(extension);
+    return {
+      kind: "file",
+      path: attachmentPath,
+      ...(download ? { download: true } : {}),
+      ...(download &&
+      requestedFileName &&
+      !requestedFileName.includes("/") &&
+      !requestedFileName.includes("\\")
+        ? { downloadName: sanitizeDownloadFileName(requestedFileName) }
+        : {}),
+    } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "project-favicon") {

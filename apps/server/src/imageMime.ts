@@ -29,6 +29,74 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
+// Uploaded files are always served as downloads unless they are images. This
+// allowlist only controls the on-disk suffix used for resolving an attachment;
+// unknown file types still upload successfully and use .bin.
+export const SAFE_FILE_EXTENSIONS = new Set([
+  ".aac",
+  ".aiff",
+  ".amr",
+  ".avi",
+  ".c",
+  ".cc",
+  ".cfg",
+  ".cpp",
+  ".cs",
+  ".css",
+  ".csv",
+  ".diff",
+  ".doc",
+  ".docx",
+  ".flac",
+  ".go",
+  ".gz",
+  ".ini",
+  ".java",
+  ".json",
+  ".json5",
+  ".jsonl",
+  ".log",
+  ".m4a",
+  ".md",
+  ".mkv",
+  ".mov",
+  ".mp3",
+  ".mp4",
+  ".odg",
+  ".odp",
+  ".ods",
+  ".odt",
+  ".ogg",
+  ".opus",
+  ".patch",
+  ".pdf",
+  ".ppt",
+  ".pptm",
+  ".pptx",
+  ".py",
+  ".rb",
+  ".rs",
+  ".rtf",
+  ".scss",
+  ".sql",
+  ".tar",
+  ".tex",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".tsv",
+  ".txt",
+  ".wav",
+  ".webm",
+  ".xls",
+  ".xlsm",
+  ".xlsx",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".zip",
+]);
+
 // Whether `code` is a character the base64 payload may contain, aside from
 // the whitespace handled separately below.
 function isBase64Char(code: number): boolean {
@@ -131,6 +199,27 @@ export function inferImageExtension(input: { mimeType: string; fileName?: string
   const fileNameExtension = extensionMatch ? `.${extensionMatch[1]!.toLowerCase()}` : "";
   if (SAFE_IMAGE_FILE_EXTENSIONS.has(fileNameExtension)) {
     return fileNameExtension;
+  }
+
+  return ".bin";
+}
+
+export function inferFileExtension(input: { mimeType: string; fileName?: string }): string {
+  const fileName = input.fileName?.trim() ?? "";
+  const extensionMatch = /\.([a-z0-9]{1,8})$/i.exec(fileName);
+  const fileNameExtension = extensionMatch ? `.${extensionMatch[1]!.toLowerCase()}` : "";
+  if (SAFE_FILE_EXTENSIONS.has(fileNameExtension)) {
+    return fileNameExtension;
+  }
+
+  const fromMimeExtension = Mime.getExtension(input.mimeType);
+  const normalizedMimeExtension = fromMimeExtension
+    ? fromMimeExtension.startsWith(".")
+      ? fromMimeExtension.toLowerCase()
+      : `.${fromMimeExtension.toLowerCase()}`
+    : "";
+  if (SAFE_FILE_EXTENSIONS.has(normalizedMimeExtension)) {
+    return normalizedMimeExtension;
   }
 
   return ".bin";

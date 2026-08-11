@@ -44,4 +44,12 @@ describe("assetResponseHeaders", () => {
       "X-Content-Type-Options": "nosniff",
     });
   });
+
+  it("marks non-image assets as downloads with their requested filename", () => {
+    expect(assetResponseHeaders("/attachments/id.bin", true, "vendor-report.csv")).toEqual({
+      "Cache-Control": "private, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Disposition": 'attachment; filename="vendor-report.csv"',
+    });
+  });
 });

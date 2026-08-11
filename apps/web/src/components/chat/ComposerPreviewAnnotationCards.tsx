@@ -2,13 +2,13 @@ import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { Frame, MousePointerClick, Paintbrush, PenLine, X } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { ComposerImageAttachment } from "~/composerDraftStore";
+import type { ComposerAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
 import { cn } from "~/lib/utils";
 
 interface ComposerPreviewAnnotationCardsProps {
   annotations: ReadonlyArray<PreviewAnnotationPayload>;
-  images: ReadonlyArray<ComposerImageAttachment>;
+  images: ReadonlyArray<ComposerAttachment>;
   onRemove: (annotationId: string) => void;
   onExpandImage: (imageId: string) => void;
   className?: string;
@@ -34,7 +34,9 @@ export function ComposerPreviewAnnotationCards({
   className,
 }: ComposerPreviewAnnotationCardsProps) {
   if (annotations.length === 0) return null;
-  const imagesById = new Map(images.map((image) => [image.id, image]));
+  const imagesById = new Map(
+    images.filter((image) => image.type === "image").map((image) => [image.id, image] as const),
+  );
 
   return (
     <div className={cn("flex flex-wrap gap-1.5", className)}>
