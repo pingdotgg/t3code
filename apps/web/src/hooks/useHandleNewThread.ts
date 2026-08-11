@@ -323,6 +323,12 @@ export function useNewThreadHandler() {
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        // Presented as a new chat like the reuse path above, so it gets the
+        // configured default panel layout too.
+        applyNewThreadPanelDefaults(
+          scopeThreadRef(projectRef.environmentId, latestActiveDraftThread.threadId),
+          getClientSettings(),
+        );
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,

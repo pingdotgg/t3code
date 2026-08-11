@@ -180,12 +180,14 @@ import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import {
+  getClientSettings,
   useClientSettings,
   useClientSettingsHydrated,
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { applyNewThreadPanelDefaults } from "../newThreadPanelDefaults";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
@@ -1861,6 +1863,15 @@ function ChatViewContent(props: ChatViewProps) {
         throw new Error("No active project is available for this pull request.");
       }
       const activeProjectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
+      // Each branch below hands the user a new chat in this project, so each one
+      // opens with the configured panel layout, exactly like the new-thread
+      // handler. A chat that already has a layout keeps it.
+      const applyPanelDefaults = (threadId: ThreadId) => {
+        applyNewThreadPanelDefaults(
+          scopeThreadRef(activeProjectRef.environmentId, threadId),
+          getClientSettings(),
+        );
+      };
       const logicalProjectKey = deriveLogicalProjectKeyFromSettings(
         activeProject,
         projectGroupingSettings,
@@ -1877,6 +1888,7 @@ function ChatViewContent(props: ChatViewProps) {
             ...input,
           },
         );
+        applyPanelDefaults(storedDraftSession.threadId);
         if (routeKind !== "draft" || draftId !== storedDraftSession.draftId) {
           await navigate({
             to: "/draft/$draftId",
@@ -1900,6 +1912,7 @@ function ChatViewContent(props: ChatViewProps) {
           interactionMode: activeDraftSession.interactionMode,
           ...input,
         });
+        applyPanelDefaults(activeDraftSession.threadId);
         return activeDraftSession.threadId;
       }
 
@@ -1912,6 +1925,7 @@ function ChatViewContent(props: ChatViewProps) {
         interactionMode: DEFAULT_INTERACTION_MODE,
         ...input,
       });
+      applyPanelDefaults(nextThreadId);
       await navigate({
         to: "/draft/$draftId",
         params: buildDraftThreadRouteParams(nextDraftId),
@@ -5721,6 +5735,12 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure === null) {
+      // The implementation runs in a chat that did not exist a moment ago, so it
+      // opens with the configured panel layout like any other new chat.
+      applyNewThreadPanelDefaults(
+        scopeThreadRef(activeThread.environmentId, nextThreadId),
+        getClientSettings(),
+      );
       const navigateResult = await settlePromise(() =>
         navigate({
           to: "/$environmentId/$threadId",
