@@ -272,8 +272,7 @@ const makeArgvSpawner = (
   handler: (argv: readonly string[]) => { readonly stdout?: string; readonly exitCode?: number },
 ) =>
   ChildProcessSpawner.make((command) => {
-    const argv =
-      command._tag === "StandardCommand" ? [command.command, ...command.args] : [];
+    const argv = command._tag === "StandardCommand" ? [command.command, ...command.args] : [];
     const result = handler(argv);
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
@@ -341,29 +340,21 @@ describe("getNetworkingModeImpl", () => {
     Effect.gen(function* () {
       expect(yield* getNetworkingModeImpl("Ubuntu")).toEqual("mirrored");
     }).pipe(
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        modeSpawner("mirrored\n"),
-      ),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, modeSpawner("mirrored\n")),
     ),
   );
 
   it.effect("parses nat mode", () =>
     Effect.gen(function* () {
       expect(yield* getNetworkingModeImpl(null)).toEqual("nat");
-    }).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, modeSpawner("nat\n")),
-    ),
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, modeSpawner("nat\n"))),
   );
 
   it.effect("reports unknown when wslinfo is missing or fails", () =>
     Effect.gen(function* () {
       expect(yield* getNetworkingModeImpl(null)).toEqual("unknown");
     }).pipe(
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        modeSpawner(undefined, 127),
-      ),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, modeSpawner(undefined, 127)),
     ),
   );
 
@@ -371,10 +362,7 @@ describe("getNetworkingModeImpl", () => {
     Effect.gen(function* () {
       expect(yield* getNetworkingModeImpl(null)).toEqual("unknown");
     }).pipe(
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        modeSpawner("bridged\n"),
-      ),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, modeSpawner("bridged\n")),
     ),
   );
 });
@@ -453,6 +441,40 @@ describe("ensureWindowsPathReleasedImpl", () => {
         releaseSpawner({ stdout: "BUSY 4242 4243\n", exitCode: 1 }),
       ),
     ),
+  );
+
+  it.effect("runs the holder scan as root so it can see and kill non-user-owned holders", () =>
+    Effect.gen(function* () {
+      // /proc/<pid>/{cwd,exe,fd,maps} are readable only by the process owner
+      // and root, so an unprivileged scan is blind to holders owned by other
+      // users (e.g. a root process with cwd in the install dir) and would
+      // wrongly report RELEASED. The probe must run as root.
+      const scanArgvs: string[][] = [];
+      const result = yield* ensureWindowsPathReleasedImpl({
+        distro: "Ubuntu",
+        windowsPath: "C:\\Users\\test\\AppData\\Local\\Programs\\t3code",
+      }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          makeArgvSpawner((argv) => {
+            if (argv.includes("wslpath")) {
+              return { stdout: "/mnt/c/Users/test/AppData/Local/Programs/t3code\n", exitCode: 0 };
+            }
+            scanArgvs.push([...argv]);
+            return { stdout: "RELEASED\n", exitCode: 0 };
+          }),
+        ),
+      );
+      expect(result).toBe("released");
+      expect(scanArgvs).toHaveLength(1);
+      const argv = scanArgvs[0]!;
+      const separator = argv.indexOf("--");
+      const userFlag = argv.indexOf("-u");
+      // `-u root` must appear before the `--` command separator.
+      expect(userFlag).toBeGreaterThanOrEqual(0);
+      expect(argv[userFlag + 1]).toBe("root");
+      expect(userFlag).toBeLessThan(separator);
+    }),
   );
 
   it.effect("reports unknown when the release-check spawn fails against a reachable distro", () =>

@@ -917,17 +917,31 @@ export const ensureWindowsPathReleasedImpl = (input: {
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Run the probe as root (-u root; WSL grants this with no password,
+        // gated by the Windows host). find_holders reads /proc/<pid>/{cwd,exe,
+        // fd,maps}, which the kernel exposes only to the process owner and
+        // root: as the unprivileged distro user the scan gets EACCES for any
+        // process it does not own, so a root- or other-user-owned holder of
+        // the install dir is invisible and the check wrongly reports RELEASED.
+        // Running as root lets the scan SEE every holder and lets its kills
+        // land on holders it does not own. find_holders is already scoped to
+        // processes that actually reference the install dir, so this cannot
+        // reach unrelated processes.
         // Script goes via stdin: wsl.exe re-escapes command-line args on the
         // way into Linux, which mangles quoted paths with spaces.
-        const command = ChildProcess.make("wsl.exe", [...buildDistroArgs(input.distro), "--", "sh"], {
-          stdin: Stream.encodeText(
-            Stream.make(buildEnsurePathReleasedScript(shellQuote(linuxPath.value))),
-          ),
-          stdout: "pipe",
-          stderr: "ignore",
-          killSignal: "SIGTERM",
-          forceKillAfter: PROCESS_TERMINATE_GRACE,
-        });
+        const command = ChildProcess.make(
+          "wsl.exe",
+          [...buildDistroArgs(input.distro), "-u", "root", "--", "sh"],
+          {
+            stdin: Stream.encodeText(
+              Stream.make(buildEnsurePathReleasedScript(shellQuote(linuxPath.value))),
+            ),
+            stdout: "pipe",
+            stderr: "ignore",
+            killSignal: "SIGTERM",
+            forceKillAfter: PROCESS_TERMINATE_GRACE,
+          },
+        );
         // A spawn failure here is NOT evidence that WSL is gone: wslpath just
         // succeeded against this distro, so the VM was reachable moments
         // ago. Fall through to "unknown" (via the catch below) and let the
