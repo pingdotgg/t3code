@@ -77,6 +77,7 @@ function AutocompleteInput({
 
 function AutocompletePopup({
   className,
+  positionerClassName,
   children,
   side = "bottom",
   sideOffset = 4,
@@ -85,6 +86,7 @@ function AutocompletePopup({
   anchor,
   ...props
 }: AutocompletePrimitive.Popup.Props & {
+  positionerClassName?: string;
   align?: AutocompletePrimitive.Positioner.Props["align"];
   sideOffset?: AutocompletePrimitive.Positioner.Props["sideOffset"];
   alignOffset?: AutocompletePrimitive.Positioner.Props["alignOffset"];
@@ -97,7 +99,7 @@ function AutocompletePopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-50 select-none"
+        className={cn("z-70 select-none", positionerClassName)}
         data-slot="autocomplete-positioner"
         side={side}
         sideOffset={sideOffset}

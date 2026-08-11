@@ -140,6 +140,7 @@ function ComboboxTrigger({ className, children, ...props }: ComboboxPrimitive.Tr
 
 function ComboboxPopup({
   className,
+  positionerClassName,
   children,
   side = "bottom",
   sideOffset = 4,
@@ -148,6 +149,7 @@ function ComboboxPopup({
   anchor: anchorProp,
   ...props
 }: ComboboxPrimitive.Popup.Props & {
+  positionerClassName?: string;
   align?: ComboboxPrimitive.Positioner.Props["align"];
   sideOffset?: ComboboxPrimitive.Positioner.Props["sideOffset"];
   alignOffset?: ComboboxPrimitive.Positioner.Props["alignOffset"];
@@ -163,7 +165,7 @@ function ComboboxPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-50 select-none"
+        className={cn("z-70 select-none", positionerClassName)}
         data-slot="combobox-positioner"
         side={side}
         sideOffset={sideOffset}

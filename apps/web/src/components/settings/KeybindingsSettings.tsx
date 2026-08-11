@@ -877,7 +877,7 @@ function KeybindingTableRow({
         <Popover>
           <PopoverTrigger
             className={cn(
-              "inline-flex h-7 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-left font-mono text-[12px] text-foreground shadow-xs/5 outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
+              "inline-flex h-7 w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-left font-mono text-[12px] text-foreground shadow-xs/5 outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
               !whenDraftExpression && "text-muted-foreground",
             )}
             aria-label={`Edit when clause for ${commandLabel(row.command)}`}
@@ -1039,7 +1039,7 @@ function NewKeybindingTableRow({
         <Popover>
           <PopoverTrigger
             className={cn(
-              "inline-flex h-7 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-left font-mono text-[12px] text-foreground shadow-xs/5 outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
+              "inline-flex h-7 w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-left font-mono text-[12px] text-foreground shadow-xs/5 outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
               !whenDraftExpression && "text-muted-foreground",
             )}
             aria-label={`Edit when clause for ${commandLabelText}`}

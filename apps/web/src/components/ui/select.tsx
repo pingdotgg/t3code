@@ -106,6 +106,7 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
 function SelectPopup({
   className,
   popupClassName,
+  positionerClassName,
   children,
   side = "bottom",
   sideOffset = 4,
@@ -117,6 +118,7 @@ function SelectPopup({
   ...props
 }: SelectPrimitive.Popup.Props & {
   popupClassName?: string;
+  positionerClassName?: string;
   side?: SelectPrimitive.Positioner.Props["side"];
   sideOffset?: SelectPrimitive.Positioner.Props["sideOffset"];
   align?: SelectPrimitive.Positioner.Props["align"];
@@ -132,7 +134,7 @@ function SelectPopup({
         alignItemWithTrigger={alignItemWithTrigger}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-50 select-none"
+        className={cn("z-70 select-none", positionerClassName)}
         data-slot="select-positioner"
         side={side}
         sideOffset={sideOffset}
