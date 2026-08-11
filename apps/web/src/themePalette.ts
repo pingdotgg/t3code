@@ -1766,11 +1766,22 @@ export function replaceCustomThemeCollection(
 }
 
 export function removeCustomTheme(themeId: string): void {
+  removeCustomThemes([themeId]);
+}
+
+export function removeCustomThemes(themeIds: ReadonlyArray<string>): void {
+  const removedIds = new Set(themeIds);
+  if (removedIds.size === 0) return;
   const library = getWritableCustomThemeLibrary();
-  const nextThemes = library.themes.filter((theme) => theme.id !== themeId);
+  const nextThemes = library.themes.filter((theme) => !removedIds.has(theme.id));
   if (nextThemes.length === library.themes.length) return;
   saveCustomThemes(
-    library.storedThemes.filter((storedTheme) => !storedThemeHasId(storedTheme, themeId)),
+    library.storedThemes.filter(
+      (storedTheme) =>
+        !isRecord(storedTheme) ||
+        typeof storedTheme.id !== "string" ||
+        !removedIds.has(storedTheme.id),
+    ),
     nextThemes,
   );
 }

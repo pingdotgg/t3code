@@ -1,4 +1,5 @@
 import {
+  CheckIcon,
   CopyIcon,
   DownloadIcon,
   MoonIcon,
@@ -8,12 +9,12 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { cn } from "../../lib/utils";
 import {
   getThemeDefinition,
   getThemeModes,
-  removeCustomTheme,
+  removeCustomThemes,
   serializeThemeFile,
   type ThemeAppearance,
   type ThemeDefinition,
@@ -376,7 +377,11 @@ function ThemeLibraryCard({
                       <TooltipTrigger
                         render={
                           <Button
-                            aria-label={`Remove ${theme.label}`}
+                            aria-label={
+                              variantNavigation
+                                ? `Remove themes from ${variantNavigation.collectionLabel}`
+                                : `Remove ${theme.label}`
+                            }
                             size="icon-xs"
                             variant="ghost"
                             className="text-muted-foreground hover:text-destructive"
@@ -389,7 +394,9 @@ function ThemeLibraryCard({
                           </Button>
                         }
                       />
-                      <TooltipPopup>Remove theme</TooltipPopup>
+                      <TooltipPopup>
+                        {variantNavigation ? "Remove themes" : "Remove theme"}
+                      </TooltipPopup>
                     </Tooltip>
                   ) : null}
                 </div>
@@ -516,14 +523,20 @@ export function ThemeLibrary({
   setThemeHalf: (appearance: ThemeAppearance, themeId: string | null) => boolean;
 }) {
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
-  const [themeToRemove, setThemeToRemove] = useState<ThemeDefinition | null>(null);
-  // Keep the last removal target so the dialog title stays populated while the
-  // close animation plays after confirming.
-  const lastThemeToRemoveRef = useRef<ThemeDefinition | null>(null);
-  useEffect(() => {
-    if (themeToRemove) lastThemeToRemoveRef.current = themeToRemove;
-  }, [themeToRemove]);
-  const removeDialogTheme = themeToRemove ?? lastThemeToRemoveRef.current;
+  const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
+    theme: ThemeDefinition;
+    collectionThemes: ReadonlyArray<ThemeDefinition>;
+  } | null>(null);
+  // Keep the target after closing so the dialog text remains populated during
+  // its exit animation. The next trash action replaces it before reopening.
+  const [isThemeRemovalOpen, setIsThemeRemovalOpen] = useState(false);
+  const [themeIdsToRemove, setThemeIdsToRemove] = useState<ReadonlyArray<string>>([]);
+  const themeIdsToRemoveSet = new Set(themeIdsToRemove);
+  const removeDialogTheme = themeRemovalTarget?.theme;
+  const removeDialogCollectionThemes = themeRemovalTarget?.collectionThemes ?? [];
+  const canRemoveCollection = removeDialogCollectionThemes.length > 1;
+  const removeDialogCollectionLabel =
+    removeDialogTheme?.collection?.label ?? removeDialogTheme?.label;
 
   const notifyThemeSaveFailure = useCallback(() => {
     toastManager.add(
@@ -554,37 +567,43 @@ export function ThemeLibrary({
     [notifyThemeSaveFailure, setTheme],
   );
 
-  const handleRemoveTheme = useCallback((customTheme: ThemeDefinition) => {
-    setThemeToRemove(customTheme);
-  }, []);
+  const handleRemoveTheme = useCallback(
+    (customTheme: ThemeDefinition, collectionThemes: ReadonlyArray<ThemeDefinition>) => {
+      setThemeRemovalTarget({ theme: customTheme, collectionThemes });
+      setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
+      setIsThemeRemovalOpen(true);
+    },
+    [],
+  );
 
   const handleConfirmRemoveTheme = useCallback(() => {
-    if (!themeToRemove) return;
-    const removesBase = getThemeDefinition(theme)?.id === themeToRemove.id;
-    // Keep the theme installed if we cannot move the selection off it; the
-    // dialog stays open so the user can retry or cancel.
+    if (!themeRemovalTarget) return;
+    const removedIds = new Set(themeIdsToRemove);
+    if (removedIds.size === 0) return;
+    const removesBase = removedIds.has(getThemeDefinition(theme)?.id ?? "");
+    // Keep the themes installed if we cannot move the selection off one of
+    // them; the dialog stays open so the user can retry or cancel.
     if (removesBase && !persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) {
       return;
     }
     for (const appearance of ["light", "dark"] as const) {
       const half = themeHalves?.[appearance];
       if (half === undefined) continue;
-      // Writing a base preference clears the whole mix, so halves that name a
-      // surviving theme are written back; halves on the removed theme fall
-      // back to the base.
-      const next = half === themeToRemove.id ? null : removesBase ? half : undefined;
+      // Writing a base preference clears the whole mix, so halves that name
+      // a surviving theme are written back; removed halves fall back to base.
+      const next = half && removedIds.has(half) ? null : removesBase ? half : undefined;
       if (next !== undefined && !setThemeHalf(appearance, next)) {
         notifyThemeRemovalFailure();
         return;
       }
     }
     try {
-      removeCustomTheme(themeToRemove.id);
+      removeCustomThemes([...removedIds]);
     } catch {
       notifyThemeRemovalFailure();
       return;
     }
-    setThemeToRemove(null);
+    setIsThemeRemovalOpen(false);
   }, [
     appearanceMode,
     notifyThemeRemovalFailure,
@@ -592,7 +611,8 @@ export function ThemeLibrary({
     setThemeHalf,
     theme,
     themeHalves,
-    themeToRemove,
+    themeIdsToRemove,
+    themeRemovalTarget,
   ]);
 
   // ----- Automatic-mode mixing -------------------------------------------
@@ -812,7 +832,7 @@ export function ThemeLibrary({
                 initialAppearance,
               })
             }
-            onRemove={handleRemoveTheme}
+            onRemove={(customTheme) => handleRemoveTheme(customTheme, themes)}
             onUse={(customTheme) => {
               const modes = getThemeModes(customTheme);
               if (modes.length === 1) assignHalf(modes[0]!, customTheme.id);
@@ -905,23 +925,80 @@ export function ThemeLibrary({
         onOpenChange={onImportOpenChange}
         open={isImportOpen}
       />
-      <AlertDialog
-        open={themeToRemove !== null}
-        onOpenChange={(open) => {
-          if (!open) setThemeToRemove(null);
-        }}
-      >
+      <AlertDialog open={isThemeRemovalOpen} onOpenChange={setIsThemeRemovalOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove “{removeDialogTheme?.label}”?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {canRemoveCollection
+                ? `Remove themes from “${removeDialogCollectionLabel}”?`
+                : `Remove “${removeDialogTheme?.label}”?`}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              You can bring it back anytime by importing its JSON file.
+              {canRemoveCollection
+                ? "Select the variants you want to remove. You can restore them by importing the extension again."
+                : "You can bring it back anytime by importing its JSON file."}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {canRemoveCollection ? (
+            <div className="grid max-h-72 grid-cols-1 gap-2 overflow-y-auto px-6 pb-6 sm:grid-cols-2">
+              {removeDialogCollectionThemes.map((customTheme) => {
+                const checked = themeIdsToRemoveSet.has(customTheme.id);
+                const card = getThemeCardDefinition(customTheme);
+                const checkboxId = `remove-theme-${customTheme.id}`;
+                return (
+                  <label
+                    className="group relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-border/70 bg-muted/25 p-3 has-checked:border-ring has-checked:bg-accent/20 hover:bg-muted/40"
+                    htmlFor={checkboxId}
+                    key={customTheme.id}
+                  >
+                    <span className="absolute right-2 top-2 inline-grid size-5 grid-cols-1 sm:size-4">
+                      <input
+                        checked={checked}
+                        className="col-start-1 row-start-1 size-full appearance-none rounded-sm border border-input bg-background outline-none checked:border-primary checked:bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring dark:not-checked:bg-input/32 forced-colors:appearance-auto"
+                        id={checkboxId}
+                        name="themes-to-remove"
+                        type="checkbox"
+                        onChange={(event) => {
+                          const shouldRemove = event.currentTarget.checked;
+                          setThemeIdsToRemove((current) =>
+                            shouldRemove
+                              ? [...current, customTheme.id]
+                              : current.filter((themeId) => themeId !== customTheme.id),
+                          );
+                        }}
+                      />
+                      <CheckIcon className="pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center stroke-primary-foreground opacity-0 group-has-checked:opacity-100 sm:size-3" />
+                    </span>
+                    <span className="flex min-h-12 items-center justify-center gap-1">
+                      {card.previews.map((preview) => (
+                        <span
+                          className="flex size-11 shrink-0 items-center justify-center"
+                          key={preview.mode}
+                        >
+                          <span className="flex scale-75">
+                            <ThemePreviewCircle colors={preview.colors} mode={preview.mode} />
+                          </span>
+                        </span>
+                      ))}
+                    </span>
+                    <p className="max-w-full truncate text-center text-base font-medium text-foreground sm:text-sm">
+                      {customTheme.label}
+                    </p>
+                  </label>
+                );
+              })}
+            </div>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button variant="destructive" onClick={handleConfirmRemoveTheme}>
-              Remove theme
+            <Button
+              disabled={themeIdsToRemove.length === 0}
+              variant="destructive"
+              onClick={handleConfirmRemoveTheme}
+            >
+              {canRemoveCollection
+                ? `Remove selected${themeIdsToRemove.length > 0 ? ` (${themeIdsToRemove.length})` : ""}`
+                : "Remove theme"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
