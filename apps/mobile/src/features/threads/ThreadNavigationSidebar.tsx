@@ -1,4 +1,3 @@
-import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -14,7 +13,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -39,7 +38,6 @@ import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   hasCustomHomeListOptions,
   PROJECT_SORT_OPTIONS,
@@ -95,42 +93,6 @@ type SidebarListItem =
   | HomeListItem
   | ThreadListV2ListItem
   | { readonly type: "v2-show-more"; readonly key: string; readonly hiddenCount: number };
-
-/**
- * Shared capsule behind the sidebar header buttons — a native liquid-glass
- * surface on iOS 26+, a tinted pill everywhere else.
- */
-function SidebarHeaderButtonGroup(props: {
-  readonly children: ReactNode;
-  readonly colorScheme: "light" | "dark";
-}) {
-  const fallbackBackground = useThemeColor("--color-glass-surface");
-  const fallbackBorder = useThemeColor("--color-header-border");
-  if (isLiquidGlassSupported) {
-    return (
-      <LiquidGlassView
-        colorScheme={props.colorScheme}
-        effect="regular"
-        interactive
-        style={styles.headerButtonGroup}
-      >
-        {props.children}
-      </LiquidGlassView>
-    );
-  }
-
-  return (
-    <View
-      style={[
-        styles.headerButtonGroup,
-        { backgroundColor: fallbackBackground, borderColor: fallbackBorder },
-        { borderWidth: StyleSheet.hairlineWidth },
-      ]}
-    >
-      {props.children}
-    </View>
-  );
-}
 
 const SIDEBAR_STICKY_HEADER_HEIGHT = 106;
 
@@ -189,7 +151,6 @@ function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
   const insets = useSafeAreaInsets();
-  const { themeAppearance: colorScheme } = useAppearancePreferences();
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -1340,16 +1301,12 @@ function ThreadNavigationSidebarPane(
               </View>
             }
           />
-          <SidebarHeaderButtonGroup colorScheme={colorScheme}>
+          <View className="flex-row items-center gap-2.5">
             <ControlPillMenu actions={listMenuActions} onPressAction={handleListMenuAction}>
-              <SidebarFilterButton
-                grouped
-                accessibilityLabel="Filter and sort threads"
-                icon={filterIcon}
-              />
+              <SidebarFilterButton accessibilityLabel="Filter and sort threads" icon={filterIcon} />
             </ControlPillMenu>
-            <SidebarHeaderActions grouped onOpenSettings={props.onOpenSettings} />
-          </SidebarHeaderButtonGroup>
+            <SidebarHeaderActions onOpenSettings={props.onOpenSettings} />
+          </View>
         </View>
 
         <View className="mx-4 mt-[9px] h-[38px] flex-row items-center gap-1.5 rounded-xl bg-sidebar-search pr-2.5 pl-[11px]">
@@ -1374,12 +1331,6 @@ function ThreadNavigationSidebarPane(
 }
 
 const styles = StyleSheet.create({
-  headerButtonGroup: {
-    alignItems: "center",
-    borderRadius: 22,
-    flexDirection: "row",
-    overflow: "hidden",
-  },
   threadList: {
     flex: 1,
   },
