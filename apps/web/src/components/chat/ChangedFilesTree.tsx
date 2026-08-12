@@ -56,7 +56,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   return (
     <div
-      className="mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
+      className="@container/changed-files mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
       data-changed-files-state={
         expanded ? "expanded" : compactPreviewVisible ? "preview" : "collapsed"
       }
@@ -96,7 +96,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               />
             )}
           </span>
-          <span className="ml-1 hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 sm:inline">
+          <span className="ml-1 hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 @[24rem]/changed-files:inline">
             {expanded ? "Hide files" : "Show files"}
           </span>
         </button>
@@ -142,7 +142,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               }
             >
               <FileDiffIcon className="size-3" />
-              <span className="hidden sm:inline">Open diff</span>
+              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
             </TooltipTrigger>
             <TooltipPopup side="top">Open the full diff</TooltipPopup>
           </Tooltip>
