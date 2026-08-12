@@ -13,6 +13,8 @@ import {
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
+  resolveSidebarDraftPreview,
+  shouldRenderSidebarDraft,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarThreadGitCwd,
   resolveFilteredSidebarProjects,
@@ -25,6 +27,7 @@ import {
   SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
+
 import {
   EnvironmentId,
   OrchestrationLatestTurn,
@@ -41,6 +44,40 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("shouldRenderSidebarDraft", () => {
+  it("keeps a sent draft visible until the server thread is published", () => {
+    expect(
+      shouldRenderSidebarDraft({
+        hasUserContent: false,
+        isPromoting: true,
+        serverThreadPublished: false,
+      }),
+    ).toBe(true);
+  });
+
+  describe("resolveSidebarDraftPreview", () => {
+    it("keeps the submitted message visible after composer cleanup", () => {
+      expect(
+        resolveSidebarDraftPreview({
+          draftPrompt: null,
+          draftAttachmentCount: 0,
+          optimisticMessage: { text: "Implement the sidebar fix\nwith tests" },
+        }),
+      ).toBe("Implement the sidebar fix");
+    });
+  });
+
+  it("hands off to the regular thread row once it is published", () => {
+    expect(
+      shouldRenderSidebarDraft({
+        hasUserContent: false,
+        isPromoting: true,
+        serverThreadPublished: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
