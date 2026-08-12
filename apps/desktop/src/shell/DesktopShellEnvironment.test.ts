@@ -69,6 +69,7 @@ function runShellEnvironment(input: {
   readonly platform: NodeJS.Platform;
   readonly handler: (command: ChildProcess.Command) => string;
   readonly failure?: PlatformError.PlatformError;
+  readonly fs?: FileSystem.FileSystem;
 }) {
   const environmentLayer = Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
@@ -85,16 +86,19 @@ function runShellEnvironment(input: {
     ),
   );
 
-  const program = Effect.gen(function* () {
+  let program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
     yield* shellEnvironment.installIntoProcess;
   }).pipe(
-    Effect.provide(
-      DesktopShellEnvironment.layer.pipe(
-        Layer.provide(Layer.mergeAll(environmentLayer, NodeServices.layer, spawnerLayer)),
-      ),
-    ),
+    Effect.provide(DesktopShellEnvironment.layer),
+    Effect.provide(Layer.mergeAll(environmentLayer, spawnerLayer)),
   );
+
+  if (input.fs) {
+    program = program.pipe(Effect.provideService(FileSystem.FileSystem, input.fs));
+  }
+  
+  program = program.pipe(Effect.provide(NodeServices.layer));
 
   return withProcessEnv(input.env, program);
 }
@@ -346,100 +350,80 @@ describe("DesktopShellEnvironment", () => {
 
   it.effect("skips ALL PowerShell probes when node is available statically with quotes and no fnm", () =>
     Effect.gen(function* () {
-      const fs = yield* Effect.promise(() => import("node:fs"));
-      const os = yield* Effect.promise(() => import("node:os"));
-      const path = yield* Effect.promise(() => import("node:path"));
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = { PATH: `"${mockDir}"` };
+      const commands: ChildProcess.Command[] = [];
 
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
-      try {
-        fs.writeFileSync(path.join(tempDir, "node.exe"), "");
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe")),
+      } as FileSystem.FileSystem;
 
-        const env: NodeJS.ProcessEnv = { PATH: `"${tempDir}"` };
-        const commands: ChildProcess.Command[] = [];
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: mockDir });
+        },
+      });
 
-        yield* runShellEnvironment({
-          env,
-          platform: "win32",
-          handler: (command) => {
-            commands.push(command);
-            return envOutput({ PATH: tempDir });
-          },
-        });
-
-        assert.equal(commands.length, 0);
-        assert.equal(env.PATH, `"${tempDir}"`);
-      } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
+      assert.equal(commands.length, 0);
+      assert.equal(env.PATH, `"${mockDir}"`);
     }),
   );
 
   it.effect("loads PowerShell probes concurrently when node and fnm.cmd are both available", () =>
     Effect.gen(function* () {
-      const fs = yield* Effect.promise(() => import("node:fs"));
-      const os = yield* Effect.promise(() => import("node:os"));
-      const path = yield* Effect.promise(() => import("node:path"));
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = { PATH: mockDir };
+      const commands: ChildProcess.Command[] = [];
 
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
-      try {
-        fs.writeFileSync(path.join(tempDir, "node.exe"), "");
-        fs.writeFileSync(path.join(tempDir, "fnm.cmd"), "");
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe") || path.includes("fnm.cmd")),
+      } as FileSystem.FileSystem;
 
-        const env: NodeJS.ProcessEnv = { PATH: tempDir };
-        const commands: ChildProcess.Command[] = [];
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: mockDir });
+        },
+      });
 
-        yield* runShellEnvironment({
-          env,
-          platform: "win32",
-          handler: (command) => {
-            commands.push(command);
-            return envOutput({ PATH: tempDir });
-          },
-        });
-
-        assert.equal(commands.length, 2);
-        
-        const noProfileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && c.args.includes("-NoProfile"));
-        const profileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && !c.args.includes("-NoProfile"));
-        assert.isTrue(noProfileIdx !== -1);
-        assert.isTrue(profileIdx !== -1);
-      } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
+      assert.equal(commands.length, 2);
+      
+      const noProfileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && c.args.includes("-NoProfile"));
+      const profileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && !c.args.includes("-NoProfile"));
+      assert.isTrue(noProfileIdx !== -1);
+      assert.isTrue(profileIdx !== -1);
     }),
   );
 
   it.effect("skips PowerShell probes when node is in knownWindowsCliDirs but not on PATH", () =>
     Effect.gen(function* () {
-      const fs = yield* Effect.promise(() => import("node:fs"));
-      const os = yield* Effect.promise(() => import("node:os"));
-      const path = yield* Effect.promise(() => import("node:path"));
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32", LOCALAPPDATA: mockDir };
+      const commands: ChildProcess.Command[] = [];
 
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
-      const knownPath = path.join(tempDir, "Programs", "nodejs");
-      fs.mkdirSync(knownPath, { recursive: true });
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe") && path.includes(mockDir)),
+      } as FileSystem.FileSystem;
 
-      try {
-        fs.writeFileSync(path.join(knownPath, "node.exe"), "");
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: "C:\\Windows\\System32" });
+        },
+      });
 
-        // PATH doesn't have node, but knownWindowsCliDirs will (simulated by tempDir inside LOCALAPPDATA)
-        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32", LOCALAPPDATA: tempDir };
-        const commands: ChildProcess.Command[] = [];
-
-        yield* runShellEnvironment({
-          env,
-          platform: "win32",
-          handler: (command) => {
-            commands.push(command);
-            return envOutput({ PATH: "C:\\Windows\\System32" });
-          },
-        });
-
-        assert.equal(commands.length, 0);
-        assert.isTrue(env.PATH!.includes("nodejs"));
-      } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
+      assert.equal(commands.length, 0);
+      assert.isTrue(env.PATH!.includes("nodejs"));
     }),
   );
 });
