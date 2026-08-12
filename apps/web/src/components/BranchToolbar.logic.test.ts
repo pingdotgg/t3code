@@ -730,11 +730,36 @@ describe("shouldIncludeBranchPickerItem", () => {
       }),
     ).toBe(false);
   });
+
+  // Typing a spaced name must still surface the ref it would have been created
+  // as, or the picker shows nothing at all for that query.
+  it("surfaces an existing ref matching the sanitized query", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "new-branch",
+        normalizedQuery: "new branch",
+        createBranchItemValue: null,
+        checkoutPullRequestItemValue: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("excludes refs matching neither the raw nor the sanitized query", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "main",
+        normalizedQuery: "new branch",
+        createBranchItemValue: null,
+        checkoutPullRequestItemValue: null,
+      }),
+    ).toBe(false);
+  });
 });
 
-// Git rejects every ref name containing whitespace, so a typed name like
-// "new branch" can only ever fail. Sanitizing can therefore turn a failing
-// name into a working one but can never break a name that works today.
+// Git rejects ASCII space and the ASCII control characters in ref names, so a
+// typed name like "new branch" can only ever fail. Replacing exactly those can
+// turn a failing name into a working one without touching a name git already
+// accepts, including one holding non-ASCII whitespace such as U+00A0.
 describe("sanitizeNewRefName", () => {
   it("replaces a space with a dash", () => {
     expect(sanitizeNewRefName("new branch")).toBe("new-branch");

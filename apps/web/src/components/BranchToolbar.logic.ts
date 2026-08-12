@@ -276,5 +276,18 @@ export function shouldIncludeBranchPickerItem(input: {
     return true;
   }
 
-  return itemValue.toLowerCase().includes(normalizedQuery);
+  const lowerItemValue = itemValue.toLowerCase();
+  if (lowerItemValue.includes(normalizedQuery)) {
+    return true;
+  }
+
+  // A query containing whitespace can only ever match a ref under its sanitized
+  // name, because that is the name such a ref would have been created with.
+  // Without this, typing "new branch" hides an existing "new-branch".
+  const sanitizedQuery = sanitizeNewRefName(normalizedQuery);
+  return (
+    sanitizedQuery.length > 0 &&
+    sanitizedQuery !== normalizedQuery &&
+    lowerItemValue.includes(sanitizedQuery)
+  );
 }
