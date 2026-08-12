@@ -635,10 +635,12 @@ extension FeatureThread {
             .first(where: { $0.id == projectID })?
             .environmentID
         let resolvedEnvironmentID = environmentID ?? projectEnvironmentID
-        let providers = resolvedEnvironmentID.flatMap {
+        let environmentProviders = resolvedEnvironmentID.flatMap {
             snapshot.providersByEnvironment?[$0]
-        } ?? []
-        return providers.first(where: { $0.id == providerID })?.name ?? providerID
+        }
+        let configuredProvider = environmentProviders?.first(where: { $0.id == providerID })
+            ?? snapshot.providers.first(where: { $0.id == providerID })
+        return configuredProvider?.name ?? providerID
     }
 
     var needsAttention: Bool {
