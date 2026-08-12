@@ -1,4 +1,4 @@
-import { PlusIcon, UploadIcon } from "lucide-react";
+import { DownloadIcon, PlusIcon } from "lucide-react";
 import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
@@ -28,6 +28,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { ThemeSearchSection } from "./ThemeSearchSection";
 
 /**
  * A full theme export is a few KB, so anything past this is not a theme file.
@@ -360,9 +361,16 @@ export function ThemeImportDialog({
           : null;
       for (const theme of conflicts) {
         try {
+          const existingTheme =
+            mode === "update"
+              ? getCustomThemes().find((candidate) => candidate.id === theme.id)
+              : undefined;
+          const themeToUpdate = existingTheme?.collection
+            ? { ...theme, collection: existingTheme.collection }
+            : theme;
           resolved.push(
             mode === "update"
-              ? updateCustomTheme(theme)
+              ? updateCustomTheme(themeToUpdate)
               : installCustomTheme(versionedCopy(theme, preferredName)),
           );
         } catch (cause) {
@@ -426,7 +434,23 @@ export function ThemeImportDialog({
         <DialogHeader>
           <DialogTitle>Add a theme</DialogTitle>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
+        <DialogPanel className="space-y-5">
+          <ThemeSearchSection
+            onInstalled={(themes, context) => {
+              onImportedMany(themes, context);
+              onOpenChange(false);
+            }}
+            open={open}
+          />
+
+          <div className="flex items-center gap-3" aria-hidden>
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-muted-foreground text-[11px] uppercase tracking-wider">
+              or import a file
+            </span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           {(() => {
             const dropHandlers = {
               onDragEnter: (event: DragEvent<HTMLDivElement>) => {
@@ -456,7 +480,7 @@ export function ThemeImportDialog({
             );
             const chooseButton = (label = "Choose files") => (
               <Button disabled={isReading} size="sm" variant="outline" onClick={openFilePicker}>
-                <UploadIcon />
+                <DownloadIcon />
                 {isReading ? "Reading…" : label}
               </Button>
             );

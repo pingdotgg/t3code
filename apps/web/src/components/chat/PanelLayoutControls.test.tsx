@@ -19,6 +19,7 @@ function renderControls(options?: {
       rightPanelAvailable
       rightPanelOpen={options?.rightPanelOpen ?? false}
       rightPanelShortcutLabel="Ctrl+Shift+B"
+      liveAgentCount={0}
       onToggleTerminal={() => {}}
       onToggleSourceControl={() => {}}
       onToggleRightPanel={() => {}}

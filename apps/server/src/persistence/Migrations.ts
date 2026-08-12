@@ -51,8 +51,20 @@ import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts
 import Migration0036 from "./Migrations/036_ProjectionThreadsPinned.ts";
 import Migration0037 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
 import Migration0038 from "./Migrations/038_ProjectionThreadsPinOrderKey.ts";
-import Migration0039 from "./Migrations/039_ProjectionThreadSubtitles.ts"; // fork: generated thread subtitles
-import Migration0040 from "./Migrations/040_RepairForkMigrationCollisions.ts";
+import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts";
+import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
+import ForkMigration0039 from "./Migrations/039_ProjectionThreadSubtitles.ts"; // fork: generated thread subtitles
+import ForkMigration0040 from "./Migrations/040_RepairForkMigrationCollisions.ts";
+
+// fork: released 2code databases already used IDs 39 and 40. Re-run every
+// colliding migration idempotently at the next free ID so those databases gain
+// the upstream project columns while fresh databases retain the fork schema.
+const Migration0041 = Effect.gen(function* () {
+  yield* Migration0039;
+  yield* Migration0040;
+  yield* ForkMigration0039;
+  yield* ForkMigration0040;
+});
 
 /**
  * Migration loader with all migrations defined inline.
@@ -103,8 +115,9 @@ export const migrationEntries = [
   [36, "ProjectionThreadsPinned", Migration0036],
   [37, "ProjectionTurnsKeysetIndex", Migration0037],
   [38, "ProjectionThreadsPinOrderKey", Migration0038],
-  [39, "ProjectionThreadSubtitles", Migration0039], // fork: generated thread subtitles
-  [40, "RepairForkMigrationCollisions", Migration0040],
+  [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
+  [40, "ProjectionProjectFaviconPath", Migration0040],
+  [41, "ReconcileForkMigrationCollisions", Migration0041], // fork: preserve released 2code schemas
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -22,6 +22,7 @@ export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./workingCopy.ts"; // fork: f4 source-control panel contract
 export * from "./sourceControl.ts";
+export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
