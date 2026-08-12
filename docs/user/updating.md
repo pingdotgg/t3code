@@ -70,4 +70,11 @@ If a step fails:
 3. For a command-line server, relaunch it with `npx t3@<client-version>`, replacing
    `<client-version>` with the client version shown in the warning.
 
+## The Mobile App
+
+The mobile app keeps itself current on its own. When it finds a new version, it downloads it in the
+background and then asks whether to install it right away. Choosing **Later** is safe: the update
+installs automatically the next time you leave the app, and unsent drafts and queued messages are
+saved before the restart either way.
+
 For remote connection setup and access troubleshooting, see [Remote Access](./remote-access.md).

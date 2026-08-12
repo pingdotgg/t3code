@@ -8,7 +8,13 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-export type AppUpdateCheckState = "idle" | "checking" | "downloading" | "restarting" | "current";
+export type AppUpdateCheckState =
+  | "idle"
+  | "checking"
+  | "downloading"
+  | "ready"
+  | "restarting"
+  | "current";
 
 export interface AppUpdateClient {
   readonly isEnabled: boolean;
@@ -23,8 +29,40 @@ export interface AppUpdateClient {
   readonly reloadAsync: () => Promise<void>;
 }
 
+/**
+ * The pieces of the app the update flow has to coordinate with before it may
+ * tear down the JavaScript runtime. Injectable so the flow stays unit-testable.
+ */
+export interface AppUpdateEnvironment {
+  /** Asks the user to install the downloaded update now; `false` defers it. */
+  readonly confirmInstallNow: () => Promise<boolean>;
+  /** Lands best-effort persisted state (drafts, outbox) before the restart. */
+  readonly flushPendingWrites: () => Promise<void>;
+  /** Runs `apply` the next time the app leaves the foreground. */
+  readonly onNextBackground: (apply: () => void) => void;
+}
+
+/** Tracks a downloaded update waiting for a safe moment to install. */
+export interface AppUpdateDeferral {
+  pendingInstall: boolean;
+}
+
+export function createAppUpdateDeferral(): AppUpdateDeferral {
+  return { pendingInstall: false };
+}
+
+const appUpdateDeferral = createAppUpdateDeferral();
+
 interface AppUpdateCheckOptions {
+  /**
+   * "prompt" (default) asks before restarting and defers a declined install to
+   * the next backgrounding. "immediate" restarts as soon as the download
+   * lands — reserved for flows where the user explicitly requested the update.
+   */
+  readonly applyMode?: "immediate" | "prompt";
   readonly client?: AppUpdateClient;
+  readonly deferral?: AppUpdateDeferral;
+  readonly environment?: AppUpdateEnvironment;
   readonly onFailure?: (message: string) => void;
   readonly onStateChange?: (state: AppUpdateCheckState) => void;
 }
@@ -109,6 +147,9 @@ export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Pr
   appUpdateCheckInFlight = inFlight;
 
   const execution = performAppUpdateCheck(client, {
+    applyMode: options.applyMode,
+    deferral: options.deferral,
+    environment: options.environment,
     onFailure: (message) => {
       progress.failure = message;
       notifyListeners(failureListeners, message);
@@ -175,6 +216,8 @@ async function performAppUpdateCheck(
   options: AppUpdateCheckOptions,
 ): Promise<void> {
   const setState = options.onStateChange ?? (() => {});
+  const environment = options.environment ?? defaultAppUpdateEnvironment;
+  const deferral = options.deferral ?? appUpdateDeferral;
 
   setState("checking");
   const check = await settlePromise(() => client.checkForUpdateAsync());
@@ -203,13 +246,93 @@ async function performAppUpdateCheck(
     return;
   }
 
+  if (options.applyMode === "immediate") {
+    await installAppUpdate(client, environment, options);
+    return;
+  }
+
+  setState("ready");
+  const installNow = await settlePromise(() => environment.confirmInstallNow());
+  if (installNow._tag === "Success" && installNow.value) {
+    await installAppUpdate(client, environment, options);
+    return;
+  }
+  armDeferredAppUpdateInstall(client, environment, deferral);
+}
+
+/**
+ * Restarting mid-session while native surfaces are mounted is the crashiest
+ * moment expo-updates has, so the restart flushes persistence first and, when
+ * declined, waits for a backgrounding — where nothing is rendering and the
+ * teardown is invisible.
+ */
+async function installAppUpdate(
+  client: AppUpdateClient,
+  environment: AppUpdateEnvironment,
+  options: AppUpdateCheckOptions,
+): Promise<void> {
+  const setState = options.onStateChange ?? (() => {});
   setState("restarting");
+  // Best-effort: a failed flush must not block the restart.
+  await settlePromise(() => environment.flushPendingWrites());
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
     reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", options.onFailure);
     setState("idle");
   }
 }
+
+function armDeferredAppUpdateInstall(
+  client: AppUpdateClient,
+  environment: AppUpdateEnvironment,
+  deferral: AppUpdateDeferral,
+): void {
+  if (deferral.pendingInstall) return;
+  deferral.pendingInstall = true;
+  environment.onNextBackground(() => {
+    // One-shot: if the reload fails, the downloaded update still applies at
+    // the next cold start.
+    void installAppUpdate(client, environment, {});
+  });
+}
+
+async function defaultConfirmInstallNow(): Promise<boolean> {
+  const { Alert } = await import("react-native");
+  return new Promise<boolean>((resolve) => {
+    Alert.alert(
+      "Update ready",
+      "A new version has been downloaded. Install it now, or it will be installed automatically the next time you leave the app.",
+      [
+        { onPress: () => resolve(false), style: "cancel", text: "Later" },
+        { onPress: () => resolve(true), text: "Install Now" },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    );
+  });
+}
+
+async function defaultFlushPendingWrites(): Promise<void> {
+  await Promise.allSettled([
+    import("../../state/use-composer-drafts").then((drafts) => drafts.flushComposerDrafts()),
+    import("../../state/thread-outbox-storage").then((outbox) => outbox.flushThreadOutboxWrites()),
+  ]);
+}
+
+function defaultOnNextBackground(apply: () => void): void {
+  void import("react-native").then(({ AppState }) => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "background") return;
+      subscription.remove();
+      apply();
+    });
+  });
+}
+
+const defaultAppUpdateEnvironment: AppUpdateEnvironment = {
+  confirmInstallNow: defaultConfirmInstallNow,
+  flushPendingWrites: defaultFlushPendingWrites,
+  onNextBackground: defaultOnNextBackground,
+};
 
 function reportUpdateFailure(
   result: AtomCommandResult<unknown, unknown>,
@@ -243,3 +366,53 @@ export function createAppUpdateLaunchCheck(
 }
 
 export const checkForAppUpdateOnLaunch = createAppUpdateLaunchCheck();
+
+/**
+ * The app can stay resident for days, so a launch-only check misses updates
+ * published while it was in memory. Anything shorter reads as noise: brief
+ * app switches should not trigger network checks or an install prompt.
+ */
+export const FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS = 15 * 60 * 1000;
+
+export function shouldRecheckAppUpdateOnForeground(
+  backgroundedAtMs: number | null,
+  activeAtMs: number,
+  pendingInstall: boolean,
+): boolean {
+  if (pendingInstall) return false;
+  return (
+    backgroundedAtMs !== null &&
+    activeAtMs - backgroundedAtMs >= FOREGROUND_APP_UPDATE_RECHECK_AFTER_MS
+  );
+}
+
+export function createAppUpdateForegroundRecheck(
+  client: AppUpdateClient = Updates,
+  deferral: AppUpdateDeferral = appUpdateDeferral,
+): () => void {
+  let started = false;
+
+  return () => {
+    if (started || !isAppUpdateCheckAvailable(client)) return;
+    started = true;
+    void import("react-native").then(({ AppState }) => {
+      let backgroundedAtMs: number | null = null;
+      AppState.addEventListener("change", (state) => {
+        if (state === "background") {
+          backgroundedAtMs = Date.now();
+          return;
+        }
+        if (state !== "active") return;
+        const shouldCheck = shouldRecheckAppUpdateOnForeground(
+          backgroundedAtMs,
+          Date.now(),
+          deferral.pendingInstall,
+        );
+        backgroundedAtMs = null;
+        if (shouldCheck) void runAppUpdateCheck({ client, deferral });
+      });
+    });
+  };
+}
+
+export const startAppUpdateForegroundRecheck = createAppUpdateForegroundRecheck();
