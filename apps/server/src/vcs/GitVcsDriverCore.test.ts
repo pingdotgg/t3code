@@ -866,6 +866,36 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("returns the branch commits without any patch when asked for commits only", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/commits-only"]);
+        yield* writeTextFile(cwd, "tracked.ts", "export const tracked = true;\n");
+        yield* git(cwd, ["add", "tracked.ts"]);
+        yield* git(cwd, ["commit", "-m", "add tracked file"]);
+        const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        // Dirty state the full preview would turn into patches, so an empty `sources` shows
+        // the listing skipped that work rather than finding nothing to report.
+        yield* writeTextFile(cwd, "tracked.ts", "export const tracked = false;\n");
+        yield* writeTextFile(cwd, "untracked.ts", "export const untracked = true;\n");
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          commitsOnly: true,
+        });
+
+        assert.isEmpty(preview.sources);
+        assert.deepStrictEqual(
+          preview.branchCommits.map(({ sha, subject }) => ({ sha, subject })),
+          [{ sha: commitSha, subject: "add tracked file" }],
+        );
+        assert.isFalse(preview.branchCommitsTruncated);
+      }),
+    );
+
     it.effect("keeps a truncated prefix when the branch commit listing exceeds its cap", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

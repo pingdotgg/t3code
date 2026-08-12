@@ -2282,6 +2282,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null);
 
+    const branchCommitResult =
+      baseRef && branch
+        ? yield* executeGit(
+            "GitVcsDriver.getReviewDiffPreview.branchCommits",
+            input.cwd,
+            [
+              "log",
+              "-z",
+              `--max-count=${REVIEW_BRANCH_COMMIT_LIMIT + 1}`,
+              "--format=%H%x00%cI%x00%s",
+              `${baseRef}..HEAD`,
+              "--",
+            ],
+            {
+              maxOutputBytes: REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES,
+              appendTruncationMarker: true,
+            },
+          ).pipe(Effect.orElseSucceed(() => ({ stdout: "", stdoutTruncated: false })))
+        : null;
+    const parsedBranchCommits = parseReviewBranchCommits(branchCommitResult?.stdout ?? "");
+    const branchCommitsTruncated =
+      parsedBranchCommits.length > REVIEW_BRANCH_COMMIT_LIMIT ||
+      (branchCommitResult?.stdoutTruncated ?? false);
+    const branchCommits = parsedBranchCommits.slice(0, REVIEW_BRANCH_COMMIT_LIMIT);
+
+    // The listing is the whole response for a caller that only needs to know which commits
+    // the range holds, so none of the patches below are built.
+    if (input.commitsOnly) {
+      return {
+        cwd: input.cwd,
+        generatedAt: yield* DateTime.now,
+        sources: [],
+        branchCommits,
+        branchCommitsTruncated,
+      };
+    }
+
     const dirtyTrackedResult = yield* executeGit(
       "GitVcsDriver.getReviewDiffPreview.dirtyTracked",
       input.cwd,
@@ -2346,30 +2383,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null;
     const baseDiff = baseResult?.stdout ?? "";
-    const branchCommitResult =
-      baseRef && branch
-        ? yield* executeGit(
-            "GitVcsDriver.getReviewDiffPreview.branchCommits",
-            input.cwd,
-            [
-              "log",
-              "-z",
-              `--max-count=${REVIEW_BRANCH_COMMIT_LIMIT + 1}`,
-              "--format=%H%x00%cI%x00%s",
-              `${baseRef}..HEAD`,
-              "--",
-            ],
-            {
-              maxOutputBytes: REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES,
-              appendTruncationMarker: true,
-            },
-          ).pipe(Effect.orElseSucceed(() => ({ stdout: "", stdoutTruncated: false })))
-        : null;
-    const parsedBranchCommits = parseReviewBranchCommits(branchCommitResult?.stdout ?? "");
-    const branchCommitsTruncated =
-      parsedBranchCommits.length > REVIEW_BRANCH_COMMIT_LIMIT ||
-      (branchCommitResult?.stdoutTruncated ?? false);
-    const branchCommits = parsedBranchCommits.slice(0, REVIEW_BRANCH_COMMIT_LIMIT);
     const [dirtyDiffHash, baseDiffHash] = yield* Effect.all([
       hashDiff(dirtyDiff),
       hashDiff(baseDiff),

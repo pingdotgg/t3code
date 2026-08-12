@@ -14,6 +14,11 @@ export const ReviewDiffPreviewInput = Schema.Struct({
   baseRef: Schema.optional(TrimmedNonEmptyString),
   /** Requests one commit's first-parent diff instead of the working tree and branch range. */
   commitSha: Schema.optional(GitObjectId),
+  /**
+   * Requests the branch commit listing on its own, skipping every patch this preview builds.
+   * Ignored alongside `commitSha`, which already scopes the response to one commit.
+   */
+  commitsOnly: Schema.optionalKey(Schema.Boolean),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;

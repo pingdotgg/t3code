@@ -265,9 +265,10 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
-  // This preview also carries the commit list. It is the rendered diff for every non-turn
-  // selection; for a turn it is loaded only while the Commits submenu is open, because the
-  // full preview also builds the working-tree and branch-range patches.
+  // This preview is the rendered diff for the working-tree and branch scopes, and it also
+  // carries the commit list the scope menu shows. A turn or commit view renders its own
+  // diff, so it asks for the list alone rather than the patches it would never show.
+  const branchPreviewCommitsOnly = selectedTurnId !== null || selectedCommitSha !== null;
   const primaryBranchDiffPreview = useEnvironmentQuery(
     (selectedTurnId === null || commitsMenuOpen) && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
@@ -275,6 +276,7 @@ export default function DiffPanel({
           input: {
             cwd: activeCwd,
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+            ...(branchPreviewCommitsOnly ? { commitsOnly: true } : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
@@ -291,6 +293,7 @@ export default function DiffPanel({
           input: {
             cwd: serverConfig.cwd,
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+            ...(branchPreviewCommitsOnly ? { commitsOnly: true } : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
@@ -299,12 +302,16 @@ export default function DiffPanel({
   const branchDiffPreview = shouldRetryBranchDiffAtEnvironmentCwd
     ? fallbackBranchDiffPreview
     : primaryBranchDiffPreview;
+  // A preview always reports back the cwd it was given, so the commit patch can be requested
+  // against the directory the branch preview uses without waiting for its response first.
+  const previewCwd =
+    shouldRetryBranchDiffAtEnvironmentCwd && serverConfig ? serverConfig.cwd : activeCwd;
   const commitDiffPreview = useEnvironmentQuery(
-    selectedCommitSha && activeThread && branchDiffPreview.data?.cwd
+    selectedCommitSha && activeThread && previewCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
-            cwd: branchDiffPreview.data.cwd,
+            cwd: previewCwd,
             commitSha: selectedCommitSha,
             ignoreWhitespace: diffIgnoreWhitespace,
           },
@@ -327,15 +334,12 @@ export default function DiffPanel({
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
   const refreshCommitDiffPreview = commitDiffPreview.refresh;
   const refreshGitDiff = useCallback(() => {
-    // The branch preview carries the commit list AND the full working-tree/branch-range
-    // patches. When a commit is selected it is not the rendered diff, so refresh it only
-    // while the Commits submenu is open — otherwise focusing or restoring a commit view
-    // re-fetches large unused patches over the wire.
-    if (selectedCommitSha === null || commitsMenuOpen) {
-      refreshBranchDiffPreview();
-    }
+    // In a commit view this refreshes the commit listing alone, which is what reconciliation
+    // reads to notice the selected commit leaving the range. The patches it would otherwise
+    // re-fetch are not part of that request.
+    refreshBranchDiffPreview();
     if (selectedCommitSha) refreshCommitDiffPreview();
-  }, [refreshBranchDiffPreview, refreshCommitDiffPreview, selectedCommitSha, commitsMenuOpen]);
+  }, [refreshBranchDiffPreview, refreshCommitDiffPreview, selectedCommitSha]);
   const canRefreshGitDiff =
     isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
