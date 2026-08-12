@@ -342,6 +342,8 @@ describe("DesktopShellEnvironment", () => {
       ),
       Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
     );
+  });
+
   it.effect("skips PowerShell profile when node is available and fnm is not", () =>
     Effect.gen(function* () {
       const fs = yield* Effect.promise(() => import("node:fs"));
