@@ -1442,17 +1442,21 @@ function ActiveScanGroup({ items }: { items: ActiveScanItem[] }) {
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const { workspaceRoot } = use(TimelineRowCtx);
-  return (
-    <ActiveScanGroup
-      items={[
-        {
-          id: row.entry.id,
-          label: liveWorkEntryLabel(row.entry, workspaceRoot),
-          iconName: workEntryIconName(row.entry),
-        },
-      ]}
-    />
-  );
+  const item = {
+    id: row.entry.id,
+    label: liveWorkEntryLabel(row.entry, workspaceRoot, row.active),
+    iconName: workEntryIconName(row.entry),
+  };
+
+  if (!row.active) {
+    return (
+      <div className="text-secondary-label/65">
+        <ActiveScanLineContent item={item} highlighted={false} />
+      </div>
+    );
+  }
+
+  return <ActiveScanGroup items={[item]} />;
 }
 
 function toolGroupSummaryIconName(
@@ -2169,11 +2173,15 @@ function commandProgramName(command: string): string | null {
 function liveWorkEntryLabel(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
+  active: boolean,
 ): string {
   const command = workEntry.command?.trim();
-  if (command && (command.length > LIVE_COMMAND_PREVIEW_LIMIT || command.includes("\n"))) {
+  if (command) {
     const program = commandProgramName(command);
-    return program ? `Running ${program}` : "Running command";
+    if (program) return `${active ? "Running" : "Ran"} ${program}`;
+    if (command.length > LIVE_COMMAND_PREVIEW_LIMIT || command.includes("\n")) {
+      return active ? "Running command" : "Ran command";
+    }
   }
 
   return workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);

@@ -1265,6 +1265,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows[1]).toMatchObject({
       kind: "work-live",
       entry: { id: "work-2", command: "pwd" },
+      active: true,
     });
   });
 
@@ -1329,7 +1330,11 @@ describe("deriveMessagesTimelineRows", () => {
       "work-live:work-entry-1",
       "assistant-entry",
     ]);
-    expect(rows[1]).toMatchObject({ kind: "work-live", entry: { id: "work-2" } });
+    expect(rows[1]).toMatchObject({
+      kind: "work-live",
+      entry: { id: "work-2" },
+      active: false,
+    });
   });
 
   it("keeps all active commentary rows", () => {

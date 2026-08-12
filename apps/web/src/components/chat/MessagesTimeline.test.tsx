@@ -716,4 +716,48 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Running rg");
     expect(markup).not.toContain("steer|intervene|followup");
   });
+
+  it("settles a tool batch when newer assistant text arrives", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
+        timelineEntries={[
+          {
+            id: "entry-settled-command",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-settled-command",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Running command",
+              tone: "tool",
+              requestKind: "command",
+              command: "git status --short",
+            },
+          },
+          {
+            id: "entry-newer-assistant-text",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            message: {
+              id: MessageId.make("message-newer-assistant-text"),
+              role: "assistant",
+              text: "The status is clean.",
+              turnId: null,
+              createdAt: "2026-03-17T19:12:29.000Z",
+              updatedAt: "2026-03-17T19:12:29.000Z",
+              streaming: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran git");
+    expect(markup).not.toContain("Running git");
+    expect(markup).not.toContain("active-tool-content-scan");
+  });
 });

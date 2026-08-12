@@ -173,6 +173,7 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       entry: WorkLogEntry;
+      active: boolean;
     }
   | {
       kind: "work-toggle";
@@ -616,13 +617,14 @@ export function deriveMessagesTimelineRows(input: {
   const appendActiveRows = () => {
     let activeToolBatchAnchor: Extract<TimelineEntry, { kind: "work" }> | null = null;
     let latestActiveToolEntry: Extract<TimelineEntry, { kind: "work" }> | null = null;
-    const flushActiveToolBatch = () => {
+    const flushActiveToolBatch = (active: boolean) => {
       if (activeToolBatchAnchor === null || latestActiveToolEntry === null) return;
       nextRows.push({
         kind: "work-live",
         id: `work-live:${activeToolBatchAnchor.id}`,
         createdAt: activeToolBatchAnchor.createdAt,
         entry: latestActiveToolEntry.entry,
+        active,
       });
       activeToolBatchAnchor = null;
       latestActiveToolEntry = null;
@@ -644,7 +646,7 @@ export function deriveMessagesTimelineRows(input: {
       if (activeEntry.kind !== "message" || activeEntry.message.role !== "assistant") {
         continue;
       }
-      flushActiveToolBatch();
+      flushActiveToolBatch(false);
       nextRows.push({
         kind: "message",
         id: activeEntry.id,
@@ -659,7 +661,7 @@ export function deriveMessagesTimelineRows(input: {
         revertTurnCount: undefined,
       });
     }
-    flushActiveToolBatch();
+    flushActiveToolBatch(true);
   };
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
@@ -922,7 +924,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
 
     case "work-live":
-      return Equal.equals(a.entry, (b as typeof a).entry);
+      return a.active === (b as typeof a).active && Equal.equals(a.entry, (b as typeof a).entry);
 
     case "work-toggle": {
       const bw = b as typeof a;
