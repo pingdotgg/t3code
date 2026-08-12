@@ -1129,6 +1129,7 @@ enum NewTaskIncomingShareDiscardResult: Equatable {
 }
 
 enum NewTaskIncomingShareDiscard {
+    @MainActor
     static func perform(
         shareID: String,
         draft: FeatureComposerDraft,
