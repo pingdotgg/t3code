@@ -13,7 +13,7 @@ import {
 } from "@react-navigation/native";
 import { SymbolView } from "../../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,7 +22,7 @@ import { useThemeColor } from "../../../lib/useThemeColor";
 import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../../components/AppText";
 import { nativeHeaderScrollEdgeEffects } from "../../../native/StackHeader";
-import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
+import { useOpenNativePullRequest } from "../../pull-requests/useOpenNativePullRequest";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
@@ -99,16 +99,16 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     void gitActions.refreshSelectedThreadGitStatus({ quiet: true });
   }, [gitActions]);
 
+  const openNativePullRequest = useOpenNativePullRequest();
+
   const openExistingPr = useCallback(async () => {
-    const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
-    if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
-      return;
-    }
-    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
-    }
-  }, [gitStatus.data]);
+    const pr = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr : null;
+    await openNativePullRequest({
+      url: pr?.url,
+      number: pr?.number,
+      presentation,
+    });
+  }, [gitStatus.data, openNativePullRequest, presentation]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {

@@ -30,6 +30,11 @@ import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
+import { PullRequestCommentSheet } from "./features/pull-requests/PullRequestCommentSheet";
+import { PullRequestDetailScreen } from "./features/pull-requests/PullRequestDetailScreen";
+import { PullRequestDiffScreen } from "./features/pull-requests/PullRequestDiffScreen";
+import { PullRequestReviewersSheet } from "./features/pull-requests/PullRequestReviewersSheet";
+import { PullRequestsRouteScreen } from "./features/pull-requests/PullRequestsRouteScreen";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -291,6 +296,8 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitConfirm",
   "GitOverview",
   "NewTaskSheet",
+  "PullRequestComment",
+  "PullRequestReviewers",
   "SettingsLegal",
   "SettingsSheet",
   "ThreadReviewComment",
@@ -423,6 +430,45 @@ export const RootStack = createNativeStackNavigator({
       screen: ThreadRouteScreen,
       linking: THREAD_LINKING_PREFIX,
       options: GLASS_HEADER_OPTIONS,
+    }),
+    PullRequests: createNativeStackScreen({
+      screen: PullRequestsRouteScreen,
+      linking: "pull-requests",
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        headerLargeTitle: Platform.OS === "ios",
+        title: "Pull Requests",
+      },
+    }),
+    PullRequestDetail: createNativeStackScreen({
+      screen: PullRequestDetailScreen,
+      linking: "pull-requests/:environmentId/:projectId/:number",
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    PullRequestDiff: createNativeStackScreen({
+      screen: PullRequestDiffScreen,
+      linking: "pull-requests/:environmentId/:projectId/:number/diff",
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    PullRequestComment: createNativeStackScreen({
+      screen: PullRequestCommentSheet,
+      linking: "pull-requests/:environmentId/:projectId/:number/comment",
+      options: {
+        presentation: Platform.OS === "android" ? "fullScreenModal" : "formSheet",
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
+        sheetGrabberVisible: Platform.OS !== "android",
+        ...(Platform.OS === "ios" ? SHEET_SOLID_HEADER_OPTIONS : { headerShown: false }),
+      },
+    }),
+    PullRequestReviewers: createNativeStackScreen({
+      screen: PullRequestReviewersSheet,
+      linking: "pull-requests/:environmentId/:projectId/:number/reviewers",
+      options: {
+        presentation: Platform.OS === "android" ? "fullScreenModal" : "formSheet",
+        sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.7, 0.92],
+        sheetGrabberVisible: Platform.OS !== "android",
+        ...(Platform.OS === "ios" ? SHEET_SOLID_HEADER_OPTIONS : { headerShown: false }),
+      },
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
