@@ -181,6 +181,7 @@ function Sidebar({
   side = "left",
   variant = "sidebar",
   collapsible = "offcanvas",
+  revealOnHover = false,
   resizable = false,
   className,
   children,
@@ -189,6 +190,7 @@ function Sidebar({
   side?: "left" | "right";
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
+  revealOnHover?: boolean;
   resizable?: boolean | SidebarResizableOptions;
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
@@ -276,6 +278,16 @@ function Sidebar({
         data-state={state}
         data-variant={variant}
       >
+        {revealOnHover && collapsible === "offcanvas" && state === "collapsed" ? (
+          <div
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none fixed inset-y-0 z-10 hidden w-1 md:block [@media(pointer:fine)]:pointer-events-auto",
+              side === "left" ? "left-0" : "right-0",
+            )}
+            data-slot="sidebar-hover-edge"
+          />
+        ) : null}
         {/* This is what handles the sidebar gap on desktop */}
         <div
           className={cn(
@@ -294,6 +306,10 @@ function Sidebar({
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
+            revealOnHover &&
+              (side === "left"
+                ? "group-data-[collapsible=offcanvas]:group-hover:left-0 group-data-[collapsible=offcanvas]:group-hover:delay-100 group-data-[collapsible=offcanvas]:group-hover:duration-100"
+                : "group-data-[collapsible=offcanvas]:group-hover:right-0 group-data-[collapsible=offcanvas]:group-hover:delay-100 group-data-[collapsible=offcanvas]:group-hover:duration-100"),
             // Adjust the padding for floating and inset variants.
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
