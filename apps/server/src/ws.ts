@@ -83,7 +83,7 @@ import {
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import {
   AETHER_MIRROR_REFUSAL,
-  aetherMirrorWriteFileError,
+  guardAetherWriteFile,
   guardAetherRemoveWorktree,
   guardAetherVcsMutation,
 } from "./provider/AetherMirrorGuards.ts";
@@ -401,14 +401,42 @@ const makeWsRpcLayer = (
       // Route each per-thread terminal RPC to the cloud-VM shell when the
       // thread is Aether-backed, else the local PTY. `handles` caches per
       // thread, so this is a plain in-memory check after the first call.
+      //
+      // A thread's terminals must all live in ONE manager. The Aether binding
+      // only appears with the thread's first turn, so a terminal opened before
+      // then lands on the local PTY — and once the binding exists every later
+      // op routes to the cloud manager, leaving that PTY running, unreachable,
+      // inside the checkout the mirror is about to claim. The first time a
+      // thread is seen as cloud-backed, close whatever it left behind locally.
+      const localTerminalsReconciled = new Set<string>();
       const routeTerminal = <A>(
         threadId: string,
         onAether: () => Effect.Effect<A, TerminalError>,
         onLocal: () => Effect.Effect<A, TerminalError>,
       ): Effect.Effect<A, TerminalError> =>
-        aetherTerminalManager
-          .handles(threadId)
-          .pipe(Effect.flatMap((useAether) => (useAether ? onAether() : onLocal())));
+        aetherTerminalManager.handles(threadId).pipe(
+          Effect.flatMap((useAether) => {
+            if (!useAether) {
+              return onLocal();
+            }
+            if (localTerminalsReconciled.has(threadId)) {
+              return onAether();
+            }
+            localTerminalsReconciled.add(threadId);
+            return terminalManager.close({ threadId }).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(
+                  "failed to close the pre-binding local terminals of a cloud thread",
+                  {
+                    threadId,
+                    error: error.message,
+                  },
+                ),
+              ),
+              Effect.andThen(onAether()),
+            );
+          }),
+        );
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1893,25 +1921,20 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            // ownsPathWithin, not ownsCwd: relativePath resolves under cwd,
-            // so a PARENT project cwd can descend into an active mirror
-            // (cwd=/repo, relativePath=.worktrees/mirror/app.ts).
-            Effect.flatMap(
-              aetherMirrorRegistry.ownsPathWithin(input.cwd, input.relativePath),
-              (owned) =>
-                owned
-                  ? Effect.fail(aetherMirrorWriteFileError(input))
-                  : workspaceFileSystem.writeFile(input).pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new ProjectWriteFileError({
-                            cwd: input.cwd,
-                            relativePath: input.relativePath,
-                            ...projectFileFailureContext(cause),
-                            cause,
-                          }),
-                      ),
-                    ),
+            guardAetherWriteFile(
+              aetherMirrorRegistry,
+              input,
+              workspaceFileSystem.writeFile(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectWriteFileError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
+                ),
+              ),
             ),
             { "rpc.aggregate": "workspace" },
           ),
