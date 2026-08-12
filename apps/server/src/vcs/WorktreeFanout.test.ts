@@ -20,6 +20,7 @@ const THREAD_ID = "thread-1";
 
 interface Recorder {
   readonly created: string[];
+  readonly detached: Array<boolean | undefined>;
   readonly removed: string[];
   readonly deletedBranches: string[];
 }
@@ -28,7 +29,7 @@ function makeGitWorkflowLayer(options?: {
   readonly failOnCwd?: string;
   readonly failRemovePaths?: ReadonlySet<string>;
 }) {
-  const recorder: Recorder = { created: [], removed: [], deletedBranches: [] };
+  const recorder: Recorder = { created: [], detached: [], removed: [], deletedBranches: [] };
   const service = {
     createWorktree: (input: VcsCreateWorktreeInput) =>
       options?.failOnCwd === input.cwd
@@ -42,6 +43,7 @@ function makeGitWorkflowLayer(options?: {
           )
         : Effect.sync(() => {
             recorder.created.push(input.path ?? "");
+            recorder.detached.push(input.detach);
             return {
               worktree: {
                 path: input.path ?? "",
@@ -128,6 +130,20 @@ describe("createThreadWorktrees", () => {
     }),
   );
 
+  it.effect("requests a detached checkout when no branch is created", () =>
+    Effect.gen(function* () {
+      const { layer, recorder } = makeGitWorkflowLayer();
+      yield* createThreadWorktrees({
+        worktreesDir: WORKTREES_DIR,
+        projectId: PROJECT_ID,
+        threadId: THREAD_ID,
+        targets: [{ repoRoot: "/Users/me/backend", baseRef: "main", newBranch: null }],
+      }).pipe(Effect.provide(layer));
+
+      expect(recorder.detached).toEqual([true]);
+    }),
+  );
+
   it.effect("rolls back already-created worktrees on partial failure", () =>
     Effect.gen(function* () {
       const { layer, recorder } = makeGitWorkflowLayer({ failOnCwd: "/Users/me/frontend" });
@@ -153,13 +169,14 @@ describe("createThreadWorktrees", () => {
   it.effect("rolls back already-created worktrees when creation is interrupted", () =>
     Effect.gen(function* () {
       const secondCreateStarted = yield* Deferred.make<void>();
-      const recorder: Recorder = { created: [], removed: [], deletedBranches: [] };
+      const recorder: Recorder = { created: [], detached: [], removed: [], deletedBranches: [] };
       const layer = Layer.mock(GitWorkflowService.GitWorkflowService)({
         createWorktree: (input) =>
           input.cwd === "/Users/me/frontend"
             ? Deferred.succeed(secondCreateStarted, undefined).pipe(Effect.andThen(Effect.never))
             : Effect.sync(() => {
                 recorder.created.push(input.path ?? "");
+                recorder.detached.push(input.detach);
                 return {
                   worktree: {
                     path: input.path ?? "",

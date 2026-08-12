@@ -40,6 +40,17 @@ describe("VcsCreateWorktreeInput", () => {
 
     expect(parsed.baseRefName).toBe("origin/main");
   });
+
+  it("accepts an explicit detached checkout", () => {
+    const parsed = decodeCreateWorktreeInput({
+      cwd: "/repo",
+      refName: "main",
+      detach: true,
+      path: "/tmp/worktree",
+    });
+
+    expect(parsed.detach).toBe(true);
+  });
 });
 
 describe("GitPreparePullRequestThreadInput", () => {

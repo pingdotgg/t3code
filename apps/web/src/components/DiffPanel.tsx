@@ -78,19 +78,10 @@ import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
+import { buildRepoFilterOptions, repoRootBaseName, scopedDiffFileKey } from "../lib/diffRepoKeys";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
-
-// Last path segment of a repo root, used to label repos and compare a project's
-// configured roots against the single root the branch diff actually covers
-// (paths differ between a thread worktree and the project checkout, but the repo
-// folder name is stable across both).
-function repoRootBaseName(rootPath: string): string {
-  const trimmed = rootPath.replace(/[/\\]+$/, "");
-  const segments = trimmed.split(/[/\\]/);
-  return segments[segments.length - 1] || trimmed;
-}
 
 interface CollapsedDiffFilesState {
   readonly scopeKey: string | null;
@@ -625,21 +616,26 @@ export default function DiffPanel({
 
   // Repo filter options come from whichever multi-repo view is active: the
   // per-worktree branch fan-out, or the checkpoint groups in a turn diff. Keyed
-  // by folder name so a selection survives switching between the two.
-  const repoFilterNames = useMemo(() => {
-    const names = isMultiRepoBranchView
-      ? diffRepoTargets.map((entry) => repoRootBaseName(entry.repoRoot))
-      : renderableGroups.map((group) => repoRootBaseName(group.repoRoot));
-    return Array.from(new Set(names));
+  // by full root so same-named repositories remain independently selectable.
+  const repoFilterOptions = useMemo(() => {
+    const roots = isMultiRepoBranchView
+      ? diffRepoTargets.map((entry) => entry.repoRoot)
+      : renderableGroups.map((group) => group.repoRoot);
+    return buildRepoFilterOptions(roots);
   }, [isMultiRepoBranchView, renderableGroups, diffRepoTargets]);
-  const showRepoFilter = repoFilterNames.length > 1;
+  const showRepoFilter = repoFilterOptions.length > 1;
   const effectiveRepoFilter =
-    branchRepoFilter && repoFilterNames.includes(branchRepoFilter) ? branchRepoFilter : null;
+    branchRepoFilter && repoFilterOptions.some((option) => option.repoRoot === branchRepoFilter)
+      ? branchRepoFilter
+      : null;
+  const effectiveRepoFilterLabel =
+    repoFilterOptions.find((option) => option.repoRoot === effectiveRepoFilter)?.displayName ??
+    "All repos";
   const visibleDiffTargets = effectiveRepoFilter
-    ? diffRepoTargets.filter((entry) => repoRootBaseName(entry.repoRoot) === effectiveRepoFilter)
+    ? diffRepoTargets.filter((entry) => entry.repoRoot === effectiveRepoFilter)
     : diffRepoTargets;
   const visibleGroups = effectiveRepoFilter
-    ? renderableGroups.filter((group) => repoRootBaseName(group.repoRoot) === effectiveRepoFilter)
+    ? renderableGroups.filter((group) => group.repoRoot === effectiveRepoFilter)
     : renderableGroups;
 
   useEffect(() => {
@@ -649,9 +645,8 @@ export default function DiffPanel({
 
   useEffect(() => {
     if (!isGroupedDiffView || !selectedFilePath || !selectedRepoRoot) return;
-    const selectedRepoName = repoRootBaseName(selectedRepoRoot);
-    if (effectiveRepoFilter && effectiveRepoFilter !== selectedRepoName) {
-      setBranchRepoFilter(selectedRepoName);
+    if (effectiveRepoFilter && effectiveRepoFilter !== selectedRepoRoot) {
+      setBranchRepoFilter(selectedRepoRoot);
       return;
     }
     const frame = requestAnimationFrame(() => {
@@ -735,7 +730,8 @@ export default function DiffPanel({
     const filePath = resolveFileDiffPath(fileDiff);
     const fileKey = buildFileDiffRenderKey(fileDiff);
     const themedFileKey = `${repoRoot ?? ""}:${fileKey}:${resolvedTheme}`;
-    const collapsed = collapsedDiffFileKeys.has(fileKey);
+    const collapseFileKey = scopedDiffFileKey(fileKey, repoRoot);
+    const collapsed = collapsedDiffFileKeys.has(collapseFileKey);
     return (
       <div
         key={themedFileKey}
@@ -769,7 +765,7 @@ export default function DiffPanel({
                     aria-expanded={!collapsed}
                     onClick={(event) => {
                       event.stopPropagation();
-                      toggleDiffFileCollapsed(fileKey);
+                      toggleDiffFileCollapsed(collapseFileKey);
                     }}
                   />
                 }
@@ -884,10 +880,10 @@ export default function DiffPanel({
           <DropdownMenu>
             <DropdownMenuTrigger
               className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={`Filter diff by repo. Currently ${effectiveRepoFilter ?? "all repos"}`}
+              aria-label={`Filter diff by repo. Currently ${effectiveRepoFilterLabel}`}
             >
               <FolderGit2Icon className="size-3.5 shrink-0 opacity-70" />
-              <span className="max-w-32 truncate">{effectiveRepoFilter ?? "All repos"}</span>
+              <span className="max-w-32 truncate">{effectiveRepoFilterLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-56">
@@ -895,10 +891,14 @@ export default function DiffPanel({
                 <span>All repos</span>
                 {effectiveRepoFilter === null && <CheckIcon className="ml-auto" />}
               </DropdownMenuItem>
-              {repoFilterNames.map((name) => (
-                <DropdownMenuItem key={name} onClick={() => setBranchRepoFilter(name)}>
-                  <span className="truncate">{name}</span>
-                  {effectiveRepoFilter === name && <CheckIcon className="ml-auto" />}
+              {repoFilterOptions.map((option) => (
+                <DropdownMenuItem
+                  key={option.repoRoot}
+                  onClick={() => setBranchRepoFilter(option.repoRoot)}
+                  title={option.repoRoot}
+                >
+                  <span className="truncate">{option.displayName}</span>
+                  {effectiveRepoFilter === option.repoRoot && <CheckIcon className="ml-auto" />}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

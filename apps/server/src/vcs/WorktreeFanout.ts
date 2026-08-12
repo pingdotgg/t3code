@@ -153,7 +153,7 @@ export const createThreadWorktrees = (
           const result = yield* gitWorkflow.createWorktree({
             cwd: target.repoRoot,
             refName: target.baseRef,
-            ...(target.newBranch ? { newRefName: target.newBranch } : {}),
+            ...(target.newBranch ? { newRefName: target.newBranch } : { detach: true }),
             path: worktreePath,
           });
           created.push({
