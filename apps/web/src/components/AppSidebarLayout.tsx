@@ -198,6 +198,12 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           void navigate({ to: "/settings" });
         }
       }
+      if (action === "open-usage" && pathname !== "/usage") {
+        void navigate({ to: "/usage" });
+      }
+      if (action === "open-pull-requests" && pathname !== "/pull-requests") {
+        void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+      }
     });
 
     return () => {

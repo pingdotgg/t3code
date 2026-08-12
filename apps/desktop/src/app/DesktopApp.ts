@@ -14,6 +14,7 @@ import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
+import * as DesktopTray from "../window/DesktopTray.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -221,6 +222,7 @@ const bootstrap = Effect.gen(function* () {
 const startup = Effect.gen(function* () {
   const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;
   const applicationMenu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+  const tray = yield* DesktopTray.DesktopTray;
   const electronApp = yield* ElectronApp.ElectronApp;
   const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
   const linuxUrlHandler = yield* DesktopLinuxUrlHandler.DesktopLinuxUrlHandler;
@@ -285,6 +287,7 @@ const startup = Effect.gen(function* () {
   }
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
+  yield* tray.configure;
   yield* updates.configure;
   yield* linuxUrlHandler.register;
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
