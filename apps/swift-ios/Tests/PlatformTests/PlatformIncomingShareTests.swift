@@ -32,6 +32,19 @@ struct PlatformIncomingShareTests {
     }
 
     @Test
+    func threadDestinationResolutionRequiresAnAuthoritativeConnectedSnapshot() {
+        #expect(PlatformIncomingShareDestinationConnectionPolicy.canResolveThread(
+            connectionState: .connected
+        ))
+        #expect(!PlatformIncomingShareDestinationConnectionPolicy.canResolveThread(
+            connectionState: .disconnected
+        ))
+        #expect(!PlatformIncomingShareDestinationConnectionPolicy.canResolveThread(
+            connectionState: nil
+        ))
+    }
+
+    @Test
     func persistsMergedDraftBeforeRemovingInboxEnvelope() async throws {
         let recorder = IncomingShareTestRecorder()
         let directory = FileManager.default.temporaryDirectory
@@ -266,7 +279,7 @@ struct PlatformIncomingShareTests {
     }
 
     @Test
-    func replayAfterInboxRemovalFailureStillReturnsTheShareIdentityAndDelta() async throws {
+    func replayAfterInboxRemovalFailureSuppressesAnAlreadyImportedDelta() async throws {
         let recorder = IncomingShareTestRecorder()
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -320,8 +333,7 @@ struct PlatformIncomingShareTests {
         let replay = try await pipeline.importEnvelope(envelope, into: thread)
         let snapshot = try await store.snapshot(for: FeatureComposerDraftStore.threadKey(thread))
 
-        #expect(replay.sharedContent.shareID == envelope.id)
-        #expect(replay.sharedContent.draft.text == "Shared once")
+        #expect(replay.sharedContent == nil)
         #expect(snapshot.draft?.text == "Shared once")
         #expect(snapshot.importedShareIDs == [envelope.id])
         #expect(await recorder.events.count == 2)
@@ -372,14 +384,15 @@ struct PlatformIncomingShareTests {
         )
 
         let imported = try await pipeline.importEnvelope(envelope, into: thread)
+        let sharedContent = try #require(imported.sharedContent)
         let captured = await recorder.capturedDraft
 
         #expect(captured?.key == FeatureComposerDraftStore.threadKey(thread))
         #expect(imported.draft.text.contains("Review this"))
-        #expect(imported.sharedContent.shareID == envelope.id)
-        #expect(imported.sharedContent.draft.text.contains("Shared video: reference.mov"))
+        #expect(sharedContent.shareID == envelope.id)
+        #expect(sharedContent.draft.text.contains("Shared video: reference.mov"))
         #expect(
-            imported.sharedContent.draft.attachments.first?.id.uuidString.lowercased() == videoID
+            sharedContent.draft.attachments.first?.id.uuidString.lowercased() == videoID
         )
         #expect(await recorder.events == [
             "video:\(videoID)",

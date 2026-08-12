@@ -323,6 +323,26 @@ struct ComposerDraftStoreTests {
         #expect(pending.map(\.shareID) == ["pending-one", "pending-two"])
     }
 
+    @Test func handledReloadImportsArePrunedBeforeAComposerCanBeRecreated() {
+        let imports = [
+            FeatureComposerIncomingShareDraft(
+                shareID: "SHARE-ONE",
+                draft: FeatureComposerDraft(text: "First")
+            ),
+            FeatureComposerIncomingShareDraft(
+                shareID: "share-two",
+                draft: FeatureComposerDraft(text: "Second")
+            ),
+        ]
+
+        let remaining = FeatureComposerIncomingShareReloadPolicy.removing(
+            shareIDs: ["share-one"],
+            from: imports
+        )
+
+        #expect(remaining.map(\.shareID) == ["share-two"])
+    }
+
     @Test func reloadQueueMatchesThePersistedLedgerWindowAndDeduplicatesReplays() {
         var imports: [FeatureComposerIncomingShareDraft] = []
         for index in 0..<34 {
@@ -389,6 +409,25 @@ struct ComposerDraftStoreTests {
         #expect(!NewTaskIncomingSharePersistencePolicy.canPersist(
             pendingShareID: nil,
             restoredShareID: "share-a"
+        ))
+    }
+
+    @Test func routedShareAcknowledgementRequiresTheOriginalProjectContext() {
+        #expect(NewTaskIncomingShareAcknowledgementPolicy.canAcknowledge(
+            didRoute: true,
+            routedShareID: "share-a",
+            pendingShareID: "SHARE-A",
+            routedProjectID: "project-a",
+            currentProjectID: "project-a",
+            restoreContextProjectID: "project-a"
+        ))
+        #expect(!NewTaskIncomingShareAcknowledgementPolicy.canAcknowledge(
+            didRoute: true,
+            routedShareID: "share-a",
+            pendingShareID: "share-a",
+            routedProjectID: "project-a",
+            currentProjectID: "project-b",
+            restoreContextProjectID: "project-b"
         ))
     }
 

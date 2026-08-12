@@ -17,6 +17,12 @@ final class PlatformIncomingShareRoutingGate {
     }
 }
 
+enum PlatformIncomingShareDestinationConnectionPolicy {
+    static func canResolveThread(connectionState: FeatureConnection.State?) -> Bool {
+        connectionState == .connected
+    }
+}
+
 struct PlatformRootView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     @Bindable private var model: FeatureRootModel
@@ -281,6 +287,11 @@ struct PlatformRootView: View {
                     // environment can retry when its connection recovers.
                     return
                 }
+                guard incomingShareDestinationIsConnected(destination.environmentID) else {
+                    // A disconnected snapshot cannot authoritatively prove that
+                    // the saved thread disappeared. Keep it queued for retry.
+                    return
+                }
                 guard let thread = PlatformRouteResolver.thread(
                     in: model.snapshot,
                     environmentID: destination.environmentID,
@@ -310,14 +321,16 @@ struct PlatformRootView: View {
     }
 
     @MainActor
-    private func acknowledgeStagedIncomingShare(id: String) async {
+    private func acknowledgeStagedIncomingShare(id: String) async -> Bool {
         do {
             try await incomingShareCoordinator.acknowledgeStagedNewThread(id: id)
             if stagedIncomingShareID?.caseInsensitiveCompare(id) == .orderedSame {
                 stagedIncomingShareID = nil
             }
+            return true
         } catch {
             model.errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -426,6 +439,15 @@ struct PlatformRootView: View {
         }
         guard !environment.isEnabled else { return true }
         return await model.setEnvironmentEnabled(id, enabled: true)
+    }
+
+    private func incomingShareDestinationIsConnected(_ id: String?) -> Bool {
+        let state = id.flatMap { environmentID in
+            model.snapshot.environments.first(where: { $0.id == environmentID })?.connectionState
+        } ?? (id == nil ? model.snapshot.connection.state : nil)
+        return PlatformIncomingShareDestinationConnectionPolicy.canResolveThread(
+            connectionState: state
+        )
     }
 
     private var incomingShareConnectionStates: [FeatureConnection.State?] {

@@ -4,14 +4,14 @@ public struct FeatureRootView: View {
     @State private var model: FeatureRootModel
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
-    private let acknowledgeIncomingShare: (String) async -> Void
+    private let acknowledgeIncomingShare: (String) async -> Bool
     private let releaseIncomingSharePresentation: @MainActor (String) -> Void
 
     public init(client: any FeatureClient) {
         _model = State(initialValue: FeatureRootModel(client: client))
         navigationRequest = nil
         onNavigationRequestConsumed = { _ in }
-        acknowledgeIncomingShare = { _ in }
+        acknowledgeIncomingShare = { _ in true }
         releaseIncomingSharePresentation = { _ in }
     }
 
@@ -19,7 +19,7 @@ public struct FeatureRootView: View {
         model: FeatureRootModel,
         navigationRequest: FeatureWorkspaceNavigationRequest? = nil,
         onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void = { _ in },
-        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
+        acknowledgeIncomingShare: @escaping (String) async -> Bool = { _ in true },
         releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         _model = State(initialValue: model)

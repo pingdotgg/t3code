@@ -107,7 +107,7 @@ struct PlatformIncomingShareDraftImport: Sendable {
 
 struct PlatformIncomingShareImport: Sendable {
     let draft: FeatureComposerDraft
-    let sharedContent: FeatureComposerIncomingShareDraft
+    let sharedContent: FeatureComposerIncomingShareDraft?
 }
 
 struct PlatformIncomingShareDraftRepository: Sendable {
@@ -271,10 +271,12 @@ struct PlatformIncomingSharePipeline: Sendable {
         }
         return PlatformIncomingShareImport(
             draft: imported.draft,
-            sharedContent: FeatureComposerIncomingShareDraft(
-                shareID: envelope.id,
-                draft: FeatureComposerDraft(text: sharedText, attachments: prepared)
-            )
+            sharedContent: imported.didImport
+                ? FeatureComposerIncomingShareDraft(
+                    shareID: envelope.id,
+                    draft: FeatureComposerDraft(text: sharedText, attachments: prepared)
+                )
+                : nil
         )
     }
 

@@ -12,6 +12,7 @@ public struct ThreadDetailView: View {
     let composerDraftReloadImports: [FeatureComposerIncomingShareDraft]
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
+    let onComposerDraftReloadHandled: ([String]) -> Void
     private let draftStore: FeatureComposerDraftStore
 
     @State private var draft = ""
@@ -35,6 +36,7 @@ public struct ThreadDetailView: View {
         composerDraftReloadImports: [FeatureComposerIncomingShareDraft] = [],
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
+        onComposerDraftReloadHandled: @escaping ([String]) -> Void = { _ in },
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
@@ -46,6 +48,7 @@ public struct ThreadDetailView: View {
         )
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
+        self.onComposerDraftReloadHandled = onComposerDraftReloadHandled
         self.draftStore = draftStore
     }
 
@@ -89,12 +92,14 @@ public struct ThreadDetailView: View {
         )) {
             guard handledComposerDraftReloadRevision != composerDraftReloadRevision,
                   didRestoreDraft else { return }
-            for imported in FeatureComposerIncomingShareReloadPolicy.pendingImports(
+            let pendingImports = FeatureComposerIncomingShareReloadPolicy.pendingImports(
                 composerDraftReloadImports,
                 restoredShareIDs: restoredImportedShareIDs
-            ) {
+            )
+            for imported in pendingImports {
                 guard await reloadImportedDraft(imported.draft) else { return }
                 restoredImportedShareIDs.insert(imported.shareID)
+                onComposerDraftReloadHandled([imported.shareID])
             }
             handledComposerDraftReloadRevision = composerDraftReloadRevision
         }
@@ -753,6 +758,14 @@ enum FeatureComposerIncomingShareReloadPolicy {
         restoredShareIDs: Set<String>
     ) -> [FeatureComposerIncomingShareDraft] {
         imports.filter { !restoredShareIDs.contains($0.shareID) }
+    }
+
+    static func removing(
+        shareIDs: [String],
+        from imports: [FeatureComposerIncomingShareDraft]
+    ) -> [FeatureComposerIncomingShareDraft] {
+        let handled = Set(shareIDs.map { $0.lowercased() })
+        return imports.filter { !handled.contains($0.shareID.lowercased()) }
     }
 }
 

@@ -8,7 +8,7 @@ public struct NewThreadView: View {
     let onCreateProject: @MainActor () -> Void
     private let draftStore: FeatureComposerDraftStore
     private let initialProjectID: String?
-    private let acknowledgeIncomingShare: (String) async -> Void
+    private let acknowledgeIncomingShare: (String) async -> Bool
 
     @State private var projectID = ""
     @State private var prompt = ""
@@ -43,7 +43,7 @@ public struct NewThreadView: View {
         onCreateProject: @escaping @MainActor () -> Void = {},
         initialProjectID: String? = nil,
         incomingShareID: String? = nil,
-        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
+        acknowledgeIncomingShare: @escaping (String) async -> Bool = { _ in true },
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
@@ -778,11 +778,17 @@ public struct NewThreadView: View {
             && draftRestoreContext?.projectID == requestedProjectID
         guard routeIsCurrent else {
             if let routedShareID,
-               shouldAcknowledgeShare,
-               pendingIncomingShareID == routedShareID {
+               NewTaskIncomingShareAcknowledgementPolicy.canAcknowledge(
+                   didRoute: shouldAcknowledgeShare,
+                   routedShareID: routedShareID,
+                   pendingShareID: pendingIncomingShareID,
+                   routedProjectID: requestedProjectID,
+                   currentProjectID: projectID,
+                   restoreContextProjectID: draftRestoreContext?.projectID
+               ),
+               await acknowledgeIncomingShare(routedShareID) {
                 restoredIncomingShareID = nil
                 pendingIncomingShareID = nil
-                await acknowledgeIncomingShare(routedShareID)
             }
             return
         }
@@ -823,10 +829,11 @@ public struct NewThreadView: View {
         workspaceSelectionIsExplicit = liveWorkspaceSelectionIsExplicit
             || saved?.workspace != nil
         restoredDraftProjectID = requestedProjectID
-        if let routedShareID, shouldAcknowledgeShare {
+        if let routedShareID,
+           shouldAcknowledgeShare,
+           await acknowledgeIncomingShare(routedShareID) {
             restoredIncomingShareID = nil
             pendingIncomingShareID = nil
-            await acknowledgeIncomingShare(routedShareID)
         }
         if liveDraft != context.baseline {
             scheduleDraftSave()
@@ -977,12 +984,12 @@ public struct NewThreadView: View {
         guard let shareID = pendingIncomingShareID else { return }
         let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
         let pendingSave = immediateDraftSaveTasks.removeValue(forKey: key)
-        restoredIncomingShareID = nil
-        pendingIncomingShareID = nil
         Task { @MainActor in
             await NewTaskDraftWriteFence.cancelAndWait(pendingSave)
+            guard await acknowledgeIncomingShare(shareID) else { return }
+            restoredIncomingShareID = nil
+            pendingIncomingShareID = nil
             try? await draftStore.removeDraft(for: key)
-            await acknowledgeIncomingShare(shareID)
             dismiss()
         }
     }
@@ -1045,6 +1052,22 @@ enum NewTaskIncomingSharePersistencePolicy {
     static func canPersist(pendingShareID: String?, restoredShareID: String?) -> Bool {
         guard let pendingShareID else { return false }
         return restoredShareID == pendingShareID
+    }
+}
+
+enum NewTaskIncomingShareAcknowledgementPolicy {
+    static func canAcknowledge(
+        didRoute: Bool,
+        routedShareID: String,
+        pendingShareID: String?,
+        routedProjectID: String,
+        currentProjectID: String,
+        restoreContextProjectID: String?
+    ) -> Bool {
+        didRoute
+            && pendingShareID?.caseInsensitiveCompare(routedShareID) == .orderedSame
+            && currentProjectID == routedProjectID
+            && restoreContextProjectID == routedProjectID
     }
 }
 

@@ -4,7 +4,7 @@ import UIKit
 struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     enum Destination: Equatable, Sendable {
         case thread(id: String)
-        case sharedThread(id: String, importDraft: FeatureComposerIncomingShareDraft)
+        case sharedThread(id: String, importDraft: FeatureComposerIncomingShareDraft?)
         case project(id: String)
         case newTask(projectID: String?)
         case sharedNewTask(shareID: String)
@@ -27,7 +27,7 @@ public struct WorkspaceView: View {
     private let onNavigationRequestConsumed: @MainActor (UUID) -> Void
     private let submitNewTask: (NewTaskRequest) async -> FeatureThread?
     private let submitMessage: (FeatureMessageSubmission) async -> Bool
-    private let acknowledgeIncomingShare: (String) async -> Void
+    private let acknowledgeIncomingShare: (String) async -> Bool
     private let releaseIncomingSharePresentation: @MainActor (String) -> Void
 
     @State private var selectedThreadID: String?
@@ -64,7 +64,7 @@ public struct WorkspaceView: View {
             onNavigationRequestConsumed: { _ in },
             submitNewTask: submitNewTask,
             submitMessage: submitMessage,
-            acknowledgeIncomingShare: { _ in },
+            acknowledgeIncomingShare: { _ in true },
             releaseIncomingSharePresentation: { _ in }
         )
     }
@@ -75,7 +75,7 @@ public struct WorkspaceView: View {
         onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void,
         submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
         submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil,
-        acknowledgeIncomingShare: @escaping (String) async -> Void = { _ in },
+        acknowledgeIncomingShare: @escaping (String) async -> Bool = { _ in true },
         releaseIncomingSharePresentation: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.model = model
@@ -286,7 +286,15 @@ public struct WorkspaceView: View {
                 composerDraftReloadRevision: threadDetailPresentationRevision,
                 composerDraftReloadImports: sharedThreadImports[id] ?? [],
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: closeSelectedThread,
+                onComposerDraftReloadHandled: { shareIDs in
+                    guard let imports = sharedThreadImports[id] else { return }
+                    let pending = FeatureComposerIncomingShareReloadPolicy.removing(
+                        shareIDs: shareIDs,
+                        from: imports
+                    )
+                    sharedThreadImports[id] = pending.isEmpty ? nil : pending
+                }
             )
             .id(id)
         } else {
@@ -604,7 +612,7 @@ public struct WorkspaceView: View {
         case let .sharedThread(id, importDraft):
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
-            if selectedThreadID == id {
+            if selectedThreadID == id, let importDraft {
                 sharedThreadImports[id] = FeatureComposerIncomingShareReloadPolicy.appending(
                     importDraft,
                     to: sharedThreadImports[id] ?? []
