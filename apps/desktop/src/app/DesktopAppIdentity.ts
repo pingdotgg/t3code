@@ -131,9 +131,6 @@ export const make = Effect.gen(function* () {
     }
 
     if (environment.platform === "linux") {
-      // Match the packaged desktop entry's StartupWMClass so Linux shells can
-      // associate the running window with its launcher and icon.
-      yield* electronApp.appendCommandLineSwitch("class", environment.linuxWmClass);
       yield* electronApp.setDesktopName(environment.linuxDesktopEntryName);
     }
 
