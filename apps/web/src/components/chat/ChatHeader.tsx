@@ -203,6 +203,7 @@ export const ChatHeader = memo(function ChatHeader({
   );
   const handleRenameKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") {
         renameCommittedRef.current = true;
         commitRename(event.currentTarget.value);
