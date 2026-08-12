@@ -11,10 +11,7 @@ import {
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
-import {
-  connectionStatusText,
-  type EnvironmentConnectionPhase,
-} from "@t3tools/client-runtime/connection";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
@@ -55,17 +52,12 @@ import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
-
-interface EnvironmentOption {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly platform: string;
-  readonly baseDirectory: string | null;
-  readonly connectionState: EnvironmentConnectionPhase;
-  readonly connectionError: string | null;
-  readonly connectionErrorTraceId: string | null;
-}
+import {
+  addProjectPathActionLabel,
+  resolveAddProjectEnvironment,
+  type AddProjectEnvironmentOption as EnvironmentOption,
+} from "./AddProjectScreen.logic";
+import { SelectedRepositoryList } from "./SelectedRepositoryList";
 
 const environmentOptionOrder = Order.mapInput(
   Order.Struct({
@@ -872,40 +864,18 @@ export function AddProjectLocalFolderScreen(props: {
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label={
-              multiple
-                ? repoRoots.length === 0
-                  ? "Set primary repository"
-                  : "Attach repository"
-                : "Add project"
-            }
+            label={addProjectPathActionLabel(multiple, repoRoots.length)}
             disabled={isBrowseNavigating || isSubmitting}
             onPress={() => void submitPath()}
             loading={isSubmitting}
           />
-          {multiple && repoRoots.length > 0 ? (
-            <View className="gap-2 rounded-2xl bg-card px-4 py-3">
-              {repoRoots.map((root, index) => (
-                <View key={root} className="flex-row items-center gap-2">
-                  <Text className="flex-1 text-sm" numberOfLines={1}>
-                    {root}
-                  </Text>
-                  <Text className="text-xs text-foreground-muted">
-                    {index === 0 ? "Primary" : "Attached"}
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Remove ${root}`}
-                    onPress={() =>
-                      setRepoRoots((current) => current.filter((candidate) => candidate !== root))
-                    }
-                    className="rounded-full px-2 py-1 active:opacity-60"
-                  >
-                    <Text className="text-xs font-t3-bold text-primary">Remove</Text>
-                  </Pressable>
-                </View>
-              ))}
-            </View>
+          {multiple ? (
+            <SelectedRepositoryList
+              repoRoots={repoRoots}
+              onRemove={(root) =>
+                setRepoRoots((current) => current.filter((candidate) => candidate !== root))
+              }
+            />
           ) : null}
           {multiple ? (
             <PrimaryActionButton

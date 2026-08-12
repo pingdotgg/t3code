@@ -61,7 +61,6 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import { resolveAnchorRepoRoot } from "@t3tools/shared/git";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -100,12 +99,8 @@ import * as WorkspaceGitScan from "./workspace/WorkspaceGitScan.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import {
-  createThreadWorktrees,
-  rollbackThreadWorktrees,
-  type CreatedThreadWorktree,
-  type WorktreeFanoutTarget,
-} from "./vcs/WorktreeFanout.ts";
+import { rollbackThreadWorktrees, type CreatedThreadWorktree } from "./vcs/WorktreeFanout.ts";
+import { prepareThreadWorktreeFanout } from "./vcs/ThreadWorktreeBootstrap.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -934,115 +929,33 @@ const makeWsRpcLayer = (
 
             if (bootstrap?.prepareWorktree) {
               const prepare = bootstrap.prepareWorktree;
-
-              // Resolve the project so an isolated run fans out across every repo
-              // root. Multi-repo projects create one worktree per
-              // `repoRoot`; single-root projects fall back to the anchor cwd,
-              // preserving today's single-worktree behavior exactly.
-              const worktreeProjectId =
-                targetProjectId ??
-                (yield* projectionSnapshotQuery
-                  .getThreadShellById(command.threadId)
-                  .pipe(
-                    Effect.map((shell) =>
-                      Option.isSome(shell) ? shell.value.projectId : undefined,
-                    ),
-                  ));
-              const projectShell = worktreeProjectId
-                ? yield* projectionSnapshotQuery
-                    .getProjectShellById(worktreeProjectId)
-                    .pipe(Effect.map(Option.getOrUndefined))
-                : undefined;
-              const repoRoots =
-                projectShell?.repoRoots && projectShell.repoRoots.length > 0
-                  ? projectShell.repoRoots
-                  : [prepare.projectCwd];
-              // The primary repository owns the base ref selected by the user.
-              // `resolveAnchorRepoRoot` retains a fallback for older imported
-              // workspace-file records whose workspaceRoot was a parent folder.
-              const anchorRepoRoot = resolveAnchorRepoRoot({
-                workspaceRoot: prepare.projectCwd,
-                repoRoots,
-              });
-
-              // Resolve the anchor repo's base ref, honoring `startFromOrigin`:
-              // fetch origin and pin to the resolved remote-tracking commit so
-              // the worktree branches off the latest upstream tip.
-              let anchorBaseRef = prepare.baseBranch;
-              // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
-              const startFromOrigin =
-                prepare.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: anchorRepoRoot,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: anchorRepoRoot,
-                  remoteName: "origin",
-                });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: anchorRepoRoot,
-                  refName: prepare.baseBranch,
-                  fallbackRemoteName: "origin",
-                });
-                anchorBaseRef = resolvedRemoteBase.commitSha;
-              }
-
-              // Each repo branches from its own base: the anchor repo uses the
-              // resolved base ref (honoring `startFromOrigin`), while cousin
-              // repos branch off their current HEAD (falling back to a detached
-              // HEAD when unresolved).
-              const targets = yield* Effect.forEach(
-                repoRoots,
-                (repoRoot): Effect.Effect<WorktreeFanoutTarget> =>
-                  repoRoot === anchorRepoRoot
-                    ? Effect.succeed({
-                        repoRoot,
-                        baseRef: anchorBaseRef,
-                        newBranch: prepare.branch ?? null,
-                      })
-                    : gitWorkflow.localStatus({ cwd: repoRoot }).pipe(
-                        Effect.map((status) => status.refName ?? "HEAD"),
-                        Effect.orElseSucceed(() => "HEAD"),
-                        Effect.map((baseRef) => ({
-                          repoRoot,
-                          baseRef,
-                          newBranch: prepare.branch ?? null,
-                        })),
-                      ),
+              const prepared = yield* prepareThreadWorktreeFanout(
+                gitWorkflow,
+                projectionSnapshotQuery,
+                {
+                  worktreesDir: config.worktreesDir,
+                  projectId: targetProjectId,
+                  threadId: command.threadId,
+                  prepare,
+                },
               );
-
-              const created = yield* createThreadWorktrees({
-                worktreesDir: config.worktreesDir,
-                projectId: worktreeProjectId ?? command.threadId,
-                threadId: command.threadId,
-                targets,
-              }).pipe(Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow));
-              createdWorktrees = created;
-
-              const worktrees = created.map((entry) => ({
-                repoRoot: entry.repoRoot,
-                worktreePath: entry.worktreePath,
-              }));
-              const anchorWorktree =
-                created.find((entry) => entry.repoRoot === anchorRepoRoot) ?? created[0];
-              targetWorktreePath = anchorWorktree?.worktreePath ?? null;
+              createdWorktrees = prepared.created;
+              targetWorktreePath = prepared.worktreePath;
 
               yield* orchestrationEngine.dispatch({
                 type: "thread.meta.update",
                 commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
                 threadId: command.threadId,
-                branch: anchorWorktree?.refName ?? prepare.branch ?? prepare.baseBranch,
+                branch: prepared.branch,
                 worktreePath: targetWorktreePath,
-                worktrees,
+                worktrees: prepared.worktrees,
               });
 
-              yield* Effect.forEach(created, (entry) => refreshGitStatus(entry.worktreePath), {
-                discard: true,
-              });
+              yield* Effect.forEach(
+                prepared.created,
+                (entry) => refreshGitStatus(entry.worktreePath),
+                { discard: true },
+              );
             }
 
             yield* runSetupProgram();

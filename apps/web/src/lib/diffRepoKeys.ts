@@ -26,3 +26,11 @@ export function buildRepoFilterOptions(repoRoots: ReadonlyArray<string>) {
 export function scopedDiffFileKey(fileKey: string, repoRoot?: string): string {
   return repoRoot === undefined ? fileKey : `${repoRoot}\u0000${fileKey}`;
 }
+
+/** Keep repository identity even when only one root in a multi-repo checkpoint changed. */
+export function shouldUseGroupedCheckpointDiff(
+  checkpointGroupCount: number,
+  renderableGroupCount: number,
+): boolean {
+  return checkpointGroupCount > 1 && renderableGroupCount > 0;
+}

@@ -58,6 +58,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useOpenWorkspaceFile } from "../hooks/useOpenWorkspaceFile";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
@@ -120,6 +121,11 @@ import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sideb
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
+import {
+  MultiRepoDraftFooter,
+  MultiRepoDraftSelection,
+  useCommandPaletteMultiRepoDraft,
+} from "./CommandPaletteMultiRepo";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
@@ -581,12 +587,6 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
     reportDefect: false,
   });
-  const scanGitRepos = useAtomQueryRunner(filesystemEnvironment.scanGitRepos, {
-    reportFailure: false,
-  });
-  const readWorkspaceFile = useAtomQueryRunner(filesystemEnvironment.readWorkspaceFile, {
-    reportFailure: false,
-  });
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
@@ -648,10 +648,6 @@ function OpenCommandPaletteDialog(props: {
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
-  const [multiRepoDraft, setMultiRepoDraft] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly roots: ReadonlyArray<string>;
-  } | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const projectGroupingSettings = useMemo(
@@ -869,6 +865,21 @@ function OpenCommandPaletteDialog(props: {
     browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
       ? currentProjectCwd
       : null;
+  const resetHighlightedItem = useCallback(() => setHighlightedItemValue(null), []);
+  const refreshBrowse = useCallback(() => setBrowseGeneration((generation) => generation + 1), []);
+  const {
+    attachRoot: attachMultiRepoRoot,
+    clearDraft: clearMultiRepoDraft,
+    draft: multiRepoDraft,
+    removeRoot: removeMultiRepoRoot,
+    startDraft: startMultiRepoDraft,
+  } = useCommandPaletteMultiRepoDraft({
+    currentProjectCwd: currentProjectCwdForBrowse,
+    getInitialQuery: getAddProjectInitialQueryForEnvironment,
+    resetHighlightedItem,
+    setQuery,
+    refreshBrowse,
+  });
   const getBrowseCwdForEnvironment = useCallback(
     (environmentId: EnvironmentId | null): string | null =>
       environmentId && currentProjectEnvironmentId === environmentId ? currentProjectCwd : null,
@@ -1126,7 +1137,7 @@ function OpenCommandPaletteDialog(props: {
   function popView(): void {
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
-    setMultiRepoDraft(null);
+    clearMultiRepoDraft();
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
     }
@@ -1163,7 +1174,8 @@ function OpenCommandPaletteDialog(props: {
         () => {
           setAddProjectEnvironmentId(environmentId);
           setAddProjectCloneFlow(null);
-          setMultiRepoDraft(multipleRepositories ? { environmentId, roots: [] } : null);
+          if (multipleRepositories) startMultiRepoDraft(environmentId);
+          else clearMultiRepoDraft();
           pushPaletteView(view);
         },
       );
@@ -1181,7 +1193,7 @@ function OpenCommandPaletteDialog(props: {
     (environmentId: EnvironmentId, source: AddProjectRemoteSource): void => {
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow({ step: "repository", environmentId, source });
-      setMultiRepoDraft(null);
+      clearMultiRepoDraft();
       pushPaletteView({
         addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
         groups: [],
@@ -1319,7 +1331,7 @@ function OpenCommandPaletteDialog(props: {
       }
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
-      setMultiRepoDraft(null);
+      clearMultiRepoDraft();
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: buildAddProjectSourceGroups(
@@ -1415,7 +1427,7 @@ function OpenCommandPaletteDialog(props: {
     clearOpenIntent();
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
-    setMultiRepoDraft(null);
+    clearMultiRepoDraft();
     setViewStack([]);
     setQuery("");
     const currentPrefix =
@@ -1844,45 +1856,10 @@ function OpenCommandPaletteDialog(props: {
       handleAddProjectForEnvironment,
     ],
   );
-
-  const attachMultiRepoRoot = useCallback(
-    async (rawPath: string) => {
-      if (!multiRepoDraft) return;
-      const path = resolveProjectPathForDispatch(rawPath, currentProjectCwdForBrowse);
-      if (!path) return;
-      const result = await scanGitRepos({
-        environmentId: multiRepoDraft.environmentId,
-        input: { parentPath: path },
-      });
-      if (result._tag === "Failure" || !result.value.parentHasGit) {
-        const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Choose a Git repository",
-            description:
-              error instanceof Error ? error.message : `${path} is not a Git repository.`,
-          }),
-        );
-        return;
-      }
-      const normalizedPath = result.value.parentPath;
-      setMultiRepoDraft((current) => {
-        if (!current || current.environmentId !== multiRepoDraft.environmentId) return current;
-        if (current.roots.includes(normalizedPath)) return current;
-        return { ...current, roots: [...current.roots, normalizedPath] };
-      });
-      setHighlightedItemValue(null);
-      setQuery(getAddProjectInitialQueryForEnvironment(multiRepoDraft.environmentId));
-      setBrowseGeneration((generation) => generation + 1);
-    },
-    [
-      currentProjectCwdForBrowse,
-      getAddProjectInitialQueryForEnvironment,
-      multiRepoDraft,
-      scanGitRepos,
-    ],
-  );
+  const openWorkspaceFile = useOpenWorkspaceFile({
+    environmentId: browseEnvironmentId,
+    addProject: handleAddProject,
+  });
 
   const createMultiRepoProject = useCallback(async () => {
     if (!multiRepoDraft || multiRepoDraft.roots.length < 2) return;
@@ -1899,14 +1876,6 @@ function OpenCommandPaletteDialog(props: {
       { repoRoots: multiRepoDraft.roots },
     );
   }, [environments, getBrowseCwdForEnvironment, handleAddProjectForEnvironment, multiRepoDraft]);
-
-  const removeMultiRepoRoot = useCallback((root: string) => {
-    setMultiRepoDraft((current) =>
-      current
-        ? { ...current, roots: current.roots.filter((candidate) => candidate !== root) }
-        : null,
-    );
-  }, []);
 
   function getDefaultCloneParentPath(environmentId: EnvironmentId): string {
     return getAddProjectInitialQueryForEnvironment(environmentId);
@@ -2086,66 +2055,6 @@ function OpenCommandPaletteDialog(props: {
     : (exactBrowseEntry?.fullPath ?? query.trim());
 
   const canBrowseUp = !relativePathNeedsActiveProject && browsePath.canBrowseUp;
-
-  const openWorkspaceFile = useCallback(
-    async (workspaceFilePath: string) => {
-      if (!browseEnvironmentId) {
-        return;
-      }
-
-      const readResult = await readWorkspaceFile({
-        environmentId: browseEnvironmentId,
-        input: { workspaceFilePath },
-      });
-      if (readResult._tag === "Failure") {
-        if (!isAtomCommandInterrupted(readResult)) {
-          const error = squashAtomCommandFailure(readResult);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to open workspace",
-              description:
-                error instanceof Error ? error.message : "Could not read the .code-workspace file.",
-            }),
-          );
-        }
-        return;
-      }
-      const resolved = readResult.value;
-      const primaryRepoRoot = resolved.repoRoots[0];
-      if (!primaryRepoRoot) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Workspace has no Git repositories",
-            description: "Add at least one existing Git repository to the workspace file.",
-          }),
-        );
-        return;
-      }
-
-      const missingFolders = resolved.folders.filter((folder) => !folder.exists);
-      if (missingFolders.length > 0) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Some workspace folders are missing",
-            description: `${missingFolders.length} folder(s) listed in the workspace could not be found and were skipped.`,
-          }),
-        );
-      }
-
-      const fileName = workspaceFilePath.split(/[/\\]/).pop() ?? workspaceFilePath;
-      const title = fileName.replace(/\.code-workspace$/i, "").trim();
-
-      await handleAddProject(primaryRepoRoot, {
-        workspaceFile: resolved.workspaceFilePath,
-        repoRoots: resolved.repoRoots,
-        ...(title.length > 0 ? { title } : {}),
-      });
-    },
-    [browseEnvironmentId, handleAddProject, readWorkspaceFile],
-  );
 
   const browseGroups = buildBrowseGroups({
     browseEntries: visibleBrowseEntries,
@@ -2565,17 +2474,10 @@ function OpenCommandPaletteDialog(props: {
   }, [showWorkspaceFiles, updateClientSettings]);
 
   const footerTrailing = multiRepoDraft ? (
-    <div className="flex items-center gap-2">
-      <span className="text-xs text-muted-foreground">{multiRepoDraft.roots.length} selected</span>
-      <Button
-        variant="outline"
-        size="xs"
-        disabled={multiRepoDraft.roots.length < 2}
-        onClick={() => void createMultiRepoProject()}
-      >
-        Create project
-      </Button>
-    </div>
+    <MultiRepoDraftFooter
+      selectedCount={multiRepoDraft.roots.length}
+      createProject={() => void createMultiRepoProject()}
+    />
   ) : (isBrowsing && !relativePathNeedsActiveProject) || canOpenProjectFromFileManager ? (
     <div className="flex items-center gap-1">
       {isBrowsing && !relativePathNeedsActiveProject ? (
@@ -2672,33 +2574,8 @@ function OpenCommandPaletteDialog(props: {
           </div>
         </div>
       ) : null}
-      {multiRepoDraft && multiRepoDraft.roots.length > 0 ? (
-        <div className="border-b border-border p-2 pb-1.5">
-          <div className="px-2 py-1 font-medium text-muted-foreground text-xs">Repositories</div>
-          <div className="space-y-0.5">
-            {multiRepoDraft.roots.map((root, index) => (
-              <div key={root} className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1">
-                <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate text-sm" title={root}>
-                  {root}
-                </span>
-                {index === 0 ? (
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase">
-                    Primary
-                  </span>
-                ) : null}
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  aria-label={`Remove ${inferProjectTitleFromPath(root)}`}
-                  onClick={() => removeMultiRepoRoot(root)}
-                >
-                  Remove
-                </Button>
-              </div>
-            ))}
-          </div>
-        </div>
+      {multiRepoDraft ? (
+        <MultiRepoDraftSelection roots={multiRepoDraft.roots} removeRoot={removeMultiRepoRoot} />
       ) : null}
       <CommandPaletteResults
         groups={displayedGroups}
