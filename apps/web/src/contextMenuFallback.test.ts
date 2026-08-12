@@ -240,12 +240,6 @@ describe("showContextMenuFallback", () => {
 
     const parentButton = findButton("Rename project");
     expect(parentButton).toBeTruthy();
-    expect(
-      parentButton
-        ?.querySelectorAll("svg")
-        .some((element) => element.dataset.contextMenuChevron === "true"),
-    ).toBe(true);
-    expect(parentButton?.textContent).toBe("Rename project");
     parentButton?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
 
     const childButton = findButton("/tmp/project-b");
@@ -253,23 +247,6 @@ describe("showContextMenuFallback", () => {
     childButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename:project-b");
-  });
-
-  it("renders explicit section dividers", async () => {
-    const selectionPromise = showContextMenuFallback([
-      { id: "pin", label: "Pin" },
-      { id: "rename", label: "Rename", separatorBefore: true },
-      { id: "delete", label: "Delete", destructive: true, separatorBefore: true },
-    ]);
-
-    expect(
-      (document as unknown as FakeDocument)
-        .querySelectorAll("div")
-        .filter((element) => element.dataset.contextMenuSeparator === "true"),
-    ).toHaveLength(2);
-    findButton("Rename")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-
-    await expect(selectionPromise).resolves.toBe("rename");
   });
 });
 

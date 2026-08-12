@@ -173,7 +173,6 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       entry: WorkLogEntry;
-      active: boolean;
     }
   | {
       kind: "work-toggle";
@@ -272,12 +271,30 @@ function toolGroupAction(entry: WorkLogEntry): ToolGroupAction {
   return "other";
 }
 
+function toolGroupActionCount(
+  action: ToolGroupAction,
+  entries: ReadonlyArray<WorkLogEntry>,
+): number {
+  if (action !== "edit") return entries.length;
+
+  const changedFiles = new Set<string>();
+  let editsWithoutFileDetails = 0;
+  for (const entry of entries) {
+    if (!entry.changedFiles || entry.changedFiles.length === 0) {
+      editsWithoutFileDetails += 1;
+      continue;
+    }
+    for (const file of entry.changedFiles) changedFiles.add(file);
+  }
+  return changedFiles.size + editsWithoutFileDetails;
+}
+
 function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
   switch (action) {
     case "read":
       return `Read ${count} ${count === 1 ? "file" : "files"}`;
     case "edit":
-      return `Edited ${count} ${count === 1 ? "file" : "files"}`;
+      return `Changed ${count} ${count === 1 ? "file" : "files"}`;
     case "command":
       return `Ran ${count} ${count === 1 ? "command" : "commands"}`;
     case "search":
@@ -289,15 +306,22 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
 
 /** Immediate, provider-neutral fallback while generated tool summaries are disabled or unavailable. */
 export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): string {
-  const counts = new Map<ToolGroupAction, number>();
+  const groupedEntries = new Map<ToolGroupAction, WorkLogEntry[]>();
   for (const entry of entries) {
     const action = toolGroupAction(entry);
-    counts.set(action, (counts.get(action) ?? 0) + 1);
+    const group = groupedEntries.get(action);
+    if (group) group.push(entry);
+    else groupedEntries.set(action, [entry]);
   }
-  const labels = [...counts].map(([action, count]) => toolGroupActionLabel(action, count));
-  return labels
-    .map((label, index) => (index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1)))
-    .join(", ");
+  const labels = [...groupedEntries].map(([action, actionEntries]) =>
+    toolGroupActionLabel(action, toolGroupActionCount(action, actionEntries)),
+  );
+  const sentenceLabels = labels.map((label, index) =>
+    index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1),
+  );
+  if (sentenceLabels.length < 2) return sentenceLabels[0] ?? "";
+  if (sentenceLabels.length === 2) return sentenceLabels.join(" and ");
+  return `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
 }
 
 function toolGroupSummaryKind(entries: ReadonlyArray<WorkLogEntry>): ToolGroupAction | "mixed" {
@@ -400,7 +424,6 @@ function deriveTurnFolds(input: {
 }): ReadonlyMap<string, TurnFold> {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
-    anchorEntry: TimelineEntry | null;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
     hasStreamingMessage: boolean;
     /**
@@ -427,7 +450,6 @@ function deriveTurnFolds(input: {
     if (!group) {
       group = {
         entries: [],
-        anchorEntry: entry,
         terminalEntry: null,
         hasStreamingMessage: false,
         // Each user boundary starts at most one turn; a second turn after the
@@ -479,7 +501,7 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    const firstEntry = group.anchorEntry ?? group.entries[0];
+    const firstEntry = group.entries[0];
     const lastEntry = group.entries.at(-1);
     if (!firstEntry || !lastEntry) {
       continue;
@@ -614,6 +636,21 @@ export function deriveMessagesTimelineRows(input: {
     string,
     Extract<MessagesTimelineRow, { kind: "work-live" }>
   >();
+  const hasLaterTurnContent = Array.from({ length: input.timelineEntries.length + 1 }, () => false);
+  for (let index = input.timelineEntries.length - 1; index >= 0; index -= 1) {
+    const entry = input.timelineEntries[index];
+    if (!entry) continue;
+    const isVisibleTurnContent =
+      (entry.kind === "message" && entry.message.role === "user") ||
+      (entryBelongsToActiveTurn(entry, index) &&
+        ((entry.kind === "message" && entry.message.role === "assistant") ||
+          entry.kind === "turn-plan" ||
+          (entry.kind === "work" &&
+            entry.entry.agentSpawn === undefined &&
+            !workEntryIndicatesToolNeutralStatus(entry.entry) &&
+            workLogEntryIsToolLike(entry.entry))));
+    hasLaterTurnContent[index] = isVisibleTurnContent || hasLaterTurnContent[index + 1] === true;
+  }
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const entry = input.timelineEntries[index];
@@ -625,13 +662,13 @@ export function deriveMessagesTimelineRows(input: {
     ) {
       continue;
     }
-    activeWorkEntryIds.add(entry.id);
     if (workEntryIndicatesToolNeutralStatus(entry.entry) || !workLogEntryIsToolLike(entry.entry)) {
       continue;
     }
 
     const anchorEntry = entry;
     let latestToolEntry = entry;
+    const batchEntryIds = [entry.id];
     let cursor = index + 1;
     while (cursor < input.timelineEntries.length) {
       const nextEntry = input.timelineEntries[cursor];
@@ -643,7 +680,7 @@ export function deriveMessagesTimelineRows(input: {
       ) {
         break;
       }
-      activeWorkEntryIds.add(nextEntry.id);
+      batchEntryIds.push(nextEntry.id);
       if (
         !workEntryIndicatesToolNeutralStatus(nextEntry.entry) &&
         workLogEntryIsToolLike(nextEntry.entry)
@@ -653,35 +690,18 @@ export function deriveMessagesTimelineRows(input: {
       cursor += 1;
     }
 
-    const hasNewerTurnContent = input.timelineEntries.slice(cursor).some((laterEntry, offset) => {
-      const laterIndex = cursor + offset;
-      if (laterEntry.kind === "message" && laterEntry.message.role === "user") {
-        return true;
-      }
-      if (!entryBelongsToActiveTurn(laterEntry, laterIndex)) {
-        return false;
-      }
-      if (laterEntry.kind === "message") {
-        return laterEntry.message.role === "assistant";
-      }
-      if (laterEntry.kind === "turn-plan") {
-        return true;
-      }
-      return (
-        laterEntry.kind === "work" &&
-        laterEntry.entry.agentSpawn === undefined &&
-        !workEntryIndicatesToolNeutralStatus(laterEntry.entry) &&
-        workLogEntryIsToolLike(laterEntry.entry)
-      );
-    });
-
-    activeWorkRowsByAnchorId.set(anchorEntry.id, {
-      kind: "work-live",
-      id: `work-live:${anchorEntry.id}`,
-      createdAt: anchorEntry.createdAt,
-      entry: latestToolEntry.entry,
-      active: !hasNewerTurnContent,
-    });
+    // Once newer commentary, a plan, or another tool batch exists, this batch
+    // is history. Let the regular work-group path turn it into an expandable
+    // summary so none of its calls disappear behind the live one-line view.
+    if (hasLaterTurnContent[cursor] !== true) {
+      for (const entryId of batchEntryIds) activeWorkEntryIds.add(entryId);
+      activeWorkRowsByAnchorId.set(anchorEntry.id, {
+        kind: "work-live",
+        id: `work-live:${anchorEntry.id}`,
+        createdAt: anchorEntry.createdAt,
+        entry: latestToolEntry.entry,
+      });
+    }
     index = cursor - 1;
   }
 
@@ -964,7 +984,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
 
     case "work-live":
-      return a.active === (b as typeof a).active && Equal.equals(a.entry, (b as typeof a).entry);
+      return Equal.equals(a.entry, (b as typeof a).entry);
 
     case "work-toggle": {
       const bw = b as typeof a;

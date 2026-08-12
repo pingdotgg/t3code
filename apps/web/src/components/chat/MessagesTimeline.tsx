@@ -22,7 +22,6 @@ import {
   use,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -36,7 +35,6 @@ import {
   deriveTimelineEntries,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
-  workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
@@ -58,7 +56,6 @@ import {
   MessageCircleIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
-  MinusIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -1255,7 +1252,7 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
             >
               <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
                 {step.status === "completed" ? (
-                  <CheckIcon className="size-3.5 text-info-foreground" />
+                  <CheckIcon className="size-3.5 text-success" />
                 ) : (
                   <span
                     className={cn(
@@ -1416,13 +1413,7 @@ function ActiveScanLineContent({
 }
 
 function ActiveScanGroup({ items }: { items: ActiveScanItem[] }) {
-  const scanRef = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const scan = scanRef.current;
-    if (!scan || typeof performance === "undefined") return;
-    scan.style.animationDelay = `-${performance.now() % 2400}ms`;
-  }, []);
+  const scanKey = items.map((item) => item.id).join(":");
 
   return (
     <div className="relative min-w-0">
@@ -1432,8 +1423,8 @@ function ActiveScanGroup({ items }: { items: ActiveScanItem[] }) {
         ))}
       </div>
       <div
+        key={scanKey}
         aria-hidden
-        ref={scanRef}
         className="active-tool-content-scan pointer-events-none absolute inset-0 space-y-1 text-foreground"
       >
         {items.map((item) => (
@@ -1448,17 +1439,9 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   const { workspaceRoot } = use(TimelineRowCtx);
   const item = {
     id: row.entry.id,
-    label: liveWorkEntryLabel(row.entry, workspaceRoot, row.active),
+    label: liveWorkEntryLabel(row.entry, workspaceRoot),
     iconName: workEntryIconName(row.entry),
   };
-
-  if (!row.active) {
-    return (
-      <div className="text-secondary-label/65">
-        <ActiveScanLineContent item={item} highlighted={false} />
-      </div>
-    );
-  }
 
   return <ActiveScanGroup items={[item]} />;
 }
@@ -2177,14 +2160,13 @@ function commandProgramName(command: string): string | null {
 function liveWorkEntryLabel(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
-  active: boolean,
 ): string {
   const command = workEntry.command?.trim();
   if (command) {
     const program = commandProgramName(command);
-    if (program) return `${active ? "Running" : "Ran"} ${program}`;
+    if (program) return `Running ${program}`;
     if (command.length > LIVE_COMMAND_PREVIEW_LIMIT || command.includes("\n")) {
-      return active ? "Running command" : "Ran command";
+      return "Running command";
     }
   }
 
@@ -2404,29 +2386,25 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
-  const activity = use(TimelineRowActivityCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
-  const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
-  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
-  const preview =
-    rawPreview &&
-    normalizeCompactToolLabel(rawPreview).toLowerCase() ===
-      normalizeCompactToolLabel(heading).toLowerCase()
-      ? null
-      : rawPreview;
-  const displayText = preview ? `${heading} - ${preview}` : heading;
+  const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
+  const entryIconName =
+    showWarningIndicator || showFailedIndicator ? "x" : workEntryIconName(workEntry);
+  const isCommandEntry =
+    workEntry.requestKind === "command" ||
+    workEntry.itemType === "command_execution" ||
+    Boolean(workEntry.command);
+  const displayText = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
   const canExpand = expandedBody !== null;
-  const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
     (workEntry.sourceActivityKind === "runtime.error" || !workLogEntryIsToolLike(workEntry));
   const iconWrapperClass = cn(
     "flex size-6 shrink-0 items-center justify-center",
-    showWarningIndicator
+    showWarningIndicator || showFailedIndicator
       ? "text-destructive"
       : showDestructiveRowStyle
         ? "text-destructive"
@@ -2438,12 +2416,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : "text-foreground/80";
-  const turnSettled = !activity.activeTurnInProgress;
-  const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
-  const showSuccessIndicator =
-    workEntryIndicatesToolSuccess(workEntry) ||
-    (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
+      : isCommandEntry
+        ? "text-secondary-label"
+        : "text-foreground/80";
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
@@ -2469,7 +2444,10 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       {...rowToggleProps}
     >
       <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
-        <span className={iconWrapperClass}>
+        <span
+          className={iconWrapperClass}
+          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+        >
           <WorkEntryIconSvg
             name={entryIconName}
             className="block size-4 shrink-0 stroke-[1.8] opacity-70"
@@ -2478,68 +2456,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
             <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
-              <span className={cn("min-w-0 shrink truncate", headingClass)}>{heading}</span>
-              {preview && (
-                <span className="min-w-0 flex-1 truncate text-secondary-label">{preview}</span>
-              )}
+              <span className={cn("min-w-0 flex-1 truncate", headingClass)}>{displayText}</span>
             </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-px text-icon-muted">
-            <span
-              className="flex size-6 shrink-0 items-center justify-center"
-              aria-hidden={!canExpand}
-            >
-              {canExpand ? (
-                <ChevronDownIcon
-                  className={cn(
-                    "size-4 shrink-0 opacity-70 transition-transform duration-200",
-                    expanded && "rotate-180",
-                  )}
-                  aria-hidden
-                />
-              ) : null}
-            </span>
-            <span className="flex size-6 shrink-0 items-center justify-center">
-              {showFailedIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        className="flex size-6 items-center justify-center"
-                        aria-label="Tool call failed"
-                      />
-                    }
-                  >
-                    <XIcon className="block size-4 shrink-0 text-destructive" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Failed</TooltipPopup>
-                </Tooltip>
-              ) : showSuccessIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-6 items-center justify-center" />}
-                  >
-                    <span className="inline-flex size-6 items-center justify-center">
-                      <CheckIcon
-                        className="block size-4 shrink-0 stroke-current"
-                        stroke="currentColor"
-                        aria-hidden
-                      />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipPopup>Completed</TooltipPopup>
-                </Tooltip>
-              ) : showNeutralIndicator ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<span className="flex size-6 items-center justify-center" />}
-                  >
-                    <MinusIcon className="block size-4 shrink-0 opacity-70" aria-hidden />
-                  </TooltipTrigger>
-                  <TooltipPopup>Empty</TooltipPopup>
-                </Tooltip>
-              ) : null}
-            </span>
           </div>
         </div>
       </div>

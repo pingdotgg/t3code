@@ -432,16 +432,22 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @keyframes tool-content-scan {
-  from {
+  0% {
     mask-position: -4.5rem 0;
+    opacity: 0;
   }
-  to {
+  15%,
+  85% {
+    opacity: 1;
+  }
+  100% {
     mask-position: calc(100% + 4.5rem) 0;
+    opacity: 0;
   }
 }
 
-/* One masked duplicate keeps the icon and text on the same pass. The wide,
-   feathered mask softens both edges without painting over the row background. */
+/* A newly active tool gets one short inline sweep without introducing a
+   separate surface or an always-repainting animation. */
 @utility active-tool-content-scan {
   mask-image: linear-gradient(
     90deg,
@@ -455,8 +461,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   );
   mask-repeat: no-repeat;
   mask-size: 4.5rem 100%;
-  filter: blur(0.25px);
-  animation: tool-content-scan 2.4s linear infinite;
+  animation: tool-content-scan 800ms ease-out both;
 
   @media (prefers-reduced-motion: reduce) {
     display: none;

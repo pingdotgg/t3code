@@ -686,121 +686,113 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Tool call failed"');
   });
 
-  it("renders compact blue progress for turn plans", () => {
+  it("shows tool content without generic action prefixes", () => {
+    const toolGroup = (
+      id: string,
+      entry: {
+        label: string;
+        requestKind: "command" | "file-read" | "file-change";
+        command?: string;
+        detail?: string;
+        changedFiles?: ReadonlyArray<string>;
+      },
+    ) => [
+      {
+        id: `${id}-context-entry`,
+        kind: "work" as const,
+        createdAt: `2026-03-17T19:12:${id}0.000Z`,
+        entry: {
+          id: `${id}-context`,
+          createdAt: `2026-03-17T19:12:${id}0.000Z`,
+          label: "Context",
+          tone: "info" as const,
+        },
+      },
+      {
+        id: `${id}-tool-entry`,
+        kind: "work" as const,
+        createdAt: `2026-03-17T19:12:${id}1.000Z`,
+        entry: {
+          id: `${id}-tool`,
+          createdAt: `2026-03-17T19:12:${id}1.000Z`,
+          tone: "tool" as const,
+          toolLifecycleStatus: "completed" as const,
+          ...entry,
+        },
+      },
+    ];
+    const boundary = (id: string) => ({
+      id: `${id}-boundary-entry`,
+      kind: "message" as const,
+      createdAt: `2026-03-17T19:12:${id}2.000Z`,
+      message: {
+        id: MessageId.make(`${id}-boundary`),
+        role: "user" as const,
+        text: "Continue",
+        turnId: null,
+        createdAt: `2026-03-17T19:12:${id}2.000Z`,
+        updatedAt: `2026-03-17T19:12:${id}2.000Z`,
+        streaming: false,
+      },
+    });
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        isWorking
-        activeTurnInProgress
-        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
-        latestTurn={{
-          turnId: TurnId.make("turn-1"),
-          state: "running",
-          startedAt: "2026-03-17T19:12:27.000Z",
-          completedAt: null,
-        }}
         timelineEntries={[
-          {
-            id: "turn-plan-entry",
-            kind: "turn-plan",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            turnPlan: {
-              id: "turn-plan:turn-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              turnId: TurnId.make("turn-1"),
-              plan: {
-                createdAt: "2026-03-17T19:12:28.000Z",
-                turnId: TurnId.make("turn-1"),
-                steps: [
-                  { step: "Inspect the UI", status: "completed" },
-                  { step: "Refine the task row", status: "inProgress" },
-                  { step: "Verify the result", status: "pending" },
-                ],
-              },
-            },
-          },
+          ...toolGroup("1", {
+            label: "Ran command",
+            requestKind: "command",
+            command: "git status --short",
+          }),
+          boundary("1"),
+          ...toolGroup("2", {
+            label: "Read file",
+            requestKind: "file-read",
+            detail: "apps/web/src/index.css",
+          }),
+          boundary("2"),
+          ...toolGroup("3", {
+            label: "Changed files",
+            requestKind: "file-change",
+            changedFiles: ["apps/web/src/components/chat/MessagesTimeline.tsx"],
+          }),
         ]}
       />,
     );
 
-    expect(markup).toContain('aria-label="1 of 3 steps completed"');
-    expect(markup).toContain("bg-info");
-    expect(markup).toContain("1/3");
-    expect(markup).not.toContain("lucide-list-checks");
+    expect(markup).toContain("git status --short");
+    expect(markup).toMatch(
+      /class="[^"]*text-secondary-label[^"]*"[^>]*>git status --short<\/span>/,
+    );
+    expect(markup).toContain("apps/web/src/index.css");
+    expect(markup).toContain("apps/web/src/components/chat/MessagesTimeline.tsx");
+    expect(markup).not.toContain("Ran command");
+    expect(markup).not.toContain("Read file");
+    expect(markup).not.toContain("Changed files");
   });
 
-  it("uses the executable as the label for a long live command", () => {
-    const command =
-      'rg -n "steer|intervene|followup|follow-up|mid-turn|same turn|turn-fold" apps/web/src/components/chat/MessagesTimeline.logic.ts';
+  it("keeps historical tool summary actions free of right-side status icons", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        isWorking
-        activeTurnInProgress
-        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
-        timelineEntries={[
-          {
-            id: "entry-long-command",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-long-command",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Running command",
-              tone: "tool",
-              requestKind: "command",
-              command,
-            },
+        timelineEntries={[1, 2].map((index) => ({
+          id: `entry-${index}`,
+          kind: "work" as const,
+          createdAt: `2026-03-17T19:12:2${index}.000Z`,
+          entry: {
+            id: `work-${index}`,
+            createdAt: `2026-03-17T19:12:2${index}.000Z`,
+            label: "Ran command",
+            tone: "tool" as const,
+            requestKind: "command" as const,
+            command: `git status --short ${index}`,
           },
-        ]}
+        }))}
       />,
     );
 
-    expect(markup).toContain("Running rg");
-    expect(markup).not.toContain("steer|intervene|followup");
-  });
-
-  it("settles a tool batch when newer assistant text arrives", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        isWorking
-        activeTurnInProgress
-        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
-        timelineEntries={[
-          {
-            id: "entry-settled-command",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-settled-command",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Running command",
-              tone: "tool",
-              requestKind: "command",
-              command: "git status --short",
-            },
-          },
-          {
-            id: "entry-newer-assistant-text",
-            kind: "message",
-            createdAt: "2026-03-17T19:12:29.000Z",
-            message: {
-              id: MessageId.make("message-newer-assistant-text"),
-              role: "assistant",
-              text: "The status is clean.",
-              turnId: null,
-              createdAt: "2026-03-17T19:12:29.000Z",
-              updatedAt: "2026-03-17T19:12:29.000Z",
-              streaming: true,
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("Ran git");
-    expect(markup).not.toContain("Running git");
-    expect(markup).not.toContain("active-tool-content-scan");
+    expect(markup).toContain("Ran 2 commands");
+    expect(markup).not.toContain("lucide-chevron-down");
+    expect(markup).not.toContain("lucide-check");
   });
 });

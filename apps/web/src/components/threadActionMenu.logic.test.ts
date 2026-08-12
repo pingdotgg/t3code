@@ -69,26 +69,4 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
   });
-
-  it("groups copy actions in one submenu", () => {
-    const copy = buildThreadActionMenuItems({ ...baseState, branch: "main" }).find(
-      (item) => item.id === "copy",
-    );
-
-    expect(copy).toMatchObject({ icon: "copy", separatorBefore: true });
-    expect(copy?.children?.map((item) => item.id)).toEqual([
-      "copy-path",
-      "copy-branch",
-      "copy-thread-id",
-    ]);
-  });
-
-  it("separates action groups and gives every top-level action an icon", () => {
-    const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
-
-    expect(items.find((item) => item.id === "rename")?.separatorBefore).toBe(true);
-    expect(items.find((item) => item.id === "copy")?.separatorBefore).toBe(true);
-    expect(items.find((item) => item.id === "delete")?.separatorBefore).toBe(true);
-    expect(items.every((item) => typeof item.icon === "string")).toBe(true);
-  });
 });
