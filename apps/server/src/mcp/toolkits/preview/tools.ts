@@ -9,6 +9,7 @@ import {
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
+  PreviewAutomationScreenshotArtifact,
   PreviewAutomationScrollInput,
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
@@ -200,6 +201,17 @@ export const PreviewRecordingStopTool = safeBrowserTool(
   }).annotate(Tool.Title, "Stop browser recording"),
 );
 
+export const PreviewScreenshotTool = safeBrowserTool(
+  Tool.make("preview_screenshot", {
+    description:
+      "Save a full-resolution PNG of the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, as a local evidence artifact and return its path. Use this to hand the user a still image; use preview_snapshot instead to look at the page yourself.",
+    parameters: PreviewAutomationTabTargetInput,
+    success: PreviewAutomationScreenshotArtifact,
+    failure: PreviewAutomationError,
+    dependencies,
+  }).annotate(Tool.Title, "Save browser screenshot"),
+);
+
 export const PreviewToolkit = Toolkit.make(
   PreviewStatusTool,
   PreviewOpenTool,
@@ -215,6 +227,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewWaitForTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
+  PreviewScreenshotTool,
 );
 
 export const PreviewStandardToolkit = Toolkit.make(
@@ -231,6 +244,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewWaitForTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
+  PreviewScreenshotTool,
 );
 
 export const PreviewSnapshotToolkit = Toolkit.make(PreviewSnapshotTool);

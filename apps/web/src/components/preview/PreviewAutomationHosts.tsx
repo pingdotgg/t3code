@@ -661,6 +661,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             }
             return { ...artifact, tabId: stopTabId };
           }
+          case "screenshot": {
+            const ready = await requireReadyTab();
+            const artifact = await ready.bridge.captureScreenshot(ready.runtimeTabId);
+            // The desktop artifact carries the runtime tab id; callers address
+            // tabs by their server id.
+            return { ...artifact, tabId: ready.tabId };
+          }
         }
       } catch (cause) {
         throw PreviewAutomationOperationError.fromCause({

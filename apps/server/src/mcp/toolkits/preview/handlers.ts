@@ -5,6 +5,7 @@ import type {
   PreviewAutomationRecordingArtifact,
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeResult,
+  PreviewAutomationScreenshotArtifact,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
@@ -85,6 +86,8 @@ const handlers = {
     invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
   preview_recording_stop: (input) =>
     invokeTargeted<PreviewAutomationRecordingArtifact>("recordingStop", input ?? {}),
+  preview_screenshot: (input) =>
+    invokeTargeted<PreviewAutomationScreenshotArtifact>("screenshot", input ?? {}),
 } satisfies Parameters<typeof PreviewToolkit.toLayer>[0];
 
 const { preview_snapshot, ...standardHandlers } = handlers;
