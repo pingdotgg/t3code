@@ -19,7 +19,7 @@ const spawn = vi.fn(() => ({
   onExit: vi.fn(() => ({ dispose: vi.fn() })),
 }));
 
-vi.mock("node-pty", () => ({ spawn }));
+vi.mock("@lydell/node-pty", () => ({ spawn }));
 
 const testLayer = NodePtyAdapter.layer.pipe(
   Layer.provide(

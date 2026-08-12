@@ -22,7 +22,7 @@ export class NodePtyModuleLoadError extends Schema.TaggedErrorClass<NodePtyModul
   }
 }
 
-type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
+type NodePtyModuleLoader = () => Promise<typeof import("@lydell/node-pty")>;
 
 let didEnsureSpawnHelperExecutable = false;
 
@@ -33,7 +33,7 @@ const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
 
-  const packageJsonPath = requireForNodePty.resolve("node-pty/package.json");
+  const packageJsonPath = requireForNodePty.resolve("@lydell/node-pty/package.json");
   const packageDir = path.dirname(packageJsonPath);
   const candidates = [
     path.join(packageDir, "build", "Release", "spawn-helper"),
@@ -68,9 +68,9 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
 });
 
 class NodePtyProcess implements PtyAdapter.PtyProcess {
-  private readonly process: import("node-pty").IPty;
+  private readonly process: import("@lydell/node-pty").IPty;
 
-  constructor(process: import("node-pty").IPty) {
+  constructor(process: import("@lydell/node-pty").IPty) {
     this.process = process;
   }
 
@@ -111,7 +111,7 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
 }
 
 export const make = Effect.fn("NodePtyAdapter.make")(function* (
-  loadNodePtyModule: NodePtyModuleLoader = () => import("node-pty"),
+  loadNodePtyModule: NodePtyModuleLoader = () => import("@lydell/node-pty"),
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
