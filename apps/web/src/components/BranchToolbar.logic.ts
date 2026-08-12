@@ -243,14 +243,17 @@ export function resolveBranchSelectionTarget(input: {
   };
 }
 
-// Git rejects every ref name containing whitespace, so the picker's "Create new
-// ref" entry can only fail for a typed name like "new branch". Replacing runs of
-// whitespace with a dash makes that name usable without reimplementing
-// check-ref-format: names invalid for other reasons still surface the git error.
-// Case and existing dashes are left alone, since ref names are case sensitive
-// and consecutive dashes are valid.
+// Git rejects ASCII space and the ASCII control characters (tab, newline and
+// friends) in ref names, so the picker's "Create new ref" entry can only fail
+// for a typed name like "new branch". Replacing runs of those with a dash makes
+// the name usable without reimplementing check-ref-format: names invalid for
+// other reasons still surface the git error. Only the whitespace git actually
+// rejects is replaced — git accepts U+00A0 and friends, and rewriting those
+// would silently create a ref the user never asked for. Case and existing
+// dashes are left alone, since ref names are case sensitive and consecutive
+// dashes are valid.
 export function sanitizeNewRefName(rawName: string): string {
-  return rawName.trim().replace(/\s+/gu, "-");
+  return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
 }
 
 export function shouldIncludeBranchPickerItem(input: {

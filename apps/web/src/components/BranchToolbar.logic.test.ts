@@ -748,9 +748,15 @@ describe("sanitizeNewRefName", () => {
     expect(sanitizeNewRefName("  new branch  ")).toBe("new-branch");
   });
 
-  it("replaces tabs and non-breaking spaces pasted from other apps", () => {
+  it("replaces tabs, which git rejects just like spaces", () => {
     expect(sanitizeNewRefName("new\tbranch")).toBe("new-branch");
-    expect(sanitizeNewRefName("new\u00a0branch")).toBe("new-branch");
+  });
+
+  // git accepts U+00A0, U+2009 and other non-ASCII whitespace in ref names, so
+  // rewriting them would silently create a ref the user never typed.
+  it("preserves whitespace that git accepts", () => {
+    expect(sanitizeNewRefName("new\u00a0branch")).toBe("new\u00a0branch");
+    expect(sanitizeNewRefName("new\u2009branch")).toBe("new\u2009branch");
   });
 
   it("keeps slashes so nested ref names survive", () => {
