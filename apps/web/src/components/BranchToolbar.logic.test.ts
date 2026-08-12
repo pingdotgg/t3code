@@ -744,6 +744,19 @@ describe("shouldIncludeBranchPickerItem", () => {
     ).toBe(true);
   });
 
+  // A partial query has to reach the ref it would have been created as, so
+  // searching "hello w" still finds an existing hello-world.
+  it("surfaces a ref from a partial query containing a space", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "hello-world",
+        normalizedQuery: "hello w",
+        createBranchItemValue: null,
+        checkoutPullRequestItemValue: null,
+      }),
+    ).toBe(true);
+  });
+
   it("excludes refs matching neither the raw nor the sanitized query", () => {
     expect(
       shouldIncludeBranchPickerItem({
