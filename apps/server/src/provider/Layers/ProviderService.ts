@@ -10,9 +10,11 @@
  * @module ProviderServiceLive
  */
 import {
+  EventId,
   ModelSelection,
   NonNegativeInt,
   ThreadId,
+  TurnId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
@@ -22,7 +24,9 @@ import {
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
+  type ProviderSendTurnInput as ProviderSendTurnInputType,
   type ProviderSession,
+  type ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
@@ -33,6 +37,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -47,7 +52,11 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import {
+  type ProviderAdapterError,
+  type ProviderServiceError,
+  ProviderValidationError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -57,6 +66,15 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import {
+  isProviderFailureEvent,
+  isProviderTurnTerminalEvent,
+  PROVIDER_TURN_RETRY_DELAYS_MS,
+  PROVIDER_TURN_RETRY_PROMPT,
+  type RetryableProviderFailure,
+  retryableProviderRuntimeFailure,
+  retryableProviderServiceFailure,
+} from "../ProviderTurnRetryPolicy.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
 /**
@@ -70,6 +88,37 @@ export interface ProviderServiceLiveOptions {
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
   ProviderService.ProviderService["Service"][Name];
+
+interface ProviderTurnRetryContext {
+  readonly threadId: ThreadId;
+  readonly continuationInput: ProviderSendTurnInputType;
+  source?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly provider: ProviderDriverKind;
+  };
+  logicalTurnId?: TurnId;
+  physicalTurnId?: TurnId;
+  retriesUsed: number;
+  generation: number;
+  sendCallPending: boolean;
+  retryScheduled: boolean;
+  awaitingTurnStart: boolean;
+  exhausted: boolean;
+  finalFailurePublished: boolean;
+  pendingFailure: RetryableProviderFailure | undefined;
+}
+
+type ProviderTurnAttemptResult =
+  | {
+      readonly _tag: "Success";
+      readonly turn: ProviderTurnStartResult;
+    }
+  | {
+      readonly _tag: "Failure";
+      readonly error: ProviderServiceError;
+    };
+
+const IGNORED_RETRY_TURN_CAPACITY = 10_000;
 
 const ProviderRollbackConversationInput = Schema.Struct({
   threadId: ThreadId,
@@ -216,6 +265,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+  const turnRetryContexts = new Map<ThreadId, ProviderTurnRetryContext>();
+  const ignoredRetryTurnKeys = new Set<string>();
+  const ignoredRetryTurnKeyOrder: string[] = [];
+  const ignoredRetrySourcesByThread = new Map<ThreadId, ProviderInstanceId>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     McpSessionRegistry.issueActiveMcpCredential({ threadId, providerInstanceId }).pipe(
@@ -284,22 +337,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
-  const processRuntimeEvent = (
-    source: {
-      readonly instanceId: ProviderInstanceId;
-      readonly provider: ProviderDriverKind;
-    },
-    event: ProviderRuntimeEvent,
-  ): Effect.Effect<void> =>
-    Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
-      Effect.flatMap((canonicalEvent) =>
-        increment(providerRuntimeEventsTotal, {
-          provider: canonicalEvent.provider,
-          eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
-      ),
-    );
-
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
   // are currently wired into the runtime event bus". It both tracks the set
   // of live subscriptions (so `reconcileInstanceSubscriptions` can diff and
@@ -315,45 +352,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getAdapterEntries = Ref.get(subscribedAdapters).pipe(
     Effect.map((map) => Array.from(map.entries())),
   );
-
-  // Rebuild the map of id → adapter from the registry and fork a new event
-  // subscription for every instance that is either brand new or whose adapter
-  // identity changed (indicating the underlying `ProviderInstance` was torn
-  // down and rebuilt by `ProviderInstanceRegistry.reconcile`). Orphaned
-  // fibers for removed/replaced instances exit on their own because their
-  // adapter's `streamEvents` source terminates when the old scope closes.
-  const reconcileInstanceSubscriptions = Effect.gen(function* () {
-    const previous = yield* Ref.get(subscribedAdapters);
-    const currentIds = yield* registry.listInstances();
-    const next = new Map<ProviderInstanceId, ProviderAdapterShape<ProviderAdapterError>>();
-    for (const id of currentIds) {
-      const adapterOption = yield* registry
-        .getByInstance(id)
-        .pipe(Effect.tapError(Effect.logWarning), Effect.option);
-      if (Option.isNone(adapterOption)) continue;
-      const adapter = adapterOption.value;
-      next.set(id, adapter);
-      if (previous.get(id) !== adapter) {
-        yield* Stream.runForEach(adapter.streamEvents, (event) =>
-          processRuntimeEvent(
-            {
-              instanceId: id,
-              provider: adapter.provider,
-            },
-            event,
-          ),
-        ).pipe(Effect.forkScoped);
-      }
-    }
-    yield* Ref.set(subscribedAdapters, next);
-  });
-
-  const instanceChanges = yield* registry.subscribeChanges;
-  yield* reconcileInstanceSubscriptions;
-  yield* Stream.runForEach(
-    Stream.fromSubscription(instanceChanges),
-    () => reconcileInstanceSubscriptions,
-  ).pipe(Effect.forkScoped);
 
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
@@ -525,6 +523,490 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const retryTurnKey = (
+    source: { readonly instanceId: ProviderInstanceId },
+    threadId: ThreadId,
+    turnId: TurnId | string,
+  ) => JSON.stringify([source.instanceId, threadId, turnId]);
+
+  const rememberIgnoredRetryTurn = (context: ProviderTurnRetryContext) => {
+    if (!context.source) {
+      return;
+    }
+    ignoredRetrySourcesByThread.delete(context.threadId);
+    ignoredRetrySourcesByThread.set(context.threadId, context.source.instanceId);
+    if (ignoredRetrySourcesByThread.size > IGNORED_RETRY_TURN_CAPACITY) {
+      const oldestThreadId = ignoredRetrySourcesByThread.keys().next().value;
+      if (oldestThreadId !== undefined) {
+        ignoredRetrySourcesByThread.delete(oldestThreadId);
+      }
+    }
+    if (!context.physicalTurnId) {
+      return;
+    }
+    const key = retryTurnKey(context.source, context.threadId, context.physicalTurnId);
+    if (ignoredRetryTurnKeys.has(key)) {
+      return;
+    }
+    ignoredRetryTurnKeys.add(key);
+    ignoredRetryTurnKeyOrder.push(key);
+    if (ignoredRetryTurnKeyOrder.length <= IGNORED_RETRY_TURN_CAPACITY) {
+      return;
+    }
+    const oldest = ignoredRetryTurnKeyOrder.shift();
+    if (oldest !== undefined) {
+      ignoredRetryTurnKeys.delete(oldest);
+    }
+  };
+
+  const isIgnoredRetryEvent = (
+    source: { readonly instanceId: ProviderInstanceId },
+    event: ProviderRuntimeEvent,
+  ): boolean => {
+    if (event.turnId === undefined) {
+      const context = turnRetryContexts.get(event.threadId);
+      return (
+        (context === undefined || context.retryScheduled) &&
+        ignoredRetrySourcesByThread.get(event.threadId) === source.instanceId &&
+        retryableProviderRuntimeFailure(event) !== undefined
+      );
+    }
+    if (!ignoredRetryTurnKeys.has(retryTurnKey(source, event.threadId, event.turnId))) {
+      return false;
+    }
+    const context = turnRetryContexts.get(event.threadId);
+    const originalAttemptCanStillSettle =
+      context !== undefined &&
+      context.source?.instanceId === source.instanceId &&
+      context.physicalTurnId === event.turnId &&
+      context.retryScheduled &&
+      !context.exhausted;
+    return !originalAttemptCanStillSettle || isProviderFailureEvent(event);
+  };
+
+  const cancelTurnRetry = (threadId: ThreadId) =>
+    Effect.sync(() => {
+      ignoredRetrySourcesByThread.delete(threadId);
+      const context = turnRetryContexts.get(threadId);
+      if (context) {
+        context.generation += 1;
+        turnRetryContexts.delete(threadId);
+      }
+    });
+
+  const rewriteRuntimeEventTurnId = (
+    context: ProviderTurnRetryContext,
+    source: {
+      readonly instanceId: ProviderInstanceId;
+      readonly provider: ProviderDriverKind;
+    },
+    event: ProviderRuntimeEvent,
+  ): ProviderRuntimeEvent => {
+    if (
+      context.source?.instanceId !== source.instanceId ||
+      context.source.provider !== source.provider
+    ) {
+      return event;
+    }
+
+    if (event.type === "turn.started" && event.turnId !== undefined) {
+      if (context.awaitingTurnStart || context.physicalTurnId === undefined) {
+        context.physicalTurnId = event.turnId;
+        context.logicalTurnId ??= event.turnId;
+        context.awaitingTurnStart = false;
+      }
+    }
+
+    if (
+      context.logicalTurnId !== undefined &&
+      event.turnId !== undefined &&
+      event.turnId === context.physicalTurnId
+    ) {
+      return { ...event, turnId: context.logicalTurnId };
+    }
+    if (
+      context.logicalTurnId !== undefined &&
+      event.turnId === undefined &&
+      isProviderFailureEvent(event)
+    ) {
+      return { ...event, turnId: context.logicalTurnId };
+    }
+    return event;
+  };
+
+  const makeContinuationInput = (input: ProviderSendTurnInputType): ProviderSendTurnInputType => ({
+    threadId: input.threadId,
+    input: PROVIDER_TURN_RETRY_PROMPT,
+    attachments: [],
+    ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+    ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+  });
+
+  const sendTurnAttempt = Effect.fn("sendTurnAttempt")(function* (
+    context: ProviderTurnRetryContext,
+    input: ProviderSendTurnInputType,
+  ) {
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.sendTurn",
+      allowRecovery: true,
+    });
+    context.source = {
+      instanceId: routed.instanceId,
+      provider: routed.adapter.provider,
+    };
+    yield* Effect.annotateCurrentSpan({
+      "provider.kind": routed.adapter.provider,
+      ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
+    });
+    // A turn is the clearest sign a session is still alive. The MCP
+    // credential is minted once at session start and cannot be rotated into
+    // an already-spawned agent process, so keep the existing token valid.
+    yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
+    const turn = yield* routed.adapter.sendTurn(input);
+
+    if (turnRetryContexts.get(context.threadId) === context) {
+      context.logicalTurnId ??= turn.turnId;
+      context.physicalTurnId = turn.turnId;
+      context.awaitingTurnStart = false;
+    }
+    const logicalTurnId = context.logicalTurnId ?? turn.turnId;
+    yield* directory.upsert({
+      threadId: input.threadId,
+      provider: routed.adapter.provider,
+      providerInstanceId: routed.instanceId,
+      status: "running",
+      ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
+      runtimePayload: {
+        ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+        activeTurnId: logicalTurnId,
+        lastRuntimeEvent: "provider.sendTurn",
+        lastRuntimeEventAt: yield* nowIso,
+      },
+    });
+    yield* analytics.record("provider.turn.sent", {
+      provider: routed.adapter.provider,
+      model: input.modelSelection?.model,
+      interactionMode: input.interactionMode,
+      // Session starts overrepresent users who toggle modes because every
+      // toggle restarts the session. Per-turn recording is usage-weighted.
+      runtimeMode: routed.runtimeMode,
+      attachmentCount: input.attachments?.length ?? 0,
+      hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+      retryAttempt: context.retriesUsed,
+    });
+    return {
+      ...turn,
+      turnId: logicalTurnId,
+    };
+  });
+
+  const captureTurnAttempt = (
+    context: ProviderTurnRetryContext,
+    input: ProviderSendTurnInputType,
+  ): Effect.Effect<ProviderTurnAttemptResult> =>
+    sendTurnAttempt(context, input).pipe(
+      Effect.map((turn) => ({ _tag: "Success" as const, turn })),
+      Effect.catch((error) => Effect.succeed({ _tag: "Failure" as const, error })),
+    );
+
+  const prepareTurnRetry = Effect.fn("prepareTurnRetry")(function* (
+    context: ProviderTurnRetryContext,
+    failure: RetryableProviderFailure,
+  ) {
+    if (context.retriesUsed >= PROVIDER_TURN_RETRY_DELAYS_MS.length) {
+      return undefined;
+    }
+    const retryAttempt = context.retriesUsed + 1;
+    const delayMs = PROVIDER_TURN_RETRY_DELAYS_MS[retryAttempt - 1];
+    if (delayMs === undefined) {
+      return undefined;
+    }
+    context.retriesUsed = retryAttempt;
+    context.generation += 1;
+    context.retryScheduled = true;
+    context.pendingFailure = undefined;
+    rememberIgnoredRetryTurn(context);
+    yield* Effect.logWarning("provider.turn.retry-scheduled", {
+      threadId: context.threadId,
+      provider: context.source?.provider ?? "unknown",
+      providerInstanceId: context.source?.instanceId ?? "unknown",
+      retryAttempt,
+      delayMs,
+      reason: failure.message,
+    });
+    yield* analytics.record("provider.turn.retry_scheduled", {
+      provider: context.source?.provider ?? "unknown",
+      retryAttempt,
+      delayMs,
+    });
+    return {
+      retryAttempt,
+      delayMs,
+      generation: context.generation,
+    } as const;
+  });
+
+  const publishSyntheticTurnFailure = Effect.fn("publishSyntheticTurnFailure")(function* (
+    context: ProviderTurnRetryContext,
+    message: string,
+  ) {
+    if (!context.source || !context.logicalTurnId || context.finalFailurePublished) {
+      return;
+    }
+    context.finalFailurePublished = true;
+    context.exhausted = true;
+    yield* publishRuntimeEvent({
+      type: "turn.completed",
+      eventId: EventId.make(
+        `provider-retry:${context.source.instanceId}:${context.threadId}:${context.logicalTurnId}:${context.generation}:failed`,
+      ),
+      provider: context.source.provider,
+      providerInstanceId: context.source.instanceId,
+      threadId: context.threadId,
+      turnId: context.logicalTurnId,
+      createdAt: yield* nowIso,
+      payload: {
+        state: "failed",
+        errorMessage: message,
+      },
+    });
+    turnRetryContexts.delete(context.threadId);
+  });
+
+  const publishSyntheticTurnInterruption = Effect.fn("publishSyntheticTurnInterruption")(function* (
+    context: ProviderTurnRetryContext,
+  ) {
+    if (!context.source || !context.logicalTurnId) {
+      turnRetryContexts.delete(context.threadId);
+      return;
+    }
+    yield* publishRuntimeEvent({
+      type: "turn.completed",
+      eventId: EventId.make(
+        `provider-retry:${context.source.instanceId}:${context.threadId}:${context.logicalTurnId}:${context.generation}:interrupted`,
+      ),
+      provider: context.source.provider,
+      providerInstanceId: context.source.instanceId,
+      threadId: context.threadId,
+      turnId: context.logicalTurnId,
+      createdAt: yield* nowIso,
+      payload: {
+        state: "interrupted",
+        stopReason: "Interrupted by user.",
+      },
+    });
+    turnRetryContexts.delete(context.threadId);
+  });
+
+  const runAsyncRetryAttempt: (
+    context: ProviderTurnRetryContext,
+    generation: number,
+  ) => Effect.Effect<void, never, Scope.Scope> = Effect.fn("runAsyncRetryAttempt")(
+    function* (context, generation) {
+      if (
+        turnRetryContexts.get(context.threadId) !== context ||
+        context.generation !== generation ||
+        context.exhausted
+      ) {
+        return;
+      }
+      context.retryScheduled = false;
+      context.sendCallPending = true;
+      context.awaitingTurnStart = true;
+      context.pendingFailure = undefined;
+
+      const attempt = yield* captureTurnAttempt(context, context.continuationInput);
+      context.sendCallPending = false;
+      if (turnRetryContexts.get(context.threadId) !== context || context.exhausted) {
+        return;
+      }
+
+      const failure =
+        context.pendingFailure ??
+        (attempt._tag === "Failure" ? retryableProviderServiceFailure(attempt.error) : undefined);
+      if (failure !== undefined) {
+        const scheduled = yield* prepareTurnRetry(context, failure);
+        if (scheduled !== undefined) {
+          yield* Effect.sleep(scheduled.delayMs).pipe(
+            Effect.andThen(runAsyncRetryAttempt(context, scheduled.generation)),
+            Effect.forkScoped,
+          );
+          return;
+        }
+      }
+
+      if (attempt._tag === "Failure") {
+        yield* publishSyntheticTurnFailure(context, attempt.error.message);
+      }
+    },
+  );
+
+  const scheduleAsyncTurnRetry: (
+    context: ProviderTurnRetryContext,
+    failure: RetryableProviderFailure,
+  ) => Effect.Effect<boolean, never, Scope.Scope> = Effect.fn("scheduleAsyncTurnRetry")(
+    function* (context, failure) {
+      const scheduled = yield* prepareTurnRetry(context, failure);
+      if (scheduled === undefined) {
+        return false;
+      }
+      yield* Effect.sleep(scheduled.delayMs).pipe(
+        Effect.andThen(runAsyncRetryAttempt(context, scheduled.generation)),
+        Effect.forkScoped,
+      );
+      return true;
+    },
+  );
+
+  const handleRuntimeEvent: (
+    source: {
+      readonly instanceId: ProviderInstanceId;
+      readonly provider: ProviderDriverKind;
+    },
+    event: ProviderRuntimeEvent,
+  ) => Effect.Effect<void, never, Scope.Scope> = Effect.fn("handleRuntimeEvent")(
+    function* (source, event) {
+      if (isIgnoredRetryEvent(source, event)) {
+        return;
+      }
+
+      const context = turnRetryContexts.get(event.threadId);
+      if (!context) {
+        yield* publishRuntimeEvent(event);
+        return;
+      }
+      if (
+        context.source !== undefined &&
+        (context.source.instanceId !== source.instanceId ||
+          context.source.provider !== source.provider)
+      ) {
+        yield* publishRuntimeEvent(event);
+        return;
+      }
+      const mappedEvent = rewriteRuntimeEventTurnId(context, source, event);
+      if (context.exhausted) {
+        yield* publishRuntimeEvent(mappedEvent);
+        if (isProviderTurnTerminalEvent(event)) {
+          turnRetryContexts.delete(event.threadId);
+        }
+        return;
+      }
+      const retryableFailure = retryableProviderRuntimeFailure(event);
+
+      // A retry is one logical turn even when an adapter has to open a new
+      // provider turn underneath it. The first turn.started already put
+      // orchestration and checkpointing into the running state, so replaying
+      // the retry's physical start would create a duplicate lifecycle edge.
+      if (
+        event.type === "turn.started" &&
+        context.logicalTurnId !== undefined &&
+        event.turnId !== undefined &&
+        event.turnId !== context.logicalTurnId
+      ) {
+        return;
+      }
+
+      if (retryableFailure !== undefined) {
+        if (context.retriesUsed < PROVIDER_TURN_RETRY_DELAYS_MS.length) {
+          context.pendingFailure = retryableFailure;
+          if (context.sendCallPending || context.retryScheduled) {
+            return;
+          }
+          yield* scheduleAsyncTurnRetry(context, retryableFailure);
+          return;
+        }
+
+        context.exhausted = true;
+        context.pendingFailure = retryableFailure;
+        if (event.type === "turn.completed") {
+          context.finalFailurePublished = true;
+          rememberIgnoredRetryTurn(context);
+          yield* publishRuntimeEvent(mappedEvent);
+          turnRetryContexts.delete(event.threadId);
+        } else {
+          rememberIgnoredRetryTurn(context);
+          yield* publishSyntheticTurnFailure(context, retryableFailure.message);
+        }
+        return;
+      }
+
+      // Recovering a provider session can emit a short-lived ready/starting
+      // lifecycle before the continuation turn begins. Publishing that state
+      // would make the logical turn look finished during its backoff window.
+      if (
+        context.retriesUsed > 0 &&
+        (event.type === "session.started" ||
+          event.type === "thread.started" ||
+          (event.type === "session.state.changed" && event.payload.state !== "error"))
+      ) {
+        return;
+      }
+
+      if (isProviderFailureEvent(event)) {
+        context.exhausted = true;
+        context.finalFailurePublished = true;
+      }
+      yield* publishRuntimeEvent(mappedEvent);
+
+      if (isProviderTurnTerminalEvent(event)) {
+        turnRetryContexts.delete(event.threadId);
+      }
+    },
+  );
+
+  const processRuntimeEvent = (
+    source: {
+      readonly instanceId: ProviderInstanceId;
+      readonly provider: ProviderDriverKind;
+    },
+    event: ProviderRuntimeEvent,
+  ): Effect.Effect<void, never, Scope.Scope> =>
+    Effect.sync(() => correlateRuntimeEventWithInstance(source, event)).pipe(
+      Effect.flatMap((canonicalEvent) =>
+        increment(providerRuntimeEventsTotal, {
+          provider: canonicalEvent.provider,
+          eventType: canonicalEvent.type,
+        }).pipe(Effect.andThen(handleRuntimeEvent(source, canonicalEvent))),
+      ),
+    );
+
+  // Rebuild the map of id to adapter and fork a new event subscription for
+  // every instance that is brand new or whose adapter identity changed.
+  // Replaced adapters close their own streams, so their old fibers exit.
+  const reconcileInstanceSubscriptions = Effect.gen(function* () {
+    const previous = yield* Ref.get(subscribedAdapters);
+    const currentIds = yield* registry.listInstances();
+    const next = new Map<ProviderInstanceId, ProviderAdapterShape<ProviderAdapterError>>();
+    for (const id of currentIds) {
+      const adapterOption = yield* registry
+        .getByInstance(id)
+        .pipe(Effect.tapError(Effect.logWarning), Effect.option);
+      if (Option.isNone(adapterOption)) continue;
+      const adapter = adapterOption.value;
+      next.set(id, adapter);
+      if (previous.get(id) !== adapter) {
+        yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          processRuntimeEvent(
+            {
+              instanceId: id,
+              provider: adapter.provider,
+            },
+            event,
+          ),
+        ).pipe(Effect.forkScoped);
+      }
+    }
+    yield* Ref.set(subscribedAdapters, next);
+  });
+
+  const instanceChanges = yield* registry.subscribeChanges;
+  yield* reconcileInstanceSubscriptions;
+  yield* Stream.runForEach(
+    Stream.fromSubscription(instanceChanges),
+    () => reconcileInstanceSubscriptions,
+  ).pipe(Effect.forkScoped);
+
   const startSession: ProviderServiceMethod<"startSession"> = Effect.fn("startSession")(
     function* (threadId, rawInput) {
       const parsed = yield* decodeInputOrValidationError({
@@ -532,6 +1014,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         schema: ProviderSessionStartInput,
         payload: rawInput,
       });
+      yield* cancelTurnRetry(threadId);
 
       const resolvedInstanceId = yield* requireBindingInstanceId(
         "ProviderService.startSession",
@@ -715,49 +1198,82 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     let metricProvider = "unknown";
     let metricModel = input.modelSelection?.model;
     return yield* Effect.gen(function* () {
-      const routed = yield* resolveRoutableSession({
+      yield* cancelTurnRetry(input.threadId);
+      const context: ProviderTurnRetryContext = {
         threadId: input.threadId,
-        operation: "ProviderService.sendTurn",
-        allowRecovery: true,
-      });
-      metricProvider = routed.adapter.provider;
-      metricModel = input.modelSelection?.model;
-      yield* Effect.annotateCurrentSpan({
-        "provider.kind": routed.adapter.provider,
-        ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
-      });
-      // A turn is the clearest sign a session is still alive. The MCP
-      // credential is minted once at session start and cannot be rotated into
-      // an already-spawned agent process, so we keep the existing token valid
-      // rather than issuing a new one: sessions that go a long time between
-      // browser tool calls used to lose the toolkit outright.
-      yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-      const turn = yield* routed.adapter.sendTurn(input);
-      yield* directory.upsert({
-        threadId: input.threadId,
-        provider: routed.adapter.provider,
-        providerInstanceId: routed.instanceId,
-        status: "running",
-        ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-        runtimePayload: {
-          ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
-          lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: yield* nowIso,
-        },
-      });
-      yield* analytics.record("provider.turn.sent", {
-        provider: routed.adapter.provider,
-        model: input.modelSelection?.model,
-        interactionMode: input.interactionMode,
-        // Session-start events alone skew runtime mode toward users who toggle
-        // often, since every toggle restarts the session. Recording it per turn
-        // gives a usage-weighted view and lets it cross with interactionMode.
-        runtimeMode: routed.runtimeMode,
-        attachmentCount: input.attachments.length,
-        hasInput: typeof input.input === "string" && input.input.trim().length > 0,
-      });
-      return turn;
+        continuationInput: makeContinuationInput(input),
+        retriesUsed: 0,
+        generation: 0,
+        sendCallPending: false,
+        retryScheduled: false,
+        awaitingTurnStart: true,
+        exhausted: false,
+        finalFailurePublished: false,
+        pendingFailure: undefined,
+      };
+      turnRetryContexts.set(input.threadId, context);
+
+      let attemptInput: ProviderSendTurnInputType = input;
+      while (true) {
+        context.sendCallPending = true;
+        context.retryScheduled = false;
+        context.awaitingTurnStart = true;
+        context.pendingFailure = undefined;
+        const attempt = yield* captureTurnAttempt(context, attemptInput);
+        context.sendCallPending = false;
+        metricProvider = context.source?.provider ?? metricProvider;
+        metricModel = input.modelSelection?.model;
+
+        if (turnRetryContexts.get(input.threadId) !== context) {
+          if (attempt._tag === "Success") {
+            return attempt.turn;
+          }
+          if (context.logicalTurnId !== undefined) {
+            return {
+              threadId: input.threadId,
+              turnId: context.logicalTurnId,
+            };
+          }
+          return yield* Effect.interrupt;
+        }
+
+        const retryableFailure =
+          context.pendingFailure ??
+          (attempt._tag === "Failure" ? retryableProviderServiceFailure(attempt.error) : undefined);
+        if (attempt._tag === "Success" && retryableFailure === undefined) {
+          return attempt.turn;
+        }
+
+        if (retryableFailure !== undefined) {
+          const scheduled = yield* prepareTurnRetry(context, retryableFailure);
+          if (scheduled !== undefined) {
+            yield* Effect.sleep(scheduled.delayMs);
+            if (
+              turnRetryContexts.get(input.threadId) !== context ||
+              context.generation !== scheduled.generation ||
+              context.exhausted
+            ) {
+              return yield* Effect.interrupt;
+            }
+            attemptInput = context.logicalTurnId === undefined ? input : context.continuationInput;
+            continue;
+          }
+        }
+
+        if (attempt._tag === "Success") {
+          return attempt.turn;
+        }
+        if (context.logicalTurnId !== undefined) {
+          rememberIgnoredRetryTurn(context);
+          yield* publishSyntheticTurnFailure(context, attempt.error.message);
+          return {
+            threadId: input.threadId,
+            turnId: context.logicalTurnId,
+          };
+        }
+        turnRetryContexts.delete(input.threadId);
+        return yield* attempt.error;
+      }
     }).pipe(
       withMetrics({
         counter: providerTurnsTotal,
@@ -781,6 +1297,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         schema: ProviderInterruptTurnInput,
         payload: rawInput,
       });
+      const retryContext = turnRetryContexts.get(input.threadId);
+      const retryInProgress = retryContext !== undefined && retryContext.retriesUsed > 0;
+      if (retryContext) {
+        retryContext.generation += 1;
+        retryContext.retryScheduled = false;
+        retryContext.exhausted = true;
+        if (retryInProgress) {
+          rememberIgnoredRetryTurn(retryContext);
+        }
+      }
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
         const routed = yield* resolveRoutableSession({
@@ -795,7 +1321,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.thread_id": input.threadId,
           "provider.turn_id": input.turnId,
         });
-        yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
+        const physicalTurnId = retryInProgress
+          ? (retryContext.physicalTurnId ?? input.turnId)
+          : input.turnId;
+        yield* routed.adapter.interruptTurn(routed.threadId, physicalTurnId).pipe(
+          Effect.catch((error) =>
+            retryInProgress
+              ? Effect.logWarning("provider.turn.retry-interrupt-failed", {
+                  threadId: input.threadId,
+                  provider: routed.adapter.provider,
+                  error,
+                })
+              : Effect.fail(error),
+          ),
+        );
+        if (retryInProgress && turnRetryContexts.get(input.threadId) === retryContext) {
+          yield* publishSyntheticTurnInterruption(retryContext);
+        }
         yield* analytics.record("provider.turn.interrupted", {
           provider: routed.adapter.provider,
         });
@@ -890,6 +1432,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         schema: ProviderStopSessionInput,
         payload: rawInput,
       });
+      yield* cancelTurnRetry(input.threadId);
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
         const routed = yield* resolveRoutableSession({
@@ -1035,6 +1578,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     if (input.numTurns === 0) {
       return;
     }
+    yield* cancelTurnRetry(input.threadId);
     let metricProvider = "unknown";
     return yield* Effect.gen(function* () {
       const routed = yield* resolveRoutableSession({
@@ -1066,6 +1610,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
 
   const runStopAll = Effect.fn("runStopAll")(function* () {
+    yield* Effect.sync(() => {
+      for (const context of turnRetryContexts.values()) {
+        context.generation += 1;
+      }
+      turnRetryContexts.clear();
+      ignoredRetrySourcesByThread.clear();
+    });
     const threadIds = yield* directory.listThreadIds();
     const currentAdapters = yield* getAdapterEntries;
     const activeSessions = yield* Effect.forEach(currentAdapters, ([instanceId, adapter]) =>
