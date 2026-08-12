@@ -87,7 +87,7 @@ function runShellEnvironment(input: {
     ),
   );
 
-  let program = Effect.gen(function* () {
+  const coreProgram = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
     yield* shellEnvironment.installIntoProcess;
   }).pipe(
@@ -95,11 +95,14 @@ function runShellEnvironment(input: {
     Effect.provide(Layer.mergeAll(environmentLayer, spawnerLayer)),
   );
 
-  if (input.fs) {
-    program = program.pipe(Effect.provideService(FileSystem.FileSystem, input.fs));
-  }
-  
-  program = program.pipe(Effect.provide(NodeServices.layer));
+  const program = input.fs
+    ? coreProgram.pipe(
+        Effect.provideService(FileSystem.FileSystem, input.fs),
+        Effect.provide(NodeServices.layer)
+      )
+    : coreProgram.pipe(
+        Effect.provide(NodeServices.layer)
+      );
 
   return withProcessEnv(input.env, program);
 }
