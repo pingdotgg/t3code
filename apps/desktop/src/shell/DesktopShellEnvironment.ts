@@ -394,10 +394,11 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     let fnmFound = false;
     if (Option.isSome(fastMergedPath)) {
       for (const dir of fastMergedPath.value.split(";")) {
-        if (!nodeFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${dir}/node.exe`), () => false))) {
+        const cleanDir = dir.trim().replace(/^"+|"+$/g, "");
+        if (!nodeFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/node.exe`), () => false))) {
           nodeFound = true;
         }
-        if (!fnmFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${dir}/fnm.exe`), () => false))) {
+        if (!fnmFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/fnm.exe`), () => false))) {
           fnmFound = true;
         }
         if (nodeFound && fnmFound) break;
