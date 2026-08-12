@@ -73,6 +73,7 @@ import {
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
+import { orderedListMarkerExtraDigits } from "../markdown-ordered-list";
 import {
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
@@ -1502,6 +1503,12 @@ function ChatMarkdown({
             {children}
           </div>
         );
+      },
+      ol({ node, start, style, ...props }) {
+        const items = node?.children.filter((c) => c.type === "element" && c.tagName === "li");
+        const extra = orderedListMarkerExtraDigits(start, items?.length ?? 0);
+        const olStyle = { ...style, "--chat-markdown-ol-marker-extra": String(extra) };
+        return <ol {...props} start={start} style={olStyle as React.CSSProperties} />;
       },
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;

@@ -1864,8 +1864,13 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown ol {
-  padding-left: 1.25rem;
+  /* --chat-markdown-ol-marker-extra: marker digits past two, set by ChatMarkdown. */
+  padding-left: calc(1.25rem + var(--chat-markdown-ol-marker-extra, 0) * 1ch);
   list-style-type: decimal;
+}
+
+.chat-markdown ol > li::marker {
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-markdown ul ul {
@@ -1896,6 +1901,10 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown li.task-list-item input[type="checkbox"] {
   margin: 0 0.35em 0.15em -1.25rem;
   vertical-align: middle;
+}
+
+.chat-markdown ol > li.task-list-item input[type="checkbox"] {
+  margin-left: calc(-1.25rem - var(--chat-markdown-ol-marker-extra, 0) * 1ch);
 }
 
 /* Markdown assumes inline images — GitHub comments lay button images out in a row — and the
@@ -1945,7 +1954,6 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown section[data-footnotes] ol {
   margin: 0;
-  padding-left: 1.25rem;
 }
 
 .chat-markdown section[data-footnotes] li + li {
