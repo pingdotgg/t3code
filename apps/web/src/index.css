@@ -431,6 +431,39 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@keyframes tool-content-scan {
+  from {
+    mask-position: -4.5rem 0;
+  }
+  to {
+    mask-position: calc(100% + 4.5rem) 0;
+  }
+}
+
+/* One masked duplicate keeps the icon and text on the same pass. The wide,
+   feathered mask softens both edges without painting over the row background. */
+@utility active-tool-content-scan {
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(0 0 0 / 12%) 18%,
+    rgb(0 0 0 / 72%) 40%,
+    black 50%,
+    rgb(0 0 0 / 72%) 60%,
+    rgb(0 0 0 / 12%) 82%,
+    transparent 100%
+  );
+  mask-repeat: no-repeat;
+  mask-size: 4.5rem 100%;
+  filter: blur(0.25px);
+  animation: tool-content-scan 2.4s linear infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    display: none;
+    animation: none;
+  }
+}
+
 @layer base {
   :root {
     /* Keep the original T3 Code artwork palettes as the defaults. Built-in

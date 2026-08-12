@@ -19,11 +19,7 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  changedFileName,
-  selectChangedFilePreview,
-  summarizeChangedFileScopes,
-} from "./changedFilesPresentation";
+import { changedFileName, selectChangedFilePreview } from "./changedFilesPresentation";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
@@ -50,7 +46,6 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onOpenTurnDiff,
   } = props;
   const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
-  const scopeSummary = useMemo(() => summarizeChangedFileScopes(files), [files]);
   const previewFiles = useMemo(() => selectChangedFilePreview(files), [files]);
   const compactPreviewVisible = showCompactPreview && !expanded;
 
@@ -158,43 +153,44 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           onOpenTurnDiff={onOpenTurnDiff}
         />
       ) : compactPreviewVisible ? (
-        <div className="px-2 pb-1.5 pt-1">
-          <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
-            {scopeSummary.map((scope, index) => (
-              <span key={scope.label} className="inline-flex items-center gap-1">
-                {index > 0 ? <span aria-hidden="true">·</span> : null}
-                <span className="font-mono text-foreground/75">{scope.label}</span>
-                <span>
-                  {scope.fileCount} file{scope.fileCount === 1 ? "" : "s"}
-                </span>
-              </span>
-            ))}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <div className="px-2 pb-1.5 pt-0.5">
+          <div className="flex min-w-0 items-center gap-1 overflow-hidden">
             {previewFiles.map((file) => (
               <button
                 key={file.path}
                 type="button"
                 title={file.path}
-                className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="group flex min-h-7 min-w-0 flex-1 basis-0 items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-accent/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => onOpenTurnDiff(turnId, file.path)}
               >
                 <PierreEntryIcon
                   pathValue={file.path}
                   kind="file"
                   theme={resolvedTheme}
-                  className="size-3 shrink-0 text-muted-foreground/70"
+                  className="size-3.5 shrink-0 text-muted-foreground/70"
                 />
-                <span className="truncate">{changedFileName(file.path)}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/75 group-hover:text-foreground">
+                  {changedFileName(file.path)}
+                </span>
+                {hasNonZeroStat(file) ? (
+                  <DiffStatLabel
+                    additions={file.additions}
+                    deletions={file.deletions}
+                    layout="inline"
+                    className="shrink-0 text-[10px]"
+                  />
+                ) : null}
               </button>
             ))}
-            <button
-              type="button"
-              className="rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => onExpandedChange(true)}
-            >
-              Show all {files.length} files
-            </button>
+            {files.length > previewFiles.length ? (
+              <button
+                type="button"
+                className="flex min-h-7 shrink-0 items-center rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => onExpandedChange(true)}
+              >
+                +{files.length - previewFiles.length} more
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

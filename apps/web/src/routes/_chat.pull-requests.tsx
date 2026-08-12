@@ -1615,7 +1615,6 @@ function PullRequestsRouteView() {
                 reviewingQuery.refresh();
               }}
               onStateChange={handlePullRequestTabStatusChange}
-              chromeVariant="collapse"
             />
           </RightPanelTabs>
         ) : null}

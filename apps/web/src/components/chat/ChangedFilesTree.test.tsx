@@ -40,7 +40,7 @@ describe("ChangedFilesCard", () => {
     expect(markup).not.toContain("1 changed files");
   });
 
-  it("renders a scope and representative-file preview for a large latest change", () => {
+  it("renders a clean representative-file preview for a large latest change", () => {
     const markup = renderToStaticMarkup(
       <ChangedFilesCard
         turnId={TurnId.make("turn-1")}
@@ -67,14 +67,13 @@ describe("ChangedFilesCard", () => {
 
     expect(markup).toContain('data-changed-files-state="preview"');
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain("apps");
-    expect(markup).toContain("2 files");
-    expect(markup).toContain("packages");
-    expect(markup).toContain("root");
+    expect(markup).toContain("apps/web/src/");
+    expect(markup).toContain("packages/shared/src/");
     expect(markup).toContain("App.tsx");
     expect(markup).toContain("git.ts");
     expect(markup).toContain("README.md");
-    expect(markup).toContain("Show all 4 files");
+    expect(markup).toContain("+1 more");
+    expect(markup).toContain('aria-label="120 additions, 20 deletions"');
     expect(markup).not.toContain("App.test.tsx");
   });
 

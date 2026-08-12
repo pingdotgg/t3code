@@ -558,6 +558,9 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
         timelineEntries={[
           {
             id: "entry-1",
@@ -681,5 +684,36 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-x");
     expect(markup).toContain('aria-label="Tool call failed"');
+  });
+
+  it("uses the executable as the label for a long live command", () => {
+    const command =
+      'rg -n "steer|intervene|followup|follow-up|mid-turn|same turn|turn-fold" apps/web/src/components/chat/MessagesTimeline.logic.ts';
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
+        timelineEntries={[
+          {
+            id: "entry-long-command",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-long-command",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Running command",
+              tone: "tool",
+              requestKind: "command",
+              command,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Running rg");
+    expect(markup).not.toContain("steer|intervene|followup");
   });
 });
