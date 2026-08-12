@@ -27,10 +27,11 @@ export function useEnvironmentQuery<A, E>(
   const selectedAtom = atom ?? EMPTY_ASYNC_RESULT_ATOM;
   const result = useAtomValue(selectedAtom);
   const refresh = useAtomRefresh(selectedAtom);
+  const interrupted = result._tag === "Failure" && Cause.hasInterruptsOnly(result.cause);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
-    error: result._tag === "Failure" ? formatError(result.cause) : null,
-    isPending: atom !== null && result.waiting,
+    error: result._tag === "Failure" && !interrupted ? formatError(result.cause) : null,
+    isPending: atom !== null && (result.waiting || interrupted),
     refresh,
   };
 }
