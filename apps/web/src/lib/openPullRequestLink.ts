@@ -172,10 +172,19 @@ export function findProjectForChangeRequest(
  * should still be reading it afterwards. Any change request opens there, not only the thread's
  * own, since the panel is told which one to show.
  */
+export function shouldOpenPullRequestExternally(
+  event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey">,
+): boolean {
+  return event.metaKey || event.ctrlKey;
+}
+
 export function useOpenChangeRequestLink(
   threadRef?: ScopedThreadRef,
 ): (
-  event: Pick<MouseEvent<HTMLElement>, "preventDefault" | "stopPropagation">,
+  event: Pick<
+    MouseEvent<HTMLElement>,
+    "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
+  >,
   targetUrl: string,
   targetThreadRef?: ScopedThreadRef,
 ) => boolean {
@@ -185,6 +194,7 @@ export function useOpenChangeRequestLink(
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useCallback(
     (event, targetUrl, targetThreadRef) => {
+      if (shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const environmentId = resolvedThreadRef?.environmentId ?? primaryEnvironmentId;
       if (
