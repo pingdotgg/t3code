@@ -21,6 +21,6 @@ describe("composer model picker spacing", () => {
     expect(composerControlSource).toContain("px-2.5");
     expect(modelPickerCall).toContain('triggerClassName="-ms-2.5"');
     expect(modelPickerCall).not.toContain("ps-0");
-    expect(modelPickerScrollerClasses).toEqual(expect.arrayContaining(["-ms-2.5", "ps-2.5"]));
+    expect(modelPickerScrollerClasses).toEqual(expect.arrayContaining(["-ms-3.5", "ps-3.5"]));
   });
 });
