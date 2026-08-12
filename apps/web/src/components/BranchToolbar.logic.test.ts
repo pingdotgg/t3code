@@ -16,6 +16,7 @@ import {
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
@@ -728,5 +729,50 @@ describe("shouldIncludeBranchPickerItem", () => {
         checkoutPullRequestItemValue: "__checkout_pull_request__:1359",
       }),
     ).toBe(false);
+  });
+});
+
+// Git rejects every ref name containing whitespace, so a typed name like
+// "new branch" can only ever fail. Sanitizing can therefore turn a failing
+// name into a working one but can never break a name that works today.
+describe("sanitizeNewRefName", () => {
+  it("replaces a space with a dash", () => {
+    expect(sanitizeNewRefName("new branch")).toBe("new-branch");
+  });
+
+  it("collapses a run of whitespace into a single dash", () => {
+    expect(sanitizeNewRefName("new   branch")).toBe("new-branch");
+  });
+
+  it("trims surrounding whitespace instead of turning it into dashes", () => {
+    expect(sanitizeNewRefName("  new branch  ")).toBe("new-branch");
+  });
+
+  it("replaces tabs and non-breaking spaces pasted from other apps", () => {
+    expect(sanitizeNewRefName("new\tbranch")).toBe("new-branch");
+    expect(sanitizeNewRefName("new\u00a0branch")).toBe("new-branch");
+  });
+
+  it("keeps slashes so nested ref names survive", () => {
+    expect(sanitizeNewRefName("feature/new thing")).toBe("feature/new-thing");
+  });
+
+  it("preserves case because git ref names are case sensitive", () => {
+    expect(sanitizeNewRefName("Feature/New Thing")).toBe("Feature/New-Thing");
+  });
+
+  it("leaves an already valid ref name untouched", () => {
+    expect(sanitizeNewRefName("feature/login")).toBe("feature/login");
+  });
+
+  it("returns an empty string for whitespace-only input", () => {
+    expect(sanitizeNewRefName("   ")).toBe("");
+  });
+
+  // Scoped deliberately to whitespace: git accepts consecutive dashes, so
+  // collapsing them would rewrite names the user may have typed on purpose.
+  it("does not collapse dashes the user typed", () => {
+    expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
+    expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
   });
 });

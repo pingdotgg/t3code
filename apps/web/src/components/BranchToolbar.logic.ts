@@ -243,6 +243,12 @@ export function resolveBranchSelectionTarget(input: {
   };
 }
 
+// Placeholder mirroring today's behavior in the ref creator, which only trims.
+// The following commit replaces the body so the sanitization tests pass.
+export function sanitizeNewRefName(rawName: string): string {
+  return rawName.trim();
+}
+
 export function shouldIncludeBranchPickerItem(input: {
   itemValue: string;
   normalizedQuery: string;
