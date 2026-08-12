@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { CommandId, IsoDateTime, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
-import { OrchestrationProjectShell, OrchestrationThreadShell } from "./orchestration.ts";
+import { OrchestrationThreadShell } from "./orchestration.ts";
 
 export const PiNativeSessionKey = Schema.String.pipe(Schema.brand("PiNativeSessionKey"));
 export type PiNativeSessionKey = typeof PiNativeSessionKey.Type;
@@ -147,9 +147,7 @@ export type PiNativeStreamItem = typeof PiNativeStreamItem.Type;
 
 export const PiExternalCatalogSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
-  projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
-  omittedProjectCount: NonNegativeInt,
   omittedThreadCount: NonNegativeInt,
   updatedAt: Schema.String,
 });

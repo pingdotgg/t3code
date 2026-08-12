@@ -26,12 +26,6 @@ export const EMPTY_PI_EXTERNAL_CATALOG_STATE: PiExternalCatalogState = {
   synchronized: false,
 };
 
-export const PI_EXTERNAL_PROJECT_ID_PREFIX = "external:pi-project:";
-
-export function isPiExternalProjectId(projectId: string): boolean {
-  return projectId.startsWith(PI_EXTERNAL_PROJECT_ID_PREFIX);
-}
-
 export function reducePiExternalCatalog(
   state: PiExternalCatalogState,
   item: PiExternalCatalogStreamItem,

@@ -71,6 +71,10 @@ session to T3's configured inactivity-based auto-settle behavior.
 
 ## Limitations
 
+Pi sessions appear in T3 Code only when they ran inside a project you added — in its workspace root, a
+subdirectory of it, or one of its worktrees. Sessions from any other directory stay out of the sidebar;
+add that directory as a project to see them.
+
 Only TUI sessions with this extension installed and connected appear live. Pi RPC, JSON, and print-mode
 sessions are intentionally ignored. Delivery is not exactly once if the TUI process crashes after
 accepting a command but before its receipt reaches the supervisor; the process-local dedupe set is lost
