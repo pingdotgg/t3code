@@ -1,10 +1,10 @@
-# Agentic Operator
+# Operator
 
-Agentic Operator lets one task coordinate model-specific implementation tasks without driving the T3 Code UI. It is disabled by default for the environment.
+Operator lets one task coordinate model-specific implementation tasks without driving the T3 Code UI. It is disabled by default for the environment.
 
 ## Use Operator
 
-1. Open **Settings > Agentic Operator** and enable **Agentic Operator**.
+1. Open **Settings > Operator** and enable **Operator**.
 2. Tell the coordinator which tasks to delegate, including the provider, model, reasoning level, and whether to use the current checkout or a new worktree.
 3. Keep the requested task scopes separate when they will run in parallel.
 

@@ -112,8 +112,8 @@ export function OperatorPanel({
           {!available
             ? "Operator is not available on this environment."
             : enabled
-              ? "Ask this task to use Agentic Operator."
-              : "Enable Agentic Operator in Settings."}
+              ? "Ask this task to use Operator."
+              : "Enable Operator in Settings."}
         </p>
         {available && !enabled ? (
           <Button size="sm" variant="outline" className="mt-2" onClick={onOpenSettings}>

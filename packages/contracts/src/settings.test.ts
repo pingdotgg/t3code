@@ -167,7 +167,7 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   });
 });
 
-describe("ServerSettings Agentic Operator", () => {
+describe("ServerSettings Operator", () => {
   it("defaults off for existing settings files", () => {
     expect(decodeServerSettings({}).agenticOperatorEnabled).toBe(false);
   });

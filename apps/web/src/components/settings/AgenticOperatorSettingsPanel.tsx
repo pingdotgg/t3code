@@ -11,7 +11,7 @@ export function AgenticOperatorSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Agentic Operator" icon={<WorkflowIcon className="size-4" />}>
+      <SettingsSection title="Operator" icon={<WorkflowIcon className="size-4" />}>
         <SettingsRow
           {...searchableSetting("agentic-operator")}
           description="Allow agents to create and coordinate model-specific T3 Code tasks."
@@ -21,7 +21,7 @@ export function AgenticOperatorSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ agenticOperatorEnabled: Boolean(checked) })
               }
-              aria-label="Enable Agentic Operator"
+              aria-label="Enable Operator"
             />
           }
         />

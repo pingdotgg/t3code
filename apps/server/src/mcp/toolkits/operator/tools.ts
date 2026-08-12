@@ -56,7 +56,7 @@ const dependencies = [McpInvocationContext.McpInvocationContext, OperatorService
 
 export const OperatorModelsTool = Tool.make("operator_models", {
   description:
-    "List the exact provider instances, model slugs, and option values available to Agentic Operator. Operator creates top-level T3 Code sidebar tasks, never native provider subagents. Call this before spawning and never substitute an unavailable provider, model, or option.",
+    "List the exact provider instances, model slugs, and option values available to Operator. Operator creates top-level T3 Code sidebar tasks, never native provider subagents. Call this before spawning and never substitute an unavailable provider, model, or option.",
   parameters: NoParameters,
   success: Schema.Struct({ providers: Schema.Array(OperatorModelInventorySchema) }),
   failure: OperatorError,
@@ -69,7 +69,7 @@ export const OperatorModelsTool = Tool.make("operator_models", {
 
 export const OperatorSpawnTool = Tool.make("operator_spawn", {
   description:
-    "Create one or more durable, top-level T3 Code sidebar task threads with the exact provider, model, and options supplied. These are independent T3 Code tasks, not native provider subagents. Parallel tasks share one checkout, so give them disjoint file ownership. Omit workspaceMode or use 'current' to use the coordinator checkout without asking the user. Use 'new-worktree' with branch and baseBranch only when the user explicitly requests a new worktree. After that, use 'operator' to reuse the remembered Operator worktree. Returns immediately. Call operator_wait once for the returned task IDs whose status is not failed, then use their results to prompt an integration task if needed. Never use this unless the user explicitly requested Agentic Operator.",
+    "Create one or more durable, top-level T3 Code sidebar task threads with the exact provider, model, and options supplied. These are independent T3 Code tasks, not native provider subagents. Parallel tasks share one checkout, so give them disjoint file ownership. Omit workspaceMode or use 'current' to use the coordinator checkout without asking the user. Use 'new-worktree' with branch and baseBranch only when the user explicitly requests a new worktree. After that, use 'operator' to reuse the remembered Operator worktree. Returns immediately. Call operator_wait once for the returned task IDs whose status is not failed, then use their results to prompt an integration task if needed. Never use this unless the user explicitly requested Operator.",
   parameters: Schema.Struct({
     tasks: Schema.Array(
       Schema.Struct({

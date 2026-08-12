@@ -62,7 +62,7 @@ export function isLiveOperatorTask(task: RuntimeOperatorTask): boolean {
   return task.status === "queued" || task.status === "running" || task.status === "waiting";
 }
 
-/** Fold durable T3 sidebar tasks created by one Agentic Operator coordinator. */
+/** Fold durable T3 sidebar tasks created by one Operator coordinator. */
 export function foldOperatorThreads(
   threads: ReadonlyArray<OrchestrationThreadShell>,
   coordinatorThreadId: ThreadId,

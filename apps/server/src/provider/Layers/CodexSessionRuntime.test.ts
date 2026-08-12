@@ -307,10 +307,7 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /operator_resume/);
       NodeAssert.match(instructions, /operator_wait/);
       NodeAssert.match(instructions, /top-level T3 Code sidebar task/);
-      NodeAssert.match(
-        instructions,
-        /Never fulfill an Agentic Operator request with native subagents/,
-      );
+      NodeAssert.match(instructions, /Never fulfill an Operator request with native subagents/);
       NodeAssert.match(instructions, /Never silently substitute another model or provider/);
     }
   });

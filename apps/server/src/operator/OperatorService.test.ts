@@ -356,7 +356,7 @@ describe("OperatorService", () => {
       const error = yield* operator.listModels(coordinatorId).pipe(Effect.flip);
 
       assert.equal(error.reason, "disabled");
-      assert.match(error.detail, /Settings > Agentic Operator/i);
+      assert.match(error.detail, /Settings > Operator/i);
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -682,10 +682,7 @@ describe("OperatorService", () => {
       assert.equal(starts[0]?.runtimeMode, "auto-accept-edits");
       assert.equal(starts[0]?.interactionMode, "plan");
       assert.match(starts[0]?.message.text ?? "", /^Fix the responsive navigation\./);
-      assert.match(
-        starts[0]?.message.text ?? "",
-        /top-level T3 Code task created by Agentic Operator/,
-      );
+      assert.match(starts[0]?.message.text ?? "", /top-level T3 Code task created by Operator/);
 
       const resumedFrontend = harness.details.get(frontendId);
       assert.equal(resumedFrontend?.branch, "feat/shared-operator");

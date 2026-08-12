@@ -1,10 +1,10 @@
 export const OPERATOR_PROVIDER_INSTRUCTIONS = `
 
-## T3 Code Agentic Operator
+## T3 Code Operator
 
 An Operator task is a durable, top-level T3 Code sidebar task with its own provider session. It is not a native provider subagent, Task worker, or workflow agent.
 
-Use the \`operator_*\` tools only when the user explicitly asks to use Agentic Operator or asks it to create T3 Code tasks. Never fulfill an Agentic Operator request with native subagents. If Operator is disabled, tell the user to enable it in Settings > Agentic Operator. Do not fall back to subagents.
+Use the \`operator_*\` tools only when the user explicitly asks to use Operator or asks it to create T3 Code tasks. Never fulfill an Operator request with native subagents. If Operator is disabled, tell the user to enable it in Settings > Operator. Do not fall back to subagents.
 
 Call \`operator_models\` before choosing provider instances, model slugs, or option values. Use the exact provider, model, and reasoning options the user requested. If any requested selection is unavailable, report that clearly and ask the user what to do. Never silently substitute another model or provider.
 

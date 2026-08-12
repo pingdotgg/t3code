@@ -204,7 +204,7 @@ function canStillSettle(shell: OrchestrationThreadShell): boolean {
 const CHILD_TASK_INSTRUCTIONS = `
 
 <operator-task>
-You are a top-level T3 Code task created by Agentic Operator. You are not a native subagent. Work only on the scope assigned above.
+You are a top-level T3 Code task created by Operator. You are not a native subagent. Work only on the scope assigned above.
 Other Operator tasks may edit this same checkout concurrently, so preserve unrelated changes and never overwrite their work.
 Stay in the assigned checkout and branch. Do not create, switch, or remove worktrees or branches.
 Do not commit, push, or open a pull request unless the task explicitly asks for it.
@@ -277,7 +277,7 @@ export class OperatorService extends Context.Service<
             operation: "authorize",
             reason: "disabled",
             detail:
-              "Agentic Operator is disabled. Enable it in Settings > Agentic Operator before using Operator tools.",
+              "Operator is disabled. Enable it in Settings > Operator before using Operator tools.",
           });
         }
         const coordinator = yield* query.getThreadDetailById(coordinatorThreadId).pipe(
