@@ -243,10 +243,31 @@ export function grokReasoningEffortMenuFromAcpMeta(
     typeof rawCurrent === "string" && entries.some((entry) => entry.id === rawCurrent.trim())
       ? rawCurrent.trim()
       : undefined;
+  const collapsedEntries = collapseGrokReasoningEffortDefaults(entries, current);
   return {
-    entries,
-    currentValue: current ?? entries.find((entry) => entry.isDefault)?.id,
+    entries: collapsedEntries,
+    currentValue: current ?? collapsedEntries.find((entry) => entry.isDefault)?.id,
   };
+}
+
+/**
+ * Grok 4.6's live catalog marks both Extra High and High as `default: true`.
+ * The picker treats every `isDefault` as a Default badge, so keep at most one.
+ */
+function collapseGrokReasoningEffortDefaults(
+  entries: ReadonlyArray<GrokReasoningEffortMenuEntry>,
+  preferredId: string | undefined,
+): Array<GrokReasoningEffortMenuEntry> {
+  const defaultIds = entries.filter((entry) => entry.isDefault).map((entry) => entry.id);
+  if (defaultIds.length <= 1) {
+    return [...entries];
+  }
+  const chosenId =
+    preferredId !== undefined && defaultIds.includes(preferredId) ? preferredId : defaultIds[0];
+  return entries.map((entry) => ({
+    ...entry,
+    isDefault: entry.id === chosenId,
+  }));
 }
 
 export function grokModelCapabilitiesFromReasoningEffortMenu(

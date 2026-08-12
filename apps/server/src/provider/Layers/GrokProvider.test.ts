@@ -106,6 +106,92 @@ describe("grokReasoningEffortMenuFromAcpMeta", () => {
     expect(menu?.currentValue).toBe("low");
   });
 
+  it("collapses Grok 4.6's dual Extra High / High defaults onto the current effort", () => {
+    const menu = grokReasoningEffortMenuFromAcpMeta({
+      supportsReasoningEffort: true,
+      reasoningEffort: "high",
+      reasoningEfforts: [
+        {
+          id: "xhigh",
+          value: "xhigh",
+          label: "Extra High Effort",
+          description: "Highest effort and reasoning level",
+          default: true,
+        },
+        {
+          id: "high",
+          value: "high",
+          label: "High Effort",
+          description: "Higher implementation quality with extensive reasoning",
+          default: true,
+        },
+        { id: "medium", value: "medium", label: "Medium Effort", default: false },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    });
+    expect(menu?.entries.filter((entry) => entry.isDefault).map((entry) => entry.id)).toEqual([
+      "high",
+    ]);
+    expect(menu?.currentValue).toBe("high");
+  });
+
+  it("collapses Grok 4.6 dual defaults onto Extra High when that is current", () => {
+    const menu = grokReasoningEffortMenuFromAcpMeta({
+      supportsReasoningEffort: true,
+      reasoningEffort: "xhigh",
+      reasoningEfforts: [
+        {
+          id: "xhigh",
+          value: "xhigh",
+          label: "Extra High Effort",
+          description: "Highest effort and reasoning level",
+          default: true,
+        },
+        {
+          id: "high",
+          value: "high",
+          label: "High Effort",
+          description: "Higher implementation quality with extensive reasoning",
+          default: true,
+        },
+        { id: "medium", value: "medium", label: "Medium Effort", default: false },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    });
+    expect(menu?.entries.filter((entry) => entry.isDefault).map((entry) => entry.id)).toEqual([
+      "xhigh",
+    ]);
+    expect(menu?.currentValue).toBe("xhigh");
+    const capabilities = grokModelCapabilitiesFromReasoningEffortMenu(menu);
+    const descriptors = capabilities.optionDescriptors ?? [];
+    expect(descriptors).toHaveLength(1);
+    const descriptor = descriptors[0];
+    expect(descriptor).toMatchObject({
+      id: "reasoningEffort",
+      type: "select",
+      currentValue: "xhigh",
+    });
+    expect(
+      descriptor?.type === "select" ? descriptor.options.filter((option) => option.isDefault) : [],
+    ).toEqual([expect.objectContaining({ id: "xhigh", isDefault: true })]);
+  });
+
+  it("keeps the first advertised default when current effort is not one of them", () => {
+    const menu = grokReasoningEffortMenuFromAcpMeta({
+      supportsReasoningEffort: true,
+      reasoningEffort: "medium",
+      reasoningEfforts: [
+        { id: "xhigh", value: "xhigh", label: "Extra High Effort", default: true },
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "medium", value: "medium", label: "Medium Effort", default: false },
+      ],
+    });
+    expect(menu?.entries.filter((entry) => entry.isDefault).map((entry) => entry.id)).toEqual([
+      "xhigh",
+    ]);
+    expect(menu?.currentValue).toBe("medium");
+  });
+
   it("falls back to the default entry when the current effort is unknown", () => {
     const menu = grokReasoningEffortMenuFromAcpMeta({
       ...GROK_4_5_ACP_META,
