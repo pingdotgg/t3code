@@ -243,10 +243,14 @@ export function resolveBranchSelectionTarget(input: {
   };
 }
 
-// Placeholder mirroring today's behavior in the ref creator, which only trims.
-// The following commit replaces the body so the sanitization tests pass.
+// Git rejects every ref name containing whitespace, so the picker's "Create new
+// ref" entry can only fail for a typed name like "new branch". Replacing runs of
+// whitespace with a dash makes that name usable without reimplementing
+// check-ref-format: names invalid for other reasons still surface the git error.
+// Case and existing dashes are left alone, since ref names are case sensitive
+// and consecutive dashes are valid.
 export function sanitizeNewRefName(rawName: string): string {
-  return rawName.trim();
+  return rawName.trim().replace(/\s+/gu, "-");
 }
 
 export function shouldIncludeBranchPickerItem(input: {
