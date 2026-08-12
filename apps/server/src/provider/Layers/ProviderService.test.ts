@@ -46,6 +46,7 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import { isProviderFailureEvent, PROVIDER_TURN_RETRY_PROMPT } from "../ProviderTurnRetryPolicy.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
@@ -259,6 +260,15 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
 
 const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
+
+const yieldTestFibers = Effect.forEach(Array.from({ length: 8 }), () => Effect.yieldNow, {
+  discard: true,
+});
+
+const isFailedTurn = (
+  event: ProviderRuntimeEvent,
+): event is Extract<ProviderRuntimeEvent, { readonly type: "turn.completed" }> =>
+  event.type === "turn.completed" && event.payload.state === "failed";
 
 const hasMetricSnapshot = (
   snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
@@ -1600,6 +1610,376 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       );
     }),
   );
+
+  it.effect("retries synchronous transient failures after 5, 10, and 20 seconds", () => {
+    const originalSendTurn = fanout.codex.sendTurn.getMockImplementation();
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-sync-retry");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      fanout.codex.sendTurn.mockClear();
+      fanout.codex.sendTurn.mockImplementation(() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "turn/start",
+            detail: "503 Service Unavailable",
+          }),
+        ),
+      );
+
+      const sendFiber = yield* provider
+        .sendTurn({ threadId, input: "Finish the task", attachments: [] })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* yieldTestFibers;
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 1);
+
+      yield* advanceTestClock(4_999);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 1);
+      yield* advanceTestClock(1);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 2);
+
+      yield* advanceTestClock(9_999);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 2);
+      yield* advanceTestClock(1);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 3);
+
+      yield* advanceTestClock(19_999);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 3);
+      yield* advanceTestClock(1);
+      const sendExit = yield* Fiber.join(sendFiber);
+
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 4);
+      assert.equal(Exit.isFailure(sendExit), true);
+      assert.deepEqual(
+        fanout.codex.sendTurn.mock.calls.map(([input]) => input.input),
+        ["Finish the task", "Finish the task", "Finish the task", "Finish the task"],
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          fanout.codex.sendTurn.mockReset();
+          if (originalSendTurn) {
+            fanout.codex.sendTurn.mockImplementation(originalSendTurn);
+          }
+        }),
+      ),
+    );
+  });
+
+  it.effect("continues an accepted turn without publishing its transient failure", () => {
+    const originalSendTurn = fanout.claude.sendTurn.getMockImplementation();
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-async-retry");
+      yield* provider.startSession(threadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      fanout.claude.sendTurn.mockClear();
+      let attempt = 0;
+      fanout.claude.sendTurn.mockImplementation((input) =>
+        Effect.sync(() => ({
+          threadId: input.threadId,
+          turnId: asTurnId(`async-turn-${++attempt}`),
+        })),
+      );
+
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Ref.update(receivedRef, (events) => [...events, event]),
+      ).pipe(Effect.forkChild);
+      yield* yieldTestFibers;
+
+      const turn = yield* provider.sendTurn({
+        threadId,
+        input: "Finish the task",
+        attachments: [],
+      });
+      assert.equal(turn.turnId, asTurnId("async-turn-1"));
+
+      fanout.claude.emit({
+        type: "turn.completed",
+        eventId: asEventId("async-retry-failed"),
+        provider: CLAUDE_AGENT_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: asTurnId("async-turn-1"),
+        payload: { state: "failed", errorMessage: "529 overloaded_error" },
+      });
+      yield* yieldTestFibers;
+      assert.equal(fanout.claude.sendTurn.mock.calls.length, 1);
+      assert.equal((yield* Ref.get(receivedRef)).some(isProviderFailureEvent), false);
+
+      yield* advanceTestClock(4_999);
+      assert.equal(fanout.claude.sendTurn.mock.calls.length, 1);
+      yield* advanceTestClock(1);
+      assert.equal(fanout.claude.sendTurn.mock.calls.length, 2);
+      assert.equal(fanout.claude.sendTurn.mock.calls[1]?.[0].input, PROVIDER_TURN_RETRY_PROMPT);
+      assert.deepEqual(fanout.claude.sendTurn.mock.calls[1]?.[0].attachments, []);
+
+      fanout.claude.emit({
+        type: "turn.started",
+        eventId: asEventId("async-retry-started"),
+        provider: CLAUDE_AGENT_DRIVER,
+        createdAt: "2026-01-01T00:00:05.000Z",
+        threadId,
+        turnId: asTurnId("async-turn-2"),
+        payload: {},
+      });
+      fanout.claude.emit({
+        type: "turn.completed",
+        eventId: asEventId("async-retry-completed"),
+        provider: CLAUDE_AGENT_DRIVER,
+        createdAt: "2026-01-01T00:00:05.000Z",
+        threadId,
+        turnId: asTurnId("async-turn-2"),
+        payload: { state: "completed" },
+      });
+      yield* yieldTestFibers;
+
+      const received = yield* Ref.get(receivedRef);
+      assert.equal(
+        received.some((event) => isFailedTurn(event)),
+        false,
+      );
+      assert.equal(
+        received.some((event) => event.type === "turn.started"),
+        false,
+      );
+      assert.equal(
+        received.some((event) => event.type === "turn.completed" && event.turnId === turn.turnId),
+        true,
+      );
+      assert.equal(
+        received.some(
+          (event) => event.type === "turn.completed" && event.turnId === asTurnId("async-turn-2"),
+        ),
+        false,
+      );
+      yield* Fiber.interrupt(consumer);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          fanout.claude.sendTurn.mockReset();
+          if (originalSendTurn) {
+            fanout.claude.sendTurn.mockImplementation(originalSendTurn);
+          }
+        }),
+      ),
+    );
+  });
+
+  it.effect("interrupts the physical retry turn and cancels further attempts", () => {
+    const originalSendTurn = fanout.codex.sendTurn.getMockImplementation();
+    const originalInterruptTurn = fanout.codex.interruptTurn.getMockImplementation();
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-retry-interrupt");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      fanout.codex.sendTurn.mockClear();
+      fanout.codex.interruptTurn.mockClear();
+      let attempt = 0;
+      fanout.codex.sendTurn.mockImplementation((input) =>
+        Effect.sync(() => ({
+          threadId: input.threadId,
+          turnId: asTurnId(`interrupt-turn-${++attempt}`),
+        })),
+      );
+
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Ref.update(receivedRef, (events) => [...events, event]),
+      ).pipe(Effect.forkChild);
+      yield* yieldTestFibers;
+
+      const turn = yield* provider.sendTurn({
+        threadId,
+        input: "Finish the task",
+        attachments: [],
+      });
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("retry-interrupt-failed"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: asTurnId("interrupt-turn-1"),
+        payload: { state: "failed", errorMessage: "503 Service Unavailable" },
+      });
+      yield* yieldTestFibers;
+      yield* advanceTestClock(5_000);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 2);
+
+      yield* provider.interruptTurn({ threadId });
+      assert.deepEqual(fanout.codex.interruptTurn.mock.calls, [
+        [threadId, asTurnId("interrupt-turn-2")],
+      ]);
+      yield* advanceTestClock(30_000);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 2);
+
+      const completions = (yield* Ref.get(receivedRef)).filter(
+        (event) => event.type === "turn.completed",
+      );
+      assert.equal(completions.length, 1);
+      assert.equal(completions[0]?.turnId, turn.turnId);
+      if (completions[0]?.type === "turn.completed") {
+        assert.equal(completions[0].payload.state, "interrupted");
+      }
+      yield* Fiber.interrupt(consumer);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          fanout.codex.sendTurn.mockReset();
+          fanout.codex.interruptTurn.mockReset();
+          if (originalSendTurn) {
+            fanout.codex.sendTurn.mockImplementation(originalSendTurn);
+          }
+          if (originalInterruptTurn) {
+            fanout.codex.interruptTurn.mockImplementation(originalInterruptTurn);
+          }
+        }),
+      ),
+    );
+  });
+
+  it.effect("publishes only the final failure after exhausting async retries", () => {
+    const originalSendTurn = fanout.codex.sendTurn.getMockImplementation();
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-async-retry-exhausted");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      fanout.codex.sendTurn.mockClear();
+      let attempt = 0;
+      fanout.codex.sendTurn.mockImplementation((input) =>
+        Effect.sync(() => ({
+          threadId: input.threadId,
+          turnId: asTurnId(`exhausted-turn-${++attempt}`),
+        })),
+      );
+
+      const receivedRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+      const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Ref.update(receivedRef, (events) => [...events, event]),
+      ).pipe(Effect.forkChild);
+      yield* yieldTestFibers;
+
+      const turn = yield* provider.sendTurn({
+        threadId,
+        input: "Finish the task",
+        attachments: [],
+      });
+
+      const failAttempt = (number: number) =>
+        Effect.sync(() => {
+          const errorMessage = `503 Service Unavailable, attempt ${number}`;
+          fanout.codex.emit({
+            type: "runtime.error",
+            eventId: asEventId(`async-exhausted-runtime-${number}`),
+            provider: CODEX_DRIVER,
+            createdAt: `2026-01-01T00:00:${String(number).padStart(2, "0")}.000Z`,
+            threadId,
+            turnId: asTurnId(`exhausted-turn-${number}`),
+            payload: {
+              class: "provider_error",
+              message: errorMessage,
+            },
+          });
+          fanout.codex.emit({
+            type: "turn.completed",
+            eventId: asEventId(`async-exhausted-completed-${number}`),
+            provider: CODEX_DRIVER,
+            createdAt: `2026-01-01T00:00:${String(number).padStart(2, "0")}.000Z`,
+            threadId,
+            turnId: asTurnId(`exhausted-turn-${number}`),
+            payload: {
+              state: "failed",
+              errorMessage,
+            },
+          });
+          fanout.codex.emit({
+            type: "runtime.error",
+            eventId: asEventId(`async-exhausted-runtime-untargeted-${number}`),
+            provider: CODEX_DRIVER,
+            createdAt: `2026-01-01T00:00:${String(number).padStart(2, "0")}.000Z`,
+            threadId,
+            payload: {
+              class: "provider_error",
+              message: errorMessage,
+            },
+          });
+          if (number < 4) {
+            fanout.codex.emit({
+              type: "session.state.changed",
+              eventId: asEventId(`async-exhausted-ready-${number}`),
+              provider: CODEX_DRIVER,
+              createdAt: `2026-01-01T00:00:${String(number).padStart(2, "0")}.000Z`,
+              threadId,
+              payload: { state: "ready" },
+            });
+          }
+        }).pipe(Effect.andThen(yieldTestFibers));
+
+      yield* failAttempt(1);
+      assert.equal((yield* Ref.get(receivedRef)).filter(isProviderFailureEvent).length, 0);
+      yield* advanceTestClock(5_000);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 2);
+
+      yield* failAttempt(2);
+      assert.equal((yield* Ref.get(receivedRef)).filter(isProviderFailureEvent).length, 0);
+      yield* advanceTestClock(10_000);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 3);
+
+      yield* failAttempt(3);
+      assert.equal((yield* Ref.get(receivedRef)).filter(isProviderFailureEvent).length, 0);
+      yield* advanceTestClock(20_000);
+      assert.equal(fanout.codex.sendTurn.mock.calls.length, 4);
+
+      yield* failAttempt(4);
+      const received = yield* Ref.get(receivedRef);
+      const failures = received.filter(isProviderFailureEvent);
+      assert.equal(failures.length, 1);
+      assert.equal(failures[0]?.turnId, turn.turnId);
+      if (failures[0]?.type === "turn.completed") {
+        assert.equal(failures[0].payload.errorMessage, "503 Service Unavailable, attempt 4");
+      }
+      assert.equal(
+        received.some((event) => event.type === "session.state.changed"),
+        false,
+      );
+      assert.deepEqual(
+        fanout.codex.sendTurn.mock.calls.slice(1).map(([input]) => input.input),
+        [PROVIDER_TURN_RETRY_PROMPT, PROVIDER_TURN_RETRY_PROMPT, PROVIDER_TURN_RETRY_PROMPT],
+      );
+      yield* Fiber.interrupt(consumer);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          fanout.codex.sendTurn.mockReset();
+          if (originalSendTurn) {
+            fanout.codex.sendTurn.mockImplementation(originalSendTurn);
+          }
+        }),
+      ),
+    );
+  });
 
   it.effect("fans out canonical runtime events in emission order", () =>
     Effect.gen(function* () {

@@ -76,6 +76,16 @@ to run.
 
 For multi-account setups, see [Codex](./providers-codex.md) and [Claude](./providers-claude.md).
 
+### Transient Provider Failures
+
+When a turn fails because a provider is overloaded, temporarily unavailable, rate limited, or
+disconnected, T3 Code retries it up to three times after 5, 10, and 20 seconds. If the provider
+already accepted the turn, T3 Code asks it to continue internally without adding another message
+to the chat.
+
+Authentication, billing, invalid-request, and user-cancellation errors fail immediately. T3 Code
+only reports a transient failure or sends its failure notification after all retries are exhausted.
+
 ## Next Steps
 
 - [Permission modes](./permission-modes.md): how much T3 Code asks before acting
