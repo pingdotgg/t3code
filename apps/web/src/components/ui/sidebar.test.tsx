@@ -2,6 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  clampSidebarWidthValue,
+  resolveSidebarCssWidth,
+  resolveSidebarMaximumWidth,
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuSubButton,
@@ -19,6 +22,25 @@ function renderSidebarButton(className?: string) {
 }
 
 describe("sidebar interactive cursors", () => {
+  it("resolves and clamps against a live maximum width", () => {
+    let maximumWidth = 360;
+    const liveMaximumWidth = () => maximumWidth;
+
+    expect(resolveSidebarMaximumWidth(liveMaximumWidth)).toBe(360);
+    expect(clampSidebarWidthValue(340, 208, liveMaximumWidth)).toBe(340);
+
+    maximumWidth = 208;
+    expect(resolveSidebarMaximumWidth(liveMaximumWidth)).toBe(208);
+    expect(clampSidebarWidthValue(340, 208, liveMaximumWidth)).toBe(208);
+  });
+
+  it("preserves a dynamic CSS width when committing a rail resize", () => {
+    const getCssWidth = (width: number) => `min(${width}px, calc(100vw - 640px))`;
+
+    expect(resolveSidebarCssWidth(340, getCssWidth)).toBe("min(340px, calc(100vw - 640px))");
+    expect(resolveSidebarCssWidth(340)).toBe("340px");
+  });
+
   it("uses mobile sheet visibility for the shared responsive state", () => {
     expect(resolveSidebarState({ isMobile: true, open: true, openMobile: false })).toBe(
       "collapsed",

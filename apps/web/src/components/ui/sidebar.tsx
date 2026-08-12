@@ -40,7 +40,9 @@ type SidebarContextProps = {
 };
 
 type SidebarResizableOptions = {
-  maxWidth?: number;
+  getCssWidth?: (width: number) => string;
+  hydrateStoredWidth?: boolean;
+  maxWidth?: number | (() => number);
   minWidth?: number;
   onResize?: (width: number) => void;
   shouldAcceptWidth?: (context: {
@@ -55,7 +57,9 @@ type SidebarResizableOptions = {
 };
 
 type SidebarResolvedResizableOptions = {
-  maxWidth: number;
+  getCssWidth?: (width: number) => string;
+  hydrateStoredWidth: boolean;
+  maxWidth: number | (() => number);
   minWidth: number;
   onResize?: (width: number) => void;
   shouldAcceptWidth?: (context: {
@@ -199,9 +203,11 @@ function Sidebar({
 
     const options = typeof resizable === "boolean" ? {} : resizable;
     return {
+      hydrateStoredWidth: options.hydrateStoredWidth ?? true,
       maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
       minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
       storageKey: options.storageKey ?? null,
+      ...(options.getCssWidth ? { getCssWidth: options.getCssWidth } : {}),
       ...(options.onResize ? { onResize: options.onResize } : {}),
       ...(options.shouldAcceptWidth ? { shouldAcceptWidth: options.shouldAcceptWidth } : {}),
     };
@@ -343,8 +349,27 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
   );
 }
 
+export function resolveSidebarMaximumWidth(maxWidth: number | (() => number)): number {
+  return typeof maxWidth === "function" ? maxWidth() : maxWidth;
+}
+
+export function clampSidebarWidthValue(
+  width: number,
+  minWidth: number,
+  maxWidth: number | (() => number),
+): number {
+  return Math.max(minWidth, Math.min(width, resolveSidebarMaximumWidth(maxWidth)));
+}
+
+export function resolveSidebarCssWidth(
+  width: number,
+  getCssWidth?: (width: number) => string,
+): string {
+  return getCssWidth?.(width) ?? `${width}px`;
+}
+
 function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptions): number {
-  return Math.max(options.minWidth, Math.min(width, options.maxWidth));
+  return clampSidebarWidthValue(width, options.minWidth, options.maxWidth);
 }
 
 function SidebarRail({
@@ -388,13 +413,21 @@ function SidebarRail({
       if (resizeState.rafId !== null) {
         window.cancelAnimationFrame(resizeState.rafId);
       }
+      const width = resolvedResizable
+        ? clampSidebarWidth(resizeState.width, resolvedResizable)
+        : resizeState.width;
+      // Keep caller-owned viewport clamps even when onResize does not trigger a render.
+      resizeState.wrapper.style.setProperty(
+        "--sidebar-width",
+        resolveSidebarCssWidth(width, resolvedResizable?.getCssWidth),
+      );
+      if (resolvedResizable?.storageKey && typeof window !== "undefined") {
+        setLocalStorageItem(resolvedResizable.storageKey, width, Schema.Finite);
+      }
+      resolvedResizable?.onResize?.(width);
       resizeState.transitionTargets.forEach((element) => {
         element.style.removeProperty("transition-duration");
       });
-      if (resolvedResizable?.storageKey && typeof window !== "undefined") {
-        setLocalStorageItem(resolvedResizable.storageKey, resizeState.width, Schema.Finite);
-      }
-      resolvedResizable?.onResize?.(resizeState.width);
       resizeStateRef.current = null;
       if (resizeState.rail.hasPointerCapture(pointerId)) {
         resizeState.rail.releasePointerCapture(pointerId);
@@ -556,7 +589,13 @@ function SidebarRail({
   );
 
   React.useLayoutEffect(() => {
-    if (!resolvedResizable?.storageKey || typeof window === "undefined") return;
+    if (
+      !resolvedResizable?.storageKey ||
+      !resolvedResizable.hydrateStoredWidth ||
+      typeof window === "undefined"
+    ) {
+      return;
+    }
     const rail = railRef.current;
     if (!rail) return;
     const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
@@ -574,7 +613,40 @@ function SidebarRail({
     // Hydrate the CSS variable before the browser paints so a restored sidebar
     // never flashes at the default width first.
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
-    resolvedResizable.onResize?.(clampedWidth);
+    // Preserve the user's stored preference even when the current viewport
+    // temporarily applies a smaller maximum width.
+    resolvedResizable.onResize?.(storedWidth);
+  }, [resolvedResizable]);
+
+  React.useEffect(() => {
+    if (!resolvedResizable || typeof window === "undefined") return;
+
+    const suppressViewportResizeTransition = () => {
+      // Pointer moves resolve the live maximum. Do not interrupt their
+      // imperative width; stopResize clamps once more before persisting.
+      if (resizeStateRef.current) return;
+
+      const rail = railRef.current;
+      const wrapper = rail?.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
+      const sidebarRoot = rail?.closest<HTMLElement>("[data-slot='sidebar']");
+      if (!wrapper || !sidebarRoot) return;
+
+      const transitionTargets = [
+        sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
+        sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-container']"),
+      ].filter((element): element is HTMLElement => element !== null);
+      transitionTargets.forEach((element) => {
+        element.style.setProperty("transition-duration", "0ms");
+      });
+      window.requestAnimationFrame(() => {
+        transitionTargets.forEach((element) => {
+          element.style.removeProperty("transition-duration");
+        });
+      });
+    };
+
+    window.addEventListener("resize", suppressViewportResizeTransition);
+    return () => window.removeEventListener("resize", suppressViewportResizeTransition);
   }, [resolvedResizable]);
 
   React.useEffect(() => {

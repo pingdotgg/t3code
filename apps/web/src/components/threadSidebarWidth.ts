@@ -10,6 +10,10 @@ export function resolveThreadSidebarMaximumWidth(viewportWidth: number): number 
   );
 }
 
+export function resolveThreadSidebarCssWidth(width: number): string {
+  return `min(${width}px, max(${THREAD_SIDEBAR_MIN_WIDTH}px, calc(100vw - ${THREAD_MAIN_CONTENT_MIN_WIDTH}px)))`;
+}
+
 export function resolveInitialThreadSidebarWidth(
   storedWidth: number | null,
   viewportWidth: number,
