@@ -31,6 +31,9 @@ const ACTION_SUCCESS_LABELS: Record<PullRequestAction, string> = {
   draft: "Converted to draft",
   close: "Pull request closed",
   reopen: "Pull request reopened",
+  "update-branch": "Branch updated with the base branch",
+  "enable-auto-merge": "Auto-merge enabled",
+  "disable-auto-merge": "Auto-merge disabled",
 };
 
 /** Said as the thing that did not happen, rather than as the operation that returned an error. */
@@ -40,6 +43,9 @@ const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
   draft: "Could not convert this to a draft",
   close: "Could not close this pull request",
   reopen: "Could not reopen this pull request",
+  "update-branch": "Could not update this branch",
+  "enable-auto-merge": "Could not enable auto-merge",
+  "disable-auto-merge": "Could not disable auto-merge",
 };
 
 /** What to try, for the times the host says only that it refused. */
@@ -51,6 +57,11 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
   close: "The host refused it. Check that you have write access, or that you opened it.",
   reopen:
     "The host refused it. Check that you have write access, and that the branch still exists.",
+  "update-branch":
+    "The host refused it. Check that you have write access, and that the base branch has not diverged in a way the host cannot merge.",
+  "enable-auto-merge":
+    "The host refused it. Check that auto-merge is enabled for this repository and that you have write access.",
+  "disable-auto-merge": "The host refused it. Check that you have write access to this repository.",
 };
 
 /**
