@@ -20,7 +20,7 @@ import { HttpClient } from "effect/unstable/http";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
-import { ProviderAdapterProcessError } from "../Errors.ts";
+import { ProviderProbeError } from "../Errors.ts";
 import {
   buildServerProvider,
   isCommandMissingCause,
@@ -628,17 +628,15 @@ const discoverDevinModelsViaModelsList = (
   Effect.gen(function* () {
     const result = yield* runDevinModelsListCommand(devinSettings, environment);
     if (result.code !== 0) {
-      return yield* new ProviderAdapterProcessError({
+      return yield* new ProviderProbeError({
         provider: "devin",
-        threadId: "probe",
         detail: `Devin models list failed with exit code ${result.code}.`,
       });
     }
     const models = parseDevinModelsList(`${result.stdout}\n${result.stderr}`);
     if (models.length === 0) {
-      return yield* new ProviderAdapterProcessError({
+      return yield* new ProviderProbeError({
         provider: "devin",
-        threadId: "probe",
         detail: "Devin models list returned no parseable models.",
       });
     }

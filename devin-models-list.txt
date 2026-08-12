@@ -1,0 +1,92 @@
+{
+  "families": [
+    {
+      "family_label": "Claude Opus 5",
+      "family_uid": "claude-opus-5",
+      "slug": "claude-opus-5",
+      "variants": [
+        { "model_uid": "claude-opus-5-medium", "label": "Claude Opus 5 Medium" },
+        { "model_uid": "claude-opus-5-low-fast", "label": "Claude Opus 5 Low Fast" },
+        { "model_uid": "claude-opus-5-high", "label": "Claude Opus 5 High" }
+      ]
+    },
+    {
+      "family_label": "Claude Sonnet 4.5",
+      "family_uid": "claude-sonnet-4-5",
+      "slug": "claude-sonnet-4-5",
+      "variants": [
+        { "model_uid": "claude-sonnet-4-5-medium", "label": "Claude Sonnet 4.5 Medium" }
+      ]
+    },
+    {
+      "family_label": "Claude Fable 5",
+      "family_uid": "claude-fable-5",
+      "slug": "claude-fable-5",
+      "variants": [
+        { "model_uid": "claude-fable-5-medium", "label": "Claude Fable 5 Medium" }
+      ]
+    },
+    {
+      "family_label": "Gemini 3 Flash",
+      "family_uid": "gemini-3-flash",
+      "slug": "gemini-3-flash",
+      "variants": [
+        { "model_uid": "gemini-3-flash-medium", "label": "Gemini 3 Flash Medium" }
+      ]
+    },
+    {
+      "family_label": "GPT-4.1",
+      "family_uid": "gpt-4-1",
+      "slug": "gpt-4-1",
+      "variants": [
+        { "model_uid": "gpt-4-1-medium", "label": "GPT-4.1 Medium" }
+      ]
+    },
+    {
+      "family_label": "GPT-5.2",
+      "family_uid": "gpt-5-2",
+      "slug": "gpt-5-2",
+      "variants": [
+        { "model_uid": "gpt-5-2-medium", "label": "GPT-5.2 Medium" },
+        { "model_uid": "gpt-5-2-none", "label": "GPT-5.2 No Thinking" },
+        { "model_uid": "gpt-5-2-1m", "label": "GPT-5.2 No Thinking 1M" }
+      ]
+    },
+    {
+      "family_label": "SWE-1.7",
+      "family_uid": "swe-1.7",
+      "slug": "swe-1.7",
+      "variants": [
+        { "model_uid": "swe-1-7", "label": "SWE-1.7 Max" },
+        { "model_uid": "swe-1-7-medium", "label": "SWE-1.7 Medium" }
+      ]
+    },
+    {
+      "family_label": "SWE-1.7 Lightning",
+      "family_uid": "swe-1.7-lightning",
+      "slug": "swe-1.7-lightning",
+      "variants": [
+        { "model_uid": "swe-1-7-lightning", "label": "SWE-1.7 Lightning Max" },
+        { "model_uid": "swe-1-7-lightning-medium", "label": "SWE-1.7 Lightning Medium" }
+      ]
+    },
+    {
+      "family_label": "GLM-5.2",
+      "family_uid": "glm-5.2",
+      "slug": "glm-5.2",
+      "variants": [
+        { "model_uid": "glm-5-2", "label": "GLM-5.2" },
+        { "model_uid": "glm-5-2-none", "label": "GLM-5.2 No Thinking" },
+        { "model_uid": "glm-5-2-1m", "label": "GLM-5.2 No Thinking 1M" }
+      ]
+    },
+    {
+      "family_label": "Adaptive",
+      "family_uid": "adaptive",
+      "slug": "adaptive",
+      "variants": [
+        { "model_uid": "adaptive", "label": "Adaptive" }
+      ]
+    }
+  ]
+}

@@ -898,7 +898,6 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
               ),
             );
             const started = yield* acp.start();
-            yield* Effect.logInfo("[DevinAdapter] session/new result", started.sessionSetupResult);
             return started;
           }).pipe(
             Effect.mapError((error) =>

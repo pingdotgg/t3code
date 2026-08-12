@@ -2,7 +2,6 @@ import { type DevinSettings, type ModelSelection, ProviderDriverKind } from "@t3
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { getModelSelectionStringOptionValue, normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
-import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
@@ -248,13 +247,6 @@ export function applyDevinAcpModelSelection<E>(input: {
   }
 
   return Effect.gen(function* () {
-    yield* Console.log("[DevinAcpSupport] applyDevinAcpModelSelection", {
-      requested,
-      current,
-      modelConfigId,
-      reasoningConfigId,
-    });
-
     if (needsModelSwitch && modelConfigId !== undefined) {
       const modelOption = findSessionConfigOption(input.configOptions, modelConfigId);
       const allowedModelValues = modelOption ? collectSessionConfigOptionValues(modelOption) : [];

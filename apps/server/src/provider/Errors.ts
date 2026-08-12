@@ -86,6 +86,22 @@ export class ProviderAdapterProcessError extends Schema.TaggedErrorClass<Provide
 }
 
 /**
+ * ProviderProbeError - A provider probe or discovery command failed.
+ */
+export class ProviderProbeError extends Schema.TaggedErrorClass<ProviderProbeError>()(
+  "ProviderProbeError",
+  {
+    provider: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Provider probe error (${this.provider}): ${this.detail}`;
+  }
+}
+
+/**
  * ProviderValidationError - Invalid provider API input.
  */
 export class ProviderValidationError extends Schema.TaggedErrorClass<ProviderValidationError>()(

@@ -63,11 +63,7 @@ function formatProtocolLogPayload(event: EffectAcpProtocol.AcpProtocolLogEvent) 
   return {
     direction: event.direction,
     stage: event.stage,
-    payload:
-      event.stage === "raw" &&
-      (typeof event.payload === "string" || event.payload instanceof Uint8Array)
-        ? event.payload
-        : summarizePayload(event.payload),
+    payload: summarizePayload(event.payload),
   };
 }
 
@@ -83,7 +79,6 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
       readonly payload: unknown;
     }) =>
       Effect.gen(function* () {
-        yield* Effect.logDebug(`[ACP ${logInput.kind}]`, logInput.payload);
         if (!input.nativeEventLogger) return;
         const observedAt = DateTime.formatIso(yield* DateTime.now);
         yield* input.nativeEventLogger.write(
