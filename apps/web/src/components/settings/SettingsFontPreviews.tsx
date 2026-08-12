@@ -1,4 +1,5 @@
 import { preloadPatchFile } from "@pierre/diffs/ssr";
+import { conversationComposerPlaceholder } from "@t3tools/client-runtime/composer";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
@@ -43,7 +44,7 @@ export function PromptFontPreview() {
         terminalContexts={EMPTY_TERMINAL_CONTEXTS}
         skills={EMPTY_SKILLS}
         disabled={false}
-        placeholder="Ask for follow-up changes or attach images"
+        placeholder={conversationComposerPlaceholder("existing")}
         className="max-h-40 min-h-12"
         onRemoveTerminalContext={noop}
         onChange={onChange}

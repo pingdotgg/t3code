@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./composer": {
+      "types": "./src/composer.ts",
+      "default": "./src/composer.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
