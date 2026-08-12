@@ -6,7 +6,6 @@ import type {
 } from "@t3tools/contracts";
 import { SourceControlProviderError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -14,36 +13,12 @@ import * as Path from "effect/Path";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import { parseDispatchWorkflow } from "./githubWorkflowYaml.ts";
+import * as SourceControlProvider from "./SourceControlProvider.ts";
 
 const WORKFLOWS_DIRECTORY = ".github/workflows";
 
 export function extractRunUrl(output: string): string | null {
   return output.match(/https?:\/\/[^\s]+\/actions\/runs\/\d+/)?.[0] ?? null;
-}
-
-export function workflowRunListArguments(input: {
-  readonly filename: string;
-  readonly ref: string;
-  readonly createdAfter: string;
-}): ReadonlyArray<string> {
-  return [
-    "run",
-    "list",
-    "--workflow",
-    input.filename,
-    "--branch",
-    input.ref,
-    "--event",
-    "workflow_dispatch",
-    "--created",
-    `>=${input.createdAfter}`,
-    "--limit",
-    "1",
-    "--json",
-    "url",
-    "--jq",
-    ".[0].url",
-  ];
 }
 
 export function workflowRunArguments(input: {
@@ -97,7 +72,6 @@ export const make = Effect.gen(function* () {
   });
 
   const run = Effect.fn("GitHubWorkflowService.run")(function* (input: GitHubWorkflowRunInput) {
-    const createdAfter = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { seconds: 5 }));
     const dispatchOutput = yield* github
       .execute({
         cwd: input.cwd,
@@ -111,35 +85,14 @@ export const make = Effect.gen(function* () {
               operation: "runWorkflow",
               cwd: input.cwd,
               command: cause.command,
-              reference: input.filename,
+              reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.filename),
               detail: cause.detail,
               cause,
             }),
         ),
       );
     const dispatchRunUrl = extractRunUrl(`${dispatchOutput.stdout}\n${dispatchOutput.stderr}`);
-    if (dispatchRunUrl) return { url: dispatchRunUrl };
-
-    const resolvedRunUrl = yield* github
-      .execute({
-        cwd: input.cwd,
-        args: workflowRunListArguments({
-          filename: input.filename,
-          ref: input.ref,
-          createdAfter,
-        }),
-      })
-      .pipe(
-        Effect.map((output) => extractRunUrl(`${output.stdout}\n${output.stderr}`)),
-        Effect.catch((cause) =>
-          Effect.logWarning("Failed to resolve dispatched GitHub workflow run URL.", {
-            cwd: input.cwd,
-            filename: input.filename,
-            cause,
-          }).pipe(Effect.as(null)),
-        ),
-      );
-    return resolvedRunUrl ? { url: resolvedRunUrl } : {};
+    return dispatchRunUrl ? { url: dispatchRunUrl } : {};
   });
 
   return GitHubWorkflowService.of({ list, run });

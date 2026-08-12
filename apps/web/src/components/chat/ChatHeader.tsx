@@ -217,7 +217,9 @@ export const ChatHeader = memo(function ChatHeader({
       toastManager.update(toastId, {
         type: "success",
         title: `${workflow.name} started`,
-        description: `Dispatched on ${activeThreadBranch}.`,
+        description: runUrl
+          ? `Dispatched on ${activeThreadBranch}.`
+          : `Dispatched on ${activeThreadBranch}. Upgrade GitHub CLI (gh) to get a direct link to the workflow run.`,
         timeout: 0,
         ...(runUrl
           ? {
