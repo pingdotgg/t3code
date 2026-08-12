@@ -660,7 +660,9 @@ export function BranchToolbarBranchSelector({
           className="pe-1.5"
           onClick={() => createRef(trimmedBranchQuery)}
         >
-          <span className="truncate">Create new ref &quot;{trimmedBranchQuery}&quot;</span>
+          <span className="truncate">
+            Create new ref &quot;{sanitizeNewRefName(trimmedBranchQuery)}&quot;
+          </span>
         </ComboboxItem>
       );
     }
