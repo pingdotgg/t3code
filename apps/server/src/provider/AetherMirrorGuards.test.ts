@@ -6,6 +6,7 @@ import * as Fiber from "effect/Fiber";
 import {
   AETHER_MIRROR_REFUSAL,
   aetherMirrorWriteFileError,
+  guardAetherQueuedMutation,
   guardAetherRemoveWorktree,
   guardAetherVcsMutation,
   guardAetherWriteFile,
@@ -157,6 +158,74 @@ describe("AetherMirrorGuards", () => {
         guardAetherVcsMutation(registry, "vcs.pull", "/repos/mirror", Effect.succeed("ran")),
       );
       expect(refused.detail).toContain(AETHER_MIRROR_REFUSAL);
+    }),
+  );
+
+  it.effect("guardAetherQueuedMutation refuses through its queue, not its error channel", () =>
+    Effect.gen(function* () {
+      const registry = yield* make;
+      yield* registry.register("/repos/mirror", "aether:thread-1");
+      const refusals: Array<string> = [];
+      const ran: Array<string> = [];
+
+      yield* guardAetherQueuedMutation(
+        registry,
+        "/repos/mirror",
+        Effect.sync(() => void refusals.push("refused")),
+        Effect.sync(() => void ran.push("ran")),
+      );
+      expect(refusals).toEqual(["refused"]);
+      expect(ran).toEqual([]);
+
+      yield* guardAetherQueuedMutation(
+        registry,
+        "/repos/elsewhere",
+        Effect.sync(() => void refusals.push("refused")),
+        Effect.sync(() => void ran.push("ran")),
+      );
+      expect(ran).toEqual(["ran"]);
+    }),
+  );
+
+  it.effect("a registration cannot land between a QUEUED mutation's check and its run", () =>
+    // The gap the round-5 lock left open: `git.runStackedAction` checked
+    // ownership outside any frozen region, so it held no reader permit and the
+    // exclusive registration never waited — its commit/branch/push could land
+    // in a checkout that had just become a one-way mirror.
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const registry = yield* make;
+      const runStarted = yield* Deferred.make<void>();
+      const releaseRun = yield* Deferred.make<void>();
+
+      const guarded = yield* Effect.forkChild(
+        guardAetherQueuedMutation(
+          registry,
+          "/repos/mirror",
+          Effect.sync(() => void order.push("refused")),
+          Effect.gen(function* () {
+            yield* Deferred.succeed(runStarted, undefined);
+            yield* Deferred.await(releaseRun);
+            order.push("stacked-action");
+          }),
+        ),
+      );
+      yield* Deferred.await(runStarted);
+
+      const registering = yield* Effect.forkChild(
+        registry
+          .register("/repos/mirror", "aether:thread-1")
+          .pipe(Effect.tap(() => Effect.sync(() => order.push("register")))),
+      );
+      // Real elapsed time so the registration's own realpath can resolve.
+      // @effect-diagnostics-next-line globalTimers:off
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 100)));
+      expect(order).toEqual([]);
+
+      yield* Deferred.succeed(releaseRun, undefined);
+      yield* Fiber.join(guarded);
+      yield* Fiber.join(registering);
+      expect(order).toEqual(["stacked-action", "register"]);
     }),
   );
 

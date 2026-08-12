@@ -81,6 +81,30 @@ export const guardAetherRemoveWorktree = <A, E, R>(
   );
 
 /**
+ * The guard for a mutation that reports through a QUEUE rather than its own
+ * error channel (`git.runStackedAction` streams progress events). The refusal
+ * is handed to `onRefused` instead of failing the returned effect, but the
+ * check and the run still share ONE frozen region — this site used to check
+ * ownership outside any region at all, so it took no reader permit and an
+ * exclusive registration never waited for the commit/branch/push it was about
+ * to race.
+ */
+export const guardAetherQueuedMutation = (
+  registry: AetherMirrorOwnership,
+  cwd: string,
+  onRefused: Effect.Effect<void>,
+  run: Effect.Effect<void>,
+): Effect.Effect<void> =>
+  registry.whileClaimsFrozen(
+    Effect.gen(function* () {
+      if (yield* registry.ownsCwd(cwd)) {
+        return yield* onRefused;
+      }
+      return yield* run;
+    }),
+  );
+
+/**
  * `projects.writeFile` resolves `relativePath` under `cwd`, so a PARENT
  * project cwd can descend into an active mirror — hence `ownsPathWithin`
  * rather than `ownsCwd`. Same frozen region as the VCS guards: the check and

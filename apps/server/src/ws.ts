@@ -83,6 +83,7 @@ import {
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import {
   AETHER_MIRROR_REFUSAL,
+  guardAetherQueuedMutation,
   guardAetherWriteFile,
   guardAetherRemoveWorktree,
   guardAetherVcsMutation,
@@ -2067,34 +2068,40 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitRunStackedAction]: (input) =>
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
-            Stream.unwrap(
-              Effect.map(aetherMirrorRegistry.ownsCwd(input.cwd), (owned) =>
-                owned
-                  ? Stream.fail(
-                      new GitManagerError({
-                        operation: "git.runStackedAction",
-                        cwd: input.cwd,
-                        detail: AETHER_MIRROR_REFUSAL,
-                      }),
-                    )
-                  : Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-                      gitWorkflow
-                        .runStackedAction(input, {
-                          actionId: input.actionId,
-                          progressReporter: {
-                            publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                          },
-                        })
-                        .pipe(
-                          Effect.matchCauseEffect({
-                            onFailure: (cause) => Queue.failCause(queue, cause),
-                            onSuccess: () =>
-                              refreshGitStatus(input.cwd).pipe(
-                                Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                              ),
-                          }),
+            // The ownership check and the run share ONE frozen region, held for
+            // the whole mutation: runStackedAction commits, branches and
+            // pushes, so a session registering between a `false` answer and
+            // the run would land all of that in a live one-way mirror. Checking
+            // outside the region (as this site used to) took no reader permit
+            // at all, so the exclusive registration never waited for it.
+            Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
+              guardAetherQueuedMutation(
+                aetherMirrorRegistry,
+                input.cwd,
+                Queue.fail(
+                  queue,
+                  new GitManagerError({
+                    operation: "git.runStackedAction",
+                    cwd: input.cwd,
+                    detail: AETHER_MIRROR_REFUSAL,
+                  }),
+                ).pipe(Effect.asVoid),
+                gitWorkflow
+                  .runStackedAction(input, {
+                    actionId: input.actionId,
+                    progressReporter: {
+                      publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                    },
+                  })
+                  .pipe(
+                    Effect.matchCauseEffect({
+                      onFailure: (cause) => Queue.failCause(queue, cause),
+                      onSuccess: () =>
+                        refreshGitStatus(input.cwd).pipe(
+                          Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                         ),
-                    ),
+                    }),
+                  ),
               ),
             ),
             { "rpc.aggregate": "vcs" },
