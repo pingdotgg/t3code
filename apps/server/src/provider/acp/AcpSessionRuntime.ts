@@ -548,20 +548,27 @@ export const make = (
       const authMethods = initializeResult.authMethods ?? [];
       if (authMethods.length > 0) {
         const requestedAuthMethodId = options.authMethodId;
-        const effectiveAuthMethodId =
-          authMethods.find((method) => method.id === requestedAuthMethodId)?.id ??
-          authMethods[0]?.id;
-        if (effectiveAuthMethodId !== undefined) {
-          const authenticatePayload = {
-            methodId: effectiveAuthMethodId,
-          } satisfies EffectAcpSchema.AuthenticateRequest;
-
-          yield* runLoggedRequest(
-            "authenticate",
-            authenticatePayload,
-            acp.agent.authenticate(authenticatePayload),
-          );
+        const authMethod = authMethods.find((method) => method.id === requestedAuthMethodId);
+        if (authMethod === undefined) {
+          return yield* new EffectAcpErrors.AcpRequestError({
+            code: -32602,
+            errorMessage: `Authentication method '${requestedAuthMethodId}' is not advertised by the agent. Available methods: ${authMethods.map((method) => method.id).join(", ")}`,
+            data: {
+              requestedAuthMethodId,
+              availableAuthMethodIds: authMethods.map((method) => method.id),
+            },
+          });
         }
+
+        const authenticatePayload = {
+          methodId: authMethod.id,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
+
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
       }
 
       let sessionId: string;

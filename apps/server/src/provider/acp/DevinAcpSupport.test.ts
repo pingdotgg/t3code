@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as EffectAcpErrors from "effect-acp/errors";
 import { DevinSettings, ProviderInstanceId } from "@t3tools/contracts";
 
 import {
@@ -97,7 +99,7 @@ describe("resolveDevinAcpModelSelection", () => {
 describe("applyDevinAcpModelSelection", () => {
   it.effect("sets the model through the model config option", () =>
     Effect.gen(function* () {
-      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setModel = vi.fn().mockReturnValue(Effect.void);
       const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
 
       const result = yield* applyDevinAcpModelSelection({
@@ -131,7 +133,7 @@ describe("applyDevinAcpModelSelection", () => {
 
   it.effect("sets reasoning through the effort config option when present", () =>
     Effect.gen(function* () {
-      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setModel = vi.fn().mockReturnValue(Effect.void);
       const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
 
       const result = yield* applyDevinAcpModelSelection({
@@ -176,7 +178,7 @@ describe("applyDevinAcpModelSelection", () => {
 
   it.effect("falls back to a variant slug when the family slug is not in the model list", () =>
     Effect.gen(function* () {
-      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setModel = vi.fn().mockReturnValue(Effect.void);
       const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
 
       yield* applyDevinAcpModelSelection({
@@ -205,7 +207,7 @@ describe("applyDevinAcpModelSelection", () => {
 
   it.effect("normalizes a legacy reasoning option value that contains the family slug", () =>
     Effect.gen(function* () {
-      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setModel = vi.fn().mockReturnValue(Effect.void);
       const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
 
       yield* applyDevinAcpModelSelection({
@@ -246,12 +248,184 @@ describe("applyDevinAcpModelSelection", () => {
       expect(setConfigOption).toHaveBeenCalledWith("effort", "medium");
     }),
   );
+
+  it.effect("fails when no model config option is discovered and a model switch is needed", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      const result = yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: undefined,
+        requested: { familySlug: "claude-opus-5", reasoningValue: "high" },
+        configOptions: [
+          {
+            id: "effort",
+            name: "Effort",
+            category: "thought_level",
+            type: "select",
+            currentValue: "default",
+            options: [
+              { value: "default", name: "Default" },
+              { value: "high", name: "High" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      }).pipe(Effect.result);
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe("AcpRequestError");
+        expect(result.failure.message).toContain("no model session config option was found");
+      }
+      expect(setModel).not.toHaveBeenCalled();
+      expect(setConfigOption).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("resets reasoning to default when the user requests the default reasoning value", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      const result = yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: { familySlug: "claude-opus-5", reasoningValue: "high" },
+        requested: {
+          familySlug: "claude-opus-5",
+          reasoningValue: "default",
+        },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "claude-opus-5",
+            options: [
+              { value: "adaptive", name: "Adaptive" },
+              { value: "claude-opus-5", name: "Claude Opus 5" },
+            ],
+          },
+          {
+            id: "effort",
+            name: "Effort",
+            category: "thought_level",
+            type: "select",
+            currentValue: "high",
+            options: [
+              { value: "default", name: "Default" },
+              { value: "high", name: "High" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).not.toHaveBeenCalled();
+      expect(setConfigOption).toHaveBeenCalledWith("effort", "default");
+      expect(result).toEqual({
+        familySlug: "claude-opus-5",
+        reasoningValue: undefined,
+      });
+    }),
+  );
+
+  it.effect("maps a reasoning synonym to an allowed reasoning config value", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.void);
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      const result = yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: undefined,
+        requested: {
+          familySlug: "claude-opus-5",
+          reasoningValue: "no-thinking",
+        },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "adaptive",
+            options: [
+              { value: "adaptive", name: "Adaptive" },
+              { value: "claude-opus-5", name: "Claude Opus 5" },
+            ],
+          },
+          {
+            id: "reasoning",
+            name: "Reasoning",
+            category: "thought_level",
+            type: "select",
+            currentValue: "low",
+            options: [
+              { value: "none", name: "None" },
+              { value: "low", name: "Low" },
+              { value: "medium", name: "Medium" },
+              { value: "high", name: "High" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).toHaveBeenCalledWith("claude-opus-5");
+      expect(setConfigOption).toHaveBeenCalledWith("reasoning", "none");
+      expect(result).toEqual({
+        familySlug: "claude-opus-5",
+        reasoningValue: "none",
+      });
+    }),
+  );
+
+  it.effect(
+    "uses the base model when default reasoning is requested and no reasoning config is present",
+    () =>
+      Effect.gen(function* () {
+        const setModel = vi.fn().mockReturnValue(Effect.void);
+        const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+        const result = yield* applyDevinAcpModelSelection({
+          runtime: { setModel, setConfigOption },
+          current: undefined,
+          requested: {
+            familySlug: "claude-opus-5",
+            reasoningValue: "default",
+          },
+          configOptions: [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: "adaptive",
+              options: [
+                { value: "adaptive", name: "Adaptive" },
+                { value: "claude-opus-5", name: "Claude Opus 5" },
+              ],
+            },
+          ],
+          mapError: (cause) => cause,
+        });
+
+        expect(setModel).toHaveBeenCalledWith("claude-opus-5");
+        expect(setConfigOption).not.toHaveBeenCalled();
+        expect(result).toEqual({
+          familySlug: "claude-opus-5",
+          reasoningValue: undefined,
+        });
+      }),
+  );
 });
 
 describe("Devin reasoning variant synonyms", () => {
   it.effect("maps no-thinking to the none variant", () =>
     Effect.gen(function* () {
-      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setModel = vi.fn().mockReturnValue(Effect.void);
       const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
 
       yield* applyDevinAcpModelSelection({
@@ -283,7 +457,7 @@ describe("Devin reasoning variant synonyms", () => {
 
   it.effect("maps no-thinking-1m to the 1m variant", () =>
     Effect.gen(function* () {
-      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setModel = vi.fn().mockReturnValue(Effect.void);
       const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
 
       yield* applyDevinAcpModelSelection({
@@ -315,7 +489,7 @@ describe("Devin reasoning variant synonyms", () => {
 
   it.effect("maps lightning-medium to the lightning-medium variant", () =>
     Effect.gen(function* () {
-      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setModel = vi.fn().mockReturnValue(Effect.void);
       const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
 
       yield* applyDevinAcpModelSelection({

@@ -9,13 +9,15 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-import { collectSessionConfigOptionValues, findSessionConfigOption } from "./AcpRuntimeModel.ts";
+import {
+  collectSessionConfigOptionValues,
+  findSessionConfigOption,
+  isModelConfigOption,
+} from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const DEVIN_AUTH_METHOD_ID = "default";
 const DEVIN_DRIVER_KIND = ProviderDriverKind.make("devin");
-
-const DEVIN_MODEL_CONFIG_OPTION_IDS = new Set(["model", "models", "modelid", "modelids"]);
 
 const DEVIN_REASONING_CONFIG_OPTION_IDS = new Set(["effort", "thought_level", "reasoning"]);
 
@@ -140,10 +142,16 @@ function normalizeConfigIdToken(value: string): string {
   return value.toLowerCase().replace(/[\s_-]+/g, "");
 }
 
-function isDevinModelConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
-  if (option.category === "model") return true;
-  const id = normalizeConfigIdToken(option.id);
-  return DEVIN_MODEL_CONFIG_OPTION_IDS.has(id);
+function resolveDevinDefaultReasoningValue(
+  allowedReasoningValues: ReadonlyArray<string>,
+): string | undefined {
+  if (allowedReasoningValues.length === 0) {
+    return undefined;
+  }
+  const clearValue = ["default", "none", "no-thinking"].find((variant) =>
+    allowedReasoningValues.includes(variant),
+  );
+  return clearValue ?? allowedReasoningValues[0];
 }
 
 function isDevinReasoningConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
@@ -166,7 +174,7 @@ function findDevinAcpModelConfigId(
 ): string | undefined {
   if (!configOptions) return undefined;
   for (const option of configOptions) {
-    if (isDevinModelConfigOption(option)) {
+    if (isModelConfigOption(option)) {
       return option.id;
     }
   }
@@ -231,23 +239,43 @@ export function applyDevinAcpModelSelection<E>(input: {
   const modelConfigId = findDevinAcpModelConfigId(input.configOptions);
   const reasoningConfigId = findDevinAcpReasoningConfigId(input.configOptions);
 
+  const requestedReasoningDefault = requested.reasoningValue === "default";
   const requestedReasoning =
-    requested.reasoningValue === requested.familySlug || requested.reasoningValue === "default"
+    requested.reasoningValue === requested.familySlug || requestedReasoningDefault
       ? undefined
       : requested.reasoningValue;
 
   const needsModelSwitch = !current || requested.familySlug !== current.familySlug;
   const needsReasoningSwitch =
     reasoningConfigId !== undefined &&
-    requestedReasoning !== undefined &&
-    requestedReasoning !== current?.reasoningValue;
+    (requestedReasoningDefault ||
+      (requestedReasoning !== undefined && requestedReasoning !== current?.reasoningValue));
 
   if (!needsModelSwitch && !needsReasoningSwitch) {
     return Effect.succeed(current);
   }
 
+  let resultReasoningValue: string | undefined = requestedReasoningDefault
+    ? undefined
+    : requested.reasoningValue;
+
   return Effect.gen(function* () {
-    if (needsModelSwitch && modelConfigId !== undefined) {
+    if (needsModelSwitch) {
+      if (modelConfigId === undefined) {
+        return yield* Effect.fail(
+          input.mapError(
+            new EffectAcpErrors.AcpRequestError({
+              code: -32602,
+              errorMessage: `Unable to set model: no model session config option was found`,
+              data: {
+                requestedModel: requested.familySlug,
+                configOptions: input.configOptions.map((o) => o.id),
+              },
+            }),
+          ),
+        );
+      }
+
       const modelOption = findSessionConfigOption(input.configOptions, modelConfigId);
       const allowedModelValues = modelOption ? collectSessionConfigOptionValues(modelOption) : [];
 
@@ -295,18 +323,30 @@ export function applyDevinAcpModelSelection<E>(input: {
       const allowedReasoningValues = reasoningOption
         ? collectSessionConfigOptionValues(reasoningOption)
         : [];
-      const effectiveReasoning =
-        requestedReasoning && allowedReasoningValues.length > 0
-          ? (allowedReasoningValues.find(
-              (value) => requestedReasoning === value || requestedReasoning.endsWith(`-${value}`),
+      const effectiveReasoning = requestedReasoningDefault
+        ? resolveDevinDefaultReasoningValue(allowedReasoningValues)
+        : requestedReasoning && allowedReasoningValues.length > 0
+          ? (allowedReasoningValues.find((value) =>
+              expandDevinReasoningVariants(requestedReasoning).some(
+                (variant) => variant === value || variant.endsWith(`-${value}`),
+              ),
             ) ?? requestedReasoning)
           : requestedReasoning;
-      yield* input.runtime
-        .setConfigOption(reasoningConfigId, effectiveReasoning)
-        .pipe(Effect.mapError(input.mapError));
+
+      if (effectiveReasoning !== undefined) {
+        yield* input.runtime
+          .setConfigOption(reasoningConfigId, effectiveReasoning)
+          .pipe(Effect.mapError(input.mapError));
+        if (!requestedReasoningDefault) {
+          resultReasoningValue = effectiveReasoning;
+        }
+      }
     }
 
-    return requested;
+    return {
+      familySlug: requested.familySlug,
+      reasoningValue: resultReasoningValue,
+    };
   });
 }
 

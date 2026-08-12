@@ -40,6 +40,17 @@ const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const advertisedAuthMethods = (() => {
+  const raw = process.env.T3_ACP_AUTH_METHODS;
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw) as ReadonlyArray<AcpSchema.AuthMethod>;
+  } catch {
+    return undefined;
+  }
+})();
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -218,7 +229,10 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         { value: "default", name: "Auto" },
         { value: "composer-2", name: "Composer 2" },
         { value: "composer-2[fast=true]", name: "Composer 2 Fast" },
-        { value: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
+        {
+          value: "gpt-5.3-codex[reasoning=medium,fast=false]",
+          name: "Codex 5.3",
+        },
       ],
     },
   ];
@@ -303,6 +317,7 @@ const program = Effect.gen(function* () {
       return {
         protocolVersion: 1,
         agentCapabilities: { loadSession: true },
+        ...(advertisedAuthMethods !== undefined ? { authMethods: advertisedAuthMethods } : {}),
       };
     }),
   );
@@ -674,13 +689,21 @@ const program = Effect.gen(function* () {
             ],
           },
           options: [
-            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+            {
+              optionId: permissionOptionIds.allowOnce,
+              name: "Allow once",
+              kind: "allow_once",
+            },
             {
               optionId: permissionOptionIds.allowAlways,
               name: "Allow always",
               kind: "allow_always",
             },
-            { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
+            {
+              optionId: permissionOptionIds.rejectOnce,
+              name: "Reject",
+              kind: "reject_once",
+            },
           ],
         });
 
@@ -784,7 +807,10 @@ const program = Effect.gen(function* () {
                 question: "Which scope should Grok use?",
                 multiSelect: null,
                 options: [
-                  { label: "Workspace", description: "Use the current workspace" },
+                  {
+                    label: "Workspace",
+                    description: "Use the current workspace",
+                  },
                   { label: "Session", description: "Only use this session" },
                 ],
               },
@@ -869,7 +895,10 @@ const program = Effect.gen(function* () {
         sessionId: requestedSessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: promptResponseText ?? "hello from mock" },
+          content: {
+            type: "text",
+            text: promptResponseText ?? "hello from mock",
+          },
         },
       });
 

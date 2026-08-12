@@ -50,6 +50,21 @@ describe("scan cache round trip", () => {
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
   });
 
+  it("restores devin records unchanged", () => {
+    const original: ScanCache = new Map();
+    original.set("/devin/session.jsonl", {
+      size: 50,
+      mtimeMs: 100,
+      provider: "devin",
+      records: [record({ provider: "devin", model: "devin-preview" })],
+    });
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
+
+    expect(restored.size).toBe(1);
+    expect(restored.get("/devin/session.jsonl")).toEqual(original.get("/devin/session.jsonl"));
+  });
+
   it("interns repeated model and session strings", () => {
     const encoded = encodeScanCache(
       cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" }), record()]]]),

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -60,6 +63,35 @@ function mockModelsListScript(platform: string) {
     "#!/bin/sh",
     'if [ "$1" = "models" ] && [ "$2" = "list" ] && [ "$3" = "--format" ] && [ "$4" = "json" ]; then',
     '  printf "[{\\\"family_label\\\": \\\"Adaptive\\\", \\\"slug\\\": \\\"adaptive\\\"}]\\n"',
+    "  exit 0",
+    "fi",
+    'printf "devin-cli 0.0.99\\n"',
+    "exit 0",
+    "",
+  ].join("\n");
+}
+
+function mockModelsListScriptWithStderrWarning(platform: string) {
+  const json = JSON.stringify([{ family_label: "Adaptive", slug: "adaptive" }]);
+  const warning = "warning: legacy flag ignored";
+  if (isWindows(platform)) {
+    return [
+      "@echo off",
+      'if "%1" == "models" if "%2" == "list" if "%3" == "--format" if "%4" == "json" (',
+      `  echo ${json}`,
+      `  echo ${warning} 1>&2`,
+      "  exit /b 0",
+      ")",
+      "echo devin-cli 0.0.99",
+      "exit /b 0",
+      "",
+    ].join("\n");
+  }
+  return [
+    "#!/bin/sh",
+    'if [ "$1" = "models" ] && [ "$2" = "list" ] && [ "$3" = "--format" ] && [ "$4" = "json" ]; then',
+    `  printf "%s\\n" '${json}'`,
+    `  printf "%s\\n" '${warning}' >&2`,
     "  exit 0",
     "fi",
     'printf "devin-cli 0.0.99\\n"',
@@ -172,6 +204,39 @@ it.layer(NodeServices.layer)("checkDevinProviderStatus", (it) => {
       expect(snapshot.status).toBe("ready");
       expect(snapshot.models.map((model) => model.slug)).toEqual(["adaptive"]);
     }),
+  );
+
+  it.effect(
+    "discovers models when `devin models list` prints JSON to stdout and a warning to stderr",
+    () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcessPlatform;
+        const snapshot = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const dir = yield* fs.makeTempDirectoryScoped({
+              prefix: "t3code-devin-models-stderr-",
+            });
+            const devinPath = yield* makeMockDevinScript(
+              fs,
+              path,
+              dir,
+              mockModelsListScriptWithStderrWarning(platform),
+              platform,
+            );
+
+            return yield* checkDevinProviderStatus(
+              decodeDevinSettings({ enabled: true, binaryPath: devinPath }),
+            );
+          }),
+        );
+
+        expect(snapshot.enabled).toBe(true);
+        expect(snapshot.installed).toBe(true);
+        expect(snapshot.status).toBe("ready");
+        expect(snapshot.models.map((model) => model.slug)).toEqual(["adaptive"]);
+      }),
   );
 
   it.effect("falls back to built-in models when `devin models list` fails", () =>
@@ -424,9 +489,9 @@ it.layer(NodeServices.layer)("parseDevinModelsList", (it) => {
   it.effect("parses the real exported devin model list into families with reasoning options", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = process.cwd();
-      const raw = yield* fs.readFileString(path.join(cwd, "devin-models-list.txt"));
+      const raw = yield* fs.readFileString(
+        NodePath.join(import.meta.dirname, "../testFixtures/devin-models-list.txt"),
+      );
       const models = parseDevinModelsList(raw);
 
       expect(models.length).toBeLessThan(50);

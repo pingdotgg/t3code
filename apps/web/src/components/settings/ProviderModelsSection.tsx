@@ -213,8 +213,9 @@ export function ProviderModelsSection({
           const capLabels: string[] = [];
           const isHidden = !model.isCustom && hiddenModelSet.has(model.slug);
           const isFavorite = favoriteModelSet.has(model.slug);
-          const previousModel = orderedModels[index - 1];
-          const nextModel = orderedModels[index + 1];
+          const orderedIndex = orderedModels.findIndex((ordered) => ordered.slug === model.slug);
+          const previousModel = orderedModels[orderedIndex - 1];
+          const nextModel = orderedModels[orderedIndex + 1];
           const canMoveUp =
             previousModel !== undefined && favoriteModelSet.has(previousModel.slug) === isFavorite;
           const canMoveDown =

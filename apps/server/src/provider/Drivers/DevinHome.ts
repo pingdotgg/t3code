@@ -26,8 +26,6 @@ export const makeDevinEnvironment = Effect.fn("makeDevinEnvironment")(function* 
   baseEnv?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
   const resolvedBaseEnv = baseEnv ?? process.env;
-  const homePath = config.homePath.trim();
-  if (homePath.length === 0) return resolvedBaseEnv;
   const resolvedHomePath = yield* resolveDevinHomePath(config);
   return {
     ...resolvedBaseEnv,

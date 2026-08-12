@@ -633,7 +633,8 @@ const discoverDevinModelsViaModelsList = (
         detail: `Devin models list failed with exit code ${result.code}.`,
       });
     }
-    const models = parseDevinModelsList(`${result.stdout}\n${result.stderr}`);
+    const stdoutModels = parseDevinModelsList(result.stdout);
+    const models = stdoutModels.length > 0 ? stdoutModels : parseDevinModelsList(result.stderr);
     if (models.length === 0) {
       return yield* new ProviderProbeError({
         provider: "devin",

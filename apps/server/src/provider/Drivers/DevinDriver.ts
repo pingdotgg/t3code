@@ -14,7 +14,7 @@ import { makeDevinTextGeneration } from "../../textGeneration/DevinTextGeneratio
 import { ProviderDriverError } from "../Errors.ts";
 import { makeDevinAdapter } from "../Layers/DevinAdapter.ts";
 import { resolveEffectiveDevinBinary } from "./DevinBinary.ts";
-import { makeDevinEnvironment } from "./DevinHome.ts";
+import { makeDevinContinuationGroupKey, makeDevinEnvironment } from "./DevinHome.ts";
 import {
   buildInitialDevinProviderSnapshot,
   checkDevinProviderStatus,
@@ -22,11 +22,7 @@ import {
 } from "../Layers/DevinProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import {
-  defaultProviderContinuationIdentity,
-  type ProviderDriver,
-  type ProviderInstance,
-} from "../ProviderDriver.ts";
+import { type ProviderDriver, type ProviderInstance } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -95,10 +91,11 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const processEnv = mergeProviderInstanceEnvironment(environment);
-      const continuationIdentity = defaultProviderContinuationIdentity({
+      const continuationGroupKey = yield* makeDevinContinuationGroupKey(config);
+      const continuationIdentity = {
         driverKind: DRIVER_KIND,
-        instanceId,
-      });
+        continuationKey: continuationGroupKey,
+      };
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName,

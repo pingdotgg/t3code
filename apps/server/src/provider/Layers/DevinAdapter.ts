@@ -17,7 +17,6 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -275,12 +274,15 @@ function devinUsageDeltaTotals(
   };
 }
 
-function usageFromUsageUpdate(
+export function usageFromUsageUpdate(
   event: Extract<AcpParsedSessionEvent, { readonly _tag: "UsageUpdated" }>,
 ): EffectAcpSchema.Usage {
+  const outputTokens = event.outputTokens ?? 0;
   return {
-    inputTokens: event.inputTokens ?? event.used,
-    outputTokens: event.outputTokens ?? 0,
+    inputTokens:
+      event.inputTokens ??
+      (event.outputTokens !== undefined ? Math.max(0, event.used - outputTokens) : event.used),
+    outputTokens,
     totalTokens: event.used,
     cachedReadTokens: event.cachedReadTokens ?? null,
     cachedWriteTokens: null,
@@ -288,12 +290,21 @@ function usageFromUsageUpdate(
   };
 }
 
-function isAcpUsageGreaterOrNew(
+export function isAcpUsageGreaterOrNew(
   current: EffectAcpSchema.Usage | undefined,
   next: EffectAcpSchema.Usage,
 ): boolean {
   if (!current) return true;
-  return next.totalTokens > current.totalTokens;
+  if (next.totalTokens !== current.totalTokens) {
+    return next.totalTokens > current.totalTokens;
+  }
+  return (
+    next.inputTokens !== current.inputTokens ||
+    next.outputTokens !== current.outputTokens ||
+    next.cachedReadTokens !== current.cachedReadTokens ||
+    next.cachedWriteTokens !== current.cachedWriteTokens ||
+    next.thoughtTokens !== current.thoughtTokens
+  );
 }
 
 interface DevinUsageTranscriptRecord {
@@ -357,11 +368,6 @@ function makeDevinTokenUsageSnapshot(
 
   const cachedReadTokens = finiteNonNegativeInteger(usage.cachedReadTokens);
   const thoughtTokens = finiteNonNegativeInteger(usage.thoughtTokens);
-  const previousUsedTokens = previous?.usedTokens ?? 0;
-  const previousInputTokens = previous?.inputTokens ?? 0;
-  const previousOutputTokens = previous?.outputTokens ?? 0;
-  const previousCachedInputTokens = previous?.cachedInputTokens ?? 0;
-  const previousReasoningOutputTokens = previous?.reasoningOutputTokens ?? 0;
 
   return buildThreadTokenUsageSnapshot({
     usedTokens,
@@ -1079,7 +1085,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                 cause,
               }),
             ),
-            Effect.forkChild,
+            Effect.forkIn(sessionScope),
           );
 
           ctx.notificationFiber = nf;
@@ -1138,31 +1144,6 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             };
 
             return yield* Effect.gen(function* () {
-              const turnModelSelection =
-                input.modelSelection?.instanceId === boundInstanceId
-                  ? input.modelSelection
-                  : undefined;
-              const requestedTurnModel = resolveDevinAcpModelSelection(turnModelSelection);
-              const currentModel = yield* applyDevinAcpModelSelection<ProviderAdapterError>({
-                runtime: ctx.acp,
-                current:
-                  ctx.currentModelId === undefined
-                    ? undefined
-                    : {
-                        familySlug: ctx.currentModelId,
-                        reasoningValue: ctx.currentReasoningValue,
-                      },
-                requested: requestedTurnModel,
-                configOptions: ctx.sessionSetupResult.configOptions ?? [],
-                mapError: (cause) =>
-                  mapAcpToAdapterError(
-                    PROVIDER,
-                    input.threadId,
-                    "session/set_config_option",
-                    cause,
-                  ),
-              });
-
               const text = input.input?.trim();
               const imagePromptParts = yield* Effect.forEach(
                 input.attachments ?? [],
@@ -1209,6 +1190,31 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                   issue: "Turn requires non-empty text or attachments.",
                 });
               }
+
+              const turnModelSelection =
+                input.modelSelection?.instanceId === boundInstanceId
+                  ? input.modelSelection
+                  : undefined;
+              const requestedTurnModel = resolveDevinAcpModelSelection(turnModelSelection);
+              const currentModel = yield* applyDevinAcpModelSelection<ProviderAdapterError>({
+                runtime: ctx.acp,
+                current:
+                  ctx.currentModelId === undefined
+                    ? undefined
+                    : {
+                        familySlug: ctx.currentModelId,
+                        reasoningValue: ctx.currentReasoningValue,
+                      },
+                requested: requestedTurnModel,
+                configOptions: ctx.sessionSetupResult.configOptions ?? [],
+                mapError: (cause) =>
+                  mapAcpToAdapterError(
+                    PROVIDER,
+                    input.threadId,
+                    "session/set_config_option",
+                    cause,
+                  ),
+              });
 
               ctx.currentModelId = currentModel?.familySlug;
               ctx.currentReasoningValue = currentModel?.reasoningValue;

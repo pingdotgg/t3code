@@ -45,7 +45,7 @@
     {
       "family_label": "GPT-5.2",
       "family_uid": "gpt-5-2",
-      "slug": "gpt-5-2",
+      "slug": "gpt-5.2",
       "variants": [
         { "model_uid": "gpt-5-2-medium", "label": "GPT-5.2 Medium" },
         { "model_uid": "gpt-5-2-none", "label": "GPT-5.2 No Thinking" },

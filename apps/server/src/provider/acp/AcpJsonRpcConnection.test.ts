@@ -626,7 +626,13 @@ describe("AcpSessionRuntime", () => {
         .trim()
         .split("\n")
         .filter((line) => line.length > 0)
-        .map((line) => JSON.parse(line) as { method?: string; params?: { value?: unknown } });
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              method?: string;
+              params?: { value?: unknown };
+            },
+        );
       expect(
         recordedRequests.some(
           (message) =>
@@ -652,6 +658,124 @@ describe("AcpSessionRuntime", () => {
       Effect.scoped,
       Effect.provide(NodeServices.layer),
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("skips authentication when the agent advertises no auth methods", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      expect(requestEvents.some((event) => event.method === "authenticate")).toBe(false);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("authenticates with the requested method when it is advertised", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    const advertisedAuthMethods = JSON.stringify([
+      { id: "test", name: "Test" },
+      { id: "other", name: "Other" },
+    ]);
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const authenticateStarted = requestEvents.find(
+        (event) => event.method === "authenticate" && event.status === "started",
+      );
+      expect(authenticateStarted?.payload).toMatchObject({
+        methodId: "test",
+      });
+      expect(
+        requestEvents.some(
+          (event) => event.method === "authenticate" && event.status === "succeeded",
+        ),
+      ).toBe(true);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHODS: advertisedAuthMethods,
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
+  it.effect("fails visibly when the requested auth method is not advertised", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    const advertisedAuthMethods = JSON.stringify([
+      { id: "other", name: "Other" },
+      { id: "another", name: "Another" },
+    ]);
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const error = yield* runtime.start().pipe(Effect.flip);
+
+      expect(error._tag).toBe("AcpRequestError");
+      if (error._tag === "AcpRequestError") {
+        expect(error.code).toBe(-32602);
+        expect(error.message).toContain(
+          "Authentication method 'test' is not advertised by the agent",
+        );
+        expect(error.message).toContain("other");
+        expect(error.message).toContain("another");
+      }
+
+      expect(requestEvents.some((event) => event.method === "authenticate")).toBe(false);
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_AUTH_METHODS: advertisedAuthMethods,
+            },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
     );
   });
 });

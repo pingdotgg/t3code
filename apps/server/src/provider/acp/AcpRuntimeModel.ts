@@ -136,9 +136,9 @@ type AcpToolCallUpdate = Extract<
   { readonly sessionUpdate: "tool_call" | "tool_call_update" }
 >;
 
-const MODEL_CONFIG_OPTION_IDS = new Set(["model", "models", "modelid", "modelids"]);
+export const MODEL_CONFIG_OPTION_IDS = new Set(["model", "models", "modelid", "modelids"]);
 
-function isModelConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
+export function isModelConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
   if (option.category === "model") return true;
   const id = option.id
     .trim()
