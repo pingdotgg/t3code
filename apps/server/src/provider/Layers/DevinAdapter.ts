@@ -747,6 +747,11 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         sessions.delete(ctx.threadId);
+        yield* SynchronizedRef.update(threadLocksRef, (current) => {
+          const next = new Map(current);
+          next.delete(ctx.threadId);
+          return next;
+        });
         yield* offerRuntimeEvent({
           type: "session.exited",
           ...(yield* makeEventStamp()),
