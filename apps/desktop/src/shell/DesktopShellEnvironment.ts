@@ -391,18 +391,22 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     ]);
 
     let nodeFound = false;
+    let fnmFound = false;
     if (Option.isSome(fastMergedPath)) {
       for (const dir of fastMergedPath.value.split(";")) {
-        const nodePath = `${dir}\\node.exe`;
-        if (yield* Effect.orElseSucceed(fileSystem.exists(nodePath), () => false)) {
+        if (!nodeFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${dir}\\node.exe`), () => false))) {
           nodeFound = true;
-          break;
         }
+        if (!fnmFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${dir}\\fnm.exe`), () => false))) {
+          fnmFound = true;
+        }
+        if (nodeFound && fnmFound) break;
       }
     }
 
-    // Only load the expensive PowerShell profile if the fast baseline is insufficient.
-    const profile = nodeFound
+    // Only load the expensive PowerShell profile if the fast baseline is insufficient,
+    // or if the user actively uses fnm (which requires FNM_DIR from the profile).
+    const profile: EnvironmentPatch = (nodeFound && !fnmFound)
       ? {}
       : yield* readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true });
 

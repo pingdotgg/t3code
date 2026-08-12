@@ -342,5 +342,61 @@ describe("DesktopShellEnvironment", () => {
       ),
       Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
     );
-  });
+  it.effect("skips PowerShell profile when node is available and fnm is not", () =>
+    Effect.gen(function* () {
+      const fs = yield* Effect.promise(() => import("node:fs"));
+      const os = yield* Effect.promise(() => import("node:os"));
+      const path = yield* Effect.promise(() => import("node:path"));
+      
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
+      fs.writeFileSync(path.join(tempDir, "node.exe"), "");
+
+      const env: NodeJS.ProcessEnv = { PATH: tempDir };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: tempDir });
+        },
+      });
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+
+      assert.equal(commands.length, 1);
+      assert.isTrue(commands[0]!._tag === "StandardCommand" && commands[0].args.includes("-NoProfile"));
+    }),
+  );
+
+  it.effect("loads PowerShell profile when node and fnm are both available", () =>
+    Effect.gen(function* () {
+      const fs = yield* Effect.promise(() => import("node:fs"));
+      const os = yield* Effect.promise(() => import("node:os"));
+      const path = yield* Effect.promise(() => import("node:path"));
+      
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
+      fs.writeFileSync(path.join(tempDir, "node.exe"), "");
+      fs.writeFileSync(path.join(tempDir, "fnm.exe"), "");
+
+      const env: NodeJS.ProcessEnv = { PATH: tempDir };
+      const commands: ChildProcess.Command[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: tempDir });
+        },
+      });
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+
+      assert.equal(commands.length, 2);
+      assert.isTrue(commands[0]!._tag === "StandardCommand" && commands[0].args.includes("-NoProfile"));
+      assert.isFalse(commands[1]!._tag === "StandardCommand" && commands[1].args.includes("-NoProfile"));
+    }),
+  );
 });
