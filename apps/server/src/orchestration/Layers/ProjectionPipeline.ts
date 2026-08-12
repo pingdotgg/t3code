@@ -67,6 +67,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  checkpointRefs: "projection.checkpoint-refs",
 } as const;
 
 type ProjectorName =
@@ -1444,19 +1445,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointTurnCount: event.payload.checkpointTurnCount,
           });
 
-          // Record the per-root checkpoint refs (multi-repo, D2). Placeholder
-          // checkpoints carry none; a real capture replaces them with the full set.
-          if (event.payload.checkpointRefs && event.payload.checkpointRefs.length > 0) {
-            yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
-              threadId: event.payload.threadId,
-              checkpointTurnCount: event.payload.checkpointTurnCount,
-              refs: event.payload.checkpointRefs.map((entry) => ({
-                repoRoot: entry.repoRoot,
-                checkpointRef: entry.checkpointRef,
-              })),
-            });
-          }
-
           if (Option.isSome(existingTurn)) {
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
@@ -1524,6 +1512,67 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     });
 
     const applyCheckpointsProjection: ProjectorDefinition["apply"] = () => Effect.void;
+
+    // Checkpoint refs use their own cursor so the first startup after migration
+    // replays historical diff-completed events even when the turn projector is
+    // already caught up. Legacy single-root events are mapped to the thread's
+    // original worktree (or project root); explicit empty arrays clear stale rows.
+    const applyCheckpointRefsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyCheckpointRefsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      if (event.type === "thread.deleted") {
+        yield* projectionCheckpointRefsRepository.deleteByThreadId({
+          threadId: event.payload.threadId,
+        });
+        return;
+      }
+      if (event.type !== "thread.turn-diff-completed") {
+        return;
+      }
+
+      if (event.payload.checkpointRefs !== undefined) {
+        yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
+          threadId: event.payload.threadId,
+          checkpointTurnCount: event.payload.checkpointTurnCount,
+          refs: event.payload.checkpointRefs.map((entry) => ({
+            repoRoot: entry.repoRoot,
+            checkpointRef: entry.checkpointRef,
+          })),
+        });
+        return;
+      }
+
+      if (event.payload.status === "missing") {
+        yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
+          threadId: event.payload.threadId,
+          checkpointTurnCount: event.payload.checkpointTurnCount,
+          refs: [],
+        });
+        return;
+      }
+
+      const thread = yield* projectionThreadRepository.getById({
+        threadId: event.payload.threadId,
+      });
+      if (Option.isNone(thread)) {
+        return;
+      }
+      const project = yield* projectionProjectRepository.getById({
+        projectId: thread.value.projectId,
+      });
+      if (Option.isNone(project)) {
+        return;
+      }
+      const legacyRepoRoot =
+        thread.value.worktreePath ??
+        thread.value.worktrees[0]?.worktreePath ??
+        project.value.workspaceRoot;
+      yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
+        threadId: event.payload.threadId,
+        checkpointTurnCount: event.payload.checkpointTurnCount,
+        refs: [{ repoRoot: legacyRepoRoot, checkpointRef: event.payload.checkpointRef }],
+      });
+    });
 
     const applyPendingApprovalsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyPendingApprovalsProjection",
@@ -1685,6 +1734,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.checkpointRefs,
+        apply: applyCheckpointRefsProjection,
       },
     ];
 

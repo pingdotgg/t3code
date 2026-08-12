@@ -32,10 +32,13 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
+import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import { ProjectionCheckpointRefsRepositoryLive } from "../../persistence/Layers/ProjectionCheckpointRefs.ts";
+import { ProjectionCheckpointRefsRepository } from "../../persistence/Services/ProjectionCheckpointRefs.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -83,6 +86,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
+  const projectionCheckpointRefsRepository = yield* ProjectionCheckpointRefsRepository;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -786,20 +790,11 @@ const make = Effect.gen(function* () {
       return;
     }
     const projects = yield* resolveThreadProjects(thread.projectId);
-    const restoreRoots = yield* resolveCheckpointRoots({
+    const currentRestoreRoots = yield* resolveCheckpointRoots({
       threadId: event.payload.threadId,
       thread,
       projects,
     });
-    if (restoreRoots.length === 0) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: "Checkpoints are unavailable because this project is not a git repository.",
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
 
     const currentTurnCount = thread.checkpoints.reduce(
       (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
@@ -833,16 +828,39 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // Restore every repo root the thread spans (multi-repo). Best-effort: a
-    // root that fails to restore is logged and reported, but the roots that
-    // succeed are kept — there is no cross-repo atomic revert (per-repo v1).
+    const persistedCheckpointRefs =
+      event.payload.turnCount === 0
+        ? []
+        : yield* projectionCheckpointRefsRepository.listByCheckpoint({
+            threadId: event.payload.threadId,
+            checkpointTurnCount: event.payload.turnCount,
+          });
+    const restoreTargets =
+      persistedCheckpointRefs.length > 0
+        ? persistedCheckpointRefs.map((entry) => ({
+            root: entry.repoRoot,
+            checkpointRef: entry.checkpointRef,
+          }))
+        : currentRestoreRoots.map((root) => ({ root, checkpointRef: targetCheckpointRef }));
+    if (restoreTargets.length === 0) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: "Checkpoints are unavailable because this project is not a git repository.",
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
+    // Restore exactly the roots captured by the selected checkpoint. Legacy
+    // checkpoints have no per-root rows and fall back to the current root set.
     const restoreResults = yield* Effect.forEach(
-      restoreRoots,
-      (root) =>
+      restoreTargets,
+      ({ root, checkpointRef }) =>
         checkpointStore
           .restoreCheckpoint({
             cwd: root,
-            checkpointRef: targetCheckpointRef,
+            checkpointRef,
             fallbackToHead: event.payload.turnCount === 0,
           })
           .pipe(
@@ -1019,7 +1037,10 @@ const make = Effect.gen(function* () {
     input: ReactorInput,
   ): Effect.Effect<
     void,
-    CheckpointStoreError | OrchestrationDispatchError | PlatformError.PlatformError,
+    | CheckpointStoreError
+    | OrchestrationDispatchError
+    | PlatformError.PlatformError
+    | ProjectionRepositoryError,
     never
   > =>
     input.source === "domain" ? processDomainEvent(input.event) : processRuntimeEvent(input.event);
@@ -1071,4 +1092,6 @@ const make = Effect.gen(function* () {
   } satisfies CheckpointReactorShape;
 });
 
-export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make);
+export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make).pipe(
+  Layer.provideMerge(ProjectionCheckpointRefsRepositoryLive),
+);

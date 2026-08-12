@@ -352,6 +352,7 @@ export function buildBrowseGroups(input: {
   browseUp: () => void | Promise<void>;
   browseTo: (name: string) => void | Promise<void>;
   openWorkspaceFile: (fullPath: string) => void;
+  includeWorkspaceFiles?: boolean;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
@@ -371,6 +372,9 @@ export function buildBrowseGroups(input: {
 
   for (const entry of input.browseEntries) {
     if (entry.kind === "workspaceFile") {
+      if (input.includeWorkspaceFiles === false) {
+        continue;
+      }
       // Selecting a workspace file resolves its repos and creates the project,
       // so the palette closes (no keepOpen) rather than navigating into it.
       items.push({

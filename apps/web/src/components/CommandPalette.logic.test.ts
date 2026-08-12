@@ -201,6 +201,23 @@ describe("buildBrowseGroups", () => {
     await item.run();
     expect(browseTo).toHaveBeenCalledWith("legacy");
   });
+
+  it("can hide workspace files while another folder-selection flow is active", () => {
+    const [group] = buildBrowseGroups({
+      ...baseInput,
+      includeWorkspaceFiles: false,
+      browseEntries: [
+        { name: "backend", fullPath: "/work/backend", kind: "directory" },
+        {
+          name: "feature.code-workspace",
+          fullPath: "/work/feature.code-workspace",
+          kind: "workspaceFile",
+        },
+      ],
+    });
+
+    expect(group?.items.map((item) => item.value)).toEqual(["browse:/work/backend"]);
+  });
 });
 
 describe("buildThreadActionItems", () => {

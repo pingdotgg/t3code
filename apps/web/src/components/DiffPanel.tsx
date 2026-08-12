@@ -132,6 +132,7 @@ function BranchDiffRepoSection({
   cwd,
   repoRoot,
   scope,
+  baseRef,
   ignoreWhitespace,
   refreshVersion,
   resolvedTheme,
@@ -141,6 +142,7 @@ function BranchDiffRepoSection({
   readonly cwd: string;
   readonly repoRoot: string;
   readonly scope: "branch" | "unstaged";
+  readonly baseRef: string | null;
   readonly ignoreWhitespace: boolean;
   readonly refreshVersion: number;
   readonly resolvedTheme: string;
@@ -149,7 +151,11 @@ function BranchDiffRepoSection({
   const preview = useEnvironmentQuery(
     reviewEnvironment.diffPreview({
       environmentId,
-      input: { cwd, ignoreWhitespace },
+      input: {
+        cwd,
+        ignoreWhitespace,
+        ...(baseRef ? { baseRef } : {}),
+      },
     }),
   );
   useRefreshOnReopen(preview.refresh, preview.data !== null);
@@ -1194,6 +1200,7 @@ export default function DiffPanel({
                     cwd={entry.cwd}
                     repoRoot={entry.repoRoot}
                     scope={selectedGitScope}
+                    baseRef={selectedBaseRef}
                     ignoreWhitespace={diffIgnoreWhitespace}
                     refreshVersion={branchRepoRefreshVersion}
                     resolvedTheme={resolvedTheme}

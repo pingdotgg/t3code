@@ -2159,6 +2159,7 @@ function OpenCommandPaletteDialog(props: {
     openWorkspaceFile: (fullPath: string) => {
       void openWorkspaceFile(fullPath);
     },
+    includeWorkspaceFiles: multiRepoDraft === null && addProjectCloneFlow === null,
   });
   const cloneDestinationBrowseGroups = useMemo(
     () =>
@@ -2433,6 +2434,16 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       if (multiRepoDraft) {
+        if (selection.environmentId !== multiRepoDraft.environmentId) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not add WSL project",
+              description: "Start the matching WSL backend, then choose the folder again.",
+            }),
+          );
+          return;
+        }
         await attachMultiRepoRoot(selection.linuxPath);
       } else {
         await handleAddProjectForEnvironment({

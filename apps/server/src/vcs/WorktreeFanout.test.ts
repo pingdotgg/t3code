@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import { GitCommandError, type VcsCreateWorktreeInput } from "@t3tools/contracts";
@@ -143,6 +145,50 @@ describe("createThreadWorktrees", () => {
       expect(result).toBeInstanceOf(GitCommandError);
       // backend was created before frontend failed; it must be force-removed.
       expect(recorder.created).toEqual(["/t3/worktrees/project-1/thread-1/backend"]);
+      expect(recorder.removed).toEqual(["/t3/worktrees/project-1/thread-1/backend"]);
+      expect(recorder.deletedBranches).toEqual(["/Users/me/backend:t3/run"]);
+    }),
+  );
+
+  it.effect("rolls back already-created worktrees when creation is interrupted", () =>
+    Effect.gen(function* () {
+      const secondCreateStarted = yield* Deferred.make<void>();
+      const recorder: Recorder = { created: [], removed: [], deletedBranches: [] };
+      const layer = Layer.mock(GitWorkflowService.GitWorkflowService)({
+        createWorktree: (input) =>
+          input.cwd === "/Users/me/frontend"
+            ? Deferred.succeed(secondCreateStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.sync(() => {
+                recorder.created.push(input.path ?? "");
+                return {
+                  worktree: {
+                    path: input.path ?? "",
+                    refName: input.newRefName ?? input.refName,
+                  },
+                };
+              }),
+        removeWorktree: (input) =>
+          Effect.sync(() => {
+            recorder.removed.push(input.path);
+          }),
+        deleteBranch: (input) =>
+          Effect.sync(() => {
+            recorder.deletedBranches.push(`${input.cwd}:${input.branch}`);
+          }),
+      } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>);
+      const fiber = yield* createThreadWorktrees({
+        worktreesDir: WORKTREES_DIR,
+        projectId: PROJECT_ID,
+        threadId: THREAD_ID,
+        targets: [
+          { repoRoot: "/Users/me/backend", baseRef: "main", newBranch: "t3/run" },
+          { repoRoot: "/Users/me/frontend", baseRef: "develop", newBranch: "t3/run" },
+        ],
+      }).pipe(Effect.provide(layer), Effect.forkChild);
+
+      yield* Deferred.await(secondCreateStarted);
+      yield* Fiber.interrupt(fiber);
+
       expect(recorder.removed).toEqual(["/t3/worktrees/project-1/thread-1/backend"]);
       expect(recorder.deletedBranches).toEqual(["/Users/me/backend:t3/run"]);
     }),

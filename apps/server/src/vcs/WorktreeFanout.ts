@@ -10,6 +10,7 @@
  * @module WorktreeFanout
  */
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 
 import type { GitCommandError, OrchestrationThreadWorktree } from "@t3tools/contracts";
@@ -127,6 +128,16 @@ export const createThreadWorktrees = (
     const createdBranches: Array<{ readonly repoRoot: string; readonly branch: string }> = [];
     const takenNames = new Set<string>();
 
+    const rollback = Effect.gen(function* () {
+      yield* removeThreadWorktrees({ worktrees: created, force: true }).pipe(Effect.ignore);
+      yield* Effect.forEach(
+        createdBranches,
+        ({ repoRoot, branch }) =>
+          gitWorkflow.deleteBranch({ cwd: repoRoot, branch }).pipe(Effect.ignore),
+        { concurrency: 1, discard: true },
+      );
+    });
+
     yield* Effect.forEach(
       input.targets,
       (target) =>
@@ -156,21 +167,9 @@ export const createThreadWorktrees = (
         }),
       { concurrency: 1, discard: true },
     ).pipe(
-      Effect.catch((error) =>
-        // Roll back the worktrees created before the failure, then re-raise the
-        // original error. Rollback failures are swallowed so the caller sees the
-        // root cause rather than a cleanup error.
-        Effect.gen(function* () {
-          yield* removeThreadWorktrees({ worktrees: created, force: true }).pipe(Effect.ignore);
-          yield* Effect.forEach(
-            createdBranches,
-            ({ repoRoot, branch }) =>
-              gitWorkflow.deleteBranch({ cwd: repoRoot, branch }).pipe(Effect.ignore),
-            { concurrency: 1, discard: true },
-          );
-          return yield* error;
-        }),
-      ),
+      // `onExit` covers typed failures, defects, and interruption. Cleanup
+      // failures are ignored so the original exit remains authoritative.
+      Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : rollback)),
     );
 
     return created;
