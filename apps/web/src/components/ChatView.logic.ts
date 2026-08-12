@@ -10,6 +10,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import type { ComposerConversationKind } from "@t3tools/client-runtime/composer";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -117,6 +118,16 @@ export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
     checkpoints: [],
     deletedAt: null,
   };
+}
+
+export function resolveComposerConversationKind(input: {
+  readonly messageCount: number;
+  readonly threadDetailLoading: boolean;
+  readonly latestUserMessageAt: string | null;
+}): ComposerConversationKind {
+  return input.messageCount > 0 || (input.threadDetailLoading && input.latestUserMessageAt !== null)
+    ? "existing"
+    : "new";
 }
 
 export function shouldWriteThreadErrorToCurrentServerThread(input: {

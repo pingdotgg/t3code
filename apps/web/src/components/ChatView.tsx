@@ -289,6 +289,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
+  resolveComposerConversationKind,
   buildThreadTurnInterruptInput,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
@@ -2548,6 +2549,11 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [activeThread?.proposedPlans, timelineMessages, turnPlans, workLogEntries],
   );
+  const composerConversationKind = resolveComposerConversationKind({
+    messageCount: timelineMessages.length,
+    threadDetailLoading,
+    latestUserMessageAt: routeServerThreadShell?.latestUserMessageAt ?? null,
+  });
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -6344,7 +6350,7 @@ function ChatViewContent(props: ChatViewProps) {
                             activeThread={activeThread}
                             isServerThread={isServerThread}
                             isLocalDraftThread={isLocalDraftThread}
-                            conversationKind={timelineMessages.length === 0 ? "new" : "existing"}
+                            conversationKind={composerConversationKind}
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             phase={phase}
