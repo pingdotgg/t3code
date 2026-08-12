@@ -59,6 +59,21 @@ describe("Codex file citations", () => {
     ).toEqual(["C:\\build\\"]);
   });
 
+  it("preserves leading and trailing spaces that belong to the quoted path", () => {
+    // The quotes delimit the value exactly, so a filename that begins or ends with a space is a
+    // distinct file; trimming it would resolve the wrong one.
+    expect(extractCodexFileCitationPaths(':codex-file-citation{path="/tmp/report .pdf "}')).toEqual(
+      ["/tmp/report .pdf "],
+    );
+  });
+
+  it("leaves a malformed directive literal when junk precedes the path attribute", () => {
+    // The text before `path="` is not a valid run of attributes, so the directive stays raw.
+    expect(
+      extractCodexFileCitationPaths(':codex-file-citation{purpose="output"junk path="/tmp/x.zip"}'),
+    ).toEqual([]);
+  });
+
   it("links an artifact written outside the workspace", () => {
     const html = renderMessage(':codex-file-citation{path="/tmp/export.zip" purpose="output"}');
 

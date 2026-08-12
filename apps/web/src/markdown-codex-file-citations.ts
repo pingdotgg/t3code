@@ -20,6 +20,11 @@ const CODEX_FILE_CITATION_PATTERN = /:codex-file-citation\{([^{}\r\n]*)\}/g;
 // Locates the opening quote of the `path` attribute; the value that follows is closed by scanning
 // (see readCitationPath), not by this pattern.
 const CITATION_PATH_ATTRIBUTE_START = /(?:^|\s)path="/;
+const PATH_ATTRIBUTE_KEYWORD = 'path="';
+// Everything before the `path` keyword must itself be a run of attributes: zero or more
+// ` key="value"` each closed and followed by whitespace. A malformed directive like
+// `purpose="x"junk path="…"` must stay literal text rather than resolve to a link.
+const CITATION_ATTRIBUTE_PREFIX_PATTERN = /^(?:[A-Za-z_][\w-]*="(?:\\"|[^"])*"\s+)*$/;
 // The directive escapes `"` inside a value as `\"`; every other backslash is a literal separator
 // (`C:\repo\.env`, `\\server\share\report.docx`). A trailing `\` right before the closing quote is
 // therefore byte-identical to an escaped quote, so the closer cannot be found by escape rules
@@ -56,6 +61,8 @@ interface RemarkCodexFileCitationsOptions {
 function readCitationPath(attributes: string): string | null {
   const opening = CITATION_PATH_ATTRIBUTE_START.exec(attributes);
   if (opening === null) return null;
+  const keywordStart = opening.index + opening[0].length - PATH_ATTRIBUTE_KEYWORD.length;
+  if (!CITATION_ATTRIBUTE_PREFIX_PATTERN.test(attributes.slice(0, keywordStart))) return null;
   const valueStart = opening.index + opening[0].length;
   // `\"` (escaped quote inside the path) and a literal trailing `\` before the closer look the
   // same, so the closing quote is the first `"` after which the rest of the directive is a valid
@@ -65,11 +72,10 @@ function readCitationPath(attributes: string): string | null {
   for (let i = valueStart; i < attributes.length; i++) {
     if (attributes[i] !== '"') continue;
     if (!CITATION_ATTRIBUTE_TAIL_PATTERN.test(attributes.slice(i + 1))) continue;
-    const path = attributes
-      .slice(valueStart, i)
-      .replace(CITATION_ESCAPED_QUOTE_PATTERN, '"')
-      .trim();
-    return path ? path : null;
+    // The quotes delimit the value exactly, so leading/trailing spaces belong to the path — a
+    // filename may legitimately start or end with one. Reject only a genuinely empty value.
+    const path = attributes.slice(valueStart, i).replace(CITATION_ESCAPED_QUOTE_PATTERN, '"');
+    return path === "" ? null : path;
   }
   return null;
 }
