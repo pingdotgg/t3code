@@ -24,8 +24,7 @@ import { type ProviderDriver, type ProviderInstance } from "../ProviderDriver.ts
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
-  makeManualOnlyProviderMaintenanceCapabilities,
-  makeStaticProviderMaintenanceResolver,
+  makePackageManagedProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -37,9 +36,12 @@ import { makeKimiContinuationGroupKey, makeKimiEnvironment } from "./KimiHome.ts
 
 const decodeKimiSettings = Schema.decodeSync(KimiSettings);
 const DRIVER_KIND = ProviderDriverKind.make("kimi");
-const UPDATE = makeStaticProviderMaintenanceResolver(
-  makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER_KIND, packageName: null }),
-);
+const UPDATE = makePackageManagedProviderMaintenanceResolver({
+  provider: DRIVER_KIND,
+  npmPackageName: "@moonshot-ai/kimi-code",
+  homebrewFormula: null,
+  nativeUpdate: null,
+});
 
 export type KimiDriverEnv =
   | BackgroundPolicy.BackgroundPolicy

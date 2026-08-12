@@ -40,7 +40,7 @@ const kimiSettings = (overrides: Partial<KimiSettings> = {}): KimiSettings => ({
 
 type KimiFixtureMode = "ready" | "unsupported" | "unauthenticated" | "failure";
 
-async function makeKimiFixture(mode: KimiFixtureMode): Promise<string> {
+async function makeKimiFixture(mode: KimiFixtureMode, version = "1.2.3"): Promise<string> {
   const directory = await NodeFS.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kimi-provider-"));
   const agentPath = NodePath.join(directory, "kimi-acp-fixture.mjs");
   const binaryPath = NodePath.join(directory, process.platform === "win32" ? "kimi.cmd" : "kimi");
@@ -111,14 +111,14 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
     process.platform === "win32"
       ? `@echo off
 if "%~1"=="--version" (
-  echo kimi 1.2.3
+  echo kimi ${version}
   exit /b 0
 )
 "${process.execPath}" "${agentPath}" %*
 `
       : `#!/bin/sh
 if [ "$1" = "--version" ]; then
-  printf 'kimi 1.2.3\\n'
+  printf 'kimi ${version}\\n'
   exit 0
 fi
 exec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)} "$@"
@@ -264,6 +264,36 @@ describe("checkKimiProviderStatus", () => {
     expect(snapshot.message).toContain("ACP");
   });
 
+  it("rejects Kimi versions that cannot expose selectable thinking levels", async () => {
+    const binaryPath = await makeKimiFixture("ready", "0.28.1");
+    const snapshot = await runNode(
+      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+        ...process.env,
+        T3_KIMI_FIXTURE_MODE: "ready",
+      }),
+    );
+
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.version).toBe("0.28.1");
+    expect(snapshot.message).toContain("0.29.0");
+    expect(snapshot.message).toContain("thinking levels");
+  });
+
+  it("rejects Kimi output whose version cannot be verified", async () => {
+    const binaryPath = await makeKimiFixture("ready", "unknown");
+    const snapshot = await runNode(
+      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+        ...process.env,
+        T3_KIMI_FIXTURE_MODE: "ready",
+      }),
+    );
+
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.version).toBeNull();
+    expect(snapshot.message).toContain("Unable to determine Kimi version");
+    expect(snapshot.message).toContain("0.29.0");
+  });
+
   it("reports authentication requirements with the Kimi login command", async () => {
     const binaryPath = await makeKimiFixture("unauthenticated");
     const snapshot = await runNode(
@@ -292,7 +322,7 @@ describe("checkKimiProviderStatus", () => {
   });
 
   it("discovers models, options, modes, and commands without prompting", async () => {
-    const binaryPath = await makeKimiFixture("ready");
+    const binaryPath = await makeKimiFixture("ready", "0.29.0");
     const snapshot = await runNode(
       checkKimiProviderStatus(
         kimiSettings({

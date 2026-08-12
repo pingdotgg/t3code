@@ -13,6 +13,10 @@ npm install -g @moonshot-ai/kimi-code
 kimi login
 ```
 
+T3 Code requires Kimi CLI 0.29.0 or newer. Earlier versions collapse selectable thinking effort
+levels into a single `Thinking On` value over ACP. Update Kimi from provider settings or run the
+install command again to expose the levels supported by each model.
+
 Confirm that the same shell which starts T3 Code can run `kimi --version`. Then open
 **Settings**, select **Kimi**, and enable the provider. If the executable is not on the server's
 `PATH`, set **Binary path** to its full path.

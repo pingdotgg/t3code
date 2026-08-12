@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -52,6 +53,7 @@ const KIMI_PRESENTATION = {
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const KIMI_ACP_DISCOVERY_TIMEOUT_MS = 15_000;
+const MINIMUM_KIMI_THINKING_LEVELS_VERSION = "0.29.0";
 
 interface KimiAcpDiscovery {
   readonly currentModelId: string | undefined;
@@ -447,6 +449,36 @@ export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(func
         status: "error",
         auth: { status: "unknown" },
         message: "Kimi CLI is installed but failed to run.",
+      },
+    });
+  }
+  if (version === null) {
+    return buildServerProvider({
+      presentation: KIMI_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: `Unable to determine Kimi version from \`kimi --version\` output. T3 Code requires Kimi v${MINIMUM_KIMI_THINKING_LEVELS_VERSION} or newer.`,
+      },
+    });
+  }
+  if (compareSemverVersions(version, MINIMUM_KIMI_THINKING_LEVELS_VERSION) < 0) {
+    return buildServerProvider({
+      presentation: KIMI_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unknown" },
+        message: `Kimi CLI v${version} is too old. Upgrade to v${MINIMUM_KIMI_THINKING_LEVELS_VERSION} or newer to use selectable thinking levels.`,
       },
     });
   }
