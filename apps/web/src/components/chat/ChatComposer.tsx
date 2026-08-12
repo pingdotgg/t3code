@@ -604,6 +604,7 @@ export interface ChatComposerProps {
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
+  density?: "default" | "compact";
 }
 
 // --------------------------------------------------------------------------
@@ -675,7 +676,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
+    density = "default",
   } = props;
+  const isEmbeddedCompact = density === "compact";
   const isSendDisabled = sendDisabledReason !== null;
 
   // ------------------------------------------------------------------
@@ -947,8 +950,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
-  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(isEmbeddedCompact);
+  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] =
+    useState(isEmbeddedCompact);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
@@ -2681,13 +2685,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     <form
       ref={composerFormRef}
       onSubmit={submitComposer}
-      className="mx-auto w-full min-w-0 max-w-3xl"
+      className={cn("mx-auto w-full min-w-0", isEmbeddedCompact ? "max-w-full" : "max-w-3xl")}
       data-chat-composer-form="true"
+      data-chat-composer-density={density}
     >
       <div
         className={cn(
-          "group rounded-[22px] p-px transition-colors duration-200",
-          composerProviderState.composerFrameClassName,
+          "group p-px transition-colors duration-200",
+          isEmbeddedCompact ? "rounded-md border border-border/70" : "rounded-[22px]",
+          !isEmbeddedCompact && composerProviderState.composerFrameClassName,
         )}
         onDragEnterCapture={composerMentionDragHandlers.onDragEnter}
         onDragOverCapture={composerMentionDragHandlers.onDragOver}

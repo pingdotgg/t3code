@@ -12,6 +12,7 @@ import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { resolveThreadRuntimeState } from "../state/threadRuntimeState";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -496,6 +497,39 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return "monitoring";
   }
   return "ready";
+}
+
+// Compatibility projection for the retired SidebarV2 surface. The live board
+// and its focused tests share the canonical runtime-state precedence, while
+// the current sidebar keeps its richer background-liveness status above.
+export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "ready";
+
+type SidebarV2StatusInput = Pick<
+  SidebarThreadSummary,
+  | "hasActionableProposedPlan"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "interactionMode"
+  | "latestTurn"
+  | "session"
+>;
+
+export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
+  switch (resolveThreadRuntimeState(thread)) {
+    case "approval":
+      return "approval";
+    case "input":
+      return "input";
+    case "working":
+    case "connecting":
+      return "working";
+    case "failed":
+      return "failed";
+    case "plan-ready":
+    case "monitoring":
+    case "idle":
+      return "ready";
+  }
 }
 
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not

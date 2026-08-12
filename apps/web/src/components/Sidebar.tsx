@@ -44,6 +44,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  LayoutGridIcon,
   MessageSquareIcon,
   PinIcon,
   PlusIcon,
@@ -66,13 +67,19 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { useParams, useRouter } from "@tanstack/react-router";
+import { useParams, useRouter, useRouterState } from "@tanstack/react-router";
 
 import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { requestBoardFocus, useBoardFocusStore } from "../board/boardFocusStore";
+import {
+  buildBoardPlacementContextMenuItems,
+  boardLaneForPlacementAction,
+} from "../board/boardPlacementMenu";
+import { useBoardLaneStore } from "../board/boardLaneStore";
 import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
@@ -96,6 +103,7 @@ import {
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useProjectScopeStore } from "../projectScopeStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -721,7 +729,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
-  onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
+  onThreadDoubleClick: (threadRef: ScopedThreadRef, title: string) => void;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string, originalTitle: string) => void;
   onCancelRename: () => void;
@@ -751,9 +759,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     onRenameTitleChange,
     onSettle,
     onSnooze,
-    onStartRename,
     onThreadActivate,
     onThreadClick,
+    onThreadDoubleClick,
     onUnsettle,
     onUnsnooze,
     onUnpin,
@@ -984,9 +992,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       }
       if ((event.target as HTMLElement).closest("button, a, input")) return;
       event.preventDefault();
-      onStartRename(threadRef, thread.title);
+      onThreadDoubleClick(threadRef, thread.title);
     },
-    [isRenaming, onStartRename, thread.title, threadRef],
+    [isRenaming, onThreadDoubleClick, thread.title, threadRef],
   );
   const renameCommittedRef = useRef(false);
   useEffect(() => {
@@ -1704,6 +1712,8 @@ export default function Sidebar() {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const boardLanes = useBoardLaneStore((state) => state.lanes);
+  const setBoardPlacement = useBoardLaneStore((state) => state.setPlacement);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
@@ -1798,6 +1808,10 @@ export default function Sidebar() {
   // the command was in flight, completing it must not yank them away.
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
+  const isBoardRoute = useRouterState({ select: (state) => state.location.pathname === "/board" });
+  const isBoardRouteRef = useRef(isBoardRoute);
+  isBoardRouteRef.current = isBoardRoute;
+  const boardFocusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
 
   const environmentLabelById = useMemo(
     () =>
@@ -1893,7 +1907,8 @@ export default function Sidebar() {
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
-  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
+  const projectScopeKey = useProjectScopeStore((state) => state.projectScopeKey);
+  const setProjectScopeKey = useProjectScopeStore((state) => state.setProjectScopeKey);
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
@@ -2289,6 +2304,27 @@ export default function Sidebar() {
     [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
   );
 
+  // On the board, a sidebar row points at the embedded chat card instead of
+  // routing away. The board decides whether to reveal, focus, or open it.
+  const openThread = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      if (!isBoardRouteRef.current) {
+        navigateToThread(threadRef);
+        return;
+      }
+      if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
+        clearSelection();
+      }
+      const threadKey = scopedThreadKey(threadRef);
+      setSelectionAnchor(threadKey);
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      requestBoardFocus(threadKey);
+    },
+    [clearSelection, isMobile, navigateToThread, setOpenMobile, setSelectionAnchor],
+  );
+
   const navigateToDraft = useCallback(
     (draftId: DraftId) => {
       // Unconditional: also drops a stale selection anchor left by
@@ -2311,9 +2347,9 @@ export default function Sidebar() {
   const selectThreadSearchResult = useCallback(
     (thread: EnvironmentThreadShell) => {
       clearThreadSearch();
-      navigateToThread(scopeThreadRef(thread.environmentId, thread.id));
+      openThread(scopeThreadRef(thread.environmentId, thread.id));
     },
-    [clearThreadSearch, navigateToThread],
+    [clearThreadSearch, openThread],
   );
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -2409,9 +2445,20 @@ export default function Sidebar() {
       if (isTrailingDoubleClick(event.detail)) {
         return;
       }
-      navigateToThread(threadRef);
+      openThread(threadRef);
     },
-    [navigateToThread, rangeSelectTo, toggleThreadSelection],
+    [openThread, rangeSelectTo, toggleThreadSelection],
+  );
+
+  const handleThreadDoubleClick = useCallback(
+    (threadRef: ScopedThreadRef, title: string) => {
+      if (isBoardRouteRef.current) {
+        openThread(threadRef);
+        return;
+      }
+      startThreadRename(threadRef, title);
+    },
+    [openThread, startThreadRename],
   );
 
   // A settle per thread at a time: double clicks and repeated menu picks
@@ -3034,27 +3081,35 @@ export default function Sidebar() {
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildThreadActionMenuItems({
-              branch: thread.branch ?? null,
-              isPinned,
-              isSettled,
-              isSnoozed,
-              canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
-              isRegeneratingTitle,
-              isRunning:
-                thread.session?.status === "running" && thread.session.activeTurnId != null,
-              supports: {
-                settlement: supportsSettlement,
-                snooze: supportsSnooze,
-                pinning: supportsPinning,
-                titleRegeneration: supportsTitleRegeneration,
-              },
-              snoozePresets,
-            }),
+            [
+              ...buildThreadActionMenuItems({
+                branch: thread.branch ?? null,
+                isPinned,
+                isSettled,
+                isSnoozed,
+                canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+                isRegeneratingTitle,
+                isRunning:
+                  thread.session?.status === "running" && thread.session.activeTurnId != null,
+                supports: {
+                  settlement: supportsSettlement,
+                  snooze: supportsSnooze,
+                  pinning: supportsPinning,
+                  titleRegeneration: supportsTitleRegeneration,
+                },
+                snoozePresets,
+              }),
+              ...buildBoardPlacementContextMenuItems(boardLanes),
+            ],
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        const laneId = boardLaneForPlacementAction(clicked.value, boardLanes);
+        if (laneId !== undefined) {
+          setBoardPlacement(threadRef, laneId);
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset = snoozePresets.find(
             (candidate) => `snooze:${candidate.id}` === clicked.value,
@@ -3224,6 +3279,8 @@ export default function Sidebar() {
       markThreadUnread,
       projectCwdByKey,
       serverConfigs,
+      boardLanes,
+      setBoardPlacement,
       startThreadRename,
       updateThreadMetadata,
       timestampFormat,
@@ -3347,6 +3404,19 @@ export default function Sidebar() {
           // Lifted above the stage backdrop, whose fade bleeds below the
           // header and would otherwise paint across the search row's outline.
           <SidebarGroup className="relative z-[1] gap-1 p-[var(--sidebar-content-inset)]">
+            <SidebarMenuButton
+              type="button"
+              isActive={isBoardRoute}
+              aria-label="Session board"
+              className="ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+              onClick={() => {
+                if (isMobile) setOpenMobile(false);
+                void router.navigate({ to: "/board" });
+              }}
+            >
+              <LayoutGridIcon className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-left">Board</span>
+            </SidebarMenuButton>
             <div className="flex items-center gap-1">
               <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
                 <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
@@ -3667,7 +3737,11 @@ export default function Sidebar() {
                         // the wake signal must survive the trip. Still-snoozed
                         // rows resolve to null on their own.
                         wokeAt={threadWokeAt(thread, { now: snoozeNow })}
-                        isActive={routeThreadKey === threadKey}
+                        isActive={
+                          isBoardRoute
+                            ? boardFocusedThreadKey === threadKey
+                            : routeThreadKey === threadKey
+                        }
                         openPullRequestsInRightPanel={routeThreadRef !== null}
                         jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                         currentEnvironmentId={primaryEnvironmentId}
@@ -3688,8 +3762,8 @@ export default function Sidebar() {
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
-                        onThreadActivate={navigateToThread}
-                        onStartRename={startThreadRename}
+                        onThreadActivate={openThread}
+                        onThreadDoubleClick={handleThreadDoubleClick}
                         onRenameTitleChange={setRenamingTitle}
                         onCommitRename={commitThreadRename}
                         onCancelRename={cancelThreadRename}
