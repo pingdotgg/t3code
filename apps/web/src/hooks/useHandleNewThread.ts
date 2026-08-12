@@ -135,18 +135,20 @@ export function useNewThreadHandler() {
         carrySourceShell?.interactionMode ??
         carrySourceDraft?.interactionMode ??
         null;
-      // Content only moves when the caller opted in, the user is looking at
-      // a draft, and that draft has real typed content to move. The move
-      // reads the store at call time, so text typed during the awaits below
-      // still comes along.
+      // Content only moves when the caller opted in and the user is looking
+      // at a draft. The content check happens at move time, not here: the
+      // paths below await, and text typed during those awaits must still
+      // come along.
       const carryContentSourceDraftId =
-        options?.carryComposerContent === true &&
-        currentRouteTarget?.kind === "draft" &&
-        composerDraftHasUserContent(carrySourceComposer)
+        options?.carryComposerContent === true && currentRouteTarget?.kind === "draft"
           ? currentRouteTarget.draftId
           : null;
       const carryComposerContentTo = (destinationDraftId: DraftId) => {
-        if (carryContentSourceDraftId && carryContentSourceDraftId !== destinationDraftId) {
+        if (
+          carryContentSourceDraftId &&
+          carryContentSourceDraftId !== destinationDraftId &&
+          composerDraftHasUserContent(getComposerDraft(carryContentSourceDraftId))
+        ) {
           moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
         }
       };
