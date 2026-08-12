@@ -152,6 +152,24 @@ export default function DiffPanel({
     ),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const threadWorktrees = useMemo(
+    () => (activeThread?.worktrees ?? []).filter((entry) => entry.worktreePath.length > 0),
+    [activeThread?.worktrees],
+  );
+  const diffRepoTargets = useMemo(() => {
+    if (threadWorktrees.length > 0) {
+      return threadWorktrees.map((entry) => ({
+        repoRoot: entry.repoRoot,
+        cwd: entry.worktreePath,
+      }));
+    }
+    const repoRoots = activeProject?.repoRoots ?? [];
+    if (repoRoots.length > 1) {
+      return repoRoots.map((repoRoot) => ({ repoRoot, cwd: repoRoot }));
+    }
+    return [];
+  }, [threadWorktrees, activeProject?.repoRoots]);
+  const hasGitDiffTarget = isGitRepo || diffRepoTargets.length > 0;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -234,7 +252,7 @@ export default function DiffPanel({
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : null,
     },
-    { enabled: isGitRepo && selectedTurn !== undefined },
+    { enabled: hasGitDiffTarget && selectedTurn !== undefined },
   );
   const primaryBranchDiffPreview = useEnvironmentQuery(
     selectedTurnId === null && activeThread && activeCwd
@@ -274,7 +292,7 @@ export default function DiffPanel({
     setBranchRepoRefreshVersion((version) => version + 1);
   }, [refreshBranchDiffPreview]);
   const canRefreshGitDiff =
-    isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
+    hasGitDiffTarget && selectedTurnId === null && activeThread != null && activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
@@ -321,10 +339,6 @@ export default function DiffPanel({
   // The single-cwd branch/working diff would only show one repo, so for these
   // threads we fan a diff-preview out per repo (see BranchDiffRepoSection) and
   // render every repo grouped, with a repo filter in the header.
-  const threadWorktrees = useMemo(
-    () => (activeThread?.worktrees ?? []).filter((entry) => entry.worktreePath.length > 0),
-    [activeThread?.worktrees],
-  );
   // The repo roots the branch/working diff fans out over, each paired with the
   // cwd to diff it in. Isolated runs create one worktree per repo, so diff those.
   // A non-isolated multi-repo `.code-workspace` has no worktrees and a container
@@ -332,19 +346,6 @@ export default function DiffPanel({
   // directly (mirrors ChatView's per-repo git status). Without this the
   // single-cwd diff below runs `git diff` in the container and reports "no
   // changes" even when the repos have changes.
-  const diffRepoTargets = useMemo(() => {
-    if (threadWorktrees.length > 0) {
-      return threadWorktrees.map((entry) => ({
-        repoRoot: entry.repoRoot,
-        cwd: entry.worktreePath,
-      }));
-    }
-    const repoRoots = activeProject?.repoRoots ?? [];
-    if (repoRoots.length > 1) {
-      return repoRoots.map((repoRoot) => ({ repoRoot, cwd: repoRoot }));
-    }
-    return [];
-  }, [threadWorktrees, activeProject?.repoRoots]);
   const isMultiRepoBranchView = selectedTurnId === null && diffRepoTargets.length > 1;
   // The diff reflects the thread's isolated worktree, not the user's own
   // checkout of the same repo. Showing the worktree path explains why on-disk
@@ -640,6 +641,7 @@ export default function DiffPanel({
             <DiffPanelBaseRefPicker
               headRef={selectedGitSource.headRef}
               baseRef={selectedGitSource.baseRef}
+              selectedBaseRef={selectedBaseRef}
               choices={baseRefChoices}
               query={baseRefQuery}
               setQuery={setBaseRefQuery}
@@ -772,7 +774,7 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : !isGitRepo ? (
+      ) : !hasGitDiffTarget ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
@@ -809,7 +811,7 @@ export default function DiffPanel({
                 openDiffFile={openDiffFile}
                 toggleDiffFileCollapsed={toggleDiffFileCollapsed}
               />
-            ) : !renderablePatch ? (
+            ) : !renderablePatch && !multiRepoDiff.isGroupedDiffView ? (
               isLoadingSelectedPatch ? (
                 <DiffPanelLoadingState
                   label={
@@ -829,23 +831,24 @@ export default function DiffPanel({
                   </p>
                 </div>
               )
-            ) : renderablePatch.kind === "files" ? (
+            ) : multiRepoDiff.isGroupedDiffView || renderablePatch?.kind === "files" ? (
               <div
                 className="min-h-0 flex-1"
                 onClickCapture={(event) => {
                   const composedPath = event.nativeEvent.composedPath?.() ?? [];
                   for (const node of composedPath) {
                     if (!(node instanceof HTMLElement)) continue;
-                    // Grouped checkpoint entries carry their own repository-aware
-                    // open handler. Let it own the click so the outer single-root
-                    // handler cannot open the same path against the primary repo.
-                    if (node.hasAttribute("data-diff-repo-root")) return;
                     // Header controls keep their own actions. In particular, the chevron must
                     // not also trigger the row handler or the two toggles cancel each other.
                     if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
                       return;
                     }
                   }
+                  const header = composedPath.find(
+                    (node): node is HTMLElement =>
+                      node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
+                  );
+                  const repoMarker = header?.querySelector<HTMLElement>("[data-diff-repo-root]");
                   const title = composedPath.find(
                     (node): node is HTMLElement =>
                       node instanceof HTMLElement && node.hasAttribute("data-title"),
@@ -853,15 +856,16 @@ export default function DiffPanel({
                   const filePath = title?.textContent?.trim();
                   // The filename remains the explicit "open in editor" affordance.
                   if (filePath) {
-                    openDiffFile(filePath);
+                    openDiffFile(filePath, repoMarker?.dataset.diffRepoRoot);
                     return;
                   }
-                  const header = composedPath.find(
-                    (node): node is HTMLElement =>
-                      node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
-                  );
                   const headerFilePath = header?.querySelector("[data-title]")?.textContent?.trim();
                   if (!headerFilePath) return;
+                  const encodedCollapseKey = repoMarker?.dataset.diffCollapseKey;
+                  if (encodedCollapseKey) {
+                    toggleDiffFileCollapsed(decodeURIComponent(encodedCollapseKey));
+                    return;
+                  }
                   const file = codeViewFiles.find(
                     (candidate) => candidate.filePath === headerFilePath,
                   );
@@ -877,6 +881,9 @@ export default function DiffPanel({
                     wordWrap={wordWrap}
                     openDiffFile={openDiffFile}
                     toggleDiffFileCollapsed={toggleDiffFileCollapsed}
+                    composerDraftTarget={composerDraftTarget}
+                    sectionId={reviewSectionId}
+                    sectionTitle={reviewSectionTitle}
                   />
                 ) : (
                   <AnnotatableCodeView
@@ -935,7 +942,7 @@ export default function DiffPanel({
                   />
                 )}
               </div>
-            ) : (
+            ) : renderablePatch?.kind === "raw" ? (
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 <div className="space-y-2">
                   <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
@@ -951,7 +958,7 @@ export default function DiffPanel({
                   </pre>
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         </>
       )}

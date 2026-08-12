@@ -1,7 +1,7 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderIcon } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { inferProjectTitleFromPath, resolveProjectPathForDispatch } from "../lib/projectPaths";
 import { filesystemEnvironment } from "../state/filesystem";
@@ -10,6 +10,7 @@ import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
 export interface MultiRepoProjectDraft {
+  readonly token: number;
   readonly environmentId: EnvironmentId;
   readonly roots: ReadonlyArray<string>;
 }
@@ -24,22 +25,29 @@ export function useCommandPaletteMultiRepoDraft(input: {
   const { currentProjectCwd, getInitialQuery, refreshBrowse, resetHighlightedItem, setQuery } =
     input;
   const [draft, setDraft] = useState<MultiRepoProjectDraft | null>(null);
+  const draftTokenRef = useRef(0);
   const scanGitRepos = useAtomQueryRunner(filesystemEnvironment.scanGitRepos, {
     reportFailure: false,
   });
   const startDraft = useCallback((environmentId: EnvironmentId) => {
-    setDraft({ environmentId, roots: [] });
+    draftTokenRef.current += 1;
+    setDraft({ token: draftTokenRef.current, environmentId, roots: [] });
   }, []);
-  const clearDraft = useCallback(() => setDraft(null), []);
+  const clearDraft = useCallback(() => {
+    draftTokenRef.current += 1;
+    setDraft(null);
+  }, []);
   const attachRoot = useCallback(
     async (rawPath: string) => {
       if (!draft) return;
+      const draftToken = draft.token;
       const path = resolveProjectPathForDispatch(rawPath, currentProjectCwd);
       if (!path) return;
       const result = await scanGitRepos({
         environmentId: draft.environmentId,
         input: { parentPath: path },
       });
+      if (draftTokenRef.current !== draftToken) return;
       if (result._tag === "Failure" || !result.value.parentHasGit) {
         const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
         toastManager.add(
@@ -54,7 +62,7 @@ export function useCommandPaletteMultiRepoDraft(input: {
       }
       const normalizedPath = result.value.parentPath;
       setDraft((current) => {
-        if (!current || current.environmentId !== draft.environmentId) return current;
+        if (!current || current.token !== draftToken) return current;
         if (current.roots.includes(normalizedPath)) return current;
         return { ...current, roots: [...current.roots, normalizedPath] };
       });
@@ -84,6 +92,7 @@ export function useCommandPaletteMultiRepoDraft(input: {
 
 export function MultiRepoDraftFooter(props: {
   readonly selectedCount: number;
+  readonly isCreating: boolean;
   readonly createProject: () => void;
 }) {
   return (
@@ -92,10 +101,10 @@ export function MultiRepoDraftFooter(props: {
       <Button
         variant="outline"
         size="xs"
-        disabled={props.selectedCount < 2}
+        disabled={props.selectedCount < 2 || props.isCreating}
         onClick={props.createProject}
       >
-        Create project
+        {props.isCreating ? "Creating…" : "Create project"}
       </Button>
     </div>
   );

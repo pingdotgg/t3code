@@ -12,19 +12,22 @@ import {
 } from "./ui/combobox";
 import { Switch } from "./ui/switch";
 
-const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
+// Consecutive slashes are forbidden in Git ref names, so this cannot collide
+// with a real branch returned by the server.
+const AUTOMATIC_BASE_REF = "refs//t3-automatic-base";
 
 export function DiffPanelBaseRefPicker(props: {
   readonly headRef: string | null | undefined;
   readonly baseRef: string;
+  readonly selectedBaseRef: string | null;
   readonly choices: ReadonlyArray<BaseRefChoice>;
   readonly query: string;
   readonly setQuery: (query: string) => void;
   readonly selectBaseRef: (baseRef: string | null) => void;
 }) {
   const valueForChoice = (choice: BaseRefChoice) =>
-    props.baseRef === choice.remote?.name
-      ? props.baseRef
+    props.selectedBaseRef === choice.remote?.name
+      ? props.selectedBaseRef
       : (choice.local?.name ?? choice.remote?.name ?? choice.id);
   const items = [AUTOMATIC_BASE_REF, ...props.choices.map(valueForChoice)];
   const filteredItems = [
@@ -44,7 +47,7 @@ export function DiffPanelBaseRefPicker(props: {
       <Combobox
         items={items}
         filteredItems={filteredItems}
-        value={props.baseRef}
+        value={props.selectedBaseRef ?? AUTOMATIC_BASE_REF}
         onOpenChange={(open) => {
           if (!open) props.setQuery("");
         }}

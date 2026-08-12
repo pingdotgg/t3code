@@ -3,7 +3,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -11,6 +11,7 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 
 export function useOpenWorkspaceFile(input: {
   readonly environmentId: EnvironmentId | null;
+  readonly flowKey: string;
   readonly addProject: (
     workspaceRoot: string,
     options: {
@@ -20,17 +21,26 @@ export function useOpenWorkspaceFile(input: {
     },
   ) => Promise<void>;
 }) {
-  const { addProject, environmentId } = input;
+  const { addProject, environmentId, flowKey } = input;
+  const generationRef = useRef(0);
+  useLayoutEffect(() => {
+    generationRef.current += 1;
+    return () => {
+      generationRef.current += 1;
+    };
+  }, [flowKey]);
   const readWorkspaceFile = useAtomQueryRunner(filesystemEnvironment.readWorkspaceFile, {
     reportFailure: false,
   });
   return useCallback(
     async (workspaceFilePath: string) => {
       if (!environmentId) return;
+      const generation = generationRef.current;
       const readResult = await readWorkspaceFile({
         environmentId,
         input: { workspaceFilePath },
       });
+      if (generationRef.current !== generation) return;
       if (readResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(readResult)) {
           const error = squashAtomCommandFailure(readResult);

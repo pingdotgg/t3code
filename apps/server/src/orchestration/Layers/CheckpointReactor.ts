@@ -21,6 +21,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
+import { publishCheckpointTerminalReceipts } from "../../checkpointing/CheckpointReceipts.ts";
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import {
@@ -195,9 +196,6 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // Shared tail for both capture paths: creates the git checkpoint ref, diffs
-  // it against the previous turn, then dispatches the domain events to update
-  // the orchestration read model.
   const captureAndDispatchCheckpoint = Effect.fn("captureAndDispatchCheckpoint")(function* (input: {
     readonly threadId: ThreadId;
     readonly turnId: TurnId;
@@ -218,9 +216,6 @@ const make = Effect.gen(function* () {
     const fromCheckpointRef = checkpointRefForThreadTurn(input.threadId, fromTurnCount);
     const targetCheckpointRef = checkpointRefForThreadTurn(input.threadId, input.turnCount);
 
-    // Capture + diff every repo root (multi-repo). Best-effort per root: a repo
-    // that fails to capture is logged and excluded rather than aborting the
-    // whole checkpoint. Results preserve `roots` order regardless of concurrency.
     const captureOneRoot = Effect.fn("captureOneRoot")(function* (root: string) {
       const fromCheckpointExists = yield* checkpointStore.hasCheckpointRef({
         cwd: root,
@@ -304,6 +299,20 @@ const make = Effect.gen(function* () {
         turnId: input.turnId,
         turnCount: input.turnCount,
       });
+      yield* appendCaptureFailureActivity({
+        threadId: input.threadId,
+        turnId: input.turnId,
+        detail: "Checkpoint capture failed in every repository.",
+        createdAt: input.createdAt,
+      }).pipe(Effect.catch(() => Effect.void));
+      yield* publishCheckpointTerminalReceipts(receiptBus, {
+        threadId: input.threadId,
+        turnId: input.turnId,
+        checkpointTurnCount: input.turnCount,
+        checkpointRef: targetCheckpointRef,
+        status: "error",
+        createdAt: input.createdAt,
+      });
       return;
     }
 
@@ -334,20 +343,12 @@ const make = Effect.gen(function* () {
       checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
     });
-    yield* receiptBus.publish({
-      type: "checkpoint.diff.finalized",
+    yield* publishCheckpointTerminalReceipts(receiptBus, {
       threadId: input.threadId,
       turnId: input.turnId,
       checkpointTurnCount: input.turnCount,
       checkpointRef: targetCheckpointRef,
       status: input.status,
-      createdAt: input.createdAt,
-    });
-    yield* receiptBus.publish({
-      type: "turn.processing.quiesced",
-      threadId: input.threadId,
-      turnId: input.turnId,
-      checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
     });
 

@@ -78,6 +78,8 @@ interface AnnotatableCodeViewProps {
     filePath: string;
     fileKey: string;
     collapsed: boolean;
+    sectionId?: string;
+    sectionTitle?: string;
   }>;
   sectionId: string;
   sectionTitle: string;
@@ -90,6 +92,7 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
+  renderCodeViewFooter?: () => ReactNode;
 }
 
 interface DiffSelectionContext {
@@ -106,6 +109,7 @@ export function AnnotatableCodeView({
   viewerRef,
   className,
   renderHeaderPrefix,
+  renderCodeViewFooter,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -125,11 +129,13 @@ export function AnnotatableCodeView({
   const filesByKey = useMemo(() => new Map(files.map((file) => [file.fileKey, file])), [files]);
   const items = useMemo<CodeViewDiffItem<DiffCommentAnnotationGroup>[]>(
     () =>
-      files.map(({ fileDiff, filePath, fileKey, collapsed }) => {
+      files.map((file) => {
+        const { fileDiff, filePath, fileKey, collapsed } = file;
+        const fileSectionId = file.sectionId ?? sectionId;
         const persisted = reviewComments
           .filter(
             (comment) =>
-              comment.sectionId === sectionId &&
+              comment.sectionId === fileSectionId &&
               comment.filePath === filePath &&
               (comment.fenceLanguage ?? "diff") === "diff",
           )
@@ -188,8 +194,8 @@ export function AnnotatableCodeView({
       if (!entry || !file) return;
       const comment = buildDiffReviewComment({
         id: entry.id,
-        sectionId,
-        sectionTitle,
+        sectionId: file.sectionId ?? sectionId,
+        sectionTitle: file.sectionTitle ?? sectionTitle,
         filePath: file.filePath,
         fileDiff: file.fileDiff,
         range: entry.range,
@@ -213,8 +219,8 @@ export function AnnotatableCodeView({
       const id = nextFileCommentId();
       const comment = buildDiffReviewComment({
         id,
-        sectionId,
-        sectionTitle,
+        sectionId: file.sectionId ?? sectionId,
+        sectionTitle: file.sectionTitle ?? sectionTitle,
         filePath: file.filePath,
         fileDiff: file.fileDiff,
         range,
@@ -256,6 +262,7 @@ export function AnnotatableCodeView({
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
           : null
       }
+      {...(renderCodeViewFooter ? { renderCodeViewFooter } : {})}
       renderAnnotation={(annotation) => {
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (

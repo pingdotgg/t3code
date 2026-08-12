@@ -650,6 +650,8 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const [isCreatingMultiRepoProject, setIsCreatingMultiRepoProject] = useState(false);
+  const isCreatingMultiRepoProjectRef = useRef(false);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -1858,23 +1860,34 @@ function OpenCommandPaletteDialog(props: {
   );
   const openWorkspaceFile = useOpenWorkspaceFile({
     environmentId: browseEnvironmentId,
+    flowKey: `${viewStack.length}:${browseGeneration}:${browseEnvironmentId ?? ""}`,
     addProject: handleAddProject,
   });
 
   const createMultiRepoProject = useCallback(async () => {
-    if (!multiRepoDraft || multiRepoDraft.roots.length < 2) return;
-    const environment = environments.find(
-      (candidate) => candidate.environmentId === multiRepoDraft.environmentId,
-    );
-    await handleAddProjectForEnvironment(
-      {
-        environmentId: multiRepoDraft.environmentId,
-        rawCwd: multiRepoDraft.roots[0]!,
-        platform: getEnvironmentBrowsePlatform(environment?.serverConfig?.environment.platform.os),
-        currentProjectCwd: getBrowseCwdForEnvironment(multiRepoDraft.environmentId),
-      },
-      { repoRoots: multiRepoDraft.roots },
-    );
+    if (!multiRepoDraft || multiRepoDraft.roots.length < 2 || isCreatingMultiRepoProjectRef.current)
+      return;
+    isCreatingMultiRepoProjectRef.current = true;
+    setIsCreatingMultiRepoProject(true);
+    try {
+      const environment = environments.find(
+        (candidate) => candidate.environmentId === multiRepoDraft.environmentId,
+      );
+      await handleAddProjectForEnvironment(
+        {
+          environmentId: multiRepoDraft.environmentId,
+          rawCwd: multiRepoDraft.roots[0]!,
+          platform: getEnvironmentBrowsePlatform(
+            environment?.serverConfig?.environment.platform.os,
+          ),
+          currentProjectCwd: getBrowseCwdForEnvironment(multiRepoDraft.environmentId),
+        },
+        { repoRoots: multiRepoDraft.roots },
+      );
+    } finally {
+      isCreatingMultiRepoProjectRef.current = false;
+      setIsCreatingMultiRepoProject(false);
+    }
   }, [environments, getBrowseCwdForEnvironment, handleAddProjectForEnvironment, multiRepoDraft]);
 
   function getDefaultCloneParentPath(environmentId: EnvironmentId): string {
@@ -2476,6 +2489,7 @@ function OpenCommandPaletteDialog(props: {
   const footerTrailing = multiRepoDraft ? (
     <MultiRepoDraftFooter
       selectedCount={multiRepoDraft.roots.length}
+      isCreating={isCreatingMultiRepoProject}
       createProject={() => void createMultiRepoProject()}
     />
   ) : (isBrowsing && !relativePathNeedsActiveProject) || canOpenProjectFromFileManager ? (

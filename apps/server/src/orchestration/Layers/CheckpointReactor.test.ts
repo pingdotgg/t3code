@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -41,7 +42,7 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
-import { RuntimeReceiptBusLive } from "./RuntimeReceiptBus.ts";
+import { RuntimeReceiptBusTest } from "./RuntimeReceiptBus.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -51,6 +52,7 @@ import {
 } from "../Services/OrchestrationEngine.ts";
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -251,7 +253,8 @@ describe("CheckpointReactor", () => {
     | OrchestrationEngineService
     | CheckpointReactor
     | CheckpointStore.CheckpointStore
-    | ProjectionSnapshotQuery,
+    | ProjectionSnapshotQuery
+    | RuntimeReceiptBus,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -339,7 +342,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
-      Layer.provideMerge(RuntimeReceiptBusLive),
+      Layer.provideMerge(RuntimeReceiptBusTest),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer))),
@@ -362,10 +365,19 @@ describe("CheckpointReactor", () => {
     const checkpointStore = await runtime.runPromise(
       Effect.service(CheckpointStore.CheckpointStore),
     );
+    const receiptBus = await runtime.runPromise(Effect.service(RuntimeReceiptBus));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const runEffect = Effect.runPromise;
     const drain = () => runEffect(reactor.drain);
+    const waitForReceipt = (type: "checkpoint.diff.finalized" | "turn.processing.quiesced") =>
+      runEffect(
+        receiptBus.streamEventsForTest.pipe(
+          Stream.filter((receipt) => receipt.type === type),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        ),
+      );
     const dispatch = (command: Parameters<typeof engine.dispatch>[0]) =>
       runEffect(engine.dispatch(command));
 
@@ -464,6 +476,7 @@ describe("CheckpointReactor", () => {
       dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
+      waitForReceipt,
       captureCheckpoint: (input: Parameters<typeof checkpointStore.captureCheckpoint>[0]) =>
         runEffect(checkpointStore.captureCheckpoint(input)),
       cwd,
@@ -824,6 +837,43 @@ describe("CheckpointReactor", () => {
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
     expect(
       thread.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+    ).toBe(true);
+  });
+
+  it("publishes terminal receipts when every checkpoint root fails to capture", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, ".git", "refs", "t3"), "blocked\n", "utf8");
+
+    const finalizedPromise = harness.waitForReceipt("checkpoint.diff.finalized");
+    const quiescedPromise = harness.waitForReceipt("turn.processing.quiesced");
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-all-roots-failed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-all-roots-failed"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+    const finalized = await finalizedPromise;
+    const quiesced = await quiescedPromise;
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+
+    expect(finalized).toMatchObject({
+      type: "checkpoint.diff.finalized",
+      turnId: "turn-all-roots-failed",
+      status: "error",
+    });
+    expect(quiesced).toMatchObject({
+      type: "turn.processing.quiesced",
+      turnId: "turn-all-roots-failed",
+    });
+    expect(
+      thread?.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
     ).toBe(true);
   });
 

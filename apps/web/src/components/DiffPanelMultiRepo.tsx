@@ -1,6 +1,6 @@
-import { FileDiff, Virtualizer } from "@pierre/diffs/react";
+import { FileDiff } from "@pierre/diffs/react";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
-import type { EnvironmentId, ThreadTurnDiffGroup } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadTurnDiffGroup } from "@t3tools/contracts";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FolderGit2Icon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -20,6 +20,8 @@ import {
 import { reviewEnvironment } from "../state/review";
 import { useEnvironmentQuery } from "../state/query";
 import { cn } from "../lib/utils";
+import type { DraftId } from "../composerDraftStore";
+import { AnnotatableCodeView } from "./diffs/AnnotatableCodeView";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +41,7 @@ interface RenderableDiffGroup {
   readonly repoRoot: string;
   readonly displayName: string;
   readonly files: ReadonlyArray<FileDiffMetadata>;
+  readonly raw: { readonly reason: string; readonly text: string } | null;
 }
 
 interface RepoFileDiffProps {
@@ -90,9 +93,17 @@ export function useMultiRepoDiffState(input: {
                 }),
               )
             : [];
-        return { repoRoot: group.repoRoot, displayName: group.displayName, files };
+        return {
+          repoRoot: group.repoRoot,
+          displayName: group.displayName,
+          files,
+          raw:
+            renderable?.kind === "raw"
+              ? { reason: renderable.reason, text: renderable.text }
+              : null,
+        };
       })
-      .filter((group) => group.files.length > 0);
+      .filter((group) => group.files.length > 0 || group.raw !== null);
   }, [input.checkpointGroups, input.resolvedTheme]);
   const isGroupedDiffView = shouldUseGroupedCheckpointDiff(
     input.checkpointGroups?.length ?? 0,
@@ -381,33 +392,127 @@ export function MultiRepoBranchDiff(
 export function MultiRepoCheckpointDiff(
   props: RepoDiffPresentationProps & {
     readonly groups: ReadonlyArray<RenderableDiffGroup>;
+    readonly composerDraftTarget: ScopedThreadRef | DraftId;
+    readonly sectionId: string;
+    readonly sectionTitle: string;
   },
 ) {
+  const groupByFileKey = useMemo(
+    () =>
+      new Map(
+        props.groups.flatMap((group) =>
+          group.files.map(
+            (fileDiff) =>
+              [scopedDiffFileKey(buildFileDiffRenderKey(fileDiff), group.repoRoot), group] as const,
+          ),
+        ),
+      ),
+    [props.groups],
+  );
+  const files = useMemo(
+    () =>
+      props.groups.flatMap((group) =>
+        group.files.map((fileDiff) => {
+          const fileKey = scopedDiffFileKey(buildFileDiffRenderKey(fileDiff), group.repoRoot);
+          return {
+            fileDiff,
+            filePath: resolveFileDiffPath(fileDiff),
+            fileKey,
+            collapsed: props.collapsedDiffFileKeys.has(fileKey),
+            sectionId: `${props.sectionId}:repo:${group.repoRoot}`,
+            sectionTitle: `${props.sectionTitle} · ${group.displayName}`,
+          };
+        }),
+      ),
+    [props.collapsedDiffFileKeys, props.groups, props.sectionId, props.sectionTitle],
+  );
+  const rawGroups = props.groups.filter((group) => group.raw !== null);
   return (
-    <Virtualizer
-      className="diff-render-surface h-full min-h-0 overflow-auto"
-      config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
-    >
-      {props.groups.flatMap((group) => [
-        <div
-          key={`diff-group:${group.repoRoot}`}
-          className="diff-render-group-header sticky top-0 z-10 mt-2 mb-1 flex items-center gap-2 rounded-md bg-background/95 px-2 py-1 text-xs font-medium text-muted-foreground backdrop-blur first:mt-0"
-          title={group.repoRoot}
-        >
-          <span className="truncate text-foreground/90">{group.displayName}</span>
-          <span className="text-muted-foreground/70">
-            {group.files.length} {group.files.length === 1 ? "file" : "files"}
+    <AnnotatableCodeView
+      codeViewKey={`${props.sectionId}:${props.groups.map((group) => group.repoRoot).join("\0")}`}
+      className="h-full min-h-0 overflow-auto"
+      files={files}
+      sectionId={props.sectionId}
+      sectionTitle={props.sectionTitle}
+      composerDraftTarget={props.composerDraftTarget}
+      options={{
+        diffStyle: props.diffRenderMode === "split" ? "split" : "unified",
+        lineDiffType: "none",
+        overflow: props.wordWrap ? "wrap" : "scroll",
+        theme: resolveDiffThemeName(props.resolvedTheme as DiffThemeType),
+        themeType: props.resolvedTheme as DiffThemeType,
+        stickyHeaders: true,
+      }}
+      renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
+        const group = groupByFileKey.get(fileKey);
+        if (!group) return null;
+        const filePath = resolveFileDiffPath(fileDiff);
+        return (
+          <span
+            className="inline-flex items-center gap-1.5"
+            data-diff-file-path={filePath}
+            data-diff-repo-root={group.repoRoot}
+            data-diff-collapse-key={encodeURIComponent(fileKey)}
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className={cn(
+                      "-ms-0.5 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                      getDiffCollapseIconClassName(fileDiff),
+                    )}
+                    aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
+                    aria-expanded={!collapsed}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.toggleDiffFileCollapsed(fileKey);
+                    }}
+                  />
+                }
+              >
+                {collapsed ? (
+                  <ChevronRightIcon className="size-4" />
+                ) : (
+                  <ChevronDownIcon className="size-4" />
+                )}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{collapsed ? "Expand diff" : "Collapse diff"}</TooltipPopup>
+            </Tooltip>
+            <span className="max-w-32 truncate text-[10px] text-muted-foreground/80">
+              {group.displayName}
+            </span>
           </span>
-        </div>,
-        ...group.files.map((fileDiff) => (
-          <RepoFileDiff
-            key={`${group.repoRoot}:${buildFileDiffRenderKey(fileDiff)}`}
-            {...props}
-            fileDiff={fileDiff}
-            repoRoot={group.repoRoot}
-          />
-        )),
-      ])}
-    </Virtualizer>
+        );
+      }}
+      {...(rawGroups.length > 0
+        ? {
+            renderCodeViewFooter: () => (
+              <div className="space-y-3 p-2">
+                {rawGroups.map((group) => (
+                  <div key={group.repoRoot}>
+                    <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                      <span className="truncate text-foreground/90">{group.displayName}</span>
+                      <span className="text-muted-foreground/70">raw patch</span>
+                    </div>
+                    <p className="mb-1 text-[11px] text-muted-foreground/75">{group.raw?.reason}</p>
+                    <pre
+                      className={cn(
+                        "rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
+                        props.wordWrap
+                          ? "overflow-auto whitespace-pre-wrap wrap-break-word"
+                          : "overflow-auto",
+                      )}
+                    >
+                      {group.raw?.text}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            ),
+          }
+        : {})}
+    />
   );
 }
