@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   findProjectForChangeRequest,
+  isModifiedClick,
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
@@ -132,6 +133,26 @@ describe("parseChangeRequestUrl", () => {
       "not a url",
     ]) {
       expect(parseChangeRequestUrl(link), link).toBeNull();
+    }
+  });
+});
+
+describe("isModifiedClick", () => {
+  const plain = { button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false };
+
+  it("leaves a plain primary click to the page", () => {
+    expect(isModifiedClick(plain)).toBe(false);
+  });
+
+  it("hands any modified or non-primary click to the browser", () => {
+    for (const click of [
+      { ...plain, metaKey: true },
+      { ...plain, ctrlKey: true },
+      { ...plain, shiftKey: true },
+      { ...plain, altKey: true },
+      { ...plain, button: 1 },
+    ]) {
+      expect(isModifiedClick(click), JSON.stringify(click)).toBe(true);
     }
   });
 });

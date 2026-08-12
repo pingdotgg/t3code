@@ -160,9 +160,21 @@ export function findProjectForChangeRequest(
 }
 
 /**
+ * A click whose modifiers spell out a browser destination — cmd/ctrl for a new tab, shift for a
+ * window, alt to download — or that is not the primary button at all. The reader said where the
+ * link should open, so the page never claims it.
+ */
+export function isModifiedClick(
+  event: Pick<MouseEvent<HTMLElement>, "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">,
+): boolean {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
+
+/**
  * Opens a change request link on the page, and says whether it did. Anything else — another
  * organisation's repository, a host nothing here is checked out from, a link that merely looks
- * like one — is left alone for the caller to handle as the ordinary link it is.
+ * like one, a cmd/ctrl/shift/alt-modified click — is left alone for the caller to handle as the
+ * ordinary link it is.
  *
  * Resolving the project here rather than on the page is what makes recognising a URL safe: a
  * lookalike hostname matches no project and stays a link, and the page is handed the project
@@ -176,7 +188,10 @@ export function findProjectForChangeRequest(
 export function useOpenChangeRequestLink(
   threadRef?: ScopedThreadRef,
 ): (
-  event: Pick<MouseEvent<HTMLElement>, "preventDefault" | "stopPropagation">,
+  event: Pick<
+    MouseEvent<HTMLElement>,
+    "preventDefault" | "stopPropagation" | "button" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey"
+  >,
   targetUrl: string,
   targetThreadRef?: ScopedThreadRef,
 ) => boolean {
@@ -186,6 +201,9 @@ export function useOpenChangeRequestLink(
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useCallback(
     (event, targetUrl, targetThreadRef) => {
+      // A modified click already names its destination, so it stays a link: a markdown anchor's
+      // own target opens the tab, and `useOpenPrLink` falls through to the system browser.
+      if (isModifiedClick(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const environmentId = resolvedThreadRef?.environmentId ?? primaryEnvironmentId;
       if (
