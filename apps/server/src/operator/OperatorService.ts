@@ -176,6 +176,16 @@ function isSettled(status: OperatorTaskStatus["status"]): boolean {
   );
 }
 
+function canStillSettle(shell: OrchestrationThreadShell): boolean {
+  return (
+    shell.latestUserMessageAt !== null ||
+    shell.latestTurn !== null ||
+    shell.session !== null ||
+    shell.hasPendingApprovals ||
+    shell.hasPendingUserInput
+  );
+}
+
 const CHILD_TASK_INSTRUCTIONS = `
 
 <operator-task>
@@ -479,8 +489,9 @@ export class OperatorService extends Context.Service<
         }
 
         if (
-          coordinator.operatorWorkspacePath !== workspacePath ||
-          coordinator.operatorWorkspaceBranch !== branch
+          input.workspaceMode !== "current" &&
+          (coordinator.operatorWorkspacePath !== workspacePath ||
+            coordinator.operatorWorkspaceBranch !== branch)
         ) {
           yield* engine
             .dispatch({
@@ -559,7 +570,7 @@ export class OperatorService extends Context.Service<
           }
         }
 
-        yield* Effect.forEach(
+        const startOutcomes = yield* Effect.forEach(
           pendingTasks,
           ({ task, taskId }) =>
             Effect.gen(function* () {
@@ -579,6 +590,7 @@ export class OperatorService extends Context.Service<
                 interactionMode: "default",
                 createdAt: turnCreatedAt,
               });
+              return { _tag: "Started" as const, taskId };
             }).pipe(
               Effect.mapError((error) =>
                 isOperatorError(error)
@@ -589,14 +601,50 @@ export class OperatorService extends Context.Service<
                       detail: errorDetail(error),
                     }),
               ),
+              Effect.catch((error) =>
+                nowIso.pipe(
+                  Effect.map((failedAt) => ({
+                    _tag: "Failed" as const,
+                    taskId,
+                    title: task.title,
+                    error,
+                    failedAt,
+                  })),
+                ),
+              ),
             ),
-          { concurrency: "unbounded", discard: true },
+          { concurrency: "unbounded" },
         );
 
-        const tasks = yield* readStatuses(
+        const failedStarts = startOutcomes.filter((outcome) => outcome._tag === "Failed");
+        if (startOutcomes.length > 0 && failedStarts.length === startOutcomes.length) {
+          return yield* new OperatorError({
+            operation: "start-task",
+            reason: "dispatch-failed",
+            detail: `Every Operator task failed to start: ${failedStarts
+              .map((outcome) => `${outcome.title}: ${outcome.error.detail}`)
+              .join("; ")}`,
+          });
+        }
+
+        const statuses = yield* readStatuses(
           coordinator.id,
           pendingTasks.map(({ taskId }) => taskId),
         );
+        const failedStartByTaskId = new Map(
+          failedStarts.map((outcome) => [outcome.taskId, outcome] as const),
+        );
+        const tasks = statuses.map((task) => {
+          const failure = failedStartByTaskId.get(task.taskId);
+          return failure === undefined
+            ? task
+            : {
+                ...task,
+                status: "failed" as const,
+                completedAt: failure.failedAt,
+                error: failure.error.detail,
+              };
+        });
         return { batchId, workspacePath, branch, tasks };
       });
 
@@ -635,7 +683,10 @@ export class OperatorService extends Context.Service<
         taskIds?: ReadonlyArray<ThreadId>,
       ) {
         const selectedIds =
-          taskIds ?? (yield* getOwnedShells(coordinatorThreadId)).map((t) => t.id);
+          taskIds ??
+          (yield* getOwnedShells(coordinatorThreadId))
+            .filter(canStillSettle)
+            .map((task) => task.id);
         if (selectedIds.length === 0) {
           return [];
         }

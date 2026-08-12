@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
@@ -173,6 +174,9 @@ interface HarnessOptions {
   readonly streamDomainEvents?: Stream.Stream<OrchestrationEvent>;
   readonly onCreateWorktree?: GitWorkflowService["Service"]["createWorktree"];
   readonly onRunSetupScript?: ProjectSetupScriptRunner["Service"]["runForThread"];
+  readonly dispatchFailure?: (
+    command: OrchestrationCommand,
+  ) => OrchestrationCommandInvariantError | null;
   readonly onDispatch?: (command: OrchestrationCommand) => void;
 }
 
@@ -186,8 +190,10 @@ function makeHarness(options: HarnessOptions = {}) {
   }
   let sequence = 0;
 
-  const dispatch = (command: OrchestrationCommand) =>
-    Effect.sync(() => {
+  const dispatch: OrchestrationEngineService["Service"]["dispatch"] = (command) => {
+    const failure = options.dispatchFailure?.(command) ?? null;
+    if (failure !== null) return Effect.fail(failure);
+    return Effect.sync(() => {
       commands.push(command);
       options.onDispatch?.(command);
       sequence += 1;
@@ -256,6 +262,7 @@ function makeHarness(options: HarnessOptions = {}) {
       }
       return { sequence };
     });
+  };
 
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
@@ -418,6 +425,44 @@ describe("OperatorService", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("does not replace the remembered Operator workspace when using current", () => {
+    const harness = makeHarness({
+      coordinator: thread(coordinatorId, {
+        operatorWorkspacePath: "/worktrees/remembered",
+        operatorWorkspaceBranch: "feat/remembered",
+      }),
+    });
+    const task = {
+      title: "Implementation",
+      prompt: "Implement the feature.",
+      modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+    } as const;
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const current = yield* operator.spawn({
+        coordinatorThreadId: coordinatorId,
+        workspaceMode: "current",
+        tasks: [task],
+      });
+      const remembered = yield* operator.spawn({
+        coordinatorThreadId: coordinatorId,
+        workspaceMode: "operator",
+        tasks: [task],
+      });
+
+      assert.equal(current.workspacePath, "/worktrees/operator");
+      assert.equal(remembered.workspacePath, "/worktrees/remembered");
+      assert.equal(remembered.branch, "feat/remembered");
+      assert.equal(
+        harness.commands.filter(
+          (command) =>
+            command.type === "thread.meta.update" && command.operatorWorkspacePath !== undefined,
+        ).length,
+        0,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("creates a Claude sidebar task from a Codex coordinator without substitution", () => {
     const harness = makeHarness({ providers: [codexProvider, claudeProvider] });
     return Effect.gen(function* () {
@@ -446,6 +491,88 @@ describe("OperatorService", () => {
         options: [{ id: "effort", value: "high" }],
       });
       assert.deepStrictEqual(start?.modelSelection, create?.modelSelection);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("returns successful task IDs when another task fails to start", () => {
+    const harness = makeHarness({
+      dispatchFailure: (command) =>
+        command.type === "thread.turn.start" && command.message.text.startsWith("Build backend")
+          ? new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "Backend start failed.",
+            })
+          : null,
+    });
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const result = yield* operator.spawn({
+        coordinatorThreadId: coordinatorId,
+        workspaceMode: "current",
+        tasks: [
+          {
+            title: "Frontend",
+            prompt: "Build frontend.",
+            modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+          },
+          {
+            title: "Backend",
+            prompt: "Build backend.",
+            modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+          },
+        ],
+      });
+
+      assert.deepStrictEqual(
+        result.tasks.map((task) => ({ title: task.title, status: task.status })),
+        [
+          { title: "Frontend", status: "running" },
+          { title: "Backend", status: "failed" },
+        ],
+      );
+      assert.match(result.tasks[1]?.error ?? "", /Backend start failed/i);
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.turn.start").length,
+        1,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("fails the spawn only when every task fails to start", () => {
+    const harness = makeHarness({
+      dispatchFailure: (command) =>
+        command.type === "thread.turn.start"
+          ? new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "Provider start failed.",
+            })
+          : null,
+    });
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const error = yield* operator
+        .spawn({
+          coordinatorThreadId: coordinatorId,
+          workspaceMode: "current",
+          tasks: [
+            {
+              title: "Frontend",
+              prompt: "Build frontend.",
+              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+            },
+            {
+              title: "Backend",
+              prompt: "Build backend.",
+              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.operation, "start-task");
+      assert.match(error.detail, /Every Operator task failed to start/);
+      assert.match(error.detail, /Frontend/);
+      assert.match(error.detail, /Backend/);
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -595,6 +722,47 @@ describe("OperatorService", () => {
           error: null,
         },
       ]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("omits never-started tasks from an unscoped wait", () => {
+    const abandonedId = ThreadId.make("operator-task-abandoned");
+    const completedId = ThreadId.make("operator-task-completed");
+    const completedTurnId = TurnId.make("operator-turn-completed");
+    const harness = makeHarness({
+      children: [
+        thread(abandonedId, {
+          title: "Abandoned",
+          operatorParentThreadId: coordinatorId,
+          operatorBatchId: "batch-1",
+        }),
+        thread(completedId, {
+          title: "Completed",
+          operatorParentThreadId: coordinatorId,
+          operatorBatchId: "batch-1",
+          latestTurn: {
+            turnId: completedTurnId,
+            state: "completed",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            assistantMessageId: null,
+          },
+        }),
+      ],
+    });
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const tasks = yield* operator.wait(coordinatorId);
+
+      assert.deepStrictEqual(
+        tasks.map((task) => task.taskId),
+        [completedId],
+      );
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.meta.update").length,
+        0,
+      );
     }).pipe(Effect.provide(harness.layer));
   });
 });
