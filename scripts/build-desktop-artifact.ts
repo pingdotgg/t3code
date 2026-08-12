@@ -1408,15 +1408,23 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
     // and the bun adapters are only covered by the unpack globs and the
     // inlined-native check below.
     yield* runCommand(
-      ChildProcess.make(process.execPath, [entryPoint, "--version"], {
-        cwd: probeApp,
-        stdout: "pipe",
-        stderr: "pipe",
-        // NODE_PATH would let a createRequire call inside the bundle resolve a
-        // missing external from outside the packaged tree, which is the whole
-        // thing this is trying to rule out.
-        env: { ...process.env, NODE_PATH: "" },
-      }),
+      ChildProcess.make(
+        process.execPath,
+        // --no-global-search-paths because clearing NODE_PATH is not enough:
+        // CommonJS resolution still falls back to $HOME/.node_modules,
+        // $HOME/.node_libraries and the install prefix, so a globally installed
+        // copy of a missing dependency would quietly satisfy this check.
+        ["--no-global-search-paths", entryPoint, "--version"],
+        {
+          cwd: probeApp,
+          stdout: "pipe",
+          stderr: "pipe",
+          // NODE_PATH would let a createRequire call inside the bundle resolve
+          // a missing external from outside the packaged tree, which is the
+          // whole thing this is trying to rule out.
+          env: { ...process.env, NODE_PATH: "" },
+        },
+      ),
       { label: "bundle self-containment check (node bin.mjs --version)", verbose: input.verbose },
     ).pipe(
       // Printing a version should be immediate. A regression that blocks (on
