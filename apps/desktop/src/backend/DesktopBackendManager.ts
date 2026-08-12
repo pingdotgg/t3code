@@ -890,8 +890,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           );
         });
 
-        const runStartedAt = yield* Clock.currentTimeMillis;
-        const elapsedMs = Clock.currentTimeMillis.pipe(Effect.map((now) => now - runStartedAt));
+        const runStartedAt = yield* Clock.currentTimeNanos;
+        const elapsedMs = Clock.currentTimeNanos.pipe(
+          Effect.map((now) => Duration.toMillis(Duration.nanos(now - runStartedAt))),
+        );
 
         const program = runBackendProcess({
           ...config.value,
