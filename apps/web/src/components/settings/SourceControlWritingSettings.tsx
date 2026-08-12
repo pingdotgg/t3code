@@ -1,11 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useRef } from "react";
-import type { SourceControlWritingStyleMode } from "@t3tools/contracts";
+import type { EnvironmentId, SourceControlWritingStyleMode } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -15,7 +15,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { primaryServerProvidersAtom } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -40,10 +40,17 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
     },
   };
 
-export function SourceControlWritingSettingsSection() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+export function SourceControlWritingSettingsSection({
+  environmentId,
+  readOnly = false,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly readOnly?: boolean;
+}) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const serverProviders =
+    useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const style = settings.sourceControlWritingStyle;
   const defaults = DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
@@ -71,7 +78,12 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection title="Text generation">
+    <SettingsSection
+      title="Text generation"
+      inert={readOnly}
+      aria-disabled={readOnly || undefined}
+      className={readOnly ? "opacity-50 select-none" : undefined}
+    >
       <SettingsRow
         title="Source control writing style"
         description={MODE_OPTIONS[style.mode].description}

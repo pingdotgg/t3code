@@ -22,22 +22,12 @@ import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
-import {
-  CloudIcon,
-  LaptopIcon,
-  LoaderIcon,
-  MonitorIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  TerminalIcon,
-} from "lucide-react";
+import { LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 
-import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
-import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
 import {
   useEnvironments,
@@ -48,11 +38,6 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getRelativeTimeState } from "../../timestampFormat";
-import {
-  ConnectionStatusDot,
-  connectionPhaseDotClassName,
-  connectionPhasePingClassName,
-} from "../ConnectionStatusDot";
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
@@ -89,6 +74,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { SettingsEnvironmentSelector } from "./SettingsEnvironmentSelector";
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
@@ -145,22 +131,6 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   );
 }
 
-function providerEnvironmentIcon(environment: EnvironmentPresentation) {
-  if (environment.entry.target._tag === "PrimaryConnectionTarget") return MonitorIcon;
-  if (environment.entry.target._tag === "RelayConnectionTarget") return CloudIcon;
-  if (environment.entry.target._tag === "SshConnectionTarget") return TerminalIcon;
-  if (isDesktopLocalConnectionTarget(environment.entry.target)) return LaptopIcon;
-  return CloudIcon;
-}
-
-function providerEnvironmentDetail(environment: EnvironmentPresentation): string {
-  if (environment.entry.target._tag === "PrimaryConnectionTarget") return "Primary device";
-  if (environment.relayManaged) return "T3 Connect";
-  if (environment.entry.target._tag === "SshConnectionTarget") return "SSH";
-  if (isDesktopLocalConnectionTarget(environment.entry.target)) return "Local device";
-  return environment.displayUrl ?? "Remote device";
-}
-
 function EnvironmentUnavailableRow({
   environment,
   access,
@@ -208,68 +178,16 @@ export function ProviderSettingsPanel() {
   );
   const selectedEnvironment =
     options.find((environment) => environment.environmentId === effectiveEnvironmentId) ?? null;
-  const onlyPrimaryDevice =
-    options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
 
   return (
     <SettingsPageContainer>
-      {!onlyPrimaryDevice ? (
-        <SettingsSection title="Devices">
-          {options.length === 0 ? (
-            // The catalog hydrates asynchronously, so an empty list before it is
-            // ready means "not loaded yet", not "nothing is connected".
-            <SettingsRow
-              title={isReady ? "No connected devices" : "Loading devices"}
-              description={
-                isReady
-                  ? "Connect an execution environment before configuring providers."
-                  : "Reading connected execution environments."
-              }
-            />
-          ) : (
-            <div className="grid gap-1 sm:grid-cols-2">
-              {options.map((environment) => {
-                const Icon = providerEnvironmentIcon(environment);
-                const selected = environment.environmentId === effectiveEnvironmentId;
-                const statusText = connectionStatusText(environment.connection);
-                return (
-                  <button
-                    key={environment.environmentId}
-                    type="button"
-                    aria-pressed={selected}
-                    className={cn(
-                      "flex min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors sm:px-4",
-                      selected
-                        ? "bg-primary/8 ring-1 ring-primary/25 dark:bg-primary/12"
-                        : "hover:bg-muted/40",
-                    )}
-                    onClick={() => setSelectedEnvironmentId(environment.environmentId)}
-                  >
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-background text-muted-foreground">
-                      <Icon className="size-4" aria-hidden />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5">
-                        <ConnectionStatusDot
-                          tooltipText={statusText}
-                          dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
-                          pingClassName={connectionPhasePingClassName(environment.connection.phase)}
-                        />
-                        <span className="truncate text-sm font-medium text-foreground">
-                          {environment.label}
-                        </span>
-                      </span>
-                      <span className="block truncate pl-[18px] text-xs text-muted-foreground">
-                        {providerEnvironmentDetail(environment)} · {statusText}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </SettingsSection>
-      ) : null}
+      <SettingsEnvironmentSelector
+        environments={options}
+        isReady={isReady}
+        selectedEnvironmentId={effectiveEnvironmentId}
+        emptyDescription="Connect an execution environment before configuring providers."
+        onSelect={setSelectedEnvironmentId}
+      />
 
       {selectedEnvironment ? (
         <SelectedEnvironmentProviderSettings
