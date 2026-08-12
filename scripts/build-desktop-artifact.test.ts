@@ -43,6 +43,7 @@ import {
   stageLinuxIconSize,
   STAGE_INSTALL_ARGS,
   WINDOWS_ASAR_UNPACK,
+  ancestorNodeModulesPaths,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -765,5 +766,42 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(resolved.verbose, false);
       assert.equal(resolved.mockUpdates, false);
     }),
+  );
+});
+
+// The self-containment check runs the packaged tree in a scratch directory. Its
+// own node_modules holds the unpacked externals and must be ignored, but any
+// node_modules *above* it would let Node's parent walk satisfy an import that is
+// missing from the package, so the probe refuses to run in that case.
+it("lists ancestor node_modules, nearest first, excluding the start directory", () => {
+  assert.deepStrictEqual(ancestorNodeModulesPaths("C:\\tmp\\probe\\app", "\\"), [
+    "C:\\tmp\\probe\\node_modules",
+    "C:\\tmp\\node_modules",
+    "C:\\node_modules",
+  ]);
+});
+
+it("includes the filesystem root for posix paths", () => {
+  assert.deepStrictEqual(ancestorNodeModulesPaths("/tmp/probe", "/"), [
+    "/tmp/node_modules",
+    "/node_modules",
+  ]);
+});
+
+// A UNC root must keep its \\server\share prefix. Rebuilding it from segments
+// produced relative paths, which fs.exists resolves against the build cwd, so
+// the guard checked directories that do not exist and silently passed.
+it("keeps the prefix of a UNC path instead of going relative", () => {
+  const paths = ancestorNodeModulesPaths("\\\\server\\share\\tmp\\app", "\\");
+  for (const candidate of paths) {
+    assert.ok(candidate.startsWith("\\\\server\\share"), candidate);
+  }
+  assert.deepStrictEqual(paths[0], "\\\\server\\share\\tmp\\node_modules");
+});
+
+it("ignores trailing separators", () => {
+  assert.deepStrictEqual(
+    ancestorNodeModulesPaths("C:\\tmp\\probe\\app\\", "\\"),
+    ancestorNodeModulesPaths("C:\\tmp\\probe\\app", "\\"),
   );
 });

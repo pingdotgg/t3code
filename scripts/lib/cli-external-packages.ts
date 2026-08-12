@@ -40,6 +40,16 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // Required by node-gyp-build-optional-packages. Not native, but in the
   // closure: without it, WSL gets MODULE_NOT_FOUND while Windows is fine.
   "detect-libc",
+  // ws's optional accelerators. Nothing in this repo declares them, so they are
+  // not in the staged production install and the packaged app does not ship
+  // them either way -- ws wraps the require in try/catch and falls back to its
+  // JS paths. They are listed because they were being inlined from the dev
+  // store: both carry binding.gyp and prebuilds and load through
+  // node-gyp-build, and a native loader inlined into a bundle chunk searches
+  // for prebuilds that cannot be beside it. Listing them keeps that from
+  // becoming real if either is ever declared as a dependency.
+  "bufferutil",
+  "utf-8-validate",
 ] as const;
 
 /**

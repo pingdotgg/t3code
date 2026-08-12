@@ -16,8 +16,14 @@ import {
 } from "./cli-external-packages.ts";
 
 // Only the field this test cares about; decoding ignores everything else.
+// optionalDependencies matter as much as dependencies here: every native family
+// in the list declares its actual platform bindings there (ffi-rs -> @yuuang/*,
+// msgpackr-extract -> @msgpackr-extract/*, fff-node -> @ff-labs/fff-bin-*), so
+// reading only `dependencies` would check nothing for exactly those packages.
 const PackageManifest = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 type PackageManifest = typeof PackageManifest.Type;
 
@@ -179,7 +185,12 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
         const manifest = installed.get(name);
         if (!manifest) continue;
 
-        for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+        const declared = {
+          ...(manifest.dependencies ?? {}),
+          ...(manifest.optionalDependencies ?? {}),
+          ...(manifest.peerDependencies ?? {}),
+        };
+        for (const dependency of Object.keys(declared)) {
           if (!isRuntimeExternal(dependency)) {
             violations.push(`${name} -> ${dependency}`);
           }

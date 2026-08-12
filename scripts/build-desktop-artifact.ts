@@ -27,6 +27,7 @@ import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -386,12 +387,33 @@ const desktopBuildInputArtifactNames = {
  */
 const BUNDLE_SELF_CONTAINED_SENTINEL = "effect";
 
+const BUNDLE_SELF_CHECK_TIMEOUT = Duration.seconds(120);
+
 export class ExternalizedBundleError extends Schema.TaggedErrorClass<ExternalizedBundleError>()(
   "ExternalizedBundleError",
   { sentinel: Schema.String, inlinedPackageCount: Schema.Number },
 ) {
   override get message(): string {
     return `The server bundle did not inline "${this.sentinel}" (${this.inlinedPackageCount} packages inlined). The bundle is meant to be self-contained apart from the native externals; if its dependencies are external again they will not be unpacked, and the WSL backend will fail with ERR_MODULE_NOT_FOUND. Check the deps.alwaysBundle wiring in apps/server/vite.config.ts.`;
+  }
+}
+
+export class BundleNotSelfContainedError extends Schema.TaggedErrorClass<BundleNotSelfContainedError>()(
+  "BundleNotSelfContainedError",
+  { exitCode: Schema.Number, output: Schema.String },
+) {
+  override get message(): string {
+    return `The packaged server bundle could not load with only its unpacked dependencies present (exit ${this.exitCode}). Anything it imports that is neither a Node built-in nor an unpacked external is unreachable to the WSL backend, which runs plain node and cannot read app.asar. Output:
+${this.output}`;
+  }
+}
+
+export class InlinedNativePackageError extends Schema.TaggedErrorClass<InlinedNativePackageError>()(
+  "InlinedNativePackageError",
+  { packages: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `The server bundle inlined packages that load native binaries: ${this.packages.join(", ")}. A node-gyp-build style loader resolves prebuilds relative to its own file, so inlined into a chunk it finds none and the importer quietly falls back to a slower JS path. Add them to CLI_RUNTIME_EXTERNAL_PREFIXES in scripts/lib/cli-external-packages.ts so they stay external and get unpacked.`;
   }
 }
 
@@ -1215,6 +1237,212 @@ const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
+/**
+ * Every `node_modules` directory that would be visible from `startDir`.
+ *
+ * The self-containment check is only meaningful in a directory with none of
+ * these: Node walks parents when resolving a bare import, so a stray
+ * node_modules above the probe would satisfy imports that are missing from the
+ * packaged tree and turn the check into a silent pass.
+ */
+function trimTrailingSeparators(value: string): string {
+  let end = value.length;
+  while (end > 1 && (value[end - 1] === "/" || value[end - 1] === "\\")) end -= 1;
+  return value.slice(0, end);
+}
+
+/**
+ * Length of the `\\server\share` prefix, or 0 when the path is not UNC.
+ *
+ * The share is the highest real directory on a UNC path: `\\server` on its own
+ * is not one, so the ancestor walk must stop there.
+ */
+function uncShareRootLength(value: string): number {
+  const isUnc = value.startsWith("\\\\") || value.startsWith("//");
+  if (!isUnc) return 0;
+  const separator = /[\\/]/;
+  const serverEnd = value.slice(2).search(separator);
+  if (serverEnd < 0) return value.length;
+  const shareStart = 2 + serverEnd + 1;
+  const shareEnd = value.slice(shareStart).search(separator);
+  return shareEnd < 0 ? value.length : shareStart + shareEnd;
+}
+
+export function ancestorNodeModulesPaths(
+  startDir: string,
+  separator: string,
+): ReadonlyArray<string> {
+  // Walks with lastIndexOf rather than splitting into segments so UNC roots
+  // (\\server\share) and drive roots keep their prefix instead of being
+  // rebuilt into a relative path that silently resolves against the build cwd.
+  const paths: string[] = [];
+  let current = trimTrailingSeparators(startDir);
+  // On a UNC path the share itself is the root: \\server is not a directory, so
+  // walking past \\server\share would emit paths that cannot exist.
+  const uncRootLength = uncShareRootLength(current);
+  for (;;) {
+    const cut = Math.max(current.lastIndexOf("/"), current.lastIndexOf("\\"));
+    if (cut < 0 || (uncRootLength > 0 && cut < uncRootLength)) break;
+    const parent = cut === 0 ? current.slice(0, 1) : current.slice(0, cut);
+    if (parent === current) break;
+    paths.push(
+      parent.endsWith(separator) ? `${parent}node_modules` : `${parent}${separator}node_modules`,
+    );
+    if (cut === 0) break;
+    current = parent;
+  }
+  return paths;
+}
+
+const NativeMarkerManifest = Schema.Struct({
+  dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+const decodeNativeMarkerManifest = Schema.decodeUnknownSync(
+  Schema.fromJsonString(NativeMarkerManifest),
+);
+
+/** Locate a package inside the pnpm store, which is where the real files live. */
+const findStorePackageDirectory = Effect.fn("findStorePackageDirectory")(function* (
+  repoRoot: string,
+  packageName: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const storeDir = path.join(repoRoot, "node_modules/.pnpm");
+  const exists = (candidate: string) =>
+    fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+  if (!(yield* exists(storeDir))) return null;
+
+  const flattened = `${packageName.replace("/", "+")}@`;
+  const entries = yield* fs
+    .readDirectory(storeDir)
+    .pipe(Effect.orElseSucceed(() => [] as string[]));
+  for (const entry of entries) {
+    if (!entry.startsWith(flattened)) continue;
+    const candidate = path.join(storeDir, entry, "node_modules", packageName);
+    if (yield* exists(candidate)) return candidate;
+  }
+  return null;
+});
+
+/** Whether a package builds or ships a native addon it loads at runtime. */
+const hasNativeLoaderMarkers = Effect.fn("hasNativeLoaderMarkers")(function* (packageDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const exists = (candidate: string) =>
+    fs.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+
+  if (yield* exists(path.join(packageDir, "binding.gyp"))) return true;
+  if (yield* exists(path.join(packageDir, "prebuilds"))) return true;
+
+  const manifestPath = path.join(packageDir, "package.json");
+  if (!(yield* exists(manifestPath))) return false;
+  const source = yield* fs.readFileString(manifestPath).pipe(Effect.orElseSucceed(() => ""));
+  if (source === "") return false;
+  const manifest = yield* Effect.try(() => decodeNativeMarkerManifest(source)).pipe(
+    Effect.orElseSucceed(() => null),
+  );
+  if (manifest === null) return false;
+  return Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies }).some(
+    (dependency) => dependency.startsWith("node-gyp-build"),
+  );
+});
+
+const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
+  function* (input: { readonly stageDistDir: string; readonly verbose: boolean }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    // electron-builder names this win-unpacked, win-arm64-unpacked, and so on.
+    const distEntries = yield* fs
+      .readDirectory(input.stageDistDir)
+      .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+    let unpackedRoot: string | null = null;
+    for (const entry of distEntries) {
+      const candidate = path.join(input.stageDistDir, entry, "resources/app.asar.unpacked");
+      if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+        unpackedRoot = candidate;
+        break;
+      }
+    }
+    // Nothing to verify rather than silently passing: a packaging layout change
+    // should surface here instead of turning the check into a no-op.
+    if (unpackedRoot === null) {
+      return yield* new BundleNotSelfContainedError({
+        exitCode: -1,
+        output: `No */resources/app.asar.unpacked directory under ${input.stageDistDir}; the bundle self-containment check found nothing to verify.`,
+      });
+    }
+
+    const probeRoot = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3code-bundle-selfcheck-",
+    });
+    const probeApp = path.join(probeRoot, "app");
+    yield* fs.copy(unpackedRoot, probeApp);
+
+    // Guard the guard: if anything above the probe provides a node_modules, a
+    // missing dependency would resolve there and the check would pass while the
+    // packaged tree is broken.
+    for (const candidate of ancestorNodeModulesPaths(probeApp, path.sep)) {
+      if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+        return yield* new BundleNotSelfContainedError({
+          exitCode: -1,
+          output: `Refusing to report success: ${candidate} is visible from the probe directory, so bare imports could resolve outside the packaged tree. Remove or rename it, or point TMPDIR somewhere without one.`,
+        });
+      }
+    }
+
+    const entryPoint = path.join(probeApp, "apps/server/dist/bin.mjs");
+    if (!(yield* fs.exists(entryPoint).pipe(Effect.orElseSucceed(() => false)))) {
+      return yield* new BundleNotSelfContainedError({
+        exitCode: -1,
+        output: `Expected the server entry at ${entryPoint}.`,
+      });
+    }
+
+    // --version exercises the eagerly loaded module graph, which is where a
+    // missing dependency shows up, without starting a server or touching disk
+    // state. It does not cover lazily imported externals: node-pty is checked
+    // by the WSL preflight probe at runtime, while ffi-rs, @ff-labs/fff-node
+    // and the bun adapters are only covered by the unpack globs and the
+    // inlined-native check below.
+    yield* runCommand(
+      ChildProcess.make(process.execPath, [entryPoint, "--version"], {
+        cwd: probeApp,
+        stdout: "pipe",
+        stderr: "pipe",
+        // NODE_PATH would let a createRequire call inside the bundle resolve a
+        // missing external from outside the packaged tree, which is the whole
+        // thing this is trying to rule out.
+        env: { ...process.env, NODE_PATH: "" },
+      }),
+      { label: "bundle self-containment check (node bin.mjs --version)", verbose: input.verbose },
+    ).pipe(
+      // Printing a version should be immediate. A regression that blocks (on
+      // stdin, a port, a lock) would otherwise hang release CI until the job
+      // times out with nothing useful in the log.
+      Effect.timeout(BUNDLE_SELF_CHECK_TIMEOUT),
+      Effect.catchTag("TimeoutError", () =>
+        Effect.fail(
+          new BundleNotSelfContainedError({
+            exitCode: -1,
+            output: `The packaged bundle did not print its version within ${Duration.toSeconds(BUNDLE_SELF_CHECK_TIMEOUT)}s; it is hanging rather than failing to resolve.`,
+          }),
+        ),
+      ),
+      Effect.catchTag("BuildCommandFailedError", (error) =>
+        Effect.fail(
+          new BundleNotSelfContainedError({
+            exitCode: error.exitCode,
+            output: `${error.stderrTail ?? ""}${error.stdoutTail ?? ""}`.trim(),
+          }),
+        ),
+      ),
+    );
+  },
+);
+
 const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -1893,7 +2121,21 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     // whole change exists to prevent, because those packages are not in the
     // unpack globs and the WSL backend would die on ERR_MODULE_NOT_FOUND.
     // `effect` is imported by every server module, so it is inlined in any
-    // correctly bundled build (209 regions at the time of writing).
+    // correctly bundled build.
+    // The list-based check above only sees packages someone already thought to
+    // list. bufferutil and utf-8-validate were inlined for exactly that reason:
+    // native, but absent from the list, so nothing flagged them. Ask the store
+    // what each inlined package actually is instead.
+    const nativeInlined: string[] = [];
+    for (const name of [...inlinedPackages].sort()) {
+      const packageDir = yield* findStorePackageDirectory(repoRoot, name);
+      if (packageDir === null) continue;
+      if (yield* hasNativeLoaderMarkers(packageDir)) nativeInlined.push(name);
+    }
+    if (nativeInlined.length > 0) {
+      return yield* new InlinedNativePackageError({ packages: nativeInlined });
+    }
+
     if (!inlinedPackages.has(BUNDLE_SELF_CONTAINED_SENTINEL)) {
       return yield* new ExternalizedBundleError({
         sentinel: BUNDLE_SELF_CONTAINED_SENTINEL,
@@ -2139,6 +2381,21 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       platform: options.platform,
       arch: options.arch,
     });
+  }
+
+  // Prove the packaged bundle is self-contained by loading it the way the WSL
+  // backend does, rather than by reasoning about the emitted source.
+  //
+  // Static analysis kept getting this wrong here. Scanning for bare imports
+  // matched specifiers inside effect's JSDoc examples and inside ajv's runtime
+  // codegen template, and asserting that one sentinel package was inlined
+  // missed a build that inlined `effect` while leaving `yaml` external. Node's
+  // resolver has no such ambiguity: it either finds every import or it does not.
+  //
+  // Only Windows unpacks anything; macOS and Linux keep the whole tree inside
+  // the asar, where this check has nothing to look at.
+  if (options.platform === "win") {
+    yield* verifyPackagedBundleIsSelfContained({ stageDistDir, verbose: options.verbose });
   }
 
   const stageEntries = yield* fs.readDirectory(stageDistDir);
