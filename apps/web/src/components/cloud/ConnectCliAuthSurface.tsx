@@ -44,8 +44,10 @@ const invalidLinkMessage = {
 } as const;
 
 /**
- * /connect: the URL a headless CLI prints. Waits for a Clerk session, then
- * forwards the CLI's PKCE request to Clerk's authorize endpoint.
+ * /connect: the URL the CLI prints for both flows. Waits for a Clerk session,
+ * then forwards the CLI's PKCE request to Clerk's authorize endpoint — with a
+ * loopback redirect URI when the request carries a port, so the code returns
+ * straight to the waiting CLI, and the hosted callback page otherwise.
  */
 export function ConnectCliAuthorizeSurface() {
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
@@ -85,7 +87,11 @@ export function ConnectCliAuthorizeSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectCliAuthMessage
-        eyebrow="Step 1 of 2 · Browser authorization"
+        eyebrow={
+          request.loopbackPort === undefined
+            ? "Step 1 of 2 · Browser authorization"
+            : "Browser authorization"
+        }
         title="Connecting your terminal"
         description={
           isSignedIn

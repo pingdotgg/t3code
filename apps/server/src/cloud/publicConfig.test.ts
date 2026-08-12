@@ -90,9 +90,9 @@ it.effect("derives direct Clerk OAuth endpoints from statically injected public 
     }).pipe(provideEnv({}));
 
     assert.deepEqual(config, {
-      authorizationEndpoint: "https://clerk.example.test/oauth/authorize",
       tokenEndpoint: "https://clerk.example.test/oauth/token",
       clientId: "oauth_client_embedded",
+      loopbackPort: 34338,
       redirectUri: "http://127.0.0.1:34338/callback",
       scopes: ["openid", "profile", "email"],
     });
@@ -111,7 +111,6 @@ it.effect("prefers runtime Clerk OAuth config overrides over statically injected
       }),
     );
 
-    assert.equal(config.authorizationEndpoint, "https://runtime.example.test/oauth/authorize");
     assert.equal(config.tokenEndpoint, "https://runtime.example.test/oauth/token");
     assert.equal(config.clientId, "oauth_client_runtime");
   }),
