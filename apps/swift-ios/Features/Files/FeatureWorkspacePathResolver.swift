@@ -31,7 +31,7 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         )
     }
 
-    public init?(url: URL, workspaceRoot: String?) {
+    public init?(url: URL, workspaceRoot: String?, relativeTo basePath: String? = nil) {
         guard let workspaceRoot, !workspaceRoot.isEmpty,
               url.host == nil, url.user == nil, url.password == nil, url.port == nil else {
             return nil
@@ -56,17 +56,24 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
             return nil
         }
 
-        if !destination.path.hasPrefix("/"), !destination.path.contains("/"),
-           !Self.isRecognizableFilePath(destination.path) {
+        if !destination.path.hasPrefix("/"), !Self.isRecognizableFilePath(destination.path) {
             return nil
         }
 
         let root = (workspaceRoot as NSString).standardizingPath
+        let base: String
+        if let basePath, !basePath.isEmpty {
+            base = ((root as NSString).appendingPathComponent(basePath) as NSString)
+                .standardizingPath
+            guard Self.contains(base, in: root) else { return nil }
+        } else {
+            base = root
+        }
         let absolute: String
         if destination.path.hasPrefix("/") {
             absolute = (destination.path as NSString).standardizingPath
         } else {
-            absolute = ((root as NSString).appendingPathComponent(destination.path) as NSString)
+            absolute = ((base as NSString).appendingPathComponent(destination.path) as NSString)
                 .standardizingPath
         }
 
@@ -81,7 +88,6 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         if url.scheme?.lowercased() == "file" { return true }
         if url.scheme == nil {
             return url.path.hasPrefix("/")
-                || url.path.contains("/")
                 || isRecognizableFilePath(parsePosition(from: url.path).path)
         }
         return positionedRelativeDestination(from: url) != nil
@@ -135,5 +141,9 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         let relative = String(absolutePath.dropFirst(prefix.count))
         guard !relative.isEmpty, relative != ".", !relative.hasPrefix("../") else { return nil }
         return relative
+    }
+
+    private static func contains(_ absolutePath: String, in root: String) -> Bool {
+        absolutePath == root || absolutePath.hasPrefix(root == "/" ? root : root + "/")
     }
 }

@@ -784,7 +784,9 @@ struct HomeThreadRowContext: Equatable {
                     snapshot.providersByEnvironment?[$0]?.first(where: { $0.id == providerID })
                 }
                 return environmentProvider
-                    ?? snapshot.providers.first(where: { $0.id == providerID })
+                    ?? (snapshot.providersByEnvironment == nil
+                        ? snapshot.providers.first(where: { $0.id == providerID })
+                        : nil)
             }
             let providerName = (explicitProvider?.isEmpty == false ? explicitProvider : nil)
                 ?? configuredProvider?.name

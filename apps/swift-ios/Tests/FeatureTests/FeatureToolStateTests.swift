@@ -73,6 +73,35 @@ struct FeatureToolStateTests {
     }
 
     @Test
+    func workspaceFileLinksResolveFromTheContainingFileDirectory() throws {
+        let sibling = try #require(URL(string: "next.md"))
+        #expect(
+            FeatureWorkspaceFileLink(
+                url: sibling,
+                workspaceRoot: "/repo",
+                relativeTo: "docs/guides"
+            )?.path == "docs/guides/next.md"
+        )
+
+        let parent = try #require(URL(string: "../README.md"))
+        #expect(
+            FeatureWorkspaceFileLink(
+                url: parent,
+                workspaceRoot: "/repo",
+                relativeTo: "docs/guides"
+            )?.path == "docs/README.md"
+        )
+
+        #expect(
+            FeatureWorkspaceFileLink(
+                url: sibling,
+                workspaceRoot: "/repo",
+                relativeTo: "../../outside"
+            ) == nil
+        )
+    }
+
+    @Test
     func workspaceFileLinksRejectEscapesAuthoritiesSchemesAndOutsidePaths() throws {
         let rejected = [
             try #require(URL(string: "../../secret.txt")),
@@ -103,6 +132,11 @@ struct FeatureToolStateTests {
         #expect(FeatureWorkspaceFileLink(url: remote, workspaceRoot: "/repo") == nil)
         let bareDomain = try #require(URL(string: "www.example.com"))
         #expect(FeatureWorkspaceFileLink(url: bareDomain, workspaceRoot: "/repo") == nil)
+        let bareDomainWithPath = try #require(URL(string: "www.example.com/docs"))
+        #expect(
+            FeatureWorkspaceFileLink(url: bareDomainWithPath, workspaceRoot: "/repo") == nil
+        )
+        #expect(!FeatureWorkspaceFileLink.isWorkspaceDestination(bareDomainWithPath))
     }
 
     @Test

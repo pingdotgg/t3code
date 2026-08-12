@@ -308,7 +308,11 @@ struct FeatureFilePreviewView: View {
     }
 
     private func openURL(_ url: URL) -> Bool {
-        guard let link = FeatureWorkspaceFileLink(url: url, workspaceRoot: workspaceRoot) else {
+        guard let link = FeatureWorkspaceFileLink(
+            url: url,
+            workspaceRoot: workspaceRoot,
+            relativeTo: entry.containingDirectoryPath
+        ) else {
             guard FeatureWorkspaceFileLink.isWorkspaceDestination(url) else { return false }
             linkFailureMessage = workspaceRoot == nil
                 ? "The active workspace is not available for this thread."

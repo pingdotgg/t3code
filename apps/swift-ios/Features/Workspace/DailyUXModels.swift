@@ -639,7 +639,9 @@ extension FeatureThread {
             snapshot.providersByEnvironment?[$0]
         }
         let configuredProvider = environmentProviders?.first(where: { $0.id == providerID })
-            ?? snapshot.providers.first(where: { $0.id == providerID })
+            ?? (snapshot.providersByEnvironment == nil
+                ? snapshot.providers.first(where: { $0.id == providerID })
+                : nil)
         return configuredProvider?.name ?? providerID
     }
 
