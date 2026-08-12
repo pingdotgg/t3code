@@ -3,7 +3,7 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { LegendListRef } from "@legendapp/list/react";
-import { MessagesTimeline } from "./MessagesTimeline";
+import { MessagesTimeline, shouldAutoloadOlderHistory } from "./MessagesTimeline";
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
@@ -510,6 +510,44 @@ describe("MessagesTimeline", () => {
     // Text content renders as plain text (highlighting is via CSS Custom Highlight API)
     expect(markup).toContain("Needle alpha");
     expect(markup).toContain("needle");
+  });
+
+  describe("shouldAutoloadOlderHistory", () => {
+    it("does not autoload when short content fits the viewport (isAtStart && isAtEnd)", () => {
+      expect(
+        shouldAutoloadOlderHistory({
+          contentLength: 300,
+          isAtEnd: true,
+          isAtStart: true,
+          scroll: 0,
+          scrollLength: 400,
+        }),
+      ).toBe(false);
+    });
+
+    it("autoloads only when the list overflows and the viewport is at the top", () => {
+      expect(
+        shouldAutoloadOlderHistory({
+          contentLength: 2_000,
+          isAtEnd: false,
+          isAtStart: true,
+          scroll: 0,
+          scrollLength: 400,
+        }),
+      ).toBe(true);
+    });
+
+    it("does not autoload while the viewport is stuck to the bottom of a long list", () => {
+      expect(
+        shouldAutoloadOlderHistory({
+          contentLength: 2_000,
+          isAtEnd: true,
+          isAtStart: false,
+          scroll: 1_600,
+          scrollLength: 400,
+        }),
+      ).toBe(false);
+    });
   });
 
   it("offers older activity history without loading it into the initial timeline", () => {

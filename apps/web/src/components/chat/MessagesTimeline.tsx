@@ -172,6 +172,33 @@ export interface AssistantResponseMeta {
 
 const USER_MESSAGE_COLLAPSE_LINE_THRESHOLD = 8;
 const USER_MESSAGE_COLLAPSE_CHAR_THRESHOLD = 900;
+const AUTOLOAD_OLDER_OVERFLOW_PX = 8;
+
+type OlderHistoryScrollMetrics = {
+  contentLength: number;
+  isAtEnd: boolean;
+  isAtStart: boolean;
+  scroll: number;
+  scrollLength: number;
+};
+
+/**
+ * Auto-loading older history must only run when the user has actually scrolled
+ * to the top of an overflowed list. Short threads report isAtStart (scroll=0)
+ * while also being at end — treating that as "at top" prepends history and
+ * jumps the viewport to the oldest messages on send/resize scroll events.
+ */
+export function shouldAutoloadOlderHistory(
+  metrics: OlderHistoryScrollMetrics,
+  overflowPx = AUTOLOAD_OLDER_OVERFLOW_PX,
+) {
+  if (!metrics.isAtStart || metrics.isAtEnd) {
+    return false;
+  }
+
+  const overflow = metrics.contentLength - metrics.scrollLength;
+  return Number.isFinite(overflow) && overflow > overflowPx && metrics.scroll <= overflowPx;
+}
 
 // ---------------------------------------------------------------------------
 // MessagesTimeline — list owner
@@ -252,15 +279,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return next;
   }, [rows, reviewResultActive]);
 
+  const tryAutoloadOlderHistory = useCallback(() => {
+    if (!hasMoreOlder || loadingOlder || !onLoadOlder) {
+      return;
+    }
+    const state = listRef.current?.getState?.();
+    if (!state || !shouldAutoloadOlderHistory(state)) {
+      return;
+    }
+    onLoadOlder();
+  }, [hasMoreOlder, listRef, loadingOlder, onLoadOlder]);
+
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (state) {
       onIsAtEndChange(state.isAtEnd);
-      if (state.isAtStart && hasMoreOlder && !loadingOlder) {
-        onLoadOlder?.();
-      }
     }
-  }, [hasMoreOlder, listRef, loadingOlder, onIsAtEndChange, onLoadOlder]);
+    tryAutoloadOlderHistory();
+  }, [listRef, onIsAtEndChange, tryAutoloadOlderHistory]);
+
+  const handleStartReached = useCallback(() => {
+    tryAutoloadOlderHistory();
+  }, [tryAutoloadOlderHistory]);
 
   const previousRowCountRef = useRef(rows.length);
   useEffect(() => {
@@ -389,6 +429,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         maintainScrollAtEndThreshold={0.1}
         maintainVisibleContentPosition
         onScroll={handleScroll}
+        onStartReached={handleStartReached}
+        onStartReachedThreshold={0.05}
         className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
         ListHeaderComponent={listHeader}
         ListFooterComponent={<div className="h-3 sm:h-4" />}
