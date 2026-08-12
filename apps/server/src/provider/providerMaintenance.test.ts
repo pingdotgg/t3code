@@ -331,6 +331,31 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it("keeps the tap-qualified Homebrew formula when the Cellar path only has the bare name", () => {
+    expect(
+      scopedPackageToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/bin/scoped-package-tool",
+        resolvedCommandPath: "/opt/homebrew/bin/scoped-package-tool",
+        realCommandPath: "/opt/homebrew/Cellar/scoped-package-tool/1.0.0/bin/scoped-package-tool",
+        env: {
+          PATH: "",
+        },
+      }),
+    ).toEqual({
+      provider: driver("scopedPackageTool"),
+      packageName: "@example/scoped-package-tool",
+      update: {
+        command: "brew upgrade example/tap/scoped-package-tool",
+
+        executable: "brew",
+
+        args: ["upgrade", "example/tap/scoped-package-tool"],
+
+        lockKey: "homebrew",
+      },
+    });
+  });
+
   it("upgrades the actually-installed Homebrew formula, not the definition's default", () => {
     expect(
       packageToolUpdate.resolve({

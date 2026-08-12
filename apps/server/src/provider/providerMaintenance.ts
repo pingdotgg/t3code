@@ -178,11 +178,32 @@ function makeVitePlusGlobalProviderMaintenanceCapabilities(
   });
 }
 
+function homebrewFormulaBasename(formula: string): string {
+  const segments = formula.split("/");
+  return segments[segments.length - 1];
+}
+
+function resolveHomebrewFormula(
+  definition: PackageManagedProviderMaintenanceDefinition,
+  installedFormula: string | null,
+): string | null {
+  if (!installedFormula) {
+    return definition.homebrewFormula;
+  }
+  if (
+    definition.homebrewFormula &&
+    homebrewFormulaBasename(definition.homebrewFormula) === installedFormula
+  ) {
+    return definition.homebrewFormula;
+  }
+  return installedFormula;
+}
+
 function makeHomebrewProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
   installedFormula?: string | null,
 ): ProviderMaintenanceCapabilities {
-  const formula = installedFormula ?? definition.homebrewFormula;
+  const formula = resolveHomebrewFormula(definition, installedFormula ?? null);
   if (!formula) {
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: definition.provider,
