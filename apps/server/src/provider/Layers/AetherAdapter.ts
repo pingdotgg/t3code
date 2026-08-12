@@ -2260,11 +2260,18 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       // dropped. Pin the in-flight dispatch and refuse a retry that is not the
       // same send, exactly as the first-turn create path does.
       //
-      // This runs BEFORE the model switch below on purpose: that switch is a
-      // remote `PUT` plus a `context.session.model` mutation, so letting it go
-      // first would change remote settings for a send that is about to be
-      // rejected AND move the session model the fingerprint is computed from —
-      // permanently invalidating the pin the user is trying to retry into.
+      // The CHECK runs before the model switch below on purpose: that switch
+      // is a remote `PUT` plus a `context.session.model` mutation, so letting
+      // it go first would change remote settings for a send that is about to
+      // be rejected AND move the session model the fingerprint is computed
+      // from — invalidating the pin the user is trying to retry into.
+      //
+      // The pin is INSTALLED only at the dispatch itself (just before each
+      // `/respond` below), never here: everything between is pre-dispatch and
+      // can reject definitively — an invalid model 4xx, a task that turns out
+      // to be running remotely — without any message reaching Aether. Pinning
+      // here would leave those exits holding a pin nothing can release, and a
+      // corrected prompt would be refused forever as an ambiguous retry.
       const dispatchFingerprint = dispatchFingerprintOf({
         message,
         model: input.modelSelection?.model ?? context.session.model,
@@ -2285,12 +2292,6 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
             "The previous message was already dispatched to Aether but its result never came back. Retry with exactly the same input, or wait for it to appear and send the change as a follow-up.",
         });
       }
-      context.pendingSend = {
-        ordinal: context.sentCount,
-        clientMessageId,
-        fingerprint: dispatchFingerprint,
-      };
-
       // Model switch between turns (build item 11): `PUT /tasks/{id}` is a
       // FULL settings replace, so the current row is read back first — the
       // auto_fix_* flags are live-mutable remotely and must not be clobbered
@@ -2352,6 +2353,11 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
         // from warning on it. Safe: the id is deterministic per ordinal, and
         // the ordinal advances only on a confirmed 202.
         context.issuedClientMessageIds.add(clientMessageId);
+        context.pendingSend = {
+          ordinal: context.sentCount,
+          clientMessageId,
+          fingerprint: dispatchFingerprint,
+        };
         const responded = yield* restClient
           .respondToTask(taskId, {
             message,
@@ -2396,6 +2402,11 @@ export const makeAetherAdapter = Effect.fn("makeAetherAdapter")(function* (
       // Registered BEFORE the call (see the plan branch above): the row can
       // hit the wire before the 202 lands here.
       context.issuedClientMessageIds.add(clientMessageId);
+      context.pendingSend = {
+        ordinal: context.sentCount,
+        clientMessageId,
+        fingerprint: dispatchFingerprint,
+      };
       const responded = yield* restClient
         .respondToTask(taskId, {
           message,

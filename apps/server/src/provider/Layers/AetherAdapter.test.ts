@@ -2886,6 +2886,69 @@ describe("AetherAdapter turn lifecycle", () => {
     }),
   );
 
+  it.effect("a definitive PRE-dispatch rejection leaves no pin behind", () =>
+    Effect.gen(function* () {
+      // A model switch is validated BEFORE anything reaches /respond. When
+      // that validation rejects definitively, no message was ever dispatched —
+      // so nothing may be pinned, or a corrected prompt (necessarily a
+      // different fingerprint) would be refused forever as an ambiguous retry.
+      let respondCalls = 0;
+      let getTaskCalls = 0;
+      const deltas = scriptedDeltas([
+        delta({ task: processingTask, activeMessageId: "m2", latestSequence: 3 }),
+      ]);
+      yield* withAdapter(
+        {
+          restClient: {
+            ...unusedRestClient,
+            listProjects: () => Effect.succeed([project()]),
+            // startSession validates the resume cursor with its own getTask;
+            // the model switch's PRE-dispatch read is the one that rejects.
+            getTask: () =>
+              Effect.suspend(() => {
+                getTaskCalls++;
+                return getTaskCalls === 1
+                  ? Effect.succeed(messageIdleTask)
+                  : Effect.fail(
+                      new AetherApiNotFoundError({
+                        endpoint: "GET /tasks/{id}",
+                        detail: "gone",
+                      }),
+                    );
+              }),
+            getConversationMessages: () => Effect.succeed(messagesPage(processingTask)),
+            respondToTask: () =>
+              Effect.sync(() => {
+                respondCalls++;
+              }).pipe(Effect.map(() => ({ message_id: "m9" }))),
+            getConversationDelta: deltas.getConversationDelta,
+          },
+        },
+        (adapter) =>
+          Effect.gen(function* () {
+            const session = yield* adapter.startSession(
+              startInput({
+                resumeCursor: { schemaVersion: 1, taskId: "task-1", latestSequence: 2 },
+              }),
+            );
+            const rejected = yield* Effect.flip(
+              adapter.sendTurn({
+                threadId: session.threadId,
+                input: "with a different model",
+                modelSelection: { instanceId, model: "codex/gpt-5.6-sol-high" },
+              }),
+            );
+            expect(rejected._tag).toBe("ProviderAdapterRequestError");
+            expect(respondCalls).toBe(0);
+
+            // Nothing was pinned, so a CORRECTED prompt dispatches normally.
+            yield* adapter.sendTurn({ threadId: session.threadId, input: "a corrected prompt" });
+            expect(respondCalls).toBe(1);
+          }),
+      );
+    }),
+  );
+
   it.effect("a definitive API rejection releases the pin so a corrected prompt can go out", () =>
     Effect.gen(function* () {
       // The server ANSWERED with a 4xx: it committed nothing, so the ordinal's
