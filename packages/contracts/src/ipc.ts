@@ -249,14 +249,26 @@ export const DesktopUpdateActionResultSchema = Schema.Struct({
   state: DesktopUpdateStateSchema,
 });
 
+export interface AlertDialogOptions {
+  readonly title: string;
+  readonly description?: string;
+}
+
+export const AlertDialogOptionsSchema = Schema.Struct({
+  title: Schema.String,
+  description: Schema.optionalKey(Schema.String),
+});
+
 export interface DesktopUpdateCheckResult {
   checked: boolean;
   state: DesktopUpdateState;
+  notice: AlertDialogOptions | null;
 }
 
 export const DesktopUpdateCheckResultSchema = Schema.Struct({
   checked: Schema.Boolean,
   state: DesktopUpdateStateSchema,
+  notice: Schema.NullOr(AlertDialogOptionsSchema),
 });
 
 // Stable id for the Windows-native primary backend. Desktop side wraps
@@ -1155,7 +1167,7 @@ export interface ConfirmDialogOptions {
 export interface LocalApi {
   dialogs: {
     pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
-    alert: (message: string) => Promise<void>;
+    alert: (options: AlertDialogOptions) => Promise<void>;
     confirm: (message: string, options?: ConfirmDialogOptions) => Promise<boolean>;
   };
   shell: {

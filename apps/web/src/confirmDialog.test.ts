@@ -64,14 +64,17 @@ describe("confirm dialog coordinator", () => {
   it("resolves a themed one-button alert", async () => {
     const unregister = registerConfirmDialogHost();
     const alert = requireAlert(
-      requestAlertDialog("You're up to date!\n\nT3 Code 1.2.3 is the newest version available."),
+      requestAlertDialog({
+        title: "Automatic updates are not available right now.",
+        description: "Automatic updates are only available in packaged production builds.",
+      }),
     );
 
     expect(readConfirmDialogState()).toEqual({
       status: "confirming",
       mode: "alert",
-      message: "You're up to date!\n\nT3 Code 1.2.3 is the newest version available.",
-      variant: "default",
+      title: "Automatic updates are not available right now.",
+      description: "Automatic updates are only available in packaged production builds.",
     });
 
     respondToConfirmDialog(true);
@@ -79,8 +82,8 @@ describe("confirm dialog coordinator", () => {
     expect(readConfirmDialogState()).toEqual({
       status: "closing",
       mode: "alert",
-      message: "You're up to date!\n\nT3 Code 1.2.3 is the newest version available.",
-      variant: "default",
+      title: "Automatic updates are not available right now.",
+      description: "Automatic updates are only available in packaged production builds.",
     });
 
     completeConfirmDialogClose();
@@ -113,6 +116,29 @@ describe("confirm dialog coordinator", () => {
     await expect(second).resolves.toBe(true);
     completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({ status: "idle" });
+    unregister();
+  });
+
+  it("preserves alert and confirmation copy while advancing a mixed queue", async () => {
+    const unregister = registerConfirmDialogHost();
+    const alert = requireAlert(
+      requestAlertDialog({ title: "Could not check for updates.", description: "Offline." }),
+    );
+    const confirmation = requireConfirmation(requestConfirmDialog("Install update?"));
+
+    respondToConfirmDialog(true);
+    await expect(alert).resolves.toBeUndefined();
+    completeConfirmDialogClose();
+    expect(readConfirmDialogState()).toEqual({
+      status: "confirming",
+      mode: "confirm",
+      message: "Install update?",
+      variant: "default",
+    });
+
+    respondToConfirmDialog(false);
+    await expect(confirmation).resolves.toBe(false);
+    completeConfirmDialogClose();
     unregister();
   });
 

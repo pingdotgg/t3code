@@ -14,8 +14,8 @@ function createBrowserLocalApi(): LocalApi {
         if (!window.desktopBridge) return null;
         return window.desktopBridge.pickFolder(options);
       },
-      alert: async (message) => {
-        await requestAlertDialog(message);
+      alert: async (options) => {
+        await requestAlertDialog(options);
       },
       confirm: async (message, options?: ConfirmDialogOptions) => {
         return requestConfirmDialog(message, options) ?? false;

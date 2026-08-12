@@ -1,4 +1,5 @@
 import {
+  type AlertDialogOptions,
   DesktopUpdateChannelSchema,
   type DesktopRuntimeInfo,
   type DesktopUpdateActionResult,
@@ -64,6 +65,32 @@ const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+
+export function getDesktopUpdateCheckNotice(input: {
+  readonly checked: boolean;
+  readonly state: DesktopUpdateState;
+  readonly disabledReason: string | null;
+}): AlertDialogOptions | null {
+  if (input.disabledReason !== null) {
+    return {
+      title: "Automatic updates are not available right now.",
+      description: input.disabledReason,
+    };
+  }
+  if (!input.checked) return null;
+  if (input.state.status === "up-to-date") {
+    return {
+      title: `T3 Code ${input.state.currentVersion} is currently the newest version available.`,
+    };
+  }
+  if (input.state.status === "error") {
+    return {
+      title: "Could not check for updates.",
+      description: input.state.message ?? "An unknown error occurred. Please try again later.",
+    };
+  }
+  return null;
+}
 
 export class DesktopUpdateActionInProgressError extends Schema.TaggedErrorClass<DesktopUpdateActionInProgressError>()(
   "DesktopUpdateActionInProgressError",
@@ -811,16 +838,29 @@ export const make = Effect.gen(function* () {
     }),
     check: Effect.fn("desktop.updates.check")(function* (reason: string) {
       yield* Effect.annotateCurrentSpan({ reason });
+      const disabledReason = yield* resolveDisabledReason;
       if (!(yield* Ref.get(updaterConfiguredRef))) {
+        const state = yield* Ref.get(updateStateRef);
         return {
           checked: false,
-          state: yield* Ref.get(updateStateRef),
+          state,
+          notice: getDesktopUpdateCheckNotice({
+            checked: false,
+            state,
+            disabledReason: Option.getOrNull(disabledReason),
+          }),
         };
       }
       const checked = yield* checkForUpdates(reason);
+      const state = yield* Ref.get(updateStateRef);
       return {
         checked,
-        state: yield* Ref.get(updateStateRef),
+        state,
+        notice: getDesktopUpdateCheckNotice({
+          checked,
+          state,
+          disabledReason: Option.getOrNull(disabledReason),
+        }),
       };
     }),
     download: Effect.gen(function* () {

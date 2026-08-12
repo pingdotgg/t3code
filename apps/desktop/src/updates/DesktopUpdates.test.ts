@@ -35,6 +35,24 @@ interface UpdatesHarnessOptions {
 
 const flushCallbacks = Effect.yieldNow;
 
+const baseUpdateState: DesktopUpdateState = {
+  enabled: true,
+  status: "idle",
+  channel: "latest",
+  currentVersion: "1.2.3",
+  hostArch: "x64",
+  appArch: "x64",
+  runningUnderArm64Translation: false,
+  availableVersion: null,
+  downloadedVersion: null,
+  releaseNotes: [],
+  downloadPercent: null,
+  checkedAt: null,
+  message: null,
+  errorContext: null,
+  canRetry: false,
+};
+
 function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let allowDowngrade = false;
@@ -208,6 +226,85 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
 }
 
 describe("DesktopUpdates", () => {
+  it("preserves the native update-check messages in themed notices", () => {
+    assert.deepEqual(
+      DesktopUpdates.getDesktopUpdateCheckNotice({
+        checked: false,
+        state: { ...baseUpdateState, enabled: false, status: "disabled" },
+        disabledReason: "Automatic updates are not available because no update feed is configured.",
+      }),
+      {
+        title: "Automatic updates are not available right now.",
+        description: "Automatic updates are not available because no update feed is configured.",
+      },
+    );
+    assert.deepEqual(
+      DesktopUpdates.getDesktopUpdateCheckNotice({
+        checked: true,
+        state: { ...baseUpdateState, status: "up-to-date" },
+        disabledReason: null,
+      }),
+      { title: "T3 Code 1.2.3 is currently the newest version available." },
+    );
+    assert.deepEqual(
+      DesktopUpdates.getDesktopUpdateCheckNotice({
+        checked: true,
+        state: { ...baseUpdateState, status: "error", message: "network unavailable" },
+        disabledReason: null,
+      }),
+      { title: "Could not check for updates.", description: "network unavailable" },
+    );
+    assert.deepEqual(
+      DesktopUpdates.getDesktopUpdateCheckNotice({
+        checked: true,
+        state: { ...baseUpdateState, status: "error" },
+        disabledReason: null,
+      }),
+      {
+        title: "Could not check for updates.",
+        description: "An unknown error occurred. Please try again later.",
+      },
+    );
+  });
+
+  it("keeps update-check outcomes silent when the native flow showed no dialog", () => {
+    assert.isNull(
+      DesktopUpdates.getDesktopUpdateCheckNotice({
+        checked: false,
+        state: { ...baseUpdateState, status: "up-to-date" },
+        disabledReason: null,
+      }),
+    );
+    assert.isNull(
+      DesktopUpdates.getDesktopUpdateCheckNotice({
+        checked: true,
+        state: { ...baseUpdateState, status: "available", availableVersion: "1.2.4" },
+        disabledReason: null,
+      }),
+    );
+  });
+
+  it.effect("returns the exact disabled notice from a manual check", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: undefined },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const result = yield* updates.check("manual");
+        assert.isFalse(result.checked);
+        assert.equal(result.state.status, "disabled");
+        assert.deepEqual(result.notice, {
+          title: "Automatic updates are not available right now.",
+          description: "Automatic updates are not available because no update feed is configured.",
+        });
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it("preserves complete causes for update poller and event failures", () => {
     const cause = Cause.combine(
       Cause.fail(new Error("updater failed")),

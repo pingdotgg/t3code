@@ -6,7 +6,6 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
-  getDesktopUpdateCheckAlertMessage,
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
@@ -160,33 +159,6 @@ describe("getDesktopUpdateActionError", () => {
 });
 
 describe("desktop update UI helpers", () => {
-  it("builds the up-to-date alert copy from the checked version", () => {
-    expect(
-      getDesktopUpdateCheckAlertMessage({
-        checked: true,
-        state: { ...baseState, status: "up-to-date", currentVersion: "1.2.3" },
-      }),
-    ).toBe("You're up to date!\n\nT3 Code 1.2.3 is currently the newest version available.");
-  });
-
-  it("does not open an alert when an update is available", () => {
-    expect(
-      getDesktopUpdateCheckAlertMessage({
-        checked: true,
-        state: { ...baseState, status: "available", availableVersion: "1.2.3" },
-      }),
-    ).toBeNull();
-  });
-
-  it("does not report stale up-to-date state when the check was skipped", () => {
-    expect(
-      getDesktopUpdateCheckAlertMessage({
-        checked: false,
-        state: { ...baseState, status: "up-to-date", currentVersion: "1.2.3" },
-      }),
-    ).toBe("Update check failed\n\nCould not check for updates. Please try again later.");
-  });
-
   it("builds the stable release URL for a downloaded version", () => {
     expect(getDesktopUpdateReleaseUrl("0.0.30")).toBe(
       "https://github.com/pingdotgg/t3code/releases/tag/v0.0.30",

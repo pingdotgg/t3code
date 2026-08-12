@@ -1,25 +1,31 @@
-import type { ConfirmDialogOptions, ConfirmDialogVariant } from "@t3tools/contracts";
+import type {
+  AlertDialogOptions,
+  ConfirmDialogOptions,
+  ConfirmDialogVariant,
+} from "@t3tools/contracts";
 
-export type ConfirmDialogState =
-  | { readonly status: "idle" }
+type ActiveDialogState =
   | {
-      readonly status: "confirming";
-      readonly mode: "alert" | "confirm";
-      readonly message: string;
-      readonly variant: ConfirmDialogVariant;
+      readonly mode: "alert";
+      readonly title: string;
+      readonly description?: string;
     }
   | {
-      readonly status: "closing";
-      readonly mode: "alert" | "confirm";
+      readonly mode: "confirm";
       readonly message: string;
       readonly variant: ConfirmDialogVariant;
     };
 
+export type ConfirmDialogState =
+  | { readonly status: "idle" }
+  | ({ readonly status: "confirming" } & ActiveDialogState)
+  | ({ readonly status: "closing" } & ActiveDialogState);
+
 type PendingDialog =
   | {
       readonly mode: "alert";
-      readonly message: string;
-      readonly variant: "default";
+      readonly title: string;
+      readonly description?: string;
       readonly resolve: () => void;
     }
   | {
@@ -69,12 +75,21 @@ function enqueueDialog(dialog: PendingDialog): void {
   }
 
   activeDialog = dialog;
-  publish({
-    status: "confirming",
-    mode: dialog.mode,
-    message: dialog.message,
-    variant: dialog.variant,
-  });
+  publish(
+    dialog.mode === "alert"
+      ? {
+          status: "confirming",
+          mode: "alert",
+          title: dialog.title,
+          ...(dialog.description === undefined ? {} : { description: dialog.description }),
+        }
+      : {
+          status: "confirming",
+          mode: "confirm",
+          message: dialog.message,
+          variant: dialog.variant,
+        },
+  );
 }
 
 export function readConfirmDialogState(): ConfirmDialogState {
@@ -109,11 +124,16 @@ export function registerConfirmDialogHost(): () => void {
 }
 
 /** Requests a themed one-button alert when a host is mounted. */
-export function requestAlertDialog(message: string): Promise<void> | undefined {
+export function requestAlertDialog(options: AlertDialogOptions): Promise<void> | undefined {
   if (registeredHostCount === 0) return undefined;
 
   return new Promise<void>((resolve) => {
-    enqueueDialog({ mode: "alert", message, variant: "default", resolve });
+    enqueueDialog({
+      mode: "alert",
+      title: options.title,
+      ...(options.description === undefined ? {} : { description: options.description }),
+      resolve,
+    });
   });
 }
 
@@ -146,12 +166,7 @@ export function respondToConfirmDialog(confirmed: boolean): void {
   const dialog = activeDialog;
   activeDialog = null;
   resolveDialog(dialog, confirmed);
-  publish({
-    status: "closing",
-    mode: state.mode,
-    message: state.message,
-    variant: state.variant,
-  });
+  publish({ ...state, status: "closing" });
 }
 
 export function completeConfirmDialogClose(): void {
@@ -164,12 +179,21 @@ export function completeConfirmDialogClose(): void {
   }
 
   activeDialog = next;
-  publish({
-    status: "confirming",
-    mode: next.mode,
-    message: next.message,
-    variant: next.variant,
-  });
+  publish(
+    next.mode === "alert"
+      ? {
+          status: "confirming",
+          mode: "alert",
+          title: next.title,
+          ...(next.description === undefined ? {} : { description: next.description }),
+        }
+      : {
+          status: "confirming",
+          mode: "confirm",
+          message: next.message,
+          variant: next.variant,
+        },
+  );
 }
 
 export function resetConfirmDialogForTests(): void {

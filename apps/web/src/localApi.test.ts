@@ -1,4 +1,5 @@
 import {
+  type AlertDialogOptions,
   DEFAULT_CLIENT_SETTINGS,
   type ConfirmDialogOptions,
   type ContextMenuItem,
@@ -16,7 +17,7 @@ const showContextMenuFallbackMock =
 
 const requestConfirmDialogMock =
   vi.fn<(message: string, options?: ConfirmDialogOptions) => Promise<boolean> | undefined>();
-const requestAlertDialogMock = vi.fn<(message: string) => Promise<void> | undefined>();
+const requestAlertDialogMock = vi.fn<(options: AlertDialogOptions) => Promise<void> | undefined>();
 
 vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
@@ -101,9 +102,13 @@ describe("LocalApi", () => {
   it("uses the themed alert host when it is available", async () => {
     requestAlertDialogMock.mockResolvedValue(undefined);
     const { createLocalApi } = await import("./localApi");
+    const options = {
+      title: "Automatic updates are not available right now.",
+      description: "Automatic updates are only available in packaged production builds.",
+    };
 
-    await expect(createLocalApi().dialogs.alert("You're up to date!")).resolves.toBeUndefined();
-    expect(requestAlertDialogMock).toHaveBeenCalledWith("You're up to date!");
+    await expect(createLocalApi().dialogs.alert(options)).resolves.toBeUndefined();
+    expect(requestAlertDialogMock).toHaveBeenCalledWith(options);
   });
 
   it("fails closed in a browser when no themed host is available", async () => {

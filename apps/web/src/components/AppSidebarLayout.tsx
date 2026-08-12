@@ -41,7 +41,6 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { getDesktopUpdateCheckAlertMessage } from "./desktopUpdate.logic";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -200,16 +199,11 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
         void checkForUpdate()
           .then((result) => {
-            const message = getDesktopUpdateCheckAlertMessage(result);
-            if (message) {
-              return ensureLocalApi().dialogs.alert(message);
+            if (result.notice) {
+              return ensureLocalApi().dialogs.alert(result.notice);
             }
           })
-          .catch((error: unknown) =>
-            ensureLocalApi().dialogs.alert(
-              `Update check failed\n\n${error instanceof Error ? error.message : "Could not check for updates. Please try again later."}`,
-            ),
-          );
+          .catch((error: unknown) => console.error("Could not check for updates.", error));
       }
     });
 
