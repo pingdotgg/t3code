@@ -56,6 +56,7 @@ struct PlatformRootView: View {
             releaseIncomingSharePresentation: { shareID in
                 if stagedIncomingShareID?.caseInsensitiveCompare(shareID) == .orderedSame {
                     stagedIncomingShareID = nil
+                    incomingShareCoordinator.dismissStagedNewThread(id: shareID)
                 }
             }
         )

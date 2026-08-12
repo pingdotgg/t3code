@@ -231,6 +231,19 @@ public actor FeatureComposerDraftStore {
         loadedDrafts = drafts
     }
 
+    public func restoreDraft(
+        _ draft: FeatureComposerDraft,
+        importedShareIDs: Set<String>,
+        for key: String
+    ) throws {
+        var drafts = try loadIfNeeded()
+        var persisted = PersistedDraft(draft)
+        persisted.importedShareIDs = Array(importedShareIDs.sorted().suffix(32))
+        drafts[key] = persisted
+        try persist(drafts)
+        loadedDrafts = drafts
+    }
+
     /// Atomically imports one share-extension envelope into the latest stored
     /// draft. The share ID is committed with the content, so a host crash after
     /// this write but before inbox cleanup cannot duplicate the import.

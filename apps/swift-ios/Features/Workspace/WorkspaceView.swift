@@ -612,7 +612,7 @@ public struct WorkspaceView: View {
         case let .sharedThread(id, importDraft):
             guard model.snapshot.threads.contains(where: { $0.id == id }) else { return }
             dismissTransientPresentations()
-            if selectedThreadID == id, let importDraft {
+            if let importDraft {
                 sharedThreadImports[id] = FeatureComposerIncomingShareReloadPolicy.appending(
                     importDraft,
                     to: sharedThreadImports[id] ?? []

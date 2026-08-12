@@ -319,8 +319,29 @@ struct ComposerDraftStoreTests {
             imports,
             restoredShareIDs: ["already-restored"]
         )
+        let restored = FeatureComposerIncomingShareReloadPolicy.restoredImportIDs(
+            imports,
+            restoredShareIDs: ["already-restored"]
+        )
 
         #expect(pending.map(\.shareID) == ["pending-one", "pending-two"])
+        #expect(restored == ["already-restored"])
+    }
+
+    @Test func initialReloadProcessesImportsDeliveredWithANewThreadDetail() {
+        let imported = FeatureComposerIncomingShareDraft(
+            shareID: "share-on-open",
+            draft: FeatureComposerDraft(text: "Open in another thread")
+        )
+
+        #expect(FeatureComposerIncomingShareReloadPolicy.initialHandledRevision(
+            revision: 7,
+            imports: [imported]
+        ) == nil)
+        #expect(FeatureComposerIncomingShareReloadPolicy.initialHandledRevision(
+            revision: 7,
+            imports: []
+        ) == 7)
     }
 
     @Test func handledReloadImportsArePrunedBeforeAComposerCanBeRecreated() {
@@ -450,7 +471,12 @@ struct ComposerDraftStoreTests {
         let shareID = "share-discard-retry"
         let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
         let draft = FeatureComposerDraft(text: "Keep me safe")
-        try await store.setDraft(draft, for: key)
+        _ = try await store.importSharedContent(
+            shareID: shareID,
+            text: draft.text,
+            attachments: [],
+            for: key
+        )
 
         let result = await NewTaskIncomingShareDiscard.perform(
             shareID: shareID,
@@ -462,6 +488,7 @@ struct ComposerDraftStoreTests {
 
         #expect(result == .acknowledgementFailed(draftRestored: true))
         #expect(try await store.draft(for: key) == draft)
+        #expect(try await store.snapshot(for: key).importedShareIDs == [shareID])
     }
 
     @Test func successfulDiscardRemovesTheStagedDraftBeforeAcknowledging() async throws {

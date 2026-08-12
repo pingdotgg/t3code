@@ -437,6 +437,7 @@ final class PlatformIncomingShareCoordinator {
     private let pipeline: PlatformIncomingSharePipeline
     private var isRefreshing = false
     private var lastNoProjectNoticeID: String?
+    private var dismissedEnvelopeIDs: Set<String> = []
 
     init(pipeline: PlatformIncomingSharePipeline = PlatformIncomingSharePipeline()) {
         self.pipeline = pipeline
@@ -459,7 +460,9 @@ final class PlatformIncomingShareCoordinator {
                 $0.id.caseInsensitiveCompare(preferredID) == .orderedSame
             }
         } else {
-            pendingEnvelope = envelopes.first
+            pendingEnvelope = envelopes.first {
+                !dismissedEnvelopeIDs.contains($0.id.lowercased())
+            }
         }
         guard pendingEnvelope != nil,
               pendingEnvelope?.destination == nil,
@@ -469,6 +472,16 @@ final class PlatformIncomingShareCoordinator {
 
     func dismissDestination() {
         guard !isImporting else { return }
+        if let id = pendingEnvelope?.id {
+            dismissedEnvelopeIDs.insert(id.lowercased())
+        }
+        pendingEnvelope = nil
+    }
+
+    func dismissStagedNewThread(id: String) {
+        guard !isImporting,
+              pendingEnvelope?.id.caseInsensitiveCompare(id) == .orderedSame else { return }
+        dismissedEnvelopeIDs.insert(id.lowercased())
         pendingEnvelope = nil
     }
 

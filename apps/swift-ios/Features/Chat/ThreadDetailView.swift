@@ -24,7 +24,7 @@ public struct ThreadDetailView: View {
     @State private var sharedAttachmentOverflowCount = 0
     @State private var didRestoreDraft = false
     @State private var restoredImportedShareIDs: Set<String> = []
-    @State private var handledComposerDraftReloadRevision: Int
+    @State private var handledComposerDraftReloadRevision: Int?
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var toolSurface: FeatureThreadToolSurface?
     @FocusState private var composerFocused: Bool
@@ -44,7 +44,10 @@ public struct ThreadDetailView: View {
         self.composerDraftReloadRevision = composerDraftReloadRevision
         self.composerDraftReloadImports = composerDraftReloadImports
         _handledComposerDraftReloadRevision = State(
-            initialValue: composerDraftReloadRevision
+            initialValue: FeatureComposerIncomingShareReloadPolicy.initialHandledRevision(
+                revision: composerDraftReloadRevision,
+                imports: composerDraftReloadImports
+            )
         )
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
@@ -92,6 +95,13 @@ public struct ThreadDetailView: View {
         )) {
             guard handledComposerDraftReloadRevision != composerDraftReloadRevision,
                   didRestoreDraft else { return }
+            let restoredImportIDs = FeatureComposerIncomingShareReloadPolicy.restoredImportIDs(
+                composerDraftReloadImports,
+                restoredShareIDs: restoredImportedShareIDs
+            )
+            if !restoredImportIDs.isEmpty {
+                onComposerDraftReloadHandled(restoredImportIDs)
+            }
             let pendingImports = FeatureComposerIncomingShareReloadPolicy.pendingImports(
                 composerDraftReloadImports,
                 restoredShareIDs: restoredImportedShareIDs
@@ -744,6 +754,13 @@ struct FeatureComposerIncomingShareMergeResult {
 }
 
 enum FeatureComposerIncomingShareReloadPolicy {
+    static func initialHandledRevision(
+        revision: Int,
+        imports: [FeatureComposerIncomingShareDraft]
+    ) -> Int? {
+        imports.isEmpty ? revision : nil
+    }
+
     static func appending(
         _ imported: FeatureComposerIncomingShareDraft,
         to imports: [FeatureComposerIncomingShareDraft],
@@ -758,6 +775,15 @@ enum FeatureComposerIncomingShareReloadPolicy {
         restoredShareIDs: Set<String>
     ) -> [FeatureComposerIncomingShareDraft] {
         imports.filter { !restoredShareIDs.contains($0.shareID) }
+    }
+
+    static func restoredImportIDs(
+        _ imports: [FeatureComposerIncomingShareDraft],
+        restoredShareIDs: Set<String>
+    ) -> [String] {
+        imports.compactMap {
+            restoredShareIDs.contains($0.shareID) ? $0.shareID : nil
+        }
     }
 
     static func removing(

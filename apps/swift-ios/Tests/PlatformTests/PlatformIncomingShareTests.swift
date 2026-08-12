@@ -456,6 +456,39 @@ struct PlatformIncomingShareTests {
     }
 
     @Test
+    func failedNewThreadRouteKeepsTheStagedSourceAndDestination() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let shareID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        let sourceKey = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let destinationKey = "new-task:full-project"
+        let stagedAttachment = Self.attachment(id: UUID(), value: 9)
+        let destination = FeatureComposerDraft(
+            text: "Existing task",
+            attachments: (0..<8).map { Self.attachment(id: UUID(), value: UInt8($0)) }
+        )
+        _ = try await store.importSharedContent(
+            shareID: shareID,
+            text: "Still staged",
+            attachments: [stagedAttachment],
+            for: sourceKey
+        )
+        try await store.setDraft(destination, for: destinationKey)
+
+        await #expect(throws: FeatureComposerDraftImportError.self) {
+            try await store.routeIncomingShare(shareID: shareID, to: destinationKey)
+        }
+
+        #expect(try await store.draft(for: sourceKey)?.text == "Still staged")
+        #expect(try await store.draft(for: sourceKey)?.attachments == [stagedAttachment])
+        #expect(try await store.draft(for: destinationKey) == destination)
+    }
+
+    @Test
     func missingStagedShareNeverMasqueradesAsAnExistingDestinationDraft() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)
@@ -500,6 +533,36 @@ struct PlatformIncomingShareTests {
         #expect(coordinator.pendingEnvelope == envelope)
         #expect(!(await coordinator.refresh(hasProjects: false)))
         #expect(coordinator.pendingEnvelope == envelope)
+    }
+
+    @Test
+    @MainActor
+    func dismissedStagedShareDoesNotImmediatelyPresentAgain() async {
+        let envelope = Self.envelope(text: "Dismiss for this app session")
+        let coordinator = PlatformIncomingShareCoordinator(
+            pipeline: PlatformIncomingSharePipeline(
+                source: PlatformIncomingShareSource(
+                    loadAll: { [envelope] },
+                    data: { _ in Data() },
+                    remove: { _ in }
+                ),
+                drafts: PlatformIncomingShareDraftRepository(
+                    importContent: { _, _, _, _, _ in
+                        PlatformIncomingShareDraftImport(
+                            draft: FeatureComposerDraft(),
+                            didImport: true
+                        )
+                    }
+                ),
+                prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
+            )
+        )
+
+        _ = await coordinator.refresh(hasProjects: true)
+        coordinator.dismissStagedNewThread(id: envelope.id.uppercased())
+        _ = await coordinator.refresh(hasProjects: true)
+
+        #expect(coordinator.pendingEnvelope == nil)
     }
 
     @Test

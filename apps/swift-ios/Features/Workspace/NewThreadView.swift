@@ -788,7 +788,9 @@ public struct NewThreadView: View {
                     routingError = "The shared draft is no longer available. Share it again to retry."
                 }
             } catch {
-                saved = nil
+                saved = try? await draftStore.draft(
+                    for: FeatureComposerDraftStore.incomingShareKey(shareID: routedShareID)
+                )
                 routingError = error.localizedDescription
             }
         } else {
@@ -814,7 +816,16 @@ public struct NewThreadView: View {
             }
             return
         }
-        if let routingError { incomingShareErrorMessage = routingError }
+        if let routingError {
+            incomingShareErrorMessage = routingError
+            if let saved {
+                prompt = saved.text
+                attachments = saved.attachments
+                restoredIncomingShareID = routedShareID
+            }
+            await loadBranches()
+            return
+        }
 
         let liveDraft = composerDraft
         let liveSelectionIsExplicit = selectionIsExplicit
@@ -1137,6 +1148,12 @@ enum NewTaskIncomingShareDiscard {
         store: FeatureComposerDraftStore,
         acknowledge: (String) async -> Bool
     ) async -> NewTaskIncomingShareDiscardResult {
+        let importedShareIDs: Set<String>
+        do {
+            importedShareIDs = try await store.snapshot(for: key).importedShareIDs
+        } catch {
+            return .cleanupFailed
+        }
         do {
             try await store.removeDraft(for: key)
         } catch {
@@ -1144,7 +1161,11 @@ enum NewTaskIncomingShareDiscard {
         }
         guard await acknowledge(shareID) else {
             do {
-                try await store.setDraft(draft, for: key)
+                try await store.restoreDraft(
+                    draft,
+                    importedShareIDs: importedShareIDs,
+                    for: key
+                )
                 return .acknowledgementFailed(draftRestored: true)
             } catch {
                 return .acknowledgementFailed(draftRestored: false)
