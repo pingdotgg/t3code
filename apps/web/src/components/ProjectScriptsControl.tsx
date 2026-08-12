@@ -167,23 +167,26 @@ export default function ProjectScriptsControl({
   const githubWorkflowItems = githubWorkflows.length > 0 && (
     <>
       <MenuSeparator />
-      {githubWorkflows.map((workflow) => (
-        <MenuItem
-          key={workflow.filename}
-          className={dropdownItemClassName}
-          onClick={() => {
-            setActionsMenuOpen({ scripts: false, imports: false });
-            if (workflow.inputs.length === 0 && onRunGithubWorkflow) {
-              void onRunGithubWorkflow(workflow, {});
-              return;
-            }
-            setSelectedWorkflow(workflow);
-          }}
-        >
-          <GitHubIcon className="size-4" />
-          <span className="truncate">{workflow.name}</span>
-        </MenuItem>
-      ))}
+      <MenuGroup>
+        <MenuGroupLabel>from GitHub Actions</MenuGroupLabel>
+        {githubWorkflows.map((workflow) => (
+          <MenuItem
+            key={workflow.filename}
+            className={dropdownItemClassName}
+            onClick={() => {
+              setActionsMenuOpen({ scripts: false, imports: false });
+              if (workflow.inputs.length === 0 && onRunGithubWorkflow) {
+                void onRunGithubWorkflow(workflow, {});
+                return;
+              }
+              setSelectedWorkflow(workflow);
+            }}
+          >
+            <GitHubIcon className="size-4" />
+            <span className="truncate">{workflow.name}</span>
+          </MenuItem>
+        ))}
+      </MenuGroup>
       <MenuSeparator />
     </>
   );
@@ -298,22 +301,25 @@ export default function ProjectScriptsControl({
           <MenuPopup align="end">
             {githubWorkflows.length > 0 ? (
               <>
-                {githubWorkflows.map((workflow) => (
-                  <MenuItem
-                    key={workflow.filename}
-                    className={dropdownItemClassName}
-                    onClick={() => {
-                      if (workflow.inputs.length === 0 && onRunGithubWorkflow) {
-                        void onRunGithubWorkflow(workflow, {});
-                        return;
-                      }
-                      setSelectedWorkflow(workflow);
-                    }}
-                  >
-                    <GitHubIcon className="size-4" />
-                    <span className="truncate">{workflow.name}</span>
-                  </MenuItem>
-                ))}
+                <MenuGroup>
+                  <MenuGroupLabel>from GitHub Actions</MenuGroupLabel>
+                  {githubWorkflows.map((workflow) => (
+                    <MenuItem
+                      key={workflow.filename}
+                      className={dropdownItemClassName}
+                      onClick={() => {
+                        if (workflow.inputs.length === 0 && onRunGithubWorkflow) {
+                          void onRunGithubWorkflow(workflow, {});
+                          return;
+                        }
+                        setSelectedWorkflow(workflow);
+                      }}
+                    >
+                      <GitHubIcon className="size-4" />
+                      <span className="truncate">{workflow.name}</span>
+                    </MenuItem>
+                  ))}
+                </MenuGroup>
                 <MenuSeparator />
               </>
             ) : null}
