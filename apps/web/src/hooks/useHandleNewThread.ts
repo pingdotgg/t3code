@@ -147,6 +147,10 @@ export function useNewThreadHandler() {
         if (
           carryContentSourceDraftId &&
           carryContentSourceDraftId !== destinationDraftId &&
+          // Never clobber a destination the user already invested in — the
+          // move overwrites the destination prompt, so a concurrent repo
+          // change that carried content first must win.
+          !composerDraftHasUserContent(getComposerDraft(destinationDraftId)) &&
           composerDraftHasUserContent(getComposerDraft(carryContentSourceDraftId))
         ) {
           moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
