@@ -188,13 +188,14 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  // Native OS notifications for agent tasks. Desktop-only: the settings section
-  // is hidden without a desktop bridge, and the keys are inert there. Default
-  // on because the OS still owns the real consent prompt (macOS asks on the
-  // first notification), and the trigger engine seeds silently on first
-  // observation, so a launch never produces a backlog of notifications.
+  // Native OS notifications for agent tasks. Desktop defaults on because the
+  // OS owns its consent prompt. Web push defaults off because browsers require
+  // an explicit user gesture before subscribing.
   desktopNotificationsEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  webPushNotificationsEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   desktopNotifyTaskCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   desktopNotifyTaskFailed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -827,6 +828,7 @@ export const ClientSettingsPatch = Schema.Struct({
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   desktopNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
+  webPushNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   desktopNotifyTaskCompleted: Schema.optionalKey(Schema.Boolean),
   desktopNotifyTaskFailed: Schema.optionalKey(Schema.Boolean),
   desktopNotifyApprovalNeeded: Schema.optionalKey(Schema.Boolean),

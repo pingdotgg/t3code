@@ -14,11 +14,18 @@ export interface ApnsCredentials {
   readonly environment: ApnsEnvironment;
 }
 
+export interface WebPushCredentials {
+  readonly subject: string;
+  readonly publicKey: string;
+  readonly privateKey: Redacted.Redacted<string>;
+}
+
 export class RelayConfiguration extends Context.Service<
   RelayConfiguration,
   {
     readonly relayIssuer: string;
     readonly apns: ApnsCredentials;
+    readonly webPush: WebPushCredentials;
     readonly clerkSecretKey: Redacted.Redacted<string>;
     readonly clerkPublishableKey: string;
     readonly clerkJwtAudience: string;

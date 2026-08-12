@@ -42,6 +42,11 @@ vi.mock("@clerk/backend", () => ({
 
 const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   relayIssuer: "https://relay.example.test",
+  webPush: {
+    subject: "https://relay.example.test",
+    publicKey: "web-push-public-key",
+    privateKey: Redacted.make("web-push-private-key"),
+  },
   apns: {
     teamId: "apns-team",
     keyId: "apns-key",

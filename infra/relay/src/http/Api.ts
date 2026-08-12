@@ -33,6 +33,7 @@ import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
   RelayMobileRegistrationScope,
+  RelayWebPushRegistrationScope,
   RelayAuthInvalidError,
   type RelayAuthInvalidReason,
   RelayEnvironmentAuth,
@@ -67,6 +68,7 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
+import * as WebPushSubscriptions from "../agentActivity/WebPushSubscriptions.ts";
 import { withSpanAttributes } from "../observability.ts";
 import * as RelayDb from "../db.ts";
 
@@ -361,6 +363,7 @@ export const metadataApi = HttpApiBuilder.group(
       RelayEnvironmentConnectScope,
       RelayEnvironmentStatusScope,
       RelayMobileRegistrationScope,
+      RelayWebPushRegistrationScope,
     ] as const;
     return handlers
       .handle("authorizationServer", () =>
@@ -381,6 +384,9 @@ export const metadataApi = HttpApiBuilder.group(
           dpop_bound_access_tokens_required: true,
           dpop_signing_alg_values_supported: ["ES256"],
         }),
+      )
+      .handle("webPushVapidPublicKey", () =>
+        Effect.succeed({ publicKey: settings.webPush.publicKey }),
       );
   }),
 );
@@ -516,6 +522,45 @@ export const mobileApi = HttpApiBuilder.group(
             expectedAccessToken: token,
           }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
           return yield* registrations.unregisterDevice({ userId, deviceId: params.deviceId });
+        }, mapRelayCommonApiErrors("invalid_dpop")),
+      );
+  }),
+);
+
+export const webPushApi = HttpApiBuilder.group(
+  RelayApi,
+  "webPush",
+  Effect.fnUntraced(function* (handlers) {
+    const subscriptions = yield* WebPushSubscriptions.WebPushSubscriptions;
+    const dpopProofs = yield* DpopProofs.DpopProofReplay;
+
+    const authorize = Effect.gen(function* () {
+      const { userId, token } = yield* RelayClientPrincipal;
+      const proofKeyThumbprint = yield* requireDpopPrincipalScope("web-push:registration");
+      yield* requireDpopThumbprint(proofKeyThumbprint, {
+        expectedAccessToken: token,
+      }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
+      return userId;
+    });
+
+    return handlers
+      .handle(
+        "registerWebPush",
+        Effect.fn("relay.api.webPush.registerWebPush")(function* (args) {
+          const userId = yield* authorize;
+          yield* subscriptions.register({ userId, registration: args.payload });
+          return { ok: true as const };
+        }, mapRelayCommonApiErrors("invalid_dpop")),
+      )
+      .handle(
+        "unregisterWebPush",
+        Effect.fn("relay.api.webPush.unregisterWebPush")(function* (args) {
+          const userId = yield* authorize;
+          yield* subscriptions.unregister({
+            userId,
+            subscriptionId: args.params.subscriptionId,
+          });
+          return { ok: true as const };
         }, mapRelayCommonApiErrors("invalid_dpop")),
       );
   }),
@@ -1025,6 +1070,7 @@ const RelayCommonPersistenceError = Schema.Union([
   AgentActivityRows.AgentActivityRowListPersistenceError,
   LiveActivities.LiveActivityDeliveryMarkPersistenceError,
   DeliveryAttempts.DeliveryAttemptRecordPersistenceError,
+  WebPushSubscriptions.WebPushSubscriptionPersistenceError,
 ]);
 type RelayCommonPersistenceError = typeof RelayCommonPersistenceError.Type;
 const isRelayCommonPersistenceError = Schema.is(RelayCommonPersistenceError);

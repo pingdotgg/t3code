@@ -39,6 +39,29 @@ export const relayMobileDevices = pgTable(
   ],
 );
 
+export const relayWebPushSubscriptions = pgTable(
+  "relay_web_push_subscriptions",
+  {
+    userId: varchar("user_id", { length: 255 }).notNull(),
+    subscriptionId: varchar("subscription_id", { length: 255 }).notNull(),
+    label: text("label").notNull().default("Web browser"),
+    endpoint: text("endpoint").notNull(),
+    expirationTime: varchar("expiration_time", { length: 64 }),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    preferencesJson: jsonb("preferences_json")
+      .notNull()
+      .$type<import("@t3tools/contracts/relay").RelayWebPushPreferences>(),
+    createdAt: varchar("created_at", { length: 64 }).notNull(),
+    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.subscriptionId] }),
+    uniqueIndex("idx_relay_web_push_subscriptions_endpoint").on(table.endpoint),
+    index("idx_relay_web_push_subscriptions_user").on(table.userId),
+  ],
+);
+
 export const relayLiveActivities = pgTable(
   "relay_live_activities",
   {

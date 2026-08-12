@@ -8,6 +8,7 @@ import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
+import * as WebPushDeliveries from "./WebPushDeliveries.ts";
 
 const state: RelayAgentActivityState = {
   environmentId: "env" as RelayAgentActivityState["environmentId"],
@@ -128,6 +129,15 @@ function makeApnsDeliveries(
   };
 }
 
+function makeWebPushDeliveries(
+  overrides: Partial<WebPushDeliveries.WebPushDeliveries["Service"]> = {},
+): WebPushDeliveries.WebPushDeliveries["Service"] {
+  return {
+    sendForUser: () => Effect.void,
+    ...overrides,
+  };
+}
+
 describe("AgentActivityPublisher", () => {
   it.effect("replays the latest aggregate when a Live Activity token registers", () => {
     const registeredTarget: LiveActivities.TargetRow = {
@@ -160,6 +170,7 @@ describe("AgentActivityPublisher", () => {
           AgentActivityPublisher.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
+                Layer.succeed(WebPushDeliveries.WebPushDeliveries, makeWebPushDeliveries()),
                 Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
                 Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
                 Layer.succeed(
@@ -218,6 +229,9 @@ describe("AgentActivityPublisher", () => {
     }> = [];
     const upserts: Array<Parameters<AgentActivityRows.AgentActivityRows["Service"]["upsert"]>[0]> =
       [];
+    const webPushDeliveries: Array<
+      Parameters<WebPushDeliveries.WebPushDeliveries["Service"]["sendForUser"]>[0]
+    > = [];
 
     return Effect.gen(function* () {
       const result = yield* Effect.gen(function* () {
@@ -233,6 +247,15 @@ describe("AgentActivityPublisher", () => {
           AgentActivityPublisher.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
+                Layer.succeed(
+                  WebPushDeliveries.WebPushDeliveries,
+                  makeWebPushDeliveries({
+                    sendForUser: (input) =>
+                      Effect.sync(() => {
+                        webPushDeliveries.push(input);
+                      }),
+                  }),
+                ),
                 Layer.succeed(
                   AgentActivityRows.AgentActivityRows,
                   makeAgentActivityRows({
@@ -296,6 +319,13 @@ describe("AgentActivityPublisher", () => {
           },
         },
       ]);
+      expect(webPushDeliveries).toEqual([
+        {
+          userId: "dev:julius",
+          previousState: state,
+          nextState: state,
+        },
+      ]);
       expect(result).toEqual({ ok: true, deliveries: [deliveryResult] });
     });
   });
@@ -327,6 +357,7 @@ describe("AgentActivityPublisher", () => {
           AgentActivityPublisher.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
+                Layer.succeed(WebPushDeliveries.WebPushDeliveries, makeWebPushDeliveries()),
                 Layer.succeed(
                   AgentActivityRows.AgentActivityRows,
                   makeAgentActivityRows({
@@ -433,6 +464,7 @@ describe("AgentActivityPublisher", () => {
           AgentActivityPublisher.layer.pipe(
             Layer.provide(
               Layer.mergeAll(
+                Layer.succeed(WebPushDeliveries.WebPushDeliveries, makeWebPushDeliveries()),
                 Layer.succeed(
                   AgentActivityRows.AgentActivityRows,
                   makeAgentActivityRows({
@@ -545,6 +577,7 @@ describe("AgentActivityPublisher", () => {
             AgentActivityPublisher.layer.pipe(
               Layer.provide(
                 Layer.mergeAll(
+                  Layer.succeed(WebPushDeliveries.WebPushDeliveries, makeWebPushDeliveries()),
                   Layer.succeed(
                     AgentActivityRows.AgentActivityRows,
                     makeAgentActivityRows({

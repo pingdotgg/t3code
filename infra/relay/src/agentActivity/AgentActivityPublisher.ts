@@ -22,6 +22,7 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
+import * as WebPushDeliveries from "./WebPushDeliveries.ts";
 
 export type AgentActivityPublishError =
   | AgentActivityRows.AgentActivityRowUpsertPersistenceError
@@ -52,9 +53,11 @@ export const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
+  const webPushDeliveries = yield* WebPushDeliveries.WebPushDeliveries;
 
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
+    readonly previousState: RelayAgentActivityState | null;
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
   }) {
@@ -98,6 +101,23 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: 4 },
     );
+    if (input.deliveryUser.notificationsEnabled) {
+      yield* webPushDeliveries
+        .sendForUser({
+          userId: input.deliveryUser.userId,
+          previousState: input.previousState,
+          nextState: input.state,
+        })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("Web Push fan-out failed", {
+              errorTag: error._tag,
+              userId: input.deliveryUser.userId,
+            }),
+          ),
+          Effect.ignore,
+        );
+    }
     return deliveriesByTarget.flat();
   });
 
@@ -138,6 +158,19 @@ export const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
+      const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
+        environmentId: input.environmentId,
+        environmentPublicKey: input.environmentPublicKey,
+      });
+      const firstDeliveryUser = deliveryUsers[0];
+      const previousState = firstDeliveryUser
+        ? yield* rows.getForUserThread({
+            userId: firstDeliveryUser.userId,
+            environmentId: input.environmentId,
+            threadId: input.threadId,
+          })
+        : null;
+
       if (input.state) {
         // Terminal states are persisted too (pruned by the cron after they
         // age out) so a thread that finishes while other agents are active
@@ -155,16 +188,13 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
-        environmentId: input.environmentId,
-        environmentPublicKey: input.environmentPublicKey,
-      });
       const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(
         deliveryUsers,
         (deliveryUser) =>
           publishForDeliveryUser({
             deliveryUser,
+            previousState,
             state: input.state,
             nowMs: now.epochMilliseconds,
           }),

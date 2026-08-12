@@ -11,6 +11,11 @@ import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 
 const config: RelayConfiguration.RelayConfiguration["Service"] = {
   relayIssuer: "https://relay.example.com",
+  webPush: {
+    subject: "https://relay.example.com",
+    publicKey: "web-push-public-key",
+    privateKey: Redacted.make("web-push-private-key"),
+  },
   apns: {
     teamId: "team-1",
     keyId: "key-1",

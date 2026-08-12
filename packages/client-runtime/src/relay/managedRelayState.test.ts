@@ -84,6 +84,9 @@ function createManager(
     unregisterDevice: () => Effect.die("unused"),
     registerLiveActivity: () => Effect.die("unused"),
     getAgentActivitySnapshot: () => Effect.die("unused"),
+    getWebPushVapidPublicKey: Effect.die("unused"),
+    registerWebPush: () => Effect.die("unused"),
+    unregisterWebPush: () => Effect.die("unused"),
     resetTokenCache: Effect.void,
     ...overrides,
   });

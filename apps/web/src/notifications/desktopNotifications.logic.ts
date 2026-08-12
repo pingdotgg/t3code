@@ -4,28 +4,9 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { projectThreadAwareness, type AgentAwarenessPhase } from "@t3tools/shared/agentAwareness";
+import { agentNotificationKind } from "@t3tools/shared/agentNotifications";
 
 import { notificationBody, notificationTitle } from "./notificationCopy";
-
-/**
- * Phases a thread must be leaving for its next phase to be worth announcing.
- * Requiring an active predecessor is what makes a thread that is merely
- * *observed* as finished (a cached snapshot, a resync, a reconnect) stay quiet:
- * nothing happened, we just learned about it.
- */
-const ACTIVE_PHASES: ReadonlySet<AgentAwarenessPhase> = new Set([
-  "starting",
-  "running",
-  "waiting_for_input",
-  "waiting_for_approval",
-]);
-
-/** Phases that can precede an approval prompt and still count as progress. */
-const PRE_APPROVAL_PHASES: ReadonlySet<AgentAwarenessPhase> = new Set([
-  "starting",
-  "running",
-  "waiting_for_input",
-]);
 
 export interface ThreadNotificationSettings {
   readonly enabled: boolean;
@@ -108,19 +89,7 @@ export function notifiableKind(
   previousPhase: AgentAwarenessPhase | null,
   nextPhase: AgentAwarenessPhase | null,
 ): DesktopNotificationKind | null {
-  if (previousPhase === null || nextPhase === null) {
-    return null;
-  }
-  if (nextPhase === "completed" && ACTIVE_PHASES.has(previousPhase)) {
-    return "task-completed";
-  }
-  if (nextPhase === "failed" && ACTIVE_PHASES.has(previousPhase)) {
-    return "task-failed";
-  }
-  if (nextPhase === "waiting_for_approval" && PRE_APPROVAL_PHASES.has(previousPhase)) {
-    return "approval-needed";
-  }
-  return null;
+  return agentNotificationKind(previousPhase, nextPhase);
 }
 
 function isNotificationKindEnabled(

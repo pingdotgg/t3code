@@ -92,6 +92,52 @@ export const RelayDeviceUnregistrationParams = Schema.Struct({
 });
 export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
 
+export const RelayWebPushPreferences = Schema.Struct({
+  notifyOnApproval: Schema.Boolean,
+  notifyOnCompletion: Schema.Boolean,
+  notifyOnFailure: Schema.Boolean,
+  soundEnabled: Schema.Boolean,
+});
+export type RelayWebPushPreferences = typeof RelayWebPushPreferences.Type;
+
+const RelayWebPushEndpoint = TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)).check(
+  Schema.makeFilter((value) => {
+    try {
+      return new URL(value).protocol === "https:" || "Web Push endpoint must use HTTPS.";
+    } catch {
+      return "Web Push endpoint must be a valid URL.";
+    }
+  }),
+);
+
+export const RelayWebPushSubscription = Schema.Struct({
+  endpoint: RelayWebPushEndpoint,
+  expirationTime: Schema.NullOr(Schema.Number),
+  keys: Schema.Struct({
+    p256dh: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    auth: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  }),
+});
+export type RelayWebPushSubscription = typeof RelayWebPushSubscription.Type;
+
+export const RelayWebPushRegistrationRequest = Schema.Struct({
+  subscriptionId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  subscription: RelayWebPushSubscription,
+  preferences: RelayWebPushPreferences,
+});
+export type RelayWebPushRegistrationRequest = typeof RelayWebPushRegistrationRequest.Type;
+
+export const RelayWebPushUnregistrationParams = Schema.Struct({
+  subscriptionId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type RelayWebPushUnregistrationParams = typeof RelayWebPushUnregistrationParams.Type;
+
+export const RelayWebPushVapidPublicKeyResponse = Schema.Struct({
+  publicKey: TrimmedNonEmptyString,
+});
+export type RelayWebPushVapidPublicKeyResponse = typeof RelayWebPushVapidPublicKeyResponse.Type;
+
 export const RelayAgentActivityState = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
@@ -653,10 +699,12 @@ export type RelayEnvironmentConnectRequest = typeof RelayEnvironmentConnectReque
 export const RelayEnvironmentConnectScope = "environment:connect" as const;
 export const RelayEnvironmentStatusScope = "environment:status" as const;
 export const RelayMobileRegistrationScope = "mobile:registration" as const;
+export const RelayWebPushRegistrationScope = "web-push:registration" as const;
 export const RelayDpopAccessTokenScope = Schema.Literals([
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
   RelayMobileRegistrationScope,
+  RelayWebPushRegistrationScope,
 ]);
 export type RelayDpopAccessTokenScope = typeof RelayDpopAccessTokenScope.Type;
 
@@ -882,6 +930,9 @@ export const RelayMetadataGroup = HttpApiGroup.make("metadata")
     HttpApiEndpoint.get("protectedResource", "/.well-known/oauth-protected-resource", {
       success: RelayProtectedResourceMetadata,
     }).annotate(OpenApi.Summary, "Read OAuth protected-resource metadata"),
+    HttpApiEndpoint.get("webPushVapidPublicKey", "/v1/web-push/vapid-public-key", {
+      success: RelayWebPushVapidPublicKeyResponse,
+    }).annotate(OpenApi.Summary, "Read the Web Push VAPID public key"),
   )
   .annotate(OpenApi.Description, "OAuth and DPoP discovery metadata.");
 
@@ -944,6 +995,33 @@ export const RelayMobileGroup = HttpApiGroup.make("mobile")
     RelayUnregisterDeviceEndpoint,
   )
   .annotate(OpenApi.Description, "Mobile push-notification and Live Activity registration.")
+  .middleware(RelayDpopClientAuth);
+
+export const RelayRegisterWebPushEndpoint = HttpApiEndpoint.post(
+  "registerWebPush",
+  "/v1/web-push/subscriptions",
+  {
+    headers: RelayDpopRequestHeaders,
+    payload: RelayWebPushRegistrationRequest,
+    success: RelayOkResponse,
+    error: RelayAuthAndInternalErrors,
+  },
+).annotate(OpenApi.Summary, "Register or update a Web Push subscription");
+
+export const RelayUnregisterWebPushEndpoint = HttpApiEndpoint.delete(
+  "unregisterWebPush",
+  "/v1/web-push/subscriptions/:subscriptionId",
+  {
+    headers: RelayDpopRequestHeaders,
+    params: RelayWebPushUnregistrationParams,
+    success: RelayOkResponse,
+    error: RelayAuthAndInternalErrors,
+  },
+).annotate(OpenApi.Summary, "Unregister a Web Push subscription");
+
+export const RelayWebPushGroup = HttpApiGroup.make("webPush")
+  .add(RelayRegisterWebPushEndpoint, RelayUnregisterWebPushEndpoint)
+  .annotate(OpenApi.Description, "Standards-based Web Push subscription registration.")
   .middleware(RelayDpopClientAuth);
 
 export const RelayClientGroup = HttpApiGroup.make("client")
@@ -1075,6 +1153,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayHealthGroup,
     RelayMetadataGroup,
     RelayMobileGroup,
+    RelayWebPushGroup,
     RelayClientGroup,
     RelayTokenGroup,
     RelayDpopClientGroup,
