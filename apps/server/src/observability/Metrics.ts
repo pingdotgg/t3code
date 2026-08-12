@@ -51,8 +51,15 @@ export const providerTurnsTotal = Metric.counter("t3_provider_turns_total", {
 });
 
 export const providerTurnDuration = Metric.timer("t3_provider_turn_duration", {
-  description: "Provider turn request duration.",
+  description: "Provider turn adapter attempt duration.",
 });
+
+export const providerTurnRetryBackoffDuration = Metric.timer(
+  "t3_provider_turn_retry_backoff_duration",
+  {
+    description: "Provider turn retry backoff duration.",
+  },
+);
 
 export const providerRuntimeEventsTotal = Metric.counter("t3_provider_runtime_events_total", {
   description: "Total canonical provider runtime events processed.",

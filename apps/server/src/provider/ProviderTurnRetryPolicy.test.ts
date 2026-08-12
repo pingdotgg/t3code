@@ -7,8 +7,14 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { ProviderAdapterRequestError } from "./Errors.ts";
 import {
+  ProviderAdapterRequestError,
+  ProviderAdapterSessionClosedError,
+  ProviderAdapterValidationError,
+} from "./Errors.ts";
+import {
+  isProviderFailureEvent,
+  isProviderTurnTerminalEvent,
   retryableProviderRuntimeFailure,
   retryableProviderServiceFailure,
 } from "./ProviderTurnRetryPolicy.ts";
@@ -94,5 +100,70 @@ describe("ProviderTurnRetryPolicy", () => {
     });
 
     expect(retryableProviderServiceFailure(error)?.message).toContain("529 overloaded_error");
+  });
+
+  it("does not retry permanent adapter failures", () => {
+    const requestError = new ProviderAdapterRequestError({
+      provider: "codex",
+      method: "turn/start",
+      detail: "401 Unauthorized: invalid API key",
+    });
+    const validationError = new ProviderAdapterValidationError({
+      provider: "codex",
+      operation: "sendTurn",
+      issue: "Invalid request",
+    });
+    const permanentlyClosedSession = new ProviderAdapterSessionClosedError({
+      provider: "codex",
+      threadId: "retry-policy-thread",
+      cause: new Error("401 Unauthorized: invalid API key"),
+    });
+    const transientlyClosedSession = new ProviderAdapterSessionClosedError({
+      provider: "codex",
+      threadId: "retry-policy-thread",
+    });
+
+    expect(retryableProviderServiceFailure(requestError)).toBeUndefined();
+    expect(retryableProviderServiceFailure(validationError)).toBeUndefined();
+    expect(retryableProviderServiceFailure(permanentlyClosedSession)).toBeUndefined();
+    expect(retryableProviderServiceFailure(transientlyClosedSession)).toBeDefined();
+  });
+
+  it("classifies provider failures independently from terminal turn events", () => {
+    const permanentFailure: ProviderRuntimeEvent = {
+      ...eventBase,
+      type: "turn.completed",
+      payload: {
+        state: "failed",
+        errorMessage: "401 Unauthorized: invalid API key",
+      },
+    };
+    const successfulCompletion: ProviderRuntimeEvent = {
+      ...eventBase,
+      type: "turn.completed",
+      payload: { state: "completed" },
+    };
+    const sessionError: ProviderRuntimeEvent = {
+      ...eventBase,
+      type: "session.state.changed",
+      payload: {
+        state: "error",
+        reason: "503 Service Unavailable",
+      },
+    };
+    const abortedTurn: ProviderRuntimeEvent = {
+      ...eventBase,
+      type: "turn.aborted",
+      payload: { reason: "Interrupted by user" },
+    };
+
+    expect(isProviderFailureEvent(permanentFailure)).toBe(true);
+    expect(isProviderTurnTerminalEvent(permanentFailure)).toBe(true);
+    expect(isProviderFailureEvent(successfulCompletion)).toBe(false);
+    expect(isProviderTurnTerminalEvent(successfulCompletion)).toBe(true);
+    expect(isProviderFailureEvent(sessionError)).toBe(true);
+    expect(isProviderTurnTerminalEvent(sessionError)).toBe(false);
+    expect(isProviderFailureEvent(abortedTurn)).toBe(true);
+    expect(isProviderTurnTerminalEvent(abortedTurn)).toBe(true);
   });
 });
