@@ -16,7 +16,7 @@ describe("GitHub pull request search JSON", () => {
             nodes: [
               {
                 number: 42,
-                title: "Review me",
+                title: "Review me  ",
                 url: "https://github.com/acme/web/pull/42",
                 author: { login: "octocat" },
                 headRefName: "feature/review",
@@ -42,6 +42,7 @@ describe("GitHub pull request search JSON", () => {
     if (!Result.isSuccess(decoded)) return;
     expect(decoded.success.items[0]?.hasTeamReviewRequest).toBe(true);
     expect(decoded.success.items[0]?.reviewRequestLogins).toEqual([]);
+    expect(decoded.success.items[0]?.title).toBe("Review me");
     expect(pullRequestSearchGraphQlQuery(1)).toContain("... on Team { slug }");
   });
 });
