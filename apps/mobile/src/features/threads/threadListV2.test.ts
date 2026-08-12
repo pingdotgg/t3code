@@ -252,13 +252,29 @@ describe("resolveThreadListV2SnoozeGateExpiryMs", () => {
 });
 
 describe("sortThreadsForListV2", () => {
-  it("orders by creation time, newest first, ignoring activity", () => {
+  it("orders by latest activity, most recent first", () => {
     const sorted = sortThreadsForListV2([
-      { id: "oldest", createdAt: "2026-06-01T08:00:00.000Z" },
-      { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
-      { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
+      {
+        id: "old-creation-fresh-work",
+        createdAt: "2026-06-01T08:00:00.000Z",
+        latestUserMessageAt: "2026-06-01T14:00:00.000Z",
+      },
+      {
+        id: "new-creation-stale",
+        createdAt: "2026-06-01T12:00:00.000Z",
+        latestUserMessageAt: "2026-06-01T12:05:00.000Z",
+      },
+      {
+        id: "middle",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        latestUserMessageAt: "2026-06-01T13:00:00.000Z",
+      },
     ]);
-    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "old-creation-fresh-work",
+      "middle",
+      "new-creation-stale",
+    ]);
   });
 });
 
@@ -562,19 +578,20 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledShelfHeaderIndex).toBe(0);
   });
 
-  it("keeps cards in creation order while settled sorts by recency", () => {
+  it("promotes active cards with recent work above newer-but-stale ones", () => {
     const { items } = buildThreadListV2Items({
       threads: [
         makeThread({
           id: ThreadId.make("older-created"),
           title: "Older",
           createdAt: "2026-06-01T08:00:00.000Z",
-          updatedAt: NOW, // recent activity must NOT promote it
+          updatedAt: NOW, // recent activity must promote it
         }),
         makeThread({
           id: ThreadId.make("newer-created"),
           title: "Newer",
           createdAt: "2026-06-01T12:00:00.000Z",
+          updatedAt: "2026-06-01T12:00:00.000Z",
         }),
       ],
       environmentId: null,
@@ -582,7 +599,7 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    expect(items.map((item) => item.thread.id)).toEqual(["newer-created", "older-created"]);
+    expect(items.map((item) => item.thread.id)).toEqual(["older-created", "newer-created"]);
   });
 
   it("keeps settled threads in the tail and filters by search query", () => {

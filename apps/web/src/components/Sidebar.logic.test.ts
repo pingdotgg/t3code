@@ -734,25 +734,57 @@ describe("searchSidebarThreadsByTitle", () => {
 });
 
 describe("sortThreadsForSidebar", () => {
-  const sortable = (input: { id: string; createdAt: string }) => ({
+  const sortable = (input: {
+    id: string;
+    createdAt: string;
+    updatedAt?: string;
+    latestUserMessageAt?: string;
+  }) => ({
     id: input.id,
     createdAt: input.createdAt,
+    updatedAt: input.updatedAt ?? input.createdAt,
+    latestUserMessageAt: input.latestUserMessageAt ?? null,
+    latestTurn: null,
   });
 
-  it("orders by creation time, newest first, ignoring activity", () => {
+  it("orders by latest activity, most recent first", () => {
     const sorted = sortThreadsForSidebar([
-      sortable({ id: "oldest", createdAt: "2026-03-09T08:00:00.000Z" }),
-      sortable({ id: "newest", createdAt: "2026-03-09T12:00:00.000Z" }),
-      sortable({ id: "middle", createdAt: "2026-03-09T10:00:00.000Z" }),
+      sortable({
+        id: "old-creation-fresh-work",
+        createdAt: "2026-03-09T08:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T14:00:00.000Z",
+      }),
+      sortable({
+        id: "new-creation-stale",
+        createdAt: "2026-03-09T12:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T12:05:00.000Z",
+      }),
+      sortable({
+        id: "middle",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T13:00:00.000Z",
+      }),
     ]);
 
-    expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
+    expect(sorted.map((thread) => thread.id)).toEqual([
+      "old-creation-fresh-work",
+      "middle",
+      "new-creation-stale",
+    ]);
   });
 
-  it("breaks creation-time ties by id so the order is stable", () => {
+  it("breaks activity-time ties by id so the order is stable", () => {
     const sorted = sortThreadsForSidebar([
-      sortable({ id: "b", createdAt: "2026-03-09T10:00:00.000Z" }),
-      sortable({ id: "a", createdAt: "2026-03-09T10:00:00.000Z" }),
+      sortable({
+        id: "b",
+        createdAt: "2026-03-09T10:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+      }),
+      sortable({
+        id: "a",
+        createdAt: "2026-03-09T09:00:00.000Z",
+        latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+      }),
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);

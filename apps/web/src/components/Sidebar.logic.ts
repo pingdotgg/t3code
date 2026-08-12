@@ -513,17 +513,56 @@ export function firstValidTimestamp(
   return null;
 }
 
-// Sidebar sort: static creation order, newest thread on top. Activity NEVER
-// reorders the list — a row holds its position from open until settled, so
-// the screen only moves at lifecycle transitions. Status (including pending
-// approval) is carried by each card's edge strip, not by position.
+type ActiveThreadActivityInput = {
+  readonly createdAt: string;
+  readonly updatedAt?: string | null;
+  readonly latestUserMessageAt?: string | null;
+  readonly latestTurn?: {
+    readonly requestedAt?: string | null;
+    readonly startedAt?: string | null;
+    readonly completedAt?: string | null;
+  } | null;
+};
+
+/**
+ * Most recent work on an active thread: last user message or turn stamp,
+ * then updatedAt, then createdAt. Used so a session that just finished
+ * work jumps above older untouched rows (All projects and per-project).
+ */
+export function resolveActiveThreadActivityTimestamp(thread: ActiveThreadActivityInput): string {
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+    thread.updatedAt,
+    thread.createdAt,
+  ]) {
+    if (candidate == null) continue;
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed) && parsed > latestMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
+  }
+  return latest ?? thread.createdAt;
+}
+
+// Active list sort: most recent activity on top (user message / turn /
+// updatedAt / createdAt). Applies for All projects and when a single project
+// is filtered — both pass through the same activeThreads partition.
 export function sortThreadsForSidebar<
-  T extends { readonly id: string; readonly createdAt: string },
+  T extends { readonly id: string } & ActiveThreadActivityInput,
 >(threads: readonly T[]): T[] {
+  const activityMs = (thread: T) => {
+    const timestamp = resolveActiveThreadActivityTimestamp(thread);
+    const parsed = Date.parse(timestamp);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
   return [...threads].toSorted(
-    (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
-      left.id.localeCompare(right.id),
+    (left, right) => activityMs(right) - activityMs(left) || left.id.localeCompare(right.id),
   );
 }
 

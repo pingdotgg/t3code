@@ -158,20 +158,49 @@ function firstValidTimestampMs(...candidates: ReadonlyArray<string | null | unde
   return 0;
 }
 
+type ActiveThreadActivityInput = {
+  readonly createdAt: string;
+  readonly updatedAt?: string | null;
+  readonly latestUserMessageAt?: string | null;
+  readonly latestTurn?: {
+    readonly requestedAt?: string | null;
+    readonly startedAt?: string | null;
+    readonly completedAt?: string | null;
+  } | null;
+};
+
 /**
- * v2 sort: static creation order, newest thread on top. Activity NEVER
- * reorders the list — a row holds its position from open until settled, so
- * the screen only moves at lifecycle transitions. Mirrors web's
- * sortThreadsForSidebarV2.
+ * Most recent work first (user message / turn / updatedAt / createdAt).
+ * Mirrors web `sortThreadsForSidebar` so finished or newly touched
+ * sessions rise to the top under All projects and single-project filters.
  */
-export function sortThreadsForListV2<T extends { readonly id: string; readonly createdAt: string }>(
+export function resolveActiveThreadActivityMs(thread: ActiveThreadActivityInput): number {
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+    thread.updatedAt,
+    thread.createdAt,
+  ]) {
+    if (candidate == null) continue;
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed) && parsed > latestMs) {
+      latestMs = parsed;
+    }
+  }
+  return latestMs === Number.NEGATIVE_INFINITY ? parseTimestampMs(thread.createdAt) : latestMs;
+}
+
+export function sortThreadsForListV2<T extends { readonly id: string } & ActiveThreadActivityInput>(
   threads: readonly T[],
 ): T[] {
   // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023
   // change-by-copy array methods.
   return [...threads].sort(
     (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
+      resolveActiveThreadActivityMs(right) - resolveActiveThreadActivityMs(left) ||
       left.id.localeCompare(right.id),
   );
 }
