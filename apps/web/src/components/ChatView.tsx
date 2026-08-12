@@ -165,6 +165,7 @@ import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { deriveLatestContextWindowSnapshot, formatProviderDisplayName } from "../lib/contextWindow";
 import { terminalLabelsById } from "../terminalLabels";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import {
@@ -1341,6 +1342,14 @@ function ChatViewBody(
     selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const activeContextWindow = useMemo(
+    () => deriveLatestContextWindowSnapshot(activeThread?.activities ?? []),
+    [activeThread?.activities],
+  );
+  const activeThreadProviderDisplayName = useMemo(
+    () => formatProviderDisplayName(selectedProvider),
+    [selectedProvider],
+  );
   const rawPhase = derivePhase(activeThread?.session ?? null);
   const phase: SessionPhase = sessionActivelyWorking
     ? "running"
@@ -4778,7 +4787,6 @@ function ChatViewBody(
                   providerStatuses={providerStatuses as ServerProvider[]}
                   activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
                   activeThreadModelSelection={activeThread?.modelSelection}
-                  activeThreadActivities={activeThread?.activities}
                   resolvedTheme={resolvedTheme}
                   settings={settings}
                   keybindings={keybindings}
@@ -4811,34 +4819,33 @@ function ChatViewBody(
                   setThreadError={setThreadError}
                   onExpandImage={onExpandTimelineImage}
                 />
-                {isGitRepo && (
-                  <BranchToolbar
-                    environmentId={activeThread.environmentId}
-                    threadId={activeThread.id}
-                    {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                    onEnvModeChange={onEnvModeChange}
-                    {...(canOverrideServerThreadEnvMode
-                      ? { effectiveEnvModeOverride: envMode }
-                      : {})}
-                    {...(canOverrideServerThreadEnvMode
-                      ? {
-                          activeThreadBranchOverride: activeThreadBranch,
-                          onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
-                        }
-                      : {})}
-                    envLocked={envLocked}
-                    onComposerFocusRequest={scheduleComposerFocus}
-                    {...(canCheckoutPullRequestIntoThread
-                      ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                      : {})}
-                    {...(hasMultipleEnvironments
-                      ? {
-                          availableEnvironments: logicalProjectEnvironments,
-                          onEnvironmentChange,
-                        }
-                      : {})}
-                  />
-                )}
+                <BranchToolbar
+                  environmentId={activeThread.environmentId}
+                  threadId={activeThread.id}
+                  {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                  onEnvModeChange={onEnvModeChange}
+                  {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+                  {...(canOverrideServerThreadEnvMode
+                    ? {
+                        activeThreadBranchOverride: activeThreadBranch,
+                        onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+                      }
+                    : {})}
+                  envLocked={envLocked}
+                  onComposerFocusRequest={scheduleComposerFocus}
+                  {...(canCheckoutPullRequestIntoThread
+                    ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                    : {})}
+                  {...(hasMultipleEnvironments
+                    ? {
+                        availableEnvironments: logicalProjectEnvironments,
+                        onEnvironmentChange,
+                      }
+                    : {})}
+                  activeContextWindow={activeContextWindow}
+                  activeThreadProviderDisplayName={activeThreadProviderDisplayName}
+                  showGitControls={isGitRepo}
+                />
               </div>
 
               {pullRequestDialogState ? (
