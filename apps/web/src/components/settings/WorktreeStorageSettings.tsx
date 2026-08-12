@@ -12,8 +12,9 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useWorktreeStoragePreviews } from "../../lib/worktreeStorageState";
+import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { cn } from "../../lib/utils";
+import { useWorktreeStoragePreviews } from "../../lib/worktreeStorageState";
 import { useThreadShells } from "../../state/entities";
 import { vcsEnvironment } from "../../state/vcs";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -58,6 +59,8 @@ export function WorktreeStorageSettings({
 }) {
   const { previews, error, isLoading, refresh } = useWorktreeStoragePreviews(environmentIds);
   const threadShells = useThreadShells();
+  const { snapshots: archivedSnapshots, refresh: refreshArchivedThreads } =
+    useArchivedThreadSnapshots(environmentIds);
   const cleanupWorktrees = useAtomCommand(vcsEnvironment.cleanupWorktrees, {
     reportFailure: false,
   });
@@ -71,18 +74,31 @@ export function WorktreeStorageSettings({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dirtyRemovalConfirmed, setDirtyRemovalConfirmed] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+  const lifecycleThreads = useMemo(
+    () => [
+      ...threadShells,
+      ...archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
+        snapshot.threads.map((thread) => ({ ...thread, environmentId })),
+      ),
+    ],
+    [archivedSnapshots, threadShells],
+  );
   const activityRevision = useMemo(
-    () => worktreeStorageActivityRevision(threadShells, environmentIds),
-    [environmentIds, threadShells],
+    () => worktreeStorageActivityRevision(lifecycleThreads, environmentIds),
+    [environmentIds, lifecycleThreads],
   );
   const previousActivityRevision = useRef(activityRevision);
+  const refreshStorage = useCallback(() => {
+    refreshArchivedThreads();
+    refresh();
+  }, [refresh, refreshArchivedThreads]);
 
   useEffect(() => {
     if (previousActivityRevision.current === activityRevision) return;
     previousActivityRevision.current = activityRevision;
-    const refreshTimer = setTimeout(refresh, WORKTREE_ACTIVITY_REFRESH_DELAY_MS);
+    const refreshTimer = setTimeout(refreshStorage, WORKTREE_ACTIVITY_REFRESH_DELAY_MS);
     return () => clearTimeout(refreshTimer);
-  }, [activityRevision, refresh]);
+  }, [activityRevision, refreshStorage]);
 
   const selectedWorktrees = useMemo(
     () =>
@@ -174,7 +190,7 @@ export function WorktreeStorageSettings({
         }
       }
 
-      refresh();
+      refreshStorage();
       setSelectedKeys(new Set());
       setDialogOpen(false);
       setDirtyRemovalConfirmed(false);
@@ -206,7 +222,7 @@ export function WorktreeStorageSettings({
   }, [
     cleanupWorktrees,
     dirtyRemovalConfirmed,
-    refresh,
+    refreshStorage,
     selectedDirtyWorktrees.length,
     selectedSizeBytes,
     selectedWorktrees,
@@ -222,7 +238,7 @@ export function WorktreeStorageSettings({
             variant="ghost"
             aria-label="Refresh worktree storage"
             disabled={isLoading}
-            onClick={refresh}
+            onClick={refreshStorage}
           >
             <RefreshCwIcon className={cn("size-3.5", isLoading && "animate-spin")} />
           </Button>
