@@ -236,6 +236,9 @@ describe("readEnvironmentFromWindowsShell", () => {
       expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
       { encoding: "utf8", timeout: 5000 },
     );
+    const command = execFile.mock.calls[0]?.[1]?.at(-1);
+    expect(command).toContain("[Environment]::GetEnvironmentVariable('PATH', 'Machine')");
+    expect(command).toContain("[Environment]::GetEnvironmentVariable('PATH', 'User')");
   });
 
   it("strips CRLF delimiters from captured PowerShell values", () => {
@@ -334,6 +337,7 @@ describe("resolveKnownWindowsCliDirs", () => {
     ).toEqual([
       "C:\\Users\\testuser\\AppData\\Roaming\\npm",
       "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+      "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
       "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
       "C:\\Users\\testuser\\AppData\\Local\\pnpm",
       "C:\\Users\\testuser\\.local\\bin",
@@ -475,6 +479,7 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
         PATH: [
           "C:\\Users\\testuser\\AppData\\Roaming\\npm",
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+          "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
           "C:\\Users\\testuser\\.local\\bin",
@@ -524,6 +529,7 @@ effectIt.layer(NodeServices.layer)("resolveWindowsEnvironment", (it) => {
           "C:\\Windows\\System32",
           "C:\\Users\\testuser\\AppData\\Roaming\\npm",
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+          "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
           "C:\\Users\\testuser\\.local\\bin",

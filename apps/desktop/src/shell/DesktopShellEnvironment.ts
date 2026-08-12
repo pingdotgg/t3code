@@ -201,7 +201,12 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
   ...trimNonEmpty(env.LOCALAPPDATA).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\Programs\\nodejs`, `${value}\\Volta\\bin`, `${value}\\pnpm`],
+      onSome: (value) => [
+        `${value}\\Programs\\nodejs`,
+        `${value}\\Programs\\OpenAI\\Codex\\bin`,
+        `${value}\\Volta\\bin`,
+        `${value}\\pnpm`,
+      ],
     }),
   ),
   ...trimNonEmpty(env.USERPROFILE).pipe(
@@ -242,9 +247,21 @@ const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
   [
     "$ErrorActionPreference = 'Stop'",
     ...names.flatMap((name) => {
+      const valueStatements =
+        name === "PATH"
+          ? [
+              "$machine = [Environment]::GetEnvironmentVariable('PATH', 'Machine')",
+              "$user = [Environment]::GetEnvironmentVariable('PATH', 'User')",
+              "$parts = @()",
+              "if ($null -ne $machine -and $machine.Length -gt 0) { $parts += $machine }",
+              "if ($null -ne $user -and $user.Length -gt 0) { $parts += $user }",
+              "$value = $parts -join ';'",
+            ]
+          : [`$value = [Environment]::GetEnvironmentVariable('${name}')`];
+
       return [
         `Write-Output '${startMarker(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        ...valueStatements,
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${endMarker(name)}'`,
       ];
