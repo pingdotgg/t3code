@@ -497,7 +497,6 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
-  externalOmittedProjectCount: Schema.optional(NonNegativeInt),
   externalOmittedThreadCount: Schema.optional(NonNegativeInt),
   updatedAt: IsoDateTime,
 });

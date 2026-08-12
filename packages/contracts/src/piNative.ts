@@ -147,10 +147,16 @@ export type PiNativeStreamItem = typeof PiNativeStreamItem.Type;
 
 export const PiExternalCatalogSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
-  projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
-  omittedProjectCount: NonNegativeInt,
   omittedThreadCount: NonNegativeInt,
+  /**
+   * Pi sessions only reach clients under a project the user added, so the
+   * catalog no longer carries project shells of its own. Clients built before
+   * that change decode both fields as required, so the server keeps emitting
+   * empty values; drop them once no such client can reach a current server.
+   */
+  projects: Schema.optional(Schema.Array(OrchestrationProjectShell)),
+  omittedProjectCount: Schema.optional(NonNegativeInt),
   updatedAt: Schema.String,
 });
 export type PiExternalCatalogSnapshot = typeof PiExternalCatalogSnapshot.Type;

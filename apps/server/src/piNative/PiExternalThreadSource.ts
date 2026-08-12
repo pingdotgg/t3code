@@ -8,7 +8,6 @@ import * as NodePath from "node:path";
 import type {
   ClientOrchestrationCommand,
   DispatchResult,
-  OrchestrationProjectShell,
   OrchestrationShellSnapshot,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadDetailSnapshot,
@@ -26,7 +25,6 @@ import {
   CommandId as CommandIdSchema,
   PiNativeError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-  ProjectId as ProjectIdSchema,
   TurnId as TurnIdSchema,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -53,7 +51,6 @@ import {
   SessionCatalog,
 } from "./SessionCatalog.ts";
 import {
-  projectPiExternalProject,
   projectPiLiveEvent,
   projectPiThread,
   projectPiThreadOverlay,
@@ -72,6 +69,12 @@ const EXTERNAL_THREAD_PREFIX = "external:pi:";
 const CATALOG_MAX_THREADS = 5_000;
 const CATALOG_MAX_SERIALIZED_BYTES = 8 * 1024 * 1024;
 const CATALOG_ENVELOPE_RESERVE_BYTES = 1_024;
+/**
+ * Clients built before catalog-only project shells were removed decode
+ * `projects` and `omittedProjectCount` as required fields. Keep emitting empty
+ * values until no such client can reach a current server, then delete.
+ */
+const LEGACY_CATALOG_PROJECT_FIELDS = { projects: [], omittedProjectCount: 0 } as const;
 export function validExternalLifecycleOverride(
   record: PiSessionCatalogRecord,
   override: PiExternalLifecycleOverride | undefined,
@@ -144,7 +147,6 @@ const supervisorEventType = (item: SupervisorStreamEvent): string | undefined =>
       : undefined;
 };
 export function boundExternalCatalog(input: {
-  readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly threads: ReadonlyArray<ReturnType<typeof projectPiThreadShell>>;
   readonly totalThreadCount: number;
   readonly maxThreads?: number;
@@ -154,21 +156,17 @@ export function boundExternalCatalog(input: {
   const maxSerializedBytes = input.maxSerializedBytes ?? CATALOG_MAX_SERIALIZED_BYTES;
   const select = (count: number) => {
     const threads = input.threads.slice(0, count);
-    const referencedProjectIds = new Set(threads.map((thread) => thread.projectId));
-    const projects = input.projects.filter((project) => referencedProjectIds.has(project.id));
     const serializedBytes =
       Buffer.byteLength(
         JSON.stringify({
           snapshotSequence: Number.MAX_SAFE_INTEGER,
-          projects,
           threads,
-          omittedProjectCount: input.projects.length - projects.length,
           omittedThreadCount: input.totalThreadCount - threads.length,
           updatedAt: "9999-12-31T23:59:59.999Z",
         }),
         "utf8",
       ) + CATALOG_ENVELOPE_RESERVE_BYTES;
-    return { projects, serializedBytes, threads };
+    return { serializedBytes, threads };
   };
   let low = 0;
   let high = Math.min(maxThreads, input.threads.length);
@@ -177,18 +175,12 @@ export function boundExternalCatalog(input: {
     if (select(middle).serializedBytes <= maxSerializedBytes) low = middle;
     else high = middle - 1;
   }
-  const { projects, threads } = select(low);
+  const { threads } = select(low);
   return {
-    projects,
     threads,
-    omittedProjectCount: input.projects.length - projects.length,
     omittedThreadCount: input.totalThreadCount - threads.length,
   };
 }
-const projectIdFor = (cwd: string) =>
-  ProjectIdSchema.make(
-    `external:pi-project:${NodeCrypto.createHash("sha256").update(cwd).digest("hex")}`,
-  );
 const sourceError = (code: string, cause: unknown) =>
   new PiNativeError({
     code,
@@ -214,7 +206,6 @@ const canonical = (value: string) =>
 
 interface Association {
   readonly projectIdByThread: ReadonlyMap<ThreadId, ProjectId>;
-  readonly externalProjects: ReadonlyArray<OrchestrationProjectShell>;
 }
 
 /**
@@ -265,7 +256,11 @@ export function managedPiBindingSignature(
   );
 }
 
-async function associate(
+/**
+ * Maps Pi sessions onto the projects a user added. Sessions Pi ran anywhere
+ * else have no project to belong to and are left out of the catalog entirely.
+ */
+export async function associate(
   records: ReadonlyArray<PiSessionCatalogRecord>,
   internal: OrchestrationShellSnapshot,
 ): Promise<Association> {
@@ -288,35 +283,19 @@ async function associate(
     ),
   );
   const projectIdByThread = new Map<ThreadId, ProjectId>();
-  const unmatchedByCwd = new Map<string, PiSessionCatalogRecord[]>();
   for (const record of records) {
     const exactProject = projects.find(({ root }) => root === record.cwd);
     const exactWorktree = worktrees.find(({ root }) => root === record.cwd);
     const ancestor = projects
       .filter(({ root }) => record.cwd === root || record.cwd.startsWith(`${root}${NodePath.sep}`))
       .sort((a, b) => b.root.length - a.root.length)[0];
-    const projectId =
-      exactProject?.project.id ??
-      exactWorktree?.projectId ??
-      ancestor?.project.id ??
-      projectIdFor(record.cwd);
-    projectIdByThread.set(record.threadId, projectId);
-    if (!exactProject && !exactWorktree && !ancestor) {
-      const grouped = unmatchedByCwd.get(record.cwd);
-      if (grouped) grouped.push(record);
-      else unmatchedByCwd.set(record.cwd, [record]);
-    }
+    const projectId = exactProject?.project.id ?? exactWorktree?.projectId ?? ancestor?.project.id;
+    // Sessions Pi ran outside every added project stay unassociated: T3 never
+    // invents a project the user did not add, so those sessions never reach
+    // the sidebar.
+    if (projectId !== undefined) projectIdByThread.set(record.threadId, projectId);
   }
-  return {
-    projectIdByThread,
-    externalProjects: [...unmatchedByCwd].map(([cwd, grouped]) =>
-      projectPiExternalProject({
-        projectId: projectIdFor(cwd),
-        cwd,
-        records: grouped,
-      }),
-    ),
-  };
+  return { projectIdByThread };
 }
 
 function runtimeFor(
@@ -452,6 +431,9 @@ export class PiExternalThreadSource extends Context.Service<
       let catalogSequence = 0;
       let catalogSignature = "";
       let cachedRecords: ReadonlyArray<PiSessionCatalogRecord> | undefined;
+      // Replaced wholesale at the end of each build, never cleared: an in-flight
+      // rebuild must not make live threads look unknown to concurrent readers.
+      let cachedScopedThreadIds: ReadonlySet<ThreadId> = new Set();
       let cachedOmittedThreadCount = 0;
       let cachedInternal: OrchestrationShellSnapshot | undefined;
       let cachedAssociation: Association | undefined;
@@ -517,7 +499,11 @@ export class PiExternalThreadSource extends Context.Service<
               ),
             )).map((value) => [value.sourceKey, value] as const),
         );
-        const projectedThreads = resolvedRecords.slice(0, CATALOG_MAX_THREADS).map((record) => {
+        const scopedRecords = resolvedRecords.filter((record) =>
+          association.projectIdByThread.has(record.threadId),
+        );
+        cachedScopedThreadIds = new Set(scopedRecords.map((record) => record.threadId));
+        const projectedThreads = scopedRecords.slice(0, CATALOG_MAX_THREADS).map((record) => {
           const projectId = association.projectIdByThread.get(record.threadId)!;
           const lifecycle = validExternalLifecycleOverride(
             record,
@@ -534,29 +520,20 @@ export class PiExternalThreadSource extends Context.Service<
           });
           return projectPiThreadShell(detail);
         });
-        const { projects, threads, omittedProjectCount, omittedThreadCount } = boundExternalCatalog(
-          {
-            projects: association.externalProjects,
-            threads: projectedThreads,
-            totalThreadCount: resolvedRecords.length + cachedOmittedThreadCount,
-          },
-        );
-        const signature = JSON.stringify({
-          projects,
-          threads,
-          omittedProjectCount,
-          omittedThreadCount,
+        const { threads, omittedThreadCount } = boundExternalCatalog({
+          threads: projectedThreads,
+          totalThreadCount: scopedRecords.length + cachedOmittedThreadCount,
         });
+        const signature = JSON.stringify({ threads, omittedThreadCount });
         if (signature !== catalogSignature) {
           catalogSignature = signature;
           catalogSequence += 1;
         }
         return {
           snapshotSequence: catalogSequence,
-          projects,
           threads,
-          omittedProjectCount,
           omittedThreadCount,
+          ...LEGACY_CATALOG_PROJECT_FIELDS,
           updatedAt: yield* DateTime.now.pipe(Effect.map(DateTime.formatIso)),
         } satisfies PiExternalCatalogSnapshot;
       });
@@ -595,9 +572,12 @@ export class PiExternalThreadSource extends Context.Service<
         },
       );
 
+      // Reads, subscriptions, and dispatch all resolve through here, so scoping
+      // it keeps every path agreeing on which sessions exist: a session outside
+      // the user's projects is unknown, not readable-but-unwritable.
       const findRecord = (threadId: ThreadId) =>
         Effect.sync(() =>
-          isPiExternalThreadId(threadId)
+          isPiExternalThreadId(threadId) && cachedScopedThreadIds.has(threadId)
             ? cachedRecords?.find((record) => record.threadId === threadId)
             : undefined,
         );
@@ -650,10 +630,17 @@ export class PiExternalThreadSource extends Context.Service<
               ),
           ),
         );
+        const projectId = association.projectIdByThread.get(threadId);
+        if (projectId === undefined) {
+          return yield* privateSourceError(
+            "thread_unscoped",
+            "This Pi session ran outside every project you added.",
+          );
+        }
         return projectPiThread({
           record: result.record,
           entries: entriesOverride ?? result.entries,
-          projectId: association.projectIdByThread.get(threadId)!,
+          projectId,
           ...(runtime === undefined ? {} : { runtime }),
           ...(lifecycle === undefined ? {} : { lifecycle }),
         });
@@ -1135,10 +1122,9 @@ export class PiExternalThreadSource extends Context.Service<
               (now) =>
                 ({
                   snapshotSequence: 0,
-                  projects: [],
                   threads: [],
-                  omittedProjectCount: 0,
                   omittedThreadCount: 0,
+                  ...LEGACY_CATALOG_PROJECT_FIELDS,
                   updatedAt: DateTime.formatIso(now),
                 }) satisfies PiExternalCatalogSnapshot,
             ),

@@ -1,25 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 
-import {
-  EMPTY_PI_EXTERNAL_CATALOG_STATE,
-  isPiExternalProjectId,
-  reducePiExternalCatalog,
-} from "./piNative.ts";
+import { EMPTY_PI_EXTERNAL_CATALOG_STATE, reducePiExternalCatalog } from "./piNative.ts";
 import { mergeExternalCatalogShells } from "./snapshots.ts";
 
 describe("external pi catalog reducer", () => {
-  it("identifies catalog-only native Pi projects", () => {
-    expect(isPiExternalProjectId("external:pi-project:abc")).toBe(true);
-    expect(isPiExternalProjectId("project-abc")).toBe(false);
-  });
-
   it("replaces snapshots and marks synchronization", () => {
     const snapshot = {
       snapshotSequence: 4,
-      projects: [],
       threads: [],
-      omittedProjectCount: 0,
       omittedThreadCount: 0,
       updatedAt: "2026-07-30T00:00:00.000Z",
     };
@@ -38,19 +27,68 @@ describe("external pi catalog reducer", () => {
   it("omits external threads until their associated project shell exists", () => {
     const merged = mergeExternalCatalogShells(null, {
       snapshotSequence: 1,
-      projects: [],
       threads: [
         {
           id: ThreadId.make("external:pi:path:one"),
           projectId: ProjectId.make("internal-project"),
         } as never,
       ],
-      omittedProjectCount: 0,
       omittedThreadCount: 0,
       updatedAt: "2026-07-30T00:00:00.000Z",
     });
 
     expect(merged?.threads).toEqual([]);
     expect(merged?.externalOmittedThreadCount).toBe(0);
+  });
+
+  it("ignores catalog project shells sent by servers built before scoping", () => {
+    const merged = mergeExternalCatalogShells(
+      {
+        snapshotSequence: 2,
+        projects: [],
+        threads: [],
+        updatedAt: "2026-07-30T00:00:00.000Z",
+      },
+      {
+        snapshotSequence: 1,
+        threads: [
+          {
+            id: ThreadId.make("external:pi:path:one"),
+            projectId: ProjectId.make("external:pi-project:abc"),
+          } as never,
+        ],
+        projects: [
+          { id: ProjectId.make("external:pi-project:abc"), workspaceRoot: "/tmp" } as never,
+        ],
+        omittedProjectCount: 0,
+        omittedThreadCount: 0,
+        updatedAt: "2026-07-30T00:00:01.000Z",
+      },
+    );
+
+    expect(merged?.projects).toEqual([]);
+    expect(merged?.threads).toEqual([]);
+  });
+
+  it("keeps external threads whose project the user added", () => {
+    const projectId = ProjectId.make("internal-project");
+    const merged = mergeExternalCatalogShells(
+      {
+        snapshotSequence: 2,
+        projects: [{ id: projectId, workspaceRoot: "/home/dev/app" } as never],
+        threads: [],
+        updatedAt: "2026-07-30T00:00:00.000Z",
+      },
+      {
+        snapshotSequence: 1,
+        threads: [{ id: ThreadId.make("external:pi:path:one"), projectId } as never],
+        omittedThreadCount: 3,
+        updatedAt: "2026-07-30T00:00:01.000Z",
+      },
+    );
+
+    expect(merged?.threads.map((thread) => thread.id)).toEqual(["external:pi:path:one"]);
+    expect(merged?.projects).toHaveLength(1);
+    expect(merged?.externalOmittedThreadCount).toBe(3);
   });
 });

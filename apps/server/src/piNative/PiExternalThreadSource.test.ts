@@ -5,7 +5,6 @@ import {
   ProjectId,
   ProviderDriverKind,
   ThreadId,
-  type OrchestrationProjectShell,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
@@ -13,6 +12,7 @@ import * as Effect from "effect/Effect";
 import { describe, expect } from "vite-plus/test";
 
 import {
+  associate,
   boundExternalCatalog,
   catalogUpdateAfterRead,
   CatalogRuntimeAttachmentGate,
@@ -114,6 +114,51 @@ describe("PiExternalThreadSource hardening", () => {
       runtimeCatalogSignature([runtime]),
     );
   });
+
+  it.effect("associates Pi sessions only with projects the user added", () =>
+    Effect.gen(function* () {
+      const session = (name: string, cwd: string) =>
+        ({
+          sourceKey: PiNativeSessionKey.make(`${name}-source`),
+          threadId: ThreadId.make(`external:pi:path:${name}`),
+          canonicalFile: `/sessions/${name}.jsonl`,
+          sessionId: `${name}-session`,
+          cwd,
+          title: name,
+          createdAt: "2026-08-06T00:00:00.000Z",
+          updatedAt: "2026-08-06T00:01:00.000Z",
+          fileSize: 1,
+          fileMtimeMs: 1,
+          historyTruncation: { truncated: false },
+        }) as const;
+      const projectId = ProjectId.make("project-1");
+      const worktreeProjectId = ProjectId.make("project-2");
+
+      const association = yield* Effect.promise(() =>
+        associate(
+          [
+            session("root", "/workspace/app"),
+            session("nested", "/workspace/app/packages/ui"),
+            session("worktree", "/worktrees/feature"),
+            session("foreign", "/tmp"),
+            session("sibling", "/workspace/app-two"),
+          ],
+          {
+            snapshotSequence: 1,
+            projects: [{ id: projectId, workspaceRoot: "/workspace/app" }],
+            threads: [{ projectId: worktreeProjectId, worktreePath: "/worktrees/feature" }],
+            updatedAt: "2026-08-06T00:01:00.000Z",
+          } as never,
+        ),
+      );
+
+      expect(Object.fromEntries(association.projectIdByThread)).toEqual({
+        "external:pi:path:root": projectId,
+        "external:pi:path:nested": projectId,
+        "external:pi:path:worktree": worktreeProjectId,
+      });
+    }),
+  );
 
   it.effect("places delegated Pi sessions under their managed T3 parent", () =>
     Effect.gen(function* () {
@@ -217,23 +262,13 @@ describe("PiExternalThreadSource hardening", () => {
   });
 
   it("bounds aggregate catalog records and serialized bytes with omission counts", () => {
-    const project = {
-      id: ProjectId.make("project-1"),
-      title: "project",
-      workspaceRoot: "/workspace",
-      defaultModelSelection: null,
-      scripts: [],
-      createdAt: "2026-07-30T00:00:00.000Z",
-      updatedAt: "2026-07-30T00:00:00.000Z",
-    } satisfies OrchestrationProjectShell;
     const threads = Array.from({ length: 20 }, (_, index) => ({
       id: ThreadId.make(`external:pi:${index}`),
-      projectId: project.id,
+      projectId: ProjectId.make("project-1"),
       title: "x".repeat(256),
     })) as unknown as OrchestrationThreadShell[];
 
     const bounded = boundExternalCatalog({
-      projects: [project],
       threads,
       totalThreadCount: threads.length,
       maxThreads: 10,

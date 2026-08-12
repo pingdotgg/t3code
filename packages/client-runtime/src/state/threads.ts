@@ -75,6 +75,31 @@ export function threadAllows(
   return backing.capabilities[action] === true;
 }
 
+/**
+ * A thread the server says does not exist will not reappear on the next tick,
+ * so it is retried slowly instead of never: re-adding the project that owns an
+ * external Pi session brings the thread back without a reload.
+ */
+const MISSING_THREAD_RETRY = "30 seconds";
+const MISSING_THREAD_CODES = new Set(["thread_not_found", "thread_unscoped"]);
+
+export function threadIsGone(cause: Cause.Cause<unknown>): boolean {
+  return (
+    cause.reasons.length > 0 &&
+    cause.reasons.every((reason) => {
+      if (reason._tag !== "Fail") return false;
+      const error: unknown = reason.error;
+      return (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        typeof error.code === "string" &&
+        MISSING_THREAD_CODES.has(error.code)
+      );
+    })
+  );
+}
+
 function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): EnvironmentThreadStatus {
   return Option.isSome(data) ? "cached" : "empty";
 }
@@ -363,7 +388,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }),
       {
         onExpectedFailure: setStreamError,
-        retryExpectedFailureAfter: "250 millis",
+        retryExpectedFailureAfter: (cause) =>
+          threadIsGone(cause) ? MISSING_THREAD_RETRY : "250 millis",
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(Stream.runForEach(applyItem)),

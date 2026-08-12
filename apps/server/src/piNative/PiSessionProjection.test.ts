@@ -9,7 +9,6 @@ import type { PiSessionCatalogRecord } from "./SessionCatalog.ts";
 import {
   projectPiActiveBranch,
   projectPiBacking,
-  projectPiExternalProjectTitle,
   projectPiLiveEvent,
   projectPiThread,
   projectPiThreadOverlay,
@@ -91,14 +90,6 @@ const entries = [
 ] as const;
 
 describe("PiSessionProjection", () => {
-  it("adds parent context to generic native Pi project names", () => {
-    expect(projectPiExternalProjectTitle("/home/bryan/workspace")).toBe("bryan/workspace");
-    expect(projectPiExternalProjectTitle("/tmp")).toBe("tmp");
-    expect(projectPiExternalProjectTitle("/home/bryan/workspace/wazzaflow")).toBe(
-      "workspace/wazzaflow",
-    );
-  });
-
   it("follows only the active parent chain", () => {
     expect(projectPiActiveBranch(entries).entries.map((entry) => entry.id)).toEqual([
       "user-1",

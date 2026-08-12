@@ -2,7 +2,6 @@ import type {
   EnvironmentId,
   OrchestrationShellSnapshot,
   PiExternalCatalogSnapshot,
-  ProjectId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -21,33 +20,17 @@ export function mergeExternalCatalogShells(
     threads: [],
     updatedAt: external.updatedAt,
   };
-  const internalProjectByRoot = new Map(
-    base.projects.map((project) => [project.workspaceRoot, project] as const),
-  );
-  const projectRemap = new Map<ProjectId, ProjectId>();
-  const externalProjects = external.projects.filter((project) => {
-    const internalProject = internalProjectByRoot.get(project.workspaceRoot);
-    if (!internalProject) return true;
-    projectRemap.set(project.id, internalProject.id);
-    return false;
-  });
   const internalThreadIds = new Set(base.threads.map((thread) => thread.id));
-  const availableProjectIds = new Set([
-    ...base.projects.map((project) => project.id),
-    ...externalProjects.map((project) => project.id),
-  ]);
-  const externalThreads = external.threads
-    .filter((thread) => !internalThreadIds.has(thread.id))
-    .map((thread) => {
-      const projectId = projectRemap.get(thread.projectId);
-      return projectId === undefined ? thread : { ...thread, projectId };
-    })
-    .filter((thread) => availableProjectIds.has(thread.projectId));
+  // The catalog only carries sessions the server already associated with an
+  // added project, but the internal snapshot can lag a project deletion, so
+  // threads without a project here are dropped rather than rendered orphaned.
+  const projectIds = new Set(base.projects.map((project) => project.id));
+  const externalThreads = external.threads.filter(
+    (thread) => !internalThreadIds.has(thread.id) && projectIds.has(thread.projectId),
+  );
   return {
     ...base,
-    projects: [...base.projects, ...externalProjects],
     threads: [...base.threads, ...externalThreads],
-    externalOmittedProjectCount: external.omittedProjectCount,
     externalOmittedThreadCount: external.omittedThreadCount,
     updatedAt:
       base.updatedAt.localeCompare(external.updatedAt) >= 0 ? base.updatedAt : external.updatedAt,
