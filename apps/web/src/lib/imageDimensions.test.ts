@@ -150,6 +150,14 @@ describe("readImageDimensions", () => {
     expect(readImageDimensions(truncated)).toBeNull();
   });
 
+  it("returns null instead of looping on an AVIF box whose 64-bit size does not advance", () => {
+    // A 32-bit size of 1 selects the 64-bit largesize; a largesize of 0 leaves the box walk on
+    // the same offset, which without the progress guard would spin forever and hang the tab.
+    const stuckBox = bytesOf(bigEndian32(1), "free", [0, 0, 0, 0, 0, 0, 0, 0]);
+    const avif = bytesOf(box("ftyp", bytesOf("avif", "avif")), stuckBox);
+    expect(readImageDimensions(avif)).toBeNull();
+  });
+
   it("reads nothing from a container it does not know, or a truncated header", () => {
     expect(readImageDimensions(bytesOf("plain text, not an image"))).toBeNull();
     expect(readImageDimensions(png(4, 4).subarray(0, 20))).toBeNull();

@@ -142,7 +142,10 @@ function readBoxHeader(
   // A size of 1 puts the real one in a 64-bit field after the type; 0 runs to EOF.
   if (size === 1) {
     if (offset + 16 > bytes.length) return null;
-    return { type, end: offset + Number(view.getBigUint64(offset + 8)) };
+    const end = offset + Number(view.getBigUint64(offset + 8));
+    // Same progress guard as the 32-bit branch: a largesize that does not
+    // advance past this box (e.g. 0) would otherwise spin the box walk forever.
+    return end > offset ? { type, end } : null;
   }
   const end = size === 0 ? bytes.length : offset + size;
   return end > offset ? { type, end } : null;
