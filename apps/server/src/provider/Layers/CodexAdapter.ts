@@ -262,7 +262,7 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
     case "web_search":
       return "Web search";
     case "image_view":
-      return "Image view";
+      return item?.type === "imageGeneration" ? "Generated image" : "Image view";
     case "error":
       return "Error";
     default:
@@ -270,7 +270,34 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
   }
 }
 
+const IMAGE_GENERATION_RESULT_PATH_MAX_CHARS = 1024;
+
+function imageGenerationResultPath(result: string | undefined): string | undefined {
+  const trimmed = trimText(result);
+  if (!trimmed || trimmed.length > IMAGE_GENERATION_RESULT_PATH_MAX_CHARS) {
+    return undefined;
+  }
+  if (trimmed.includes("\n") || /\s/.test(trimmed)) {
+    return undefined;
+  }
+  if (trimmed.includes("/") || trimmed.includes("\\")) {
+    return trimmed;
+  }
+  return undefined;
+}
+
 function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): string | undefined {
+  if (item.type === "imageGeneration") {
+    return (
+      trimText(item.savedPath ?? undefined) ??
+      imageGenerationResultPath(item.result) ??
+      trimText(item.revisedPrompt ?? undefined)
+    );
+  }
+  if (item.type === "imageView") {
+    return trimText(item.path);
+  }
+
   const itemRecord = item as Record<string, unknown>;
   const action = itemRecord.action as Record<string, unknown> | undefined;
   const actionQueries = Array.isArray(action?.queries) ? action.queries : [];

@@ -106,6 +106,60 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues exact URLs for Codex generated images outside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-workspace-root-",
+      });
+      const generatedRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-generated-images-",
+      });
+      const generatedDir = path.join(generatedRoot, "generated_images");
+      const imagePath = path.join(generatedDir, "hero.png");
+      const siblingPath = path.join(generatedDir, "other.png");
+      yield* fileSystem.makeDirectory(generatedDir, { recursive: true });
+      yield* fileSystem.writeFile(imagePath, new Uint8Array([137, 80, 78, 71]));
+      yield* fileSystem.writeFile(siblingPath, new Uint8Array([137, 80, 78, 71]));
+      const canonicalImagePath = yield* fileSystem.realPath(imagePath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: imagePath,
+        },
+        workspaceRoot: root,
+        generatedImagesRoots: [generatedDir],
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "hero.png")).toEqual({
+        kind: "file",
+        path: canonicalImagePath,
+      });
+      expect(yield* resolveAsset(token, "other.png")).toBeNull();
+
+      const unrelatedDir = path.join(generatedRoot, "unrelated", "generated_images");
+      const unrelatedPath = path.join(unrelatedDir, "private.png");
+      yield* fileSystem.makeDirectory(unrelatedDir, { recursive: true });
+      yield* fileSystem.writeFile(unrelatedPath, new Uint8Array([137, 80, 78, 71]));
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: unrelatedPath,
+        },
+        workspaceRoot: root,
+        generatedImagesRoots: [generatedDir],
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("AssetWorkspacePathValidationError");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("preserves non-missing canonical path failures when issuing asset URLs", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
