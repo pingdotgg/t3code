@@ -98,255 +98,266 @@ export function loginAvatarUrl(login: string, host: string): string | null {
   return /^[a-z0-9][a-z0-9-]{0,38}$/iu.test(login) ? `https://${host}/${login}.png?size=80` : null;
 }
 
-export const make = Effect.gen(function* () {
-  const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+/** The kinds `gh` answers for: github.com and every authenticated enterprise host. */
+export type GitHubPullRequestProviderKind = "github" | "github-enterprise";
 
-  const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
-    new PullRequestProviderError({
-      provider: "github",
-      operation,
-      reason: reasonFor(error),
-      detail: error.detail,
-      cause: error,
-    });
+export const makeProvider = (kind: GitHubPullRequestProviderKind) =>
+  Effect.gen(function* () {
+    const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-  const provider: PullRequestProviderApi = {
-    kind: "github",
-    capabilities: CAPABILITIES,
+    const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
+      new PullRequestProviderError({
+        provider: kind,
+        operation,
+        reason: reasonFor(error),
+        detail: error.detail,
+        cause: error,
+      });
 
-    getViewer: (input) =>
-      cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+    const provider: PullRequestProviderApi = {
+      kind,
+      capabilities: CAPABILITIES,
 
-    listChangeRequests: (input) =>
-      cli
-        .listPullRequests({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          state: input.state,
-          involvement: input.involvement,
-          viewer: input.viewer,
-          limit: input.limit,
-          query: input.query,
-          cursor: input.cursor,
-        })
-        .pipe(
-          Effect.mapError(fail("listChangeRequests")),
-          Effect.flatMap((page) =>
-            cli
-              .listActorAvatars({
-                cwd: input.cwd,
-                repository: input.repository,
-                host: input.host,
-                ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
-              })
-              // A listing without faces is still a listing, so a failed lookup falls back to
-              // the initials rather than taking the rows down with it.
-              .pipe(
-                Effect.orElseSucceed(() => new Map<string, string>()),
-                Effect.map((avatarsByLogin) => ({
-                  ...page,
-                  items: page.items.map((item) => ({
-                    ...item,
-                    author: withAvatar(item.author, avatarsByLogin, input.host),
-                  })),
-                })),
-              ),
-          ),
-        ),
+      getViewer: (input) =>
+        cli
+          .getViewerLogin({ cwd: input.cwd, host: input.host })
+          .pipe(Effect.mapError(fail("getViewer"))),
 
-    /**
-     * The same listing for a whole host in one search. The avatar lookup the per-repository read
-     * needs is not here: a search reports an author's picture itself, so a face costs no request
-     * of its own — `withAvatar` still stands behind it for the login GitHub answered nothing for.
-     */
-    listChangeRequestsAcross: (input) =>
-      cli
-        .searchPullRequests({
-          cwd: input.cwd,
-          host: input.host,
-          repositories: input.repositories,
-          state: input.state,
-          involvement: input.involvement,
-          viewer: input.viewer,
-          limit: input.limit,
-          query: input.query,
-          cursor: input.cursor,
-        })
-        .pipe(
-          Effect.mapError(fail("listChangeRequestsAcross")),
-          Effect.map((batch) => ({
-            truncated: batch.truncated,
-            items: batch.items.map((item) => ({
-              ...item,
-              author: withAvatar(item.author, new Map<string, string>(), input.host),
-            })),
-          })),
-        ),
-
-    listChangeRequestStats: (input) =>
-      cli
-        .listPullRequestStats({
-          cwd: input.cwd,
-          host: input.host,
-          changeRequests: input.changeRequests,
-        })
-        .pipe(Effect.mapError(fail("listChangeRequestStats"))),
-
-    getChangeRequest: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestDetail(input),
-          cli.getRepositoryAccess({
+      listChangeRequests: (input) =>
+        cli
+          .listPullRequests({
             cwd: input.cwd,
             repository: input.repository,
             host: input.host,
-          }),
-          // A small permissions query replaces the deeply paginated review-thread walk on the
-          // core path. Writes ask again immediately before mutating, so this is presentation.
-          cli.getViewerAccess(input),
-        ],
-        { concurrency: 3 },
-      ).pipe(
-        Effect.mapError(fail("getChangeRequest")),
-        Effect.map(
-          ([pullRequest, repository, viewerAccess]): ProviderChangeRequestDetail => ({
-            ...pullRequest,
-            reviewers: pullRequest.reviewRequestLogins.map((login) => ({
-              login,
-              name: null,
-              avatarUrl: null,
-            })),
-            mergeCapabilities: repository.mergeCapabilities,
-            viewerPermissions: gitHubViewerPermissions(viewerAccess),
-          }),
-        ),
-      ),
-
-    getChangeRequestActivity: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestActivity(input),
-          // Line comments live on review threads, which `gh pr view --json` cannot reach. A
-          // GraphQL hiccup degrades to a truncated conversation rather than blanking activity.
-          cli.listReviewThreadComments(input).pipe(
-            Effect.orElseSucceed(() => ({
-              comments: [],
-              reviewThreads: [],
-              commentCount: 0,
-              truncated: true,
-              reviewers: [],
-              avatarsByLogin: new Map<string, string>(),
-              commitStats: new Map<
-                string,
-                { readonly additions: number; readonly deletions: number }
-              >(),
-              commits: [],
-              viewer: { canUpdate: true, didAuthor: false },
-            })),
+            state: input.state,
+            involvement: input.involvement,
+            viewer: input.viewer,
+            limit: input.limit,
+            query: input.query,
+            cursor: input.cursor,
+          })
+          .pipe(
+            Effect.mapError(fail("listChangeRequests")),
+            Effect.flatMap((page) =>
+              cli
+                .listActorAvatars({
+                  cwd: input.cwd,
+                  repository: input.repository,
+                  host: input.host,
+                  ids: [...new Set(page.items.flatMap((item) => item.authorId ?? []))],
+                })
+                // A listing without faces is still a listing, so a failed lookup falls back to
+                // the initials rather than taking the rows down with it.
+                .pipe(
+                  Effect.orElseSucceed(() => new Map<string, string>()),
+                  Effect.map((avatarsByLogin) => ({
+                    ...page,
+                    items: page.items.map((item) => ({
+                      ...item,
+                      author: withAvatar(item.author, avatarsByLogin, input.host),
+                    })),
+                  })),
+                ),
+            ),
           ),
-        ],
-        { concurrency: 2 },
-      ).pipe(
-        Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
-            author: withAvatar(pullRequest.author, reviewThreads.avatarsByLogin, input.host),
-            reviewers: reviewThreads.reviewers,
-            commits: (reviewThreads.commits.length > 0
-              ? reviewThreads.commits
-              : pullRequest.commits
-            ).map((commit) => ({
-              ...commit,
-              ...reviewThreads.commitStats.get(commit.oid),
-              authors: commit.authors?.map(
-                (author) => withAvatar(author, reviewThreads.avatarsByLogin, input.host) ?? author,
-              ),
-            })),
-            comments: [...pullRequest.comments, ...reviewThreads.comments]
-              .map((comment) => ({
-                ...comment,
-                author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
-              }))
-              .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-            // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
-            // are always whole and only the thread walk can stop short of the host.
-            commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-            commentsTruncated: reviewThreads.truncated,
-            reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
-              ...thread,
-              comments: thread.comments.map((comment) => ({
-                ...comment,
-                author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
+
+      /**
+       * The same listing for a whole host in one search. The avatar lookup the per-repository read
+       * needs is not here: a search reports an author's picture itself, so a face costs no request
+       * of its own — `withAvatar` still stands behind it for the login GitHub answered nothing for.
+       */
+      listChangeRequestsAcross: (input) =>
+        cli
+          .searchPullRequests({
+            cwd: input.cwd,
+            host: input.host,
+            repositories: input.repositories,
+            state: input.state,
+            involvement: input.involvement,
+            viewer: input.viewer,
+            limit: input.limit,
+            query: input.query,
+            cursor: input.cursor,
+          })
+          .pipe(
+            Effect.mapError(fail("listChangeRequestsAcross")),
+            Effect.map((batch) => ({
+              truncated: batch.truncated,
+              items: batch.items.map((item) => ({
+                ...item,
+                author: withAvatar(item.author, new Map<string, string>(), input.host),
               })),
             })),
-          }),
+          ),
+
+      listChangeRequestStats: (input) =>
+        cli
+          .listPullRequestStats({
+            cwd: input.cwd,
+            host: input.host,
+            changeRequests: input.changeRequests,
+          })
+          .pipe(Effect.mapError(fail("listChangeRequestStats"))),
+
+      getChangeRequest: (input) =>
+        Effect.all(
+          [
+            cli.getPullRequestDetail(input),
+            cli.getRepositoryAccess({
+              cwd: input.cwd,
+              repository: input.repository,
+              host: input.host,
+            }),
+            // A small permissions query replaces the deeply paginated review-thread walk on the
+            // core path. Writes ask again immediately before mutating, so this is presentation.
+            cli.getViewerAccess(input),
+          ],
+          { concurrency: 3 },
+        ).pipe(
+          Effect.mapError(fail("getChangeRequest")),
+          Effect.map(
+            ([pullRequest, repository, viewerAccess]): ProviderChangeRequestDetail => ({
+              ...pullRequest,
+              reviewers: pullRequest.reviewRequestLogins.map((login) => ({
+                login,
+                name: null,
+                avatarUrl: null,
+              })),
+              mergeCapabilities: repository.mergeCapabilities,
+              viewerPermissions: gitHubViewerPermissions(viewerAccess),
+            }),
+          ),
         ),
-      ),
 
-    getViewerPermissions: (input) =>
-      cli
-        .getViewerAccess(input)
-        .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitHubViewerPermissions)),
+      getChangeRequestActivity: (input) =>
+        Effect.all(
+          [
+            cli.getPullRequestActivity(input),
+            // Line comments live on review threads, which `gh pr view --json` cannot reach. A
+            // GraphQL hiccup degrades to a truncated conversation rather than blanking activity.
+            cli.listReviewThreadComments(input).pipe(
+              Effect.orElseSucceed(() => ({
+                comments: [],
+                reviewThreads: [],
+                commentCount: 0,
+                truncated: true,
+                reviewers: [],
+                avatarsByLogin: new Map<string, string>(),
+                commitStats: new Map<
+                  string,
+                  { readonly additions: number; readonly deletions: number }
+                >(),
+                commits: [],
+                viewer: { canUpdate: true, didAuthor: false },
+              })),
+            ),
+          ],
+          { concurrency: 2 },
+        ).pipe(
+          Effect.mapError(fail("getChangeRequestActivity")),
+          Effect.map(
+            ([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
+              author: withAvatar(pullRequest.author, reviewThreads.avatarsByLogin, input.host),
+              reviewers: reviewThreads.reviewers,
+              commits: (reviewThreads.commits.length > 0
+                ? reviewThreads.commits
+                : pullRequest.commits
+              ).map((commit) => ({
+                ...commit,
+                ...reviewThreads.commitStats.get(commit.oid),
+                authors: commit.authors?.map(
+                  (author) =>
+                    withAvatar(author, reviewThreads.avatarsByLogin, input.host) ?? author,
+                ),
+              })),
+              comments: [...pullRequest.comments, ...reviewThreads.comments]
+                .map((comment) => ({
+                  ...comment,
+                  author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
+                }))
+                .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+              // `gh pr view --json comments,reviews` follows GitHub's cursors itself, so those two
+              // are always whole and only the thread walk can stop short of the host.
+              commentCount: pullRequest.comments.length + reviewThreads.commentCount,
+              commentsTruncated: reviewThreads.truncated,
+              reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
+                ...thread,
+                comments: thread.comments.map((comment) => ({
+                  ...comment,
+                  author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
+                })),
+              })),
+            }),
+          ),
+        ),
 
-    getDiff: (input) => cli.getPullRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
+      getViewerPermissions: (input) =>
+        cli
+          .getViewerAccess(input)
+          .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitHubViewerPermissions)),
 
-    getDiffFileContents: (input) =>
-      cli.getPullRequestDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
+      getDiff: (input) => cli.getPullRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
-    listReviewerCandidates: (input) =>
-      cli.listReviewerCandidates(input).pipe(Effect.mapError(fail("listReviewerCandidates"))),
+      getDiffFileContents: (input) =>
+        cli
+          .getPullRequestDiffFileContents(input)
+          .pipe(Effect.mapError(fail("getDiffFileContents"))),
 
-    setReviewerRequest: (input) =>
-      cli
-        .setReviewerRequest({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          number: input.number,
-          reviewers: input.reviewers,
-          requested: input.requested,
-        })
-        .pipe(Effect.mapError(fail("setReviewerRequest"))),
+      listReviewerCandidates: (input) =>
+        cli.listReviewerCandidates(input).pipe(Effect.mapError(fail("listReviewerCandidates"))),
 
-    runAction: (input) =>
-      cli
-        .runPullRequestAction({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          number: input.number,
-          action: input.action,
-          ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
-        })
-        .pipe(Effect.mapError(fail("runAction"))),
+      setReviewerRequest: (input) =>
+        cli
+          .setReviewerRequest({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            number: input.number,
+            reviewers: input.reviewers,
+            requested: input.requested,
+          })
+          .pipe(Effect.mapError(fail("setReviewerRequest"))),
 
-    comment: (input) => cli.commentOnPullRequest(input).pipe(Effect.mapError(fail("comment"))),
+      runAction: (input) =>
+        cli
+          .runPullRequestAction({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            number: input.number,
+            action: input.action,
+            ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+          })
+          .pipe(Effect.mapError(fail("runAction"))),
 
-    submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+      comment: (input) => cli.commentOnPullRequest(input).pipe(Effect.mapError(fail("comment"))),
 
-    replyToThread: (input) =>
-      cli
-        .replyToReviewThread({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          threadId: input.threadId,
-          body: input.body,
-        })
-        .pipe(Effect.mapError(fail("replyToThread"))),
+      submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
 
-    setThreadResolution: (input) =>
-      cli
-        .setReviewThreadResolution({
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          threadId: input.threadId,
-          resolved: input.resolved,
-        })
-        .pipe(Effect.mapError(fail("setThreadResolution"))),
-  };
+      replyToThread: (input) =>
+        cli
+          .replyToReviewThread({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            threadId: input.threadId,
+            body: input.body,
+          })
+          .pipe(Effect.mapError(fail("replyToThread"))),
 
-  return provider;
-});
+      setThreadResolution: (input) =>
+        cli
+          .setReviewThreadResolution({
+            cwd: input.cwd,
+            repository: input.repository,
+            host: input.host,
+            threadId: input.threadId,
+            resolved: input.resolved,
+          })
+          .pipe(Effect.mapError(fail("setThreadResolution"))),
+    };
+
+    return provider;
+  });
+
+export const make = makeProvider("github");

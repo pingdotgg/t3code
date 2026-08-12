@@ -39,6 +39,20 @@ describe("source control presentation", () => {
       }),
     );
   });
+
+  it("presents github-enterprise with GitHub PR terminology and icon", () => {
+    const presentation = resolveChangeRequestPresentation({
+      kind: "github-enterprise",
+      name: "git.corp.com",
+      baseUrl: "https://git.corp.com",
+    });
+
+    expect(presentation.icon).toBe("github");
+    expect(presentation.shortName).toBe("PR");
+    expect(presentation.longName).toBe("pull request");
+    expect(presentation.providerName).toBe("GitHub Enterprise");
+    expect(presentation.checkoutCommandExample).toBe("gh pr checkout 123");
+  });
 });
 
 describe("detectSourceControlProviderFromRemoteUrl", () => {
@@ -90,5 +104,61 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       name: "self-hosted.example.test:8443",
       baseUrl: "https://self-hosted.example.test:8443",
     });
+  });
+
+  it("classifies github.com as github", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("https://github.com/owner/repo.git")).toEqual({
+      kind: "github",
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    });
+  });
+
+  it("classifies a github.com endpoint served from a subdomain as github", () => {
+    // `ssh.github.com:443` is dotcom's own SSH endpoint for networks that block port 22, not an
+    // Enterprise install that happens to have `github` in its name.
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@ssh.github.com:443/owner/repo.git"),
+    ).toEqual({
+      kind: "github",
+      name: "GitHub",
+      baseUrl: "https://ssh.github.com",
+    });
+  });
+
+  it("classifies a ghe.com tenant as github-enterprise", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("https://acme.ghe.com/owner/repo.git")).toEqual(
+      {
+        kind: "github-enterprise",
+        name: "acme.ghe.com",
+        baseUrl: "https://acme.ghe.com",
+      },
+    );
+  });
+
+  // Previously classified as kind "github" / name "GitHub Self-Hosted".
+  // Reclassification is intended; nothing persists the kind.
+  it("classifies a github-prefixed corporate host as github-enterprise", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("git@github.acme.com:owner/repo.git")).toEqual({
+      kind: "github-enterprise",
+      name: "github.acme.com",
+      baseUrl: "https://github.acme.com",
+    });
+  });
+
+  it("leaves an arbitrary GHES hostname unknown for CLI refinement", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("https://git.corp.com/owner/repo.git")).toEqual(
+      {
+        kind: "unknown",
+        name: "git.corp.com",
+        baseUrl: "https://git.corp.com",
+      },
+    );
+  });
+
+  it("still classifies gitlab hosts as gitlab", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitlab.acme.com/group/project.git")?.kind,
+    ).toBe("gitlab");
   });
 });

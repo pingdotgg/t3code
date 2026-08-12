@@ -1,5 +1,5 @@
 const GITHUB_PULL_REQUEST_URL_PATTERN =
-  /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i;
+  /^https:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i;
 const GITLAB_MERGE_REQUEST_URL_PATTERN =
   /^https:\/\/[^/\s]*gitlab[^/\s]*\/.+\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/i;
 const AZURE_DEVOPS_PULL_REQUEST_URL_PATTERN =

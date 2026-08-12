@@ -9,7 +9,6 @@ import type {
   GitRunStackedActionResult,
   GitStackedAction,
   SourceControlCloneProtocol,
-  SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
   SourceControlPublishRepositoryResult,
   SourceControlRepositoryVisibility,
@@ -43,9 +42,11 @@ import {
   type GitActionMenuItem,
   type GitQuickAction,
   type DefaultBranchConfirmableAction,
+  getPublishProviderReadiness,
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
+  resolveSelectedEnterpriseHost,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
   resolveThreadBranchUpdate,
@@ -114,7 +115,7 @@ interface PendingDefaultBranchAction {
 
 type PublishProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "bitbucket" | "azure-devops" | "github-enterprise"
 >;
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -161,8 +162,19 @@ function requestVcsStatusRefresh(
 }
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
+interface PublishProviderOption {
+  readonly id: string;
+  readonly value: PublishProviderKind;
+  readonly label: string;
+  readonly description: string;
+  readonly host: string;
+  readonly pathPlaceholder: string;
+  readonly Icon: typeof GitHubIcon;
+}
+
 const PUBLISH_PROVIDER_OPTIONS = [
   {
+    id: "github",
     value: "github",
     label: "GitHub",
     description: "github.com",
@@ -171,6 +183,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
     Icon: GitHubIcon,
   },
   {
+    id: "gitlab",
     value: "gitlab",
     label: "GitLab",
     description: "gitlab.com",
@@ -179,6 +192,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
     Icon: GitLabIcon,
   },
   {
+    id: "bitbucket",
     value: "bitbucket",
     label: "Bitbucket",
     description: "bitbucket.org",
@@ -187,6 +201,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
     Icon: BitbucketIcon,
   },
   {
+    id: "azure-devops",
     value: "azure-devops",
     label: "Azure DevOps",
     description: "dev.azure.com",
@@ -194,53 +209,14 @@ const PUBLISH_PROVIDER_OPTIONS = [
     pathPlaceholder: "project/repository",
     Icon: AzureDevOpsIcon,
   },
-] as const satisfies ReadonlyArray<{
-  readonly value: PublishProviderKind;
-  readonly label: string;
-  readonly description: string;
-  readonly host: string;
-  readonly pathPlaceholder: string;
-  readonly Icon: typeof GitHubIcon;
-}>;
+] as const satisfies ReadonlyArray<PublishProviderOption>;
 
-function publishProviderOption(provider: PublishProviderKind) {
-  return (
-    PUBLISH_PROVIDER_OPTIONS.find((option) => option.value === provider) ??
-    PUBLISH_PROVIDER_OPTIONS[0]
-  );
-}
+type StaticPublishProviderKind = Exclude<PublishProviderKind, "github-enterprise">;
 
 function isPublishProviderKind(
   provider: SourceControlProviderKind,
-): provider is PublishProviderKind {
+): provider is StaticPublishProviderKind {
   return PUBLISH_PROVIDER_OPTIONS.some((option) => option.value === provider);
-}
-
-function getPublishProviderReadiness(input: {
-  provider: PublishProviderKind;
-  sourceControlProviders: ReadonlyArray<SourceControlProviderDiscoveryItem>;
-}): { readonly ready: boolean; readonly hint: string | null } {
-  const discovered = input.sourceControlProviders.find(
-    (provider) => provider.kind === input.provider,
-  );
-  if (!discovered) {
-    return {
-      ready: false,
-      hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
-    };
-  }
-  if (discovered.status !== "available") {
-    return { ready: false, hint: discovered.installHint };
-  }
-  if (discovered.auth.status === "unauthenticated") {
-    return {
-      ready: false,
-      hint:
-        Option.getOrNull(discovered.auth.detail) ??
-        `${discovered.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
-    };
-  }
-  return { ready: true, hint: null };
 }
 
 function formatElapsedDescription(startedAtMs: number | null): string | undefined {
@@ -388,8 +364,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           input: {},
         }),
   );
-  const [selectedPublishProvider, setSelectedPublishProvider] =
-    useState<PublishProviderKind | null>(null);
+  const [selectedPublishProviderId, setSelectedPublishProviderId] = useState<string | null>(null);
   const [publishRepositoryOverride, setPublishRepositoryOverride] = useState<string | null>(null);
   const [publishVisibility, setPublishVisibility] =
     useState<SourceControlRepositoryVisibility>("private");
@@ -409,8 +384,67 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     [props.environmentId, props.gitCwd],
   );
   const publishRepositoryAction = useSourceControlPublishRepositoryAction(sourceControlScope);
+  const [selectedEnterpriseHost, setSelectedEnterpriseHost] = useState<string | null>(null);
+  const enterpriseHosts = useMemo(() => {
+    const sourceControlProviders = sourceControlDiscovery.data?.sourceControlProviders ?? [];
+    return sourceControlProviders
+      .filter((item) => item.kind === "github-enterprise" && item.status === "available")
+      .flatMap((item) => {
+        const host = Option.getOrNull(item.host);
+        return host ? [host] : [];
+      })
+      .toSorted((left, right) => left.localeCompare(right));
+  }, [sourceControlDiscovery.data]);
+  // Computed straight from discovery rather than from the readiness map below,
+  // which is keyed by provider card and so already depends on the active host.
+  const enterpriseHostReadiness = useMemo(() => {
+    const sourceControlProviders = sourceControlDiscovery.data?.sourceControlProviders ?? [];
+    return new Map(
+      enterpriseHosts.map(
+        (host) =>
+          [
+            host,
+            getPublishProviderReadiness({
+              provider: "github-enterprise",
+              host,
+              sourceControlProviders,
+            }),
+          ] as const,
+      ),
+    );
+  }, [enterpriseHosts, sourceControlDiscovery.data]);
+  const readyEnterpriseHosts = useMemo(
+    () => enterpriseHosts.filter((host) => enterpriseHostReadiness.get(host)?.ready === true),
+    [enterpriseHosts, enterpriseHostReadiness],
+  );
+  const activeEnterpriseHost = resolveSelectedEnterpriseHost({
+    selectedHost: selectedEnterpriseHost,
+    availableHosts: enterpriseHosts,
+    readyHosts: readyEnterpriseHosts,
+  });
+  const enterprisePublishProviderOptions = useMemo<ReadonlyArray<PublishProviderOption>>(() => {
+    if (enterpriseHosts.length === 0 || activeEnterpriseHost === null) return [];
+    return [
+      {
+        id: "github-enterprise",
+        value: "github-enterprise" as const,
+        label: "GitHub Enterprise",
+        description: activeEnterpriseHost,
+        host: activeEnterpriseHost,
+        pathPlaceholder: "owner/repo",
+        Icon: GitHubIcon,
+      },
+    ];
+  }, [enterpriseHosts, activeEnterpriseHost]);
+  const publishProviderOptions = useMemo<ReadonlyArray<PublishProviderOption>>(
+    () =>
+      PUBLISH_PROVIDER_OPTIONS.flatMap((option) =>
+        option.value === "github" ? [option, ...enterprisePublishProviderOptions] : [option],
+      ),
+    [enterprisePublishProviderOptions],
+  );
   const publishAccountByProvider = useMemo(() => {
-    const accounts: Record<PublishProviderKind, string | null> = {
+    const accounts: Record<StaticPublishProviderKind, string | null> = {
       github: null,
       gitlab: null,
       bitbucket: null,
@@ -423,47 +457,58 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     }
     return accounts;
   }, [sourceControlDiscovery.data]);
-  const publishProviderReadiness = useMemo(() => {
+  const publishProviderReadinessById = useMemo(() => {
     const sourceControlProviders = sourceControlDiscovery.data?.sourceControlProviders ?? [];
-    return Object.fromEntries(
-      PUBLISH_PROVIDER_OPTIONS.map((option) => [
-        option.value,
-        getPublishProviderReadiness({
+    return new Map(
+      publishProviderOptions.map((option) => {
+        const readiness = getPublishProviderReadiness({
           provider: option.value,
+          ...(option.value === "github-enterprise" ? { host: option.host } : {}),
           sourceControlProviders,
-        }),
-      ]),
-    ) as Record<PublishProviderKind, { readonly ready: boolean; readonly hint: string | null }>;
-  }, [sourceControlDiscovery.data]);
+        });
+        return [option.id, readiness] as const;
+      }),
+    );
+  }, [publishProviderOptions, sourceControlDiscovery.data]);
+  const readinessForOption = useCallback(
+    (id: string) => publishProviderReadinessById.get(id) ?? { ready: false, hint: null },
+    [publishProviderReadinessById],
+  );
   const hasReadyPublishProvider = useMemo(
-    () => PUBLISH_PROVIDER_OPTIONS.some((option) => publishProviderReadiness[option.value].ready),
-    [publishProviderReadiness],
+    () => publishProviderOptions.some((option) => readinessForOption(option.id).ready),
+    [publishProviderOptions, readinessForOption],
   );
   const sortedPublishProviderOptions = useMemo(
     () =>
-      PUBLISH_PROVIDER_OPTIONS.toSorted((left, right) => {
-        const leftReady = publishProviderReadiness[left.value].ready;
-        const rightReady = publishProviderReadiness[right.value].ready;
+      publishProviderOptions.toSorted((left, right) => {
+        const leftReady = readinessForOption(left.id).ready;
+        const rightReady = readinessForOption(right.id).ready;
         if (leftReady !== rightReady) {
           return leftReady ? -1 : 1;
         }
         return left.label.localeCompare(right.label);
       }),
-    [publishProviderReadiness],
+    [publishProviderOptions, readinessForOption],
   );
-  const firstReadyPublishProvider = sortedPublishProviderOptions.find(
-    (option) => publishProviderReadiness[option.value].ready,
-  )?.value;
-  const publishProvider =
-    selectedPublishProvider !== null && publishProviderReadiness[selectedPublishProvider].ready
-      ? selectedPublishProvider
-      : (firstReadyPublishProvider ?? selectedPublishProvider ?? "github");
-  const selectedPublishProviderReadiness = publishProviderReadiness[publishProvider];
-  const publishRepositoryPrefill = publishAccountByProvider[publishProvider]
-    ? `${publishAccountByProvider[publishProvider]}/`
-    : "";
+  const firstReadyPublishProviderId = sortedPublishProviderOptions.find(
+    (option) => readinessForOption(option.id).ready,
+  )?.id;
+  const publishProviderId =
+    selectedPublishProviderId !== null && readinessForOption(selectedPublishProviderId).ready
+      ? selectedPublishProviderId
+      : (firstReadyPublishProviderId ?? selectedPublishProviderId ?? "github");
+  const selectedPublishProviderReadiness = readinessForOption(publishProviderId);
+  const currentPublishProvider =
+    publishProviderOptions.find((option) => option.id === publishProviderId) ??
+    PUBLISH_PROVIDER_OPTIONS[0];
+  const publishProvider = currentPublishProvider.value;
+  const publishRepositoryPrefill =
+    publishProvider === "github-enterprise"
+      ? ""
+      : publishAccountByProvider[publishProvider]
+        ? `${publishAccountByProvider[publishProvider]}/`
+        : "";
   const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
-  const currentPublishProvider = publishProviderOption(publishProvider);
   const publishHost = currentPublishProvider.host;
   const publishPathPlaceholder = currentPublishProvider.pathPlaceholder;
   const publishProviderLabel = currentPublishProvider.label;
@@ -494,6 +539,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     void (async () => {
       const result = await publishRepositoryAction.run({
         provider: publishProvider,
+        ...(publishProvider === "github-enterprise" ? { host: currentPublishProvider.host } : {}),
         repository: publishRepository.trim(),
         visibility: publishVisibility,
         remoteName: publishRemoteName.trim() || "origin",
@@ -515,6 +561,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     })();
   }, [
     canSubmitPublishRepository,
+    currentPublishProvider,
     props.environmentId,
     props.gitCwd,
     publishProtocol,
@@ -532,6 +579,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     setPublishAdvancedOpen(false);
     setPublishError(null);
     setPublishResult(null);
+    setSelectedPublishProviderId(null);
+    setSelectedEnterpriseHost(null);
   }, []);
 
   const handleOpenChange = useCallback(
@@ -619,21 +668,21 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   Provider
                 </span>
                 <RadioGroup
-                  value={publishProvider}
+                  value={publishProviderId}
                   onValueChange={(value) => {
-                    setSelectedPublishProvider(value as PublishProviderKind);
+                    setSelectedPublishProviderId(value as string);
                     setPublishRepositoryOverride(null);
                   }}
                   aria-labelledby="publish-provider-cards-label"
                   className="grid grid-cols-2 gap-2.5"
                 >
                   {sortedPublishProviderOptions.map((option) => {
-                    const readiness = publishProviderReadiness[option.value];
-                    const isSelected = publishProvider === option.value && readiness.ready;
+                    const readiness = readinessForOption(option.id);
+                    const isSelected = publishProviderId === option.id && readiness.ready;
                     if (!readiness.ready) {
                       return (
                         <div
-                          key={option.value}
+                          key={option.id}
                           className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55 dark:border-transparent dark:bg-white/[0.035]"
                         >
                           <option.Icon
@@ -671,8 +720,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
                     return (
                       <RadioPrimitive.Root
-                        key={option.value}
-                        value={option.value}
+                        key={option.id}
+                        value={option.id}
                         className={cn(
                           "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
                           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
@@ -682,13 +731,109 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                         )}
                       >
                         <option.Icon className="size-5 shrink-0" aria-hidden />
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                          {option.label}
-                        </span>
+                        {option.value === "github-enterprise" ? (
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-foreground">
+                              {option.label}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {option.description}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                            {option.label}
+                          </span>
+                        )}
                       </RadioPrimitive.Root>
                     );
                   })}
                 </RadioGroup>
+
+                {publishProvider === "github-enterprise" && enterpriseHosts.length > 0 ? (
+                  <div className="space-y-2 pt-1">
+                    <span
+                      id="publish-enterprise-host-label"
+                      className="text-xs font-medium text-foreground"
+                    >
+                      Host
+                    </span>
+                    <RadioGroup
+                      value={activeEnterpriseHost ?? undefined}
+                      onValueChange={(value) => {
+                        setSelectedEnterpriseHost(value as string);
+                        setPublishRepositoryOverride(null);
+                      }}
+                      aria-labelledby="publish-enterprise-host-label"
+                      className="grid grid-cols-2 gap-2"
+                    >
+                      {enterpriseHosts.map((host) => {
+                        const hostReadiness = enterpriseHostReadiness.get(host);
+                        // Selecting an unauthenticated host would swap the card
+                        // for its "Setup Required" state, which removes this
+                        // picker and leaves no way back to a working host.
+                        if (!hostReadiness?.ready) {
+                          return (
+                            <div
+                              key={host}
+                              className="relative flex cursor-not-allowed items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-left opacity-55 dark:border-transparent dark:bg-white/[0.035]"
+                            >
+                              <GitHubIcon
+                                className="size-4 shrink-0 text-muted-foreground"
+                                aria-hidden
+                              />
+                              <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">
+                                {host}
+                              </span>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      variant="outline"
+                                      size="xs"
+                                      className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
+                                      onClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        openSourceControlSettings();
+                                      }}
+                                    >
+                                      Setup Required
+                                    </Button>
+                                  }
+                                />
+                                <TooltipPopup side="top" align="end" className="max-w-72">
+                                  {hostReadiness?.hint ??
+                                    `${host} is not authenticated. Open Settings -> Source Control for setup guidance.`}
+                                </TooltipPopup>
+                              </Tooltip>
+                            </div>
+                          );
+                        }
+
+                        const isSelected = activeEnterpriseHost === host;
+                        return (
+                          <RadioPrimitive.Root
+                            key={host}
+                            value={host}
+                            className={cn(
+                              "relative flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                              isSelected
+                                ? "border-primary bg-background shadow-sm ring-2 ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
+                                : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
+                            )}
+                          >
+                            <GitHubIcon className="size-4 shrink-0" aria-hidden />
+                            <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">
+                              {host}
+                            </span>
+                          </RadioPrimitive.Root>
+                        );
+                      })}
+                    </RadioGroup>
+                  </div>
+                ) : null}
               </div>
 
               <div className={cn("space-y-5", publishWizardStep !== 1 && "hidden")}>

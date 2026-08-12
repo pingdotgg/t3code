@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -29,6 +29,20 @@ function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
     Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
   );
 }
+
+const mockRun = vi.fn<VcsProcess.VcsProcess["Service"]["run"]>();
+
+const cliLayer = GitHubCli.layer.pipe(
+  Layer.provide(
+    Layer.mock(VcsProcess.VcsProcess)({
+      run: mockRun,
+    }),
+  ),
+);
+
+afterEach(() => {
+  mockRun.mockReset();
+});
 
 it.effect("maps GitHub PR summaries into provider-neutral change requests", () =>
   Effect.gen(function* () {
@@ -379,5 +393,538 @@ it("reports unauthenticated when GitHub JSON has accounts but none are valid", (
       host: Option.some("github.com"),
       detail: Option.some("The token in keyring is invalid."),
     },
+  );
+});
+
+const authStatusJson = (
+  hosts: Record<string, ReadonlyArray<{ login: string; state: string; active: boolean }>>,
+) =>
+  JSON.stringify({
+    hosts: Object.fromEntries(
+      Object.entries(hosts).map(([host, accounts]) => [
+        host,
+        accounts.map((account) => ({ ...account, host })),
+      ]),
+    ),
+  });
+
+const probe = (stdout: string) => ({
+  stdout,
+  stderr: "",
+  exitCode: ChildProcessSpawner.ExitCode(0),
+});
+
+describe("expandGitHubInstances", () => {
+  it("emits only a github row when no enterprise host is logged in", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(
+      probe(
+        authStatusJson({ "github.com": [{ login: "octocat", state: "success", active: true }] }),
+      ),
+    );
+
+    expect(instances.map((instance) => instance.id)).toEqual(["github"]);
+    expect(instances[0]!.kind).toBe("github");
+    expect(instances[0]!.auth.status).toBe("authenticated");
+  });
+
+  it("emits one enterprise row per non-github.com host", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(
+      probe(
+        authStatusJson({
+          "github.com": [{ login: "octocat", state: "success", active: true }],
+          "git.corp.com": [{ login: "dev", state: "success", active: false }],
+          "acme.ghe.com": [{ login: "dev2", state: "success", active: false }],
+        }),
+      ),
+    );
+
+    expect(instances.map((instance) => instance.id)).toEqual([
+      "github",
+      "github-enterprise:acme.ghe.com",
+      "github-enterprise:git.corp.com",
+    ]);
+    expect(instances[1]!.kind).toBe("github-enterprise");
+    expect(instances[1]!.label).toBe("acme.ghe.com");
+    expect(instances[1]!.host).toBe("acme.ghe.com");
+    expect(Option.getOrNull(instances[1]!.auth.account)).toBe("dev2");
+  });
+
+  it("collapses two authenticated accounts on the same enterprise host into one row", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(
+      probe(
+        authStatusJson({
+          "github.com": [{ login: "octocat", state: "success", active: true }],
+          "git.corp.com": [
+            { login: "dev", state: "success", active: true },
+            { login: "dev2", state: "success", active: false },
+          ],
+        }),
+      ),
+    );
+
+    expect(instances.map((instance) => instance.id)).toEqual([
+      "github",
+      "github-enterprise:git.corp.com",
+    ]);
+    expect(instances).toHaveLength(2);
+  });
+
+  it("still emits a github row when github.com is not logged in", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(
+      probe(authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] })),
+    );
+
+    expect(instances[0]!.id).toBe("github");
+    expect(instances[0]!.auth.status).toBe("unauthenticated");
+    expect(instances).toHaveLength(2);
+  });
+
+  it("emits only a github row with unknown auth when output is unparseable", () => {
+    const instances = GitHubSourceControlProvider.expandGitHubInstances(probe("not json"));
+
+    expect(instances).toHaveLength(1);
+    expect(instances[0]!.id).toBe("github");
+    expect(instances[0]!.kind).toBe("github");
+    expect(instances[0]!.host).toBe("github.com");
+    expect(instances[0]!.auth.status).toBe("unknown");
+  });
+});
+
+describe("refineUnknownGitHubRemote", () => {
+  const context = {
+    provider: { kind: "unknown" as const, name: "git.corp.com", baseUrl: "https://git.corp.com" },
+    remoteName: "origin",
+    remoteUrl: "https://git.corp.com/owner/repo.git",
+  };
+
+  it("claims a remote whose host is authenticated in gh", () => {
+    const refined = GitHubSourceControlProvider.refineUnknownGitHubRemote({
+      cwd: "/repo",
+      context,
+      auth: probe(
+        authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] }),
+      ),
+    });
+
+    expect(refined).toEqual({
+      kind: "github-enterprise",
+      name: "git.corp.com",
+      baseUrl: "https://git.corp.com",
+    });
+  });
+
+  it("claims a remote whose host carries a non-default port", () => {
+    const refined = GitHubSourceControlProvider.refineUnknownGitHubRemote({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "unknown" as const,
+          name: "git.corp.com:8443",
+          baseUrl: "https://git.corp.com:8443",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://git.corp.com:8443/owner/repo.git",
+      },
+      auth: probe(
+        authStatusJson({ "git.corp.com": [{ login: "dev", state: "success", active: true }] }),
+      ),
+    });
+
+    expect(refined).toEqual({
+      kind: "github-enterprise",
+      name: "git.corp.com",
+      baseUrl: "https://git.corp.com:8443",
+    });
+  });
+
+  it("does not claim a host that failed authentication", () => {
+    expect(
+      GitHubSourceControlProvider.refineUnknownGitHubRemote({
+        cwd: "/repo",
+        context,
+        auth: probe(
+          authStatusJson({ "git.corp.com": [{ login: "dev", state: "error", active: true }] }),
+        ),
+      }),
+    ).toBeNull();
+  });
+
+  it("does not claim a host absent from gh auth status", () => {
+    expect(
+      GitHubSourceControlProvider.refineUnknownGitHubRemote({
+        cwd: "/repo",
+        context,
+        auth: probe(
+          authStatusJson({ "github.com": [{ login: "octocat", state: "success", active: true }] }),
+        ),
+      }),
+    ).toBeNull();
+  });
+});
+
+function makeProviderOfKind(
+  kind: "github" | "github-enterprise",
+  github: Partial<GitHubCli.GitHubCli["Service"]>,
+) {
+  return GitHubSourceControlProvider.makeProvider(kind).pipe(
+    Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
+  );
+}
+
+describe("getRepositoryCloneUrls bare name resolution", () => {
+  it.effect("resolves a bare enterprise name via search, preferring the exact-name match", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() =>
+        Effect.succeed([
+          { fullName: "Sollit/core-documentation" },
+          { fullName: "Sollit/core" },
+          { fullName: "Sollit/frontend-core" },
+          { fullName: "Sollit/portal-core-service" },
+        ]),
+      );
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const result = yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "core",
+        host: "sollit.ghe.com",
+      });
+
+      expect(searchRepositories).toHaveBeenCalledWith({
+        cwd: "/repo",
+        query: "core",
+        host: "sollit.ghe.com",
+      });
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "Sollit/core",
+        host: "sollit.ghe.com",
+      });
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "Sollit/core",
+        url: "https://sollit.ghe.com/Sollit/core",
+        sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+      });
+    }),
+  );
+
+  it.effect("resolves a sole near match when no bare name matches exactly", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() =>
+        Effect.succeed([{ fullName: "Sollit/widget-service" }]),
+      );
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/widget-service",
+          url: "https://sollit.ghe.com/Sollit/widget-service",
+          sshUrl: "git@sollit.ghe.com:Sollit/widget-service.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "widget",
+        host: "sollit.ghe.com",
+      });
+
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "Sollit/widget-service",
+        host: "sollit.ghe.com",
+      });
+    }),
+  );
+
+  it.effect("fails rather than rank near matches when none of them is exact", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() =>
+        Effect.succeed([{ fullName: "Sollit/widget-service" }, { fullName: "Sollit/mywidget" }]),
+      );
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/widget-service",
+          url: "https://sollit.ghe.com/Sollit/widget-service",
+          sshUrl: "git@sollit.ghe.com:Sollit/widget-service.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const error = yield* provider
+        .getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "widget",
+          host: "sollit.ghe.com",
+        })
+        .pipe(Effect.flip);
+
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("Sollit/widget-service");
+      expect(error.detail).toContain("Sollit/mywidget");
+    }),
+  );
+
+  it.effect("fails with a detail naming the query and host when search returns zero results", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/typo-name",
+          url: "https://sollit.ghe.com/Sollit/typo-name",
+          sshUrl: "git@sollit.ghe.com:Sollit/typo-name.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const error = yield* provider
+        .getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "typo-name",
+          host: "sollit.ghe.com",
+        })
+        .pipe(Effect.flip);
+
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("typo-name");
+      expect(error.detail).toContain("sollit.ghe.com");
+    }),
+  );
+
+  it.effect("fails naming every owner when several exact matches share the bare name", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() =>
+        Effect.succeed([
+          { fullName: "team-a/core" },
+          { fullName: "team-b/core" },
+          { fullName: "team-c/core-docs" },
+        ]),
+      );
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "team-a/core",
+          url: "https://sollit.ghe.com/team-a/core",
+          sshUrl: "git@sollit.ghe.com:team-a/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const error = yield* provider
+        .getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "core",
+          host: "sollit.ghe.com",
+        })
+        .pipe(Effect.flip);
+
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("team-a/core");
+      expect(error.detail).toContain("team-b/core");
+      expect(error.detail).not.toContain("team-c/core-docs");
+    }),
+  );
+
+  it.effect("refuses a bare enterprise name without a host rather than searching github.com", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([{ fullName: "Sollit/core" }]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const error = yield* provider
+        .getRepositoryCloneUrls({ cwd: "/repo", repository: "core" })
+        .pipe(Effect.flip);
+
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).not.toHaveBeenCalled();
+      expect(error.detail).toContain("host");
+    }),
+  );
+
+  // GitManager resolves the enterprise provider from the git remote and looks
+  // up owner/repo with no host, letting `gh` read the host from the clone.
+  it.effect("looks up an owner/repo reference in-repo without a host", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const result = yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "Sollit/core",
+      });
+
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "Sollit/core",
+      });
+      assert.strictEqual(result.nameWithOwner, "Sollit/core");
+    }),
+  );
+
+  it.effect("refuses to create an enterprise repository without a host", () =>
+    Effect.gen(function* () {
+      const createRepository = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://github.com/Sollit/core",
+          sshUrl: "git@github.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", { createRepository });
+
+      const error = yield* provider
+        .createRepository({ cwd: "/repo", repository: "Sollit/core", visibility: "private" })
+        .pipe(Effect.flip);
+
+      expect(createRepository).not.toHaveBeenCalled();
+      expect(error.detail).toContain("host");
+    }),
+  );
+
+  it.effect("never calls search for an owner/repo reference on enterprise", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "Sollit/core",
+          url: "https://sollit.ghe.com/Sollit/core",
+          sshUrl: "git@sollit.ghe.com:Sollit/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github-enterprise", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "Sollit/core",
+        host: "sollit.ghe.com",
+      });
+
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "Sollit/core",
+        host: "sollit.ghe.com",
+      });
+    }),
+  );
+
+  it.effect("never calls search for a bare name on plain github.com", () =>
+    Effect.gen(function* () {
+      const searchRepositories = vi.fn(() => Effect.succeed([]));
+      const getRepositoryCloneUrls = vi.fn(() =>
+        Effect.succeed({
+          nameWithOwner: "octocat/core",
+          url: "https://github.com/octocat/core",
+          sshUrl: "git@github.com:octocat/core.git",
+        }),
+      );
+
+      const provider = yield* makeProviderOfKind("github", {
+        searchRepositories,
+        getRepositoryCloneUrls,
+      });
+
+      const result = yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "core",
+      });
+
+      expect(searchRepositories).not.toHaveBeenCalled();
+      expect(getRepositoryCloneUrls).toHaveBeenCalledWith({
+        cwd: "/repo",
+        repository: "core",
+      });
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/core",
+        url: "https://github.com/octocat/core",
+        sshUrl: "git@github.com:octocat/core.git",
+      });
+    }),
+  );
+});
+
+describe("makeProvider", () => {
+  it.effect("tags change requests and errors with the enterprise kind", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processResult(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 7,
+                title: "Add widget",
+                url: "https://git.corp.com/owner/repo/pull/7",
+                baseRefName: "main",
+                headRefName: "feature",
+                state: "OPEN",
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const provider = yield* GitHubSourceControlProvider.makeProvider("github-enterprise");
+      const requests = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        headSelector: "feature",
+        state: "open",
+      });
+
+      expect(provider.kind).toBe("github-enterprise");
+      expect(requests[0]!.provider).toBe("github-enterprise");
+    }).pipe(Effect.provide(cliLayer)),
   );
 });

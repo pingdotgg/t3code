@@ -1,8 +1,10 @@
 import {
-  addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
   addProjectRemoteSourceProvider,
+  addProjectRemoteTargetLabel,
+  addProjectRemoteTargetReadiness,
   buildAddProjectRemoteSourceReadiness,
+  buildAddProjectRemoteTargets,
   buildProjectCreateCommand,
   canCreateProjectInEnvironment,
   findExistingAddProject,
@@ -10,6 +12,7 @@ import {
   resolveAddProjectPath,
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
+  type AddProjectRemoteTarget,
 } from "@t3tools/client-runtime/operations/projects";
 import {
   connectionStatusText,
@@ -97,6 +100,7 @@ function sourceFromParam(value: string | string[] | undefined): AddProjectRemote
   if (
     source === "url" ||
     source === "github" ||
+    source === "github-enterprise" ||
     source === "gitlab" ||
     source === "bitbucket" ||
     source === "azure-devops"
@@ -368,7 +372,7 @@ function EmptyEnvironmentState() {
 }
 
 function SourceControlRow(props: {
-  readonly source: AddProjectRemoteSource;
+  readonly target: AddProjectRemoteTarget;
   readonly selectedEnvironmentId: EnvironmentId;
   readonly ready: boolean;
   readonly hint: string;
@@ -376,17 +380,15 @@ function SourceControlRow(props: {
 }) {
   const navigation = useNavigation();
   const iconColor = useThemeColor("--color-icon");
-  const title =
-    props.source === "url" ? "Git URL" : `${addProjectRemoteSourceLabel(props.source)} repository`;
+  const label = addProjectRemoteTargetLabel(props.target);
+  const title = props.target.source === "url" ? "Git URL" : `${label} repository`;
   const subtitle =
-    props.source === "url"
-      ? "Clone from a remote URL"
-      : `Clone ${addProjectRemoteSourceLabel(props.source)} ${props.hint}`;
+    props.target.source === "url" ? "Clone from a remote URL" : `Clone ${label} ${props.hint}`;
   const icon =
-    props.source === "url" ? (
+    props.target.source === "url" ? (
       <SymbolView name="link" size={17} tintColor={iconColor} type="monochrome" />
     ) : (
-      <SourceControlIcon kind={props.source} size={18} color={String(iconColor)} />
+      <SourceControlIcon kind={props.target.source} size={18} color={String(iconColor)} />
     );
 
   if (!props.ready) {
@@ -406,7 +408,8 @@ function SourceControlRow(props: {
           screen: "AddProjectRepository",
           params: {
             environmentId: props.selectedEnvironmentId,
-            source: props.source,
+            source: props.target.source,
+            ...(props.target.host ? { host: props.target.host } : {}),
           },
         })
       }
@@ -430,6 +433,10 @@ export function AddProjectSourceScreen() {
   );
   const readiness = useMemo(
     () => buildAddProjectRemoteSourceReadiness(discoveryState.data),
+    [discoveryState.data],
+  );
+  const targets = useMemo(
+    () => buildAddProjectRemoteTargets(discoveryState.data),
     [discoveryState.data],
   );
 
@@ -506,22 +513,26 @@ export function AddProjectSourceScreen() {
                 })
               }
             />
-            {(["url", ...sortAddProjectProviderSources(readiness)] as AddProjectRemoteSource[]).map(
-              (candidate) => (
+            {[
+              { id: "url", source: "url", host: null } as AddProjectRemoteTarget,
+              ...sortAddProjectProviderSources(readiness, targets),
+            ].map((target) => {
+              const targetReadiness = addProjectRemoteTargetReadiness(readiness, target.id);
+              return (
                 <SourceControlRow
-                  key={candidate}
-                  source={candidate}
+                  key={target.id}
+                  target={target}
                   selectedEnvironmentId={selectedEnvironment.environmentId}
-                  ready={readiness[candidate].ready}
+                  ready={targetReadiness.ready}
                   hint={
-                    readiness[candidate].ready
-                      ? addProjectRemoteSourcePathHint(candidate)
-                      : (readiness[candidate].hint ?? "")
+                    targetReadiness.ready
+                      ? addProjectRemoteSourcePathHint(target.source)
+                      : (targetReadiness.hint ?? "")
                   }
                   isFirst={false}
                 />
-              ),
-            )}
+              );
+            })}
           </ListSection>
           {discoveryState.isPending ? <ActivityIndicator color={accentColor} /> : null}
         </>
@@ -594,6 +605,7 @@ function useEnvironmentFromParam(
 export function AddProjectRepositoryScreen(props: {
   readonly environmentId?: string | string[];
   readonly source?: string | string[];
+  readonly host?: string | string[];
 }) {
   const lookupRepositoryQuery = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
@@ -601,6 +613,7 @@ export function AddProjectRepositoryScreen(props: {
   const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
   const source = sourceFromParam(props.source);
+  const host = stringParam(props.host);
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -630,6 +643,7 @@ export function AddProjectRepositoryScreen(props: {
       input: {
         provider,
         repository: repositoryInput.trim(),
+        ...(host ? { host } : {}),
       },
     });
     if (AsyncResult.isFailure(result)) {
@@ -647,7 +661,7 @@ export function AddProjectRepositoryScreen(props: {
       });
     }
     setIsSubmitting(false);
-  }, [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
+  }, [environment, host, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
 
   return (
     <AddProjectShell>

@@ -1,10 +1,11 @@
-import { assert, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
@@ -15,7 +16,24 @@ import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
+import {
+  providerAuth,
+  type SourceControlCliDiscoverySpec,
+} from "./SourceControlProviderDiscovery.ts";
+import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+
+const stubProvider = (kind: SourceControlProviderKind) =>
+  SourceControlProvider.SourceControlProvider.of({
+    kind,
+    listChangeRequests: () => Effect.succeed([]),
+    getChangeRequest: () => Effect.die("unused"),
+    createChangeRequest: () => Effect.die("unused"),
+    getRepositoryCloneUrls: () => Effect.die("unused"),
+    createRepository: () => Effect.die("unused"),
+    getDefaultBranch: () => Effect.succeed(null),
+    checkoutChangeRequest: () => Effect.die("unused"),
+  });
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
@@ -293,3 +311,60 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     assert.strictEqual(provider.kind, "azure-devops");
   }),
 );
+
+describe("SourceControlProviderRegistry.discover", () => {
+  it.effect("flattens a spec that expands into multiple instances", () =>
+    Effect.gen(function* () {
+      const spec = {
+        type: "cli",
+        kind: "github",
+        label: "GitHub",
+        executable: "gh",
+        versionArgs: ["--version"],
+        authArgs: ["auth", "status"],
+        parseAuth: () => providerAuth({ status: "unknown" }),
+        expandInstances: () => [
+          {
+            kind: "github" as const,
+            id: "github",
+            host: "github.com",
+            label: "GitHub",
+            auth: providerAuth({ status: "authenticated", account: "octocat", host: "github.com" }),
+          },
+          {
+            kind: "github-enterprise" as const,
+            id: "github-enterprise:git.corp.com",
+            host: "git.corp.com",
+            label: "git.corp.com",
+            auth: providerAuth({ status: "authenticated", account: "dev", host: "git.corp.com" }),
+          },
+        ],
+        installHint: "Install gh.",
+      } satisfies SourceControlCliDiscoverySpec;
+
+      const registry = yield* SourceControlProviderRegistry.makeWithProviders([
+        { kind: "github", provider: stubProvider("github"), discovery: spec },
+        { kind: "github-enterprise", provider: stubProvider("github-enterprise") },
+      ]).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
+            Layer.mock(VcsProcess.VcsProcess)({
+              run: () => Effect.succeed(processOutput("")),
+            }),
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3-source-control-registry-expand-test-",
+            }).pipe(Layer.provide(NodeServices.layer)),
+          ),
+        ),
+      );
+
+      const items = yield* registry.discover;
+
+      expect(items.map((item) => item.id)).toEqual(["github", "github-enterprise:git.corp.com"]);
+      expect(items.map((item) => item.kind)).toEqual(["github", "github-enterprise"]);
+      expect(Option.getOrNull(items[1]!.host)).toBe("git.corp.com");
+      expect(items[1]!.label).toBe("git.corp.com");
+    }),
+  );
+});

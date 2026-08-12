@@ -31,7 +31,7 @@ const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
 export interface SourceControlProviderRegistration {
   readonly kind: SourceControlProviderKind;
   readonly provider: SourceControlProvider.SourceControlProvider["Service"];
-  readonly discovery: SourceControlProviderDiscoverySpec;
+  readonly discovery?: SourceControlProviderDiscoverySpec;
 }
 
 export interface SourceControlProviderHandle {
@@ -203,7 +203,9 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       SourceControlProviderKind,
       SourceControlProvider.SourceControlProvider["Service"]
     >(registrations.map((registration) => [registration.kind, registration.provider]));
-    const discoverySpecs = registrations.map((registration) => registration.discovery);
+    const discoverySpecs = registrations.flatMap((registration) =>
+      registration.discovery ? [registration.discovery] : [],
+    );
 
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
@@ -287,13 +289,14 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           }),
         ),
         { concurrency: "unbounded" },
-      ),
+      ).pipe(Effect.map((results) => results.flat())),
     });
   },
 );
 
 export const make = Effect.gen(function* () {
-  const github = yield* GitHubSourceControlProvider.make;
+  const github = yield* GitHubSourceControlProvider.makeProvider("github");
+  const githubEnterprise = yield* GitHubSourceControlProvider.makeProvider("github-enterprise");
   const gitlab = yield* GitLabSourceControlProvider.make;
   const bitbucket = yield* BitbucketSourceControlProvider.make;
   const bitbucketDiscovery = yield* BitbucketSourceControlProvider.makeDiscovery;
@@ -303,6 +306,11 @@ export const make = Effect.gen(function* () {
       kind: "github",
       provider: github,
       discovery: GitHubSourceControlProvider.discovery,
+    },
+    {
+      // Rows come from the `gh` spec's expandInstances; no spec of its own.
+      kind: "github-enterprise",
+      provider: githubEnterprise,
     },
     {
       kind: "gitlab",

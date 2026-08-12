@@ -193,9 +193,14 @@ export interface PullRequestProviderApi {
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
 
-  /** The signed-in account, which is what involvement filtering compares against. */
+  /**
+   * The signed-in account, which is what involvement filtering compares against. The host is
+   * named because a tool signed into more than one answers for a different account on each, and
+   * the wrong login silently empties every involvement filter.
+   */
   readonly getViewer: (input: {
     readonly cwd: string;
+    readonly host: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
   readonly listChangeRequests: (

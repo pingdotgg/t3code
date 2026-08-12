@@ -277,6 +277,8 @@ export class GitHubPullRequestCli extends Context.Service<
   {
     readonly getViewerLogin: (input: {
       readonly cwd: string;
+      /** `gh api` reads no repository context, so an unnamed host is always github.com. */
+      readonly host: string;
     }) => Effect.Effect<string, GitHubPullRequestCliError>;
 
     readonly listPullRequests: (input: {
@@ -893,14 +895,21 @@ export const make = Effect.gen(function* () {
 
   return GitHubPullRequestCli.of({
     getViewerLogin: (input) =>
-      github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
-        Effect.flatMap((result) => {
-          const login = result.stdout.trim();
-          return login.length > 0
-            ? Effect.succeed(login)
-            : Effect.fail(new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd }));
-        }),
-      ),
+      github
+        .execute({
+          cwd: input.cwd,
+          args: ["api", "user", "--hostname", input.host, "--jq", ".login"],
+        })
+        .pipe(
+          Effect.flatMap((result) => {
+            const login = result.stdout.trim();
+            return login.length > 0
+              ? Effect.succeed(login)
+              : Effect.fail(
+                  new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd }),
+                );
+          }),
+        ),
 
     listPullRequests: (input) => {
       const fallbackMaxRows = Math.max(input.limit + 1, PULL_REQUEST_FALLBACK_MAX_ROWS);

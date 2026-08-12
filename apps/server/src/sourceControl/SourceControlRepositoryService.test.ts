@@ -1,6 +1,6 @@
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -21,6 +21,14 @@ const CLONE_URLS = {
   sshUrl: "git@github.com:octocat/t3code.git",
 };
 
+const getRepositoryCloneUrls = vi.fn<
+  SourceControlProvider.SourceControlProvider["Service"]["getRepositoryCloneUrls"]
+>(() => Effect.succeed(CLONE_URLS));
+
+afterEach(() => {
+  getRepositoryCloneUrls.mockClear();
+});
+
 function makeProvider(
   overrides: Partial<SourceControlProvider.SourceControlProvider["Service"]> = {},
 ): SourceControlProvider.SourceControlProvider["Service"] {
@@ -35,7 +43,7 @@ function makeProvider(
     listChangeRequests: () => unsupported("listChangeRequests"),
     getChangeRequest: () => unsupported("getChangeRequest"),
     createChangeRequest: () => unsupported("createChangeRequest"),
-    getRepositoryCloneUrls: () => Effect.succeed(CLONE_URLS),
+    getRepositoryCloneUrls,
     createRepository: () => Effect.succeed(CLONE_URLS),
     getDefaultBranch: () => Effect.succeed(null),
     checkoutChangeRequest: () => unsupported("checkoutChangeRequest"),
@@ -395,5 +403,31 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
         },
       }),
     ),
+  );
+});
+
+describe("github-enterprise host requirement", () => {
+  it.effect("rejects an enterprise lookup with no host", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const error = yield* service
+        .lookupRepository({ provider: "github-enterprise", repository: "owner/repo" })
+        .pipe(Effect.flip);
+
+      expect(error.detail).toBe("Choose a GitHub Enterprise host before continuing.");
+    }).pipe(Effect.provide(makeLayer({}))),
+  );
+
+  it.effect("forwards the host to the provider", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.lookupRepository({
+        provider: "github-enterprise",
+        repository: "owner/repo",
+        host: "git.corp.com",
+      });
+
+      expect(getRepositoryCloneUrls.mock.calls[0]![0].host).toBe("git.corp.com");
+    }).pipe(Effect.provide(makeLayer({}))),
   );
 });
