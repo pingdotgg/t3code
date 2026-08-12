@@ -54,6 +54,11 @@ export interface OperatorSpawnInput {
   readonly baseBranch?: string | undefined;
 }
 
+export interface OperatorResumeTask {
+  readonly taskId: ThreadId;
+  readonly prompt: string;
+}
+
 export interface OperatorTaskStatus {
   readonly taskId: ThreadId;
   readonly batchId: string | null;
@@ -138,11 +143,17 @@ function deriveTaskStatus(
   thread: OrchestrationThread,
   shell: OrchestrationThreadShell,
 ): OperatorTaskStatus {
-  const latestAssistantMessage = thread.messages.findLast(
-    (message) => message.role === "assistant" && !message.streaming,
-  );
-  const waiting = shell.hasPendingApprovals || shell.hasPendingUserInput;
   const latestTurn = thread.latestTurn;
+  const latestAssistantMessage =
+    latestTurn === null
+      ? undefined
+      : thread.messages.findLast(
+          (message) =>
+            message.role === "assistant" &&
+            !message.streaming &&
+            message.turnId === latestTurn.turnId,
+        );
+  const waiting = shell.hasPendingApprovals || shell.hasPendingUserInput;
   const status: OperatorTaskStatus["status"] = waiting
     ? "waiting"
     : latestTurn?.state === "completed"
@@ -165,7 +176,7 @@ function deriveTaskStatus(
     status,
     startedAt: latestTurn?.startedAt ?? latestTurn?.requestedAt ?? thread.createdAt,
     completedAt: latestTurn?.completedAt ?? null,
-    result: latestAssistantMessage?.text ?? null,
+    result: status === "completed" ? (latestAssistantMessage?.text ?? null) : null,
     error: status === "failed" ? (thread.session?.lastError ?? "The task failed.") : null,
   };
 }
@@ -174,6 +185,10 @@ function isSettled(status: OperatorTaskStatus["status"]): boolean {
   return (
     status === "waiting" || status === "completed" || status === "failed" || status === "stopped"
   );
+}
+
+function isResumable(status: OperatorTaskStatus["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "stopped";
 }
 
 function canStillSettle(shell: OrchestrationThreadShell): boolean {
@@ -205,6 +220,10 @@ export class OperatorService extends Context.Service<
     readonly spawn: (
       input: OperatorSpawnInput,
     ) => Effect.Effect<OperatorSpawnResult, OperatorError>;
+    readonly resume: (
+      coordinatorThreadId: ThreadId,
+      tasks: ReadonlyArray<OperatorResumeTask>,
+    ) => Effect.Effect<ReadonlyArray<OperatorTaskStatus>, OperatorError>;
     readonly status: (
       coordinatorThreadId: ThreadId,
       taskIds?: ReadonlyArray<ThreadId>,
@@ -392,12 +411,9 @@ export class OperatorService extends Context.Service<
         return owned;
       });
 
-      const readStatuses = Effect.fn("OperatorService.readStatuses")(function* (
-        coordinatorThreadId: ThreadId,
-        taskIds?: ReadonlyArray<ThreadId>,
+      const readShellStatuses = Effect.fn("OperatorService.readShellStatuses")(function* (
+        shells: ReadonlyArray<OrchestrationThreadShell>,
       ) {
-        yield* getCoordinator(coordinatorThreadId);
-        const shells = yield* getOwnedShells(coordinatorThreadId, taskIds);
         return yield* Effect.forEach(
           shells,
           (shell) =>
@@ -424,6 +440,105 @@ export class OperatorService extends Context.Service<
             ),
           { concurrency: "unbounded" },
         );
+      });
+
+      const readStatuses = Effect.fn("OperatorService.readStatuses")(function* (
+        coordinatorThreadId: ThreadId,
+        taskIds?: ReadonlyArray<ThreadId>,
+      ) {
+        yield* getCoordinator(coordinatorThreadId);
+        const shells = yield* getOwnedShells(coordinatorThreadId, taskIds);
+        return yield* readShellStatuses(shells);
+      });
+
+      const startTurns = Effect.fn("OperatorService.startTurns")(function* (
+        coordinatorThreadId: ThreadId,
+        tasks: ReadonlyArray<{
+          readonly taskId: ThreadId;
+          readonly title: string;
+          readonly prompt: string;
+          readonly modelSelection: ModelSelection;
+          readonly runtimeMode: OrchestrationThreadShell["runtimeMode"];
+          readonly interactionMode: OrchestrationThreadShell["interactionMode"];
+        }>,
+        operation: "start-task" | "resume-task",
+      ) {
+        const startOutcomes = yield* Effect.forEach(
+          tasks,
+          (task) =>
+            Effect.gen(function* () {
+              const turnCreatedAt = yield* nowIso;
+              yield* engine.dispatch({
+                type: "thread.turn.start",
+                commandId: yield* commandId(operation),
+                threadId: task.taskId,
+                message: {
+                  messageId: MessageId.make(yield* randomUuid),
+                  role: "user",
+                  text: `${task.prompt.trim()}${CHILD_TASK_INSTRUCTIONS}`,
+                  attachments: [],
+                },
+                modelSelection: task.modelSelection,
+                runtimeMode: task.runtimeMode,
+                interactionMode: task.interactionMode,
+                createdAt: turnCreatedAt,
+              });
+              return { _tag: "Started" as const, taskId: task.taskId };
+            }).pipe(
+              Effect.mapError((error) =>
+                isOperatorError(error)
+                  ? error
+                  : new OperatorError({
+                      operation,
+                      reason: "dispatch-failed",
+                      detail: errorDetail(error),
+                    }),
+              ),
+              Effect.catch((error) =>
+                nowIso.pipe(
+                  Effect.map((failedAt) => ({
+                    _tag: "Failed" as const,
+                    taskId: task.taskId,
+                    title: task.title,
+                    error,
+                    failedAt,
+                  })),
+                ),
+              ),
+            ),
+          { concurrency: "unbounded" },
+        );
+
+        const failedStarts = startOutcomes.filter((outcome) => outcome._tag === "Failed");
+        if (startOutcomes.length > 0 && failedStarts.length === startOutcomes.length) {
+          const action = operation === "resume-task" ? "resume" : "start";
+          return yield* new OperatorError({
+            operation,
+            reason: "dispatch-failed",
+            detail: `Every Operator task failed to ${action}: ${failedStarts
+              .map((outcome) => `${outcome.title}: ${outcome.error.detail}`)
+              .join("; ")}`,
+          });
+        }
+
+        const statuses = yield* readStatuses(
+          coordinatorThreadId,
+          tasks.map((task) => task.taskId),
+        );
+        const failedStartByTaskId = new Map(
+          failedStarts.map((outcome) => [outcome.taskId, outcome] as const),
+        );
+        return statuses.map((task) => {
+          const failure = failedStartByTaskId.get(task.taskId);
+          return failure === undefined
+            ? task
+            : {
+                ...task,
+                status: "failed" as const,
+                completedAt: failure.failedAt,
+                error: failure.error.detail,
+              };
+        });
       });
 
       const spawn = Effect.fn("OperatorService.spawn")(function* (input: OperatorSpawnInput) {
@@ -488,11 +603,11 @@ export class OperatorService extends Context.Service<
           branch = coordinator.operatorWorkspaceBranch ?? coordinator.branch;
         }
 
-        if (
+        const rememberedWorkspace =
           input.workspaceMode !== "current" &&
           (coordinator.operatorWorkspacePath !== workspacePath ||
-            coordinator.operatorWorkspaceBranch !== branch)
-        ) {
+            coordinator.operatorWorkspaceBranch !== branch);
+        if (rememberedWorkspace) {
           yield* engine
             .dispatch({
               type: "thread.meta.update",
@@ -570,82 +685,125 @@ export class OperatorService extends Context.Service<
           }
         }
 
-        const startOutcomes = yield* Effect.forEach(
-          pendingTasks,
-          ({ task, taskId }) =>
-            Effect.gen(function* () {
-              const turnCreatedAt = yield* nowIso;
-              yield* engine.dispatch({
-                type: "thread.turn.start",
-                commandId: yield* commandId("start-task"),
-                threadId: taskId,
-                message: {
-                  messageId: MessageId.make(yield* randomUuid),
-                  role: "user",
-                  text: `${task.prompt.trim()}${CHILD_TASK_INSTRUCTIONS}`,
-                  attachments: [],
-                },
-                modelSelection: task.modelSelection,
-                runtimeMode: coordinator.runtimeMode,
-                interactionMode: "default",
-                createdAt: turnCreatedAt,
-              });
-              return { _tag: "Started" as const, taskId };
-            }).pipe(
-              Effect.mapError((error) =>
-                isOperatorError(error)
-                  ? error
-                  : new OperatorError({
-                      operation: "start-task",
-                      reason: "dispatch-failed",
-                      detail: errorDetail(error),
-                    }),
-              ),
-              Effect.catch((error) =>
-                nowIso.pipe(
-                  Effect.map((failedAt) => ({
-                    _tag: "Failed" as const,
-                    taskId,
-                    title: task.title,
-                    error,
-                    failedAt,
-                  })),
+        const cleanupFailedSpawn = Effect.gen(function* () {
+          yield* Effect.forEach(
+            pendingTasks,
+            ({ taskId }) =>
+              commandId("cleanup-task").pipe(
+                Effect.flatMap((cleanupCommandId) =>
+                  engine.dispatch({
+                    type: "thread.delete",
+                    commandId: cleanupCommandId,
+                    threadId: taskId,
+                  }),
+                ),
+                Effect.catch((error) =>
+                  Effect.logWarning("Failed to clean up an unstarted Operator task", {
+                    threadId: taskId,
+                    cause: error,
+                  }),
                 ),
               ),
-            ),
-          { concurrency: "unbounded" },
-        );
+            { concurrency: "unbounded" },
+          );
 
-        const failedStarts = startOutcomes.filter((outcome) => outcome._tag === "Failed");
-        if (startOutcomes.length > 0 && failedStarts.length === startOutcomes.length) {
+          if (rememberedWorkspace) {
+            yield* engine
+              .dispatch({
+                type: "thread.meta.update",
+                commandId: yield* commandId("restore-workspace"),
+                threadId: coordinator.id,
+                operatorWorkspacePath: coordinator.operatorWorkspacePath,
+                operatorWorkspaceBranch: coordinator.operatorWorkspaceBranch,
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("Failed to restore Operator workspace metadata", {
+                    threadId: coordinator.id,
+                    cause: error,
+                  }),
+                ),
+              );
+          }
+        });
+
+        const tasks = yield* startTurns(
+          coordinator.id,
+          pendingTasks.map(({ task, taskId }) => ({
+            taskId,
+            title: task.title,
+            prompt: task.prompt,
+            modelSelection: task.modelSelection,
+            runtimeMode: coordinator.runtimeMode,
+            interactionMode: "default",
+          })),
+          "start-task",
+        ).pipe(
+          Effect.catch((error) =>
+            error.operation === "start-task" && error.reason === "dispatch-failed"
+              ? cleanupFailedSpawn.pipe(Effect.andThen(Effect.fail(error)))
+              : Effect.fail(error),
+          ),
+        );
+        return { batchId, workspacePath, branch, tasks };
+      });
+
+      const resume = Effect.fn("OperatorService.resume")(function* (
+        coordinatorThreadId: ThreadId,
+        tasks: ReadonlyArray<OperatorResumeTask>,
+      ) {
+        yield* getCoordinator(coordinatorThreadId);
+        if (tasks.length === 0 || tasks.length > 8) {
           return yield* new OperatorError({
-            operation: "start-task",
-            reason: "dispatch-failed",
-            detail: `Every Operator task failed to start: ${failedStarts
-              .map((outcome) => `${outcome.title}: ${outcome.error.detail}`)
-              .join("; ")}`,
+            operation: "resume-task",
+            reason: "invalid-task",
+            detail: "Resume requires between one and eight Operator tasks.",
           });
         }
 
-        const statuses = yield* readStatuses(
-          coordinator.id,
-          pendingTasks.map(({ taskId }) => taskId),
+        const seenTaskIds = new Set<string>();
+        for (const task of tasks) {
+          if (task.prompt.trim().length === 0) {
+            return yield* new OperatorError({
+              operation: "resume-task",
+              reason: "invalid-task",
+              detail: `Task '${task.taskId}' requires a non-empty resume instruction.`,
+            });
+          }
+          if (seenTaskIds.has(task.taskId)) {
+            return yield* new OperatorError({
+              operation: "resume-task",
+              reason: "invalid-task",
+              detail: `Task '${task.taskId}' can only be resumed once per call.`,
+            });
+          }
+          seenTaskIds.add(task.taskId);
+        }
+
+        const taskIds = tasks.map((task) => task.taskId);
+        const shells = yield* getOwnedShells(coordinatorThreadId, taskIds);
+        const statuses = yield* readShellStatuses(shells);
+        const unavailable = statuses.find((task) => !isResumable(task.status));
+        if (unavailable) {
+          return yield* new OperatorError({
+            operation: "resume-task",
+            reason: "invalid-task",
+            detail: `Task '${unavailable.title}' (${unavailable.taskId}) is ${unavailable.status}. Only completed, failed, or stopped Operator tasks can be resumed.`,
+          });
+        }
+
+        return yield* startTurns(
+          coordinatorThreadId,
+          shells.map((shell, index) => ({
+            taskId: shell.id,
+            title: shell.title,
+            prompt: tasks[index]!.prompt,
+            modelSelection: shell.modelSelection,
+            runtimeMode: shell.runtimeMode,
+            interactionMode: shell.interactionMode,
+          })),
+          "resume-task",
         );
-        const failedStartByTaskId = new Map(
-          failedStarts.map((outcome) => [outcome.taskId, outcome] as const),
-        );
-        const tasks = statuses.map((task) => {
-          const failure = failedStartByTaskId.get(task.taskId);
-          return failure === undefined
-            ? task
-            : {
-                ...task,
-                status: "failed" as const,
-                completedAt: failure.failedAt,
-                error: failure.error.detail,
-              };
-        });
-        return { batchId, workspacePath, branch, tasks };
       });
 
       const status = Effect.fn("OperatorService.status")(function* (
@@ -742,7 +900,7 @@ export class OperatorService extends Context.Service<
         );
       });
 
-      return OperatorService.of({ listModels, spawn, status, wait });
+      return OperatorService.of({ listModels, spawn, resume, status, wait });
     }),
   );
 }

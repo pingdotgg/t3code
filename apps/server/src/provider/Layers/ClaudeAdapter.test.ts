@@ -364,6 +364,7 @@ describe("ClaudeAdapterLive", () => {
         append: OPERATOR_PROVIDER_INSTRUCTIONS,
       });
       assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /top-level T3 Code sidebar task/);
+      assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /operator_resume/);
       assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /never.*native subagents/i);
       assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /never silently substitute/i);
     }).pipe(

@@ -135,6 +135,40 @@ function thread(id: ThreadId, overrides: Partial<OrchestrationThread> = {}): Orc
   };
 }
 
+function completedOperatorTask(
+  id: ThreadId,
+  title: string,
+  overrides: Partial<OrchestrationThread> = {},
+): OrchestrationThread {
+  const turnId = TurnId.make(`completed-turn-${id}`);
+  const assistantMessageId = MessageId.make(`completed-assistant-${id}`);
+  return thread(id, {
+    title,
+    operatorParentThreadId: coordinatorId,
+    operatorBatchId: "batch-1",
+    latestTurn: {
+      turnId,
+      state: "completed",
+      requestedAt: NOW,
+      startedAt: NOW,
+      completedAt: NOW,
+      assistantMessageId,
+    },
+    messages: [
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        text: `${title} handoff`,
+        turnId,
+        streaming: false,
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ],
+    ...overrides,
+  });
+}
+
 function shellFromThread(value: OrchestrationThread): OrchestrationThreadShell {
   return {
     id: value.id,
@@ -230,6 +264,9 @@ function makeHarness(options: HarnessOptions = {}) {
             updatedAt: command.createdAt,
           }),
         );
+      }
+      if (command.type === "thread.delete") {
+        details.delete(command.threadId);
       }
       if (command.type === "thread.turn.start") {
         const current = details.get(command.threadId);
@@ -538,7 +575,7 @@ describe("OperatorService", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("fails the spawn only when every task fails to start", () => {
+  it.effect("cleans up the spawn when every task fails to start", () => {
     const harness = makeHarness({
       dispatchFailure: (command) =>
         command.type === "thread.turn.start"
@@ -553,7 +590,7 @@ describe("OperatorService", () => {
       const error = yield* operator
         .spawn({
           coordinatorThreadId: coordinatorId,
-          workspaceMode: "current",
+          workspaceMode: "operator",
           tasks: [
             {
               title: "Frontend",
@@ -573,6 +610,171 @@ describe("OperatorService", () => {
       assert.match(error.detail, /Every Operator task failed to start/);
       assert.match(error.detail, /Frontend/);
       assert.match(error.detail, /Backend/);
+      const createdTaskIds = harness.commands
+        .filter((command) => command.type === "thread.create")
+        .map((command) => command.threadId);
+      assert.deepStrictEqual(
+        harness.commands
+          .filter((command) => command.type === "thread.delete")
+          .map((command) => command.threadId),
+        createdTaskIds,
+      );
+      assert.isTrue(createdTaskIds.every((taskId) => !harness.details.has(taskId)));
+      assert.deepStrictEqual(
+        harness.commands
+          .filter(
+            (command): command is Extract<OrchestrationCommand, { type: "thread.meta.update" }> =>
+              command.type === "thread.meta.update" && command.operatorWorkspacePath !== undefined,
+          )
+          .map((command) => [command.operatorWorkspacePath, command.operatorWorkspaceBranch]),
+        [
+          ["/worktrees/operator", "feat/operator"],
+          [null, null],
+        ],
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("resumes completed tasks in place with their existing models and history", () => {
+    const frontendId = ThreadId.make("operator-frontend");
+    const backendId = ThreadId.make("operator-backend");
+    const frontend = completedOperatorTask(frontendId, "Frontend", {
+      modelSelection: {
+        instanceId: claudeInstanceId,
+        model: "claude-opus-5",
+        options: [{ id: "effort", value: "high" }],
+      },
+      runtimeMode: "auto-accept-edits",
+      interactionMode: "plan",
+      branch: "feat/shared-operator",
+      worktreePath: "/worktrees/shared-operator",
+    });
+    const backend = completedOperatorTask(backendId, "Backend", {
+      branch: "feat/shared-operator",
+      worktreePath: "/worktrees/shared-operator",
+    });
+    const harness = makeHarness({ children: [frontend, backend] });
+
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const tasks = yield* operator.resume(coordinatorId, [
+        { taskId: frontendId, prompt: "Fix the responsive navigation." },
+        { taskId: backendId, prompt: "Fix the pagination query." },
+      ]);
+
+      assert.deepStrictEqual(
+        tasks.map((task) => ({ taskId: task.taskId, status: task.status, result: task.result })),
+        [
+          { taskId: frontendId, status: "running", result: null },
+          { taskId: backendId, status: "running", result: null },
+        ],
+      );
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.create").length,
+        0,
+      );
+      const starts = harness.commands.filter((command) => command.type === "thread.turn.start");
+      assert.deepStrictEqual(
+        starts.map((command) => command.threadId),
+        [frontendId, backendId],
+      );
+      assert.deepStrictEqual(starts[0]?.modelSelection, frontend.modelSelection);
+      assert.equal(starts[0]?.runtimeMode, "auto-accept-edits");
+      assert.equal(starts[0]?.interactionMode, "plan");
+      assert.match(starts[0]?.message.text ?? "", /^Fix the responsive navigation\./);
+      assert.match(
+        starts[0]?.message.text ?? "",
+        /top-level T3 Code task created by Agentic Operator/,
+      );
+
+      const resumedFrontend = harness.details.get(frontendId);
+      assert.equal(resumedFrontend?.branch, "feat/shared-operator");
+      assert.equal(resumedFrontend?.worktreePath, "/worktrees/shared-operator");
+      assert.equal(resumedFrontend?.messages[0]?.text, "Frontend handoff");
+      assert.match(
+        resumedFrontend?.messages.at(-1)?.text ?? "",
+        /^Fix the responsive navigation\./,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("rejects active tasks and tasks owned by another coordinator", () => {
+    const runningId = ThreadId.make("operator-running");
+    const foreignId = ThreadId.make("operator-foreign");
+    const running = thread(runningId, {
+      title: "Running",
+      operatorParentThreadId: coordinatorId,
+      operatorBatchId: "batch-1",
+      latestTurn: {
+        turnId: TurnId.make("running-turn"),
+        state: "running",
+        requestedAt: NOW,
+        startedAt: NOW,
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const foreign = completedOperatorTask(foreignId, "Foreign", {
+      operatorParentThreadId: ThreadId.make("another-coordinator"),
+    });
+    const harness = makeHarness({ children: [running, foreign] });
+
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const activeError = yield* operator
+        .resume(coordinatorId, [{ taskId: runningId, prompt: "Do more work." }])
+        .pipe(Effect.flip);
+      const ownershipError = yield* operator
+        .resume(coordinatorId, [{ taskId: foreignId, prompt: "Do more work." }])
+        .pipe(Effect.flip);
+
+      assert.equal(activeError.reason, "invalid-task");
+      assert.match(activeError.detail, /is running/);
+      assert.equal(ownershipError.reason, "invalid-task");
+      assert.match(ownershipError.detail, /does not belong/);
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.turn.start").length,
+        0,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("keeps successful resumes when another resumed task fails to start", () => {
+    const frontendId = ThreadId.make("resume-frontend");
+    const backendId = ThreadId.make("resume-backend");
+    const harness = makeHarness({
+      children: [
+        completedOperatorTask(frontendId, "Frontend"),
+        completedOperatorTask(backendId, "Backend"),
+      ],
+      dispatchFailure: (command) =>
+        command.type === "thread.turn.start" && command.threadId === backendId
+          ? new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "Backend resume failed.",
+            })
+          : null,
+    });
+
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const tasks = yield* operator.resume(coordinatorId, [
+        { taskId: frontendId, prompt: "Fix frontend." },
+        { taskId: backendId, prompt: "Fix backend." },
+      ]);
+
+      assert.deepStrictEqual(
+        tasks.map((task) => ({ title: task.title, status: task.status })),
+        [
+          { title: "Frontend", status: "running" },
+          { title: "Backend", status: "failed" },
+        ],
+      );
+      assert.match(tasks[1]?.error ?? "", /Backend resume failed/i);
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.turn.start").length,
+        1,
+      );
     }).pipe(Effect.provide(harness.layer));
   });
 

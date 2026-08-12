@@ -24,6 +24,19 @@ const handlers = {
         ...(input.baseBranch === undefined ? {} : { baseBranch: input.baseBranch }),
       });
     }),
+  operator_resume: (input) =>
+    Effect.gen(function* () {
+      const invocation = yield* McpInvocationContext.McpInvocationContext;
+      const operator = yield* OperatorService;
+      const tasks = yield* operator.resume(
+        invocation.threadId,
+        input.tasks.map((task) => ({
+          taskId: ThreadId.make(task.taskId),
+          prompt: task.prompt,
+        })),
+      );
+      return { tasks };
+    }),
   operator_status: (input) =>
     Effect.gen(function* () {
       const invocation = yield* McpInvocationContext.McpInvocationContext;

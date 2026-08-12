@@ -96,6 +96,28 @@ export const OperatorSpawnTool = Tool.make("operator_spawn", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false);
 
+export const OperatorResumeTool = Tool.make("operator_resume", {
+  description:
+    "Start a new turn on one or more previously spawned Operator task threads, preserving each task's provider, model, checkout, branch, and conversation history. Supply a separate instruction for every task. Only completed, failed, or stopped tasks can be resumed. This resumes the existing durable T3 Code tasks and never creates replacements or native provider subagents. Call operator_wait once for the returned task IDs whose status is not failed.",
+  parameters: Schema.Struct({
+    tasks: Schema.Array(
+      Schema.Struct({
+        taskId: ThreadId,
+        prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(100_000)),
+      }),
+    ).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+  }),
+  success: Schema.Struct({ tasks: Schema.Array(OperatorTaskStatusSchema) }) as Schema.Schema<{
+    readonly tasks: ReadonlyArray<OperatorTaskStatus>;
+  }>,
+  failure: OperatorError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Resume Operator tasks")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false);
+
 export const OperatorStatusTool = Tool.make("operator_status", {
   description:
     "Read current status and available final output for this coordinator's top-level Operator sidebar tasks. Omit taskIds to list every task. Prefer operator_wait when work is still running instead of polling this tool.",
@@ -125,6 +147,7 @@ export const OperatorWaitTool = Tool.make("operator_wait", {
 export const OperatorToolkit = Toolkit.make(
   OperatorModelsTool,
   OperatorSpawnTool,
+  OperatorResumeTool,
   OperatorStatusTool,
   OperatorWaitTool,
 );

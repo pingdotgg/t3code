@@ -1,6 +1,6 @@
 import type { RuntimeOperatorTask } from "@t3tools/client-runtime/state/operatorRuntime";
 import { CircleAlert, CircleCheck, CircleDashed, CircleStop, Workflow } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -19,20 +19,25 @@ function elapsedBetween(startedAt: string, completedAt: string | null): string {
 }
 
 function OperatorElapsed({ task }: { task: RuntimeOperatorTask }) {
-  const ref = useRef<HTMLSpanElement>(null);
   const live = task.status === "queued" || task.status === "running" || task.status === "waiting";
+  const [elapsed, setElapsed] = useState(() => elapsedBetween(task.startedAt, task.completedAt));
 
   useEffect(() => {
-    const update = () => {
-      if (ref.current) ref.current.textContent = elapsedBetween(task.startedAt, task.completedAt);
-    };
+    const update = () => setElapsed(elapsedBetween(task.startedAt, task.completedAt));
     update();
     if (!live) return;
     const timer = window.setInterval(update, 1_000);
     return () => window.clearInterval(timer);
   }, [live, task.completedAt, task.startedAt]);
 
-  return <span ref={ref} className="font-mono tabular-nums text-muted-foreground" />;
+  return (
+    <span
+      className="font-mono tabular-nums text-muted-foreground"
+      aria-label={`Elapsed time for ${task.title}: ${elapsed}`}
+    >
+      {elapsed}
+    </span>
+  );
 }
 
 function statusIcon(task: RuntimeOperatorTask) {
@@ -56,9 +61,10 @@ function OperatorTaskRow({ task }: { task: RuntimeOperatorTask }) {
   return (
     <div className="rounded-lg px-2.5 py-2 hover:bg-accent/50">
       <div className="flex min-w-0 items-center gap-2">
-        <span className="shrink-0" aria-label={task.status}>
+        <span className="shrink-0" aria-hidden>
           {statusIcon(task)}
         </span>
+        <span className="sr-only">Status: {task.status}</span>
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{task.title}</span>
         <OperatorElapsed task={task} />
       </div>

@@ -304,6 +304,7 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /preview_open/);
       NodeAssert.match(instructions, /Do not switch to global browser skills/);
       NodeAssert.match(instructions, /operator_models/);
+      NodeAssert.match(instructions, /operator_resume/);
       NodeAssert.match(instructions, /operator_wait/);
       NodeAssert.match(instructions, /top-level T3 Code sidebar task/);
       NodeAssert.match(

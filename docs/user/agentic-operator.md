@@ -22,6 +22,7 @@ The coordinator reads the live provider inventory before spawning work, so it us
 - The Operator panel shows each task's title, provider instance, model, reasoning effort, status, and elapsed time.
 - The coordinator waits on T3 Code's event stream rather than repeatedly asking models for status.
 - When delegated work finishes, the coordinator receives each task's final handoff and can create a later integration task.
+- Completed, failed, or stopped Operator tasks can be resumed with individual follow-up instructions. Resume reuses the same task, provider, model, checkout, branch, and conversation history.
 - A new Operator worktree runs the project's configured setup script once before its task turns start.
 
 Disabling Operator prevents new Operator actions across that environment. Existing Operator tasks remain available in the thread list.
