@@ -3,6 +3,7 @@ import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { formatElapsed } from "@t3tools/shared/orchestrationTiming";
 import { SymbolView } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
@@ -101,8 +102,8 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
-import { useAssetUrl } from "../../state/assets";
-import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import { useAssetUrl, useAssetUrlState } from "../../state/assets";
+import { resolveWorkspaceFilePath, resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -165,6 +166,86 @@ export interface ThreadFeedProps {
     readonly loading: boolean;
     readonly onLoadEarlier: () => void;
   } | null;
+}
+
+function MarkdownWorkspaceImage(props: {
+  readonly href: string;
+  readonly alt?: string;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot?: string | null;
+  readonly onPressImage: (uri: string) => void;
+}) {
+  const presentation = resolveMarkdownLinkPresentation(props.href);
+  const remoteUri =
+    presentation.kind === "external"
+      ? presentation.href
+      : /^https?:\/\//i.test(props.href)
+        ? props.href
+        : null;
+  const filePath = presentation.kind === "file" ? presentation.path : null;
+  const absolutePath =
+    filePath === null
+      ? null
+      : props.workspaceRoot
+        ? resolveWorkspaceFilePath(props.workspaceRoot, filePath)
+        : filePath;
+  const canPreviewFile = absolutePath !== null && isWorkspaceImagePreviewPath(absolutePath);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    canPreviewFile && absolutePath !== null
+      ? {
+          _tag: "workspace-file",
+          threadId: props.threadId,
+          path: absolutePath,
+        }
+      : null,
+  );
+  const assetUri = assetUrl._tag === "Success" ? assetUrl.url : null;
+  const uri = remoteUri ?? assetUri;
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+
+  if (
+    (remoteUri === null && canPreviewFile && assetUrl._tag === "Failure") ||
+    (uri !== null && failedUri === uri)
+  ) {
+    return (
+      <Text className="my-2 rounded-[12px] bg-neutral-200 px-3 py-2 text-xs text-foreground-muted dark:bg-neutral-800">
+        Unable to load image{props.alt ? ` “${props.alt}”` : ""}.
+      </Text>
+    );
+  }
+
+  if (uri === null && canPreviewFile) {
+    return (
+      <View className="my-2 h-40 items-center justify-center rounded-[12px] bg-neutral-200 dark:bg-neutral-800">
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  if (uri === null) {
+    return props.alt ? (
+      <Text className="my-1 text-xs text-foreground-muted">{props.alt}</Text>
+    ) : null;
+  }
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={props.alt ? `Preview ${props.alt}` : "Preview image"}
+      className="my-2 overflow-hidden rounded-[12px] bg-neutral-200 dark:bg-neutral-800"
+      onPress={() => props.onPressImage(uri)}
+    >
+      <Image
+        source={{ uri }}
+        className="aspect-[4/3] w-full"
+        resizeMode="contain"
+        onError={() => setFailedUri(uri)}
+      />
+    </TouchableOpacity>
+  );
 }
 
 function MessageAttachmentImage(props: {
@@ -820,7 +901,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
+  props: Pick<ThreadFeedProps, "environmentId" | "threadId" | "workspaceRoot" | "skills"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -929,6 +1010,16 @@ function renderFeedEntry(
                 reviewCommentColors={props.reviewCommentColors}
                 skills={props.skills}
                 onLinkPress={props.onMarkdownLinkPress}
+                renderImage={({ href, alt }) => (
+                  <MarkdownWorkspaceImage
+                    href={href}
+                    alt={alt}
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                    workspaceRoot={props.workspaceRoot}
+                    onPressImage={props.onPressImage}
+                  />
+                )}
               />
             ) : null}
             {attachments.map((attachment) => {
@@ -980,11 +1071,33 @@ function renderFeedEntry(
               skills={props.skills}
               textStyle={styles.nativeTextStyle}
               onLinkPress={props.onMarkdownLinkPress}
+              renderImage={({ href, alt }) => (
+                <MarkdownWorkspaceImage
+                  href={href}
+                  alt={alt}
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  workspaceRoot={props.workspaceRoot}
+                  onPressImage={props.onPressImage}
+                />
+              )}
             />
           ) : (
             <Markdown
               options={{ gfm: true }}
-              renderers={styles.renderers}
+              renderers={{
+                ...styles.renderers,
+                image: ({ src, alt }) => (
+                  <MarkdownWorkspaceImage
+                    href={src ?? ""}
+                    alt={alt}
+                    environmentId={props.environmentId}
+                    threadId={props.threadId}
+                    workspaceRoot={props.workspaceRoot}
+                    onPressImage={props.onPressImage}
+                  />
+                ),
+              }}
               styles={styles.styles}
               theme={styles.theme}
             >
@@ -1027,6 +1140,16 @@ function renderFeedEntry(
       copiedRowId={props.copiedRowId}
       expandedRows={props.expandedWorkRows}
       iconSubtleColor={iconSubtleColor}
+      renderImage={(path) => (
+        <MarkdownWorkspaceImage
+          href={path}
+          alt="Generated image"
+          environmentId={props.environmentId}
+          threadId={props.threadId}
+          workspaceRoot={props.workspaceRoot}
+          onPressImage={props.onPressImage}
+        />
+      )}
       onCopyRow={props.onCopyWorkRow}
       onToggleRow={props.onToggleWorkRow}
     />
@@ -1065,6 +1188,7 @@ function UserMessageContent(props: {
   readonly reviewCommentColors: ReviewCommentColors;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onLinkPress: (href: string) => void;
+  readonly renderImage?: (input: { href: string; alt?: string }) => ReactNode;
 }) {
   const segments = parseReviewCommentMessageSegments(props.text);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
@@ -1077,13 +1201,22 @@ function UserMessageContent(props: {
           textStyle={props.markdownStyles.nativeTextStyle}
           preserveSoftBreaks
           onLinkPress={props.onLinkPress}
+          renderImage={props.renderImage}
         />
       );
     }
     return (
       <Markdown
         options={{ gfm: true }}
-        renderers={props.markdownStyles.renderers}
+        renderers={{
+          ...props.markdownStyles.renderers,
+          ...(props.renderImage
+            ? {
+                image: ({ src, alt }: { src?: string; alt?: string }) =>
+                  props.renderImage?.({ href: src ?? "", alt }) ?? null,
+              }
+            : {}),
+        }}
         styles={props.markdownStyles.styles}
         theme={props.markdownStyles.theme}
       >
@@ -1118,12 +1251,21 @@ function UserMessageContent(props: {
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks
             onLinkPress={props.onLinkPress}
+            renderImage={props.renderImage}
           />
         ) : (
           <Markdown
             key={segment.id}
             options={{ gfm: true }}
-            renderers={props.markdownStyles.renderers}
+            renderers={{
+              ...props.markdownStyles.renderers,
+              ...(props.renderImage
+                ? {
+                    image: ({ src, alt }: { src?: string; alt?: string }) =>
+                      props.renderImage?.({ href: src ?? "", alt }) ?? null,
+                  }
+                : {}),
+            }}
             styles={props.markdownStyles.styles}
             theme={props.markdownStyles.theme}
           >
@@ -1805,9 +1947,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         case "working":
           return workingRowHeight;
         case "activity-group":
-          // Expanded rows append a variable detail block — fall back to
-          // measurement for those groups.
-          return entry.activities.some((activity) => expandedWorkRows[activity.id])
+          // Expanded rows and image previews have variable height — fall back
+          // to measurement for those groups.
+          return entry.activities.some(
+            (activity) => expandedWorkRows[activity.id] || activity.imagePath !== null,
+          )
             ? undefined
             : collapsedWorkLogHeight(entry.activities, appearance.baseFontSize);
         default:
@@ -1821,6 +1965,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (info: { item: ThreadFeedEntry; index: number }) =>
       renderFeedEntry(info, {
         environmentId: props.environmentId,
+        threadId: props.threadId,
+        workspaceRoot: props.workspaceRoot,
         copiedRowId,
         expandedWorkRows,
         terminalAssistantMessageIds,
@@ -1857,6 +2003,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.threadId,
+      props.workspaceRoot,
       props.skills,
     ],
   );

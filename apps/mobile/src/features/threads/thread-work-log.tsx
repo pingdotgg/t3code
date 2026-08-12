@@ -1,4 +1,5 @@
 import * as Haptics from "expo-haptics";
+import type { ReactNode } from "react";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
 
@@ -124,6 +125,7 @@ export function ThreadWorkLog(props: {
   readonly copiedRowId: string | null;
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly iconSubtleColor: import("react-native").ColorValue;
+  readonly renderImage?: (path: string) => ReactNode;
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
 }) {
@@ -247,6 +249,10 @@ export function ThreadWorkLog(props: {
                   </View>
                 </View>
               </Pressable>
+
+              {row.imagePath && props.renderImage ? (
+                <View className="ml-7">{props.renderImage(row.imagePath)}</View>
+              ) : null}
 
               {fullDetail ? (
                 <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
