@@ -25,6 +25,7 @@ import {
   type ImageCompressionFailureReason,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
 } from "../../lib/imageCompression";
+import { IMAGE_HEADER_BYTES, readImageDimensions } from "../../lib/imageDimensions";
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -272,6 +273,64 @@ const MAX_WALLPAPER_IMAGE_PIXELS = 40_000_000;
 
 const SVG_DATA_URL_PREFIX = "data:image/svg+xml";
 
+/** Base64 payloads an SVG embeds, e.g. `<image href="data:image/png;base64,…">`. */
+const EMBEDDED_RASTER_PATTERN = /data:image\/[\w.+-]+;base64,([A-Za-z0-9+/=\s]+)/g;
+/** Base64 expansion of the header window: three bytes per four characters. */
+const HEADER_BASE64_CHARS = Math.ceil(IMAGE_HEADER_BYTES / 3) * 4;
+
+/**
+ * Decodes as much of a base64 payload as the header window covers. Returns
+ * nothing it cannot decode — a payload that is not valid base64 is one this
+ * cannot measure, and the decode probe downstream still has to pass.
+ */
+function headerBytesOfBase64(payload: string): Uint8Array {
+  const compact = payload.replace(/\s/g, "").slice(0, HEADER_BASE64_CHARS);
+  // atob rejects a partial group, and the window rarely lands on one.
+  const whole = compact.slice(0, compact.length - (compact.length % 4));
+  let binary: string;
+  try {
+    binary = atob(whole);
+  } catch {
+    return new Uint8Array(0);
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+/**
+ * Total pixels of the rasters an SVG embeds. Vector markup is exempt from the
+ * ceiling because a viewBox is not memory, but a few kilobytes of markup can
+ * wrap an enormous encoded raster — and the browser reports the SVG's viewport,
+ * which says nothing about it. Painting the wallpaper holds every embedded
+ * raster at once, so they are summed.
+ */
+function embeddedRasterPixels(svgSource: string): number {
+  let pixels = 0;
+  for (const [, payload] of svgSource.matchAll(EMBEDDED_RASTER_PATTERN)) {
+    const size = readImageDimensions(headerBytesOfBase64(payload ?? ""));
+    if (size !== null) pixels += size.width * size.height;
+  }
+  return pixels;
+}
+
+/**
+ * The pixel count a file states in its own bytes, before anything decodes it,
+ * or zero when nothing states one: an unrecognized container, or a vector that
+ * embeds no raster. Decoding is what materializes the bitmap, so this is the
+ * only measurement that can refuse an image without first paying for it.
+ */
+async function declaredPixelCount(file: File, dataUrl: string): Promise<number> {
+  if (dataUrl.startsWith(SVG_DATA_URL_PREFIX)) {
+    return embeddedRasterPixels(await file.text());
+  }
+  const header = await file.slice(0, IMAGE_HEADER_BYTES).arrayBuffer();
+  const size = readImageDimensions(new Uint8Array(header));
+  return size === null ? 0 : size.width * size.height;
+}
+
 /**
  * The decoded pixel size of `dataUrl`, or null when the browser cannot paint it.
  * The wallpaper is a CSS `background-image` and previews in an `<img>`, so an
@@ -314,12 +373,19 @@ export async function prepareWallpaperImage(file: File): Promise<PreparedWallpap
   // Re-encoding already decoded the file and bounded its dimensions, so only the
   // verbatim path is unproven — both that it decodes and that it is not enormous.
   if (!compressed.image.recompressed) {
+    // Ordered so the ceiling lands before any decode: the decode is what spends
+    // the memory, so measuring first is the difference between refusing an image
+    // and OOMing on it.
+    if ((await declaredPixelCount(file, compressed.image.dataUrl)) > MAX_WALLPAPER_IMAGE_PIXELS) {
+      return { ok: false, reason: "too-large" };
+    }
     const size = await decodedImageSize(compressed.image.dataUrl);
     if (size === null) {
       return { ok: false, reason: "unreadable" };
     }
-    // SVG is vector: naturalWidth/Height are a viewBox, not a raster the tab must
-    // hold, so the pixel ceiling does not apply to it.
+    // Backstop for a container whose header this cannot read. SVG is exempt:
+    // naturalWidth/Height are a viewBox, not a raster the tab must hold, and any
+    // raster it embeds was measured above.
     const isVector = compressed.image.dataUrl.startsWith(SVG_DATA_URL_PREFIX);
     if (!isVector && size.width * size.height > MAX_WALLPAPER_IMAGE_PIXELS) {
       return { ok: false, reason: "too-large" };

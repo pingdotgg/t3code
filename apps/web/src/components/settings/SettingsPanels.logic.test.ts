@@ -260,6 +260,22 @@ describe("prepareWallpaperImage", () => {
     return probed;
   }
 
+  /** A PNG signature and IHDR chunk — enough of a file to state its size. */
+  function pngHeader(width: number, height: number) {
+    const bytes = new Uint8Array(24);
+    bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(8, 13);
+    bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+    view.setUint32(16, width);
+    view.setUint32(20, height);
+    return bytes;
+  }
+
+  function base64Of(bytes: Uint8Array): string {
+    return btoa(String.fromCharCode(...bytes));
+  }
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -334,6 +350,55 @@ describe("prepareWallpaperImage", () => {
         {
           type: "image/svg+xml",
         },
+      ),
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses an enormous raster from its header, without decoding it", async () => {
+    const probed = stubImageDecoder(() => true);
+
+    expect(
+      await prepareWallpaperImage(
+        new File([pngHeader(16_384, 16_384)], "uniform.png", { type: "image/png" }),
+      ),
+    ).toEqual({ ok: false, reason: "too-large" });
+    // The decode is what would materialize the ~1 GB bitmap, so refusing after it
+    // would be refusing too late.
+    expect(probed).toEqual([]);
+  });
+
+  it("refuses an SVG that embeds an enormous raster", async () => {
+    stubImageDecoder(() => true);
+    const embedded = base64Of(pngHeader(16_384, 16_384));
+
+    expect(
+      await prepareWallpaperImage(
+        new File(
+          [
+            `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 8 8">` +
+              `<image xlink:href="data:image/png;base64,${embedded}" width="8" height="8"/></svg>`,
+          ],
+          "wrapper.svg",
+          { type: "image/svg+xml" },
+        ),
+      ),
+    ).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  it("keeps an SVG that embeds a raster small enough to hold", async () => {
+    stubImageDecoder(() => true);
+    const embedded = base64Of(pngHeader(64, 64));
+
+    const result = await prepareWallpaperImage(
+      new File(
+        [
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+            `<image href="data:image/png;base64,${embedded}" width="64" height="64"/></svg>`,
+        ],
+        "logo.svg",
+        { type: "image/svg+xml" },
       ),
     );
 
