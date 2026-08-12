@@ -395,7 +395,11 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
         if (!nodeFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/node.exe`), () => false))) {
           nodeFound = true;
         }
-        if (!fnmFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/fnm.exe`), () => false))) {
+        if (!fnmFound && (
+          (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/fnm.exe`), () => false)) ||
+          (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/fnm.cmd`), () => false)) ||
+          (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/fnm.ps1`), () => false))
+        )) {
           fnmFound = true;
         }
         if (nodeFound && fnmFound) break;
@@ -404,13 +408,19 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
 
     const skipProfile = nodeFound && !fnmFound;
 
+    // If node is found statically and no fnm wrappers exist, we can skip BOTH PowerShell probes entirely!
+    if (skipProfile) {
+      if (Option.isSome(staticPaths)) {
+        config.env.PATH = staticPaths.value;
+      }
+      return; // Exit early, 0ms startup!
+    }
+
     // Run the necessary probes concurrently, bounded by the slowest single probe
     const [noProfile, profile] = yield* Effect.all(
       [
         readWindowsEnvironment(["PATH"], { loadProfile: false }),
-        skipProfile
-          ? Effect.succeed<EnvironmentPatch>({})
-          : readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
+        readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
       ],
       { concurrency: 2 },
     );

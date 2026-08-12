@@ -344,61 +344,68 @@ describe("DesktopShellEnvironment", () => {
     );
   });
 
-  it.effect("skips PowerShell profile when node is available and fnm is not", () =>
+  it.effect("skips ALL PowerShell probes when node is available statically with quotes and no fnm", () =>
     Effect.gen(function* () {
       const fs = yield* Effect.promise(() => import("node:fs"));
       const os = yield* Effect.promise(() => import("node:os"));
       const path = yield* Effect.promise(() => import("node:path"));
       
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
-      fs.writeFileSync(path.join(tempDir, "node.exe"), "");
+      try {
+        fs.writeFileSync(path.join(tempDir, "node.exe"), "");
 
-      const env: NodeJS.ProcessEnv = { PATH: tempDir };
-      const commands: ChildProcess.Command[] = [];
+        const env: NodeJS.ProcessEnv = { PATH: `"${tempDir}"` };
+        const commands: ChildProcess.Command[] = [];
 
-      yield* runShellEnvironment({
-        env,
-        platform: "win32",
-        handler: (command) => {
-          commands.push(command);
-          return envOutput({ PATH: tempDir });
-        },
-      });
+        yield* runShellEnvironment({
+          env,
+          platform: "win32",
+          handler: (command) => {
+            commands.push(command);
+            return envOutput({ PATH: tempDir });
+          },
+        });
 
-      fs.rmSync(tempDir, { recursive: true, force: true });
-
-      assert.equal(commands.length, 1);
-      assert.isTrue(commands[0]!._tag === "StandardCommand" && commands[0].args.includes("-NoProfile"));
+        assert.equal(commands.length, 0);
+        assert.equal(env.PATH, `"${tempDir}"`);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
     }),
   );
 
-  it.effect("loads PowerShell profile when node and fnm are both available", () =>
+  it.effect("loads PowerShell probes concurrently when node and fnm.cmd are both available", () =>
     Effect.gen(function* () {
       const fs = yield* Effect.promise(() => import("node:fs"));
       const os = yield* Effect.promise(() => import("node:os"));
       const path = yield* Effect.promise(() => import("node:path"));
       
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
-      fs.writeFileSync(path.join(tempDir, "node.exe"), "");
-      fs.writeFileSync(path.join(tempDir, "fnm.exe"), "");
+      try {
+        fs.writeFileSync(path.join(tempDir, "node.exe"), "");
+        fs.writeFileSync(path.join(tempDir, "fnm.cmd"), "");
 
-      const env: NodeJS.ProcessEnv = { PATH: tempDir };
-      const commands: ChildProcess.Command[] = [];
+        const env: NodeJS.ProcessEnv = { PATH: tempDir };
+        const commands: ChildProcess.Command[] = [];
 
-      yield* runShellEnvironment({
-        env,
-        platform: "win32",
-        handler: (command) => {
-          commands.push(command);
-          return envOutput({ PATH: tempDir });
-        },
-      });
+        yield* runShellEnvironment({
+          env,
+          platform: "win32",
+          handler: (command) => {
+            commands.push(command);
+            return envOutput({ PATH: tempDir });
+          },
+        });
 
-      fs.rmSync(tempDir, { recursive: true, force: true });
-
-      assert.equal(commands.length, 2);
-      assert.isTrue(commands[0]!._tag === "StandardCommand" && commands[0].args.includes("-NoProfile"));
-      assert.isFalse(commands[1]!._tag === "StandardCommand" && commands[1].args.includes("-NoProfile"));
+        assert.equal(commands.length, 2);
+        
+        const noProfileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && c.args.includes("-NoProfile"));
+        const profileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && !c.args.includes("-NoProfile"));
+        assert.isTrue(noProfileIdx !== -1);
+        assert.isTrue(profileIdx !== -1);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
     }),
   );
 });
