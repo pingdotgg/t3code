@@ -226,6 +226,12 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Browser-only. On macOS the browser reserves nearly every Cmd shortcut
+  // (Cmd+N/W/L/1..9) before the page sees a keydown, so those bindings are
+  // unreachable in a tab. When enabled, the abstract `mod` token resolves to
+  // Ctrl in a browser session, which macOS browsers leave free. Inert in the
+  // desktop app and on non-mac platforms, where `mod` is already Ctrl.
+  browserModKeyFlip: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -843,5 +849,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
+  browserModKeyFlip: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

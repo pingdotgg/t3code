@@ -127,7 +127,12 @@ import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import { resolveDefaultProviderModelSelection } from "../providerInstances";
-import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
+import {
+  resolveModModifier,
+  resolveShortcutCommand,
+  threadJumpIndexFromCommand,
+} from "../keybindings";
+import { getShortcutRuntime } from "../shortcutRuntime";
 import { CommandDialog, CommandDialogPopup } from "./ui/command";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -1950,8 +1955,14 @@ function OpenCommandPaletteDialog(props: {
     query.trim().length > 0 &&
     !hasHighlightedBrowseItem &&
     (hasTrailingPathSeparator(query) ? !browseResult : exactBrowseEntry === null);
-  const useMetaForMod = isMacPlatform(navigator.platform);
-  const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
+  // Tracks the same `mod` resolution as the keybinding matcher so the hint and
+  // the handler below agree in every runtime.
+  const useMetaForMod = resolveModModifier(navigator.platform, getShortcutRuntime()) === "meta";
+  const submitModifierLabel = useMetaForMod
+    ? "\u2318"
+    : isMacPlatform(navigator.platform)
+      ? "\u2303"
+      : "Ctrl";
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const submitActionLabel = isCloneDestinationStep
     ? willCreateProjectPath

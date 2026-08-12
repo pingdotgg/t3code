@@ -20,6 +20,7 @@ import {
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
+  resolveModModifier,
   resolveShortcutCommand,
   shouldShowModelPickerJumpHints,
   shouldShowThreadJumpHints,
@@ -849,6 +850,93 @@ describe("plus key parsing", () => {
       isTerminalToggleShortcut(event({ key: "+", ctrlKey: true }), plusBindings, {
         platform: "Linux",
       }),
+    );
+  });
+});
+
+describe("browser mod-key flip", () => {
+  const bindings = compile([
+    { shortcut: modShortcut("k"), command: "commandPalette.toggle" },
+    { shortcut: { ...modShortcut("g"), modKey: false, metaKey: true }, command: "chat.new" },
+  ]);
+
+  it("resolves mod to Ctrl only for macOS browser sessions", () => {
+    assert.strictEqual(resolveModModifier("MacIntel", "browser"), "ctrl");
+    assert.strictEqual(resolveModModifier("MacIntel", "desktop"), "meta");
+    assert.strictEqual(resolveModModifier("Linux", "browser"), "ctrl");
+    assert.strictEqual(resolveModModifier("Win32", "desktop"), "ctrl");
+  });
+
+  it("matches Ctrl instead of Cmd on macOS in the browser", () => {
+    const options = { platform: "MacIntel", runtime: "browser" } as const;
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", ctrlKey: true }), bindings, options),
+      "commandPalette.toggle",
+    );
+    assert.isNull(resolveShortcutCommand(event({ key: "k", metaKey: true }), bindings, options));
+  });
+
+  it("keeps Cmd on macOS in the desktop app", () => {
+    const options = { platform: "MacIntel", runtime: "desktop" } as const;
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", metaKey: true }), bindings, options),
+      "commandPalette.toggle",
+    );
+    assert.isNull(resolveShortcutCommand(event({ key: "k", ctrlKey: true }), bindings, options));
+  });
+
+  it("leaves non-mac platforms identical across runtimes", () => {
+    for (const runtime of ["browser", "desktop"] as const) {
+      const options = { platform: "Linux", runtime };
+      assert.strictEqual(
+        resolveShortcutCommand(event({ key: "k", ctrlKey: true }), bindings, options),
+        "commandPalette.toggle",
+      );
+      assert.isNull(resolveShortcutCommand(event({ key: "k", metaKey: true }), bindings, options));
+    }
+  });
+
+  it("never flips an explicitly literal modifier", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "g", metaKey: true }), bindings, {
+        platform: "MacIntel",
+        runtime: "browser",
+      }),
+      "chat.new",
+    );
+  });
+
+  it("labels mod as Control on macOS in the browser", () => {
+    assert.strictEqual(
+      formatShortcutLabel(modShortcut("d", { shiftKey: true }), "MacIntel", "browser"),
+      "⌃⇧D",
+    );
+    assert.strictEqual(
+      formatShortcutLabel(modShortcut("d", { shiftKey: true }), "MacIntel", "desktop"),
+      "⇧⌘D",
+    );
+  });
+
+  it("shadows a literal ctrl binding only when mod resolves to Control", () => {
+    const conflicting = compile([
+      { shortcut: modShortcut("d"), command: "diff.toggle" },
+      {
+        shortcut: { ...modShortcut("d"), modKey: false, ctrlKey: true },
+        command: "terminal.split",
+      },
+    ]);
+    assert.isNull(
+      shortcutLabelForCommand(conflicting, "diff.toggle", {
+        platform: "MacIntel",
+        runtime: "browser",
+      }),
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(conflicting, "diff.toggle", {
+        platform: "MacIntel",
+        runtime: "desktop",
+      }),
+      "⌘D",
     );
   });
 });

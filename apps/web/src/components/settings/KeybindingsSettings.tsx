@@ -35,8 +35,10 @@ import {
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
-import { formatShortcutLabel } from "../../keybindings";
-import { cn } from "../../lib/utils";
+import { formatShortcutLabel, resolveModModifier } from "../../keybindings";
+import { getShortcutRuntime } from "../../shortcutRuntime";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { cn, isMacPlatform } from "../../lib/utils";
 import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
@@ -51,6 +53,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { Toggle } from "../ui/toggle";
 import { toastManager } from "../ui/toast";
 import {
@@ -74,27 +77,30 @@ import { searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
+function keybindingPartLabel(part: string, platform: string): string {
+  const isMac = isMacPlatform(platform);
+  // `mod` follows the runtime, so a browser session on macOS renders ⌃ here
+  // and the matcher listens for Control to match.
+  if (part === "mod") {
+    if (resolveModModifier(platform, getShortcutRuntime()) === "ctrl") {
+      return isMac ? "⌃" : "Ctrl";
+    }
+    return "⌘";
+  }
+  if (part === "shift") return "⇧";
+  if (part === "alt") return isMac ? "⌥" : "Alt";
+  if (part === "ctrl") return isMac ? "⌃" : "Ctrl";
+  if (part === "meta") return isMac ? "⌘" : "Meta";
+  return part.length === 1 ? part.toUpperCase() : part;
+}
+
 function KeybindingPill({ value }: { value: string }) {
   const parts = value.split("+");
   return (
     <KbdGroup className="bg-transparent p-0 shadow-none">
       {parts.map((part) => (
         <Kbd key={part} className="min-w-6 justify-center px-1.5">
-          {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
-              ? "⌘"
-              : "Ctrl"
-            : part === "shift"
-              ? "⇧"
-              : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
-                  ? "⌥"
-                  : "Alt"
-                : part === "ctrl"
-                  ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
+          {keybindingPartLabel(part, navigator.platform)}
         </Kbd>
       ))}
     </KbdGroup>
@@ -1082,6 +1088,40 @@ function NewKeybindingTableRow({
   );
 }
 
+/**
+ * Browser-only. macOS browsers reserve nearly every Cmd shortcut before the
+ * page sees a keydown, so `mod` resolves to Ctrl there by default. The copy
+ * differs by platform because non-mac browsers already used Ctrl and get no
+ * behavior change from the toggle.
+ */
+function BrowserModKeyFlipRow() {
+  const enabled = useClientSettings((settings) => settings.browserModKeyFlip);
+  const updateClientSettings = useUpdateClientSettings();
+  const isMac = isMacPlatform(navigator.platform);
+
+  return (
+    <div className="flex items-start gap-2.5 border-b border-border/70 bg-muted/25 px-3 py-2.5 sm:px-4">
+      <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+      <div className="flex flex-1 items-start justify-between gap-4">
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          {isMac
+            ? "The browser claims most ⌘ shortcuts before T3 Code sees them, so bindings below use ⌃ instead. Turn this off to use ⌘ and lose the claimed shortcuts."
+            : "Some shortcuts are claimed by the browser before T3 Code sees them. The desktop app has full keybinding support."}
+        </p>
+        {isMac ? (
+          <Switch
+            checked={enabled}
+            onCheckedChange={(checked) =>
+              updateClientSettings({ browserModKeyFlip: Boolean(checked) })
+            }
+            aria-label="Use Control for shortcuts in the browser"
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function KeybindingsSettingsPanel() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindingsConfigPath = useAtomValue(primaryServerKeybindingsConfigPathAtom);
@@ -1280,15 +1320,7 @@ export function KeybindingsSettingsPanel() {
           </div>
         }
       >
-        {!isElectron ? (
-          <div className="flex items-start gap-2 border-b border-warning/20 bg-warning/5 px-3 py-2.5 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
-            <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-            <p>
-              Some shortcuts may be claimed by the browser before T3 Code sees them. Use the desktop
-              app for better keybinding support.
-            </p>
-          </div>
-        ) : null}
+        {!isElectron ? <BrowserModKeyFlipRow /> : null}
 
         <ScrollArea
           chainVerticalScroll
