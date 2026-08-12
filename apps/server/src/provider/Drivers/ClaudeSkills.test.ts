@@ -18,6 +18,10 @@ const writeSkill = Effect.fn(function* (
   yield* fs.writeFileString(path.join(skillDir, "SKILL.md"), contents);
 });
 
+const isolatedDiscoveryOptions = (tempDir: string) => ({
+  homeDirectory: `${tempDir}/isolated-home`,
+});
+
 it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
   it.effect("discovers user and project skills with frontmatter metadata", () =>
     Effect.gen(function* () {
@@ -45,7 +49,12 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["---", "name: deploy", "description: Deploy the app.", "---", "", "# Deploy"].join("\n"),
       );
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+      const skills = yield* discoverClaudeSkills(
+        { homePath: configDir },
+        workspace,
+        undefined,
+        isolatedDiscoveryOptions(tempDir),
+      );
 
       assert.deepEqual(skills, [
         {
@@ -64,6 +73,92 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         },
       ]);
     }),
+  );
+
+  it.effect("prefers project .agents/skills over user .claude/skills on name collisions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "shared-skill",
+        ["---", "name: shared-skill", "description: Claude user skill.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspace, ".agents", "skills"),
+        "shared-skill",
+        ["---", "name: shared-skill", "description: Project agents skill.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills(
+        { homePath: configDir },
+        workspace,
+        undefined,
+        isolatedDiscoveryOptions(tempDir),
+      );
+
+      assert.equal(skills.length, 1);
+      assert.equal(skills[0]?.scope, "project");
+      assert.equal(skills[0]?.description, "Project agents skill.");
+    }),
+  );
+
+  it.effect(
+    "prefers Claude-native .claude/skills over portable .agents/skills within a scope",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+        const configDir = path.join(tempDir, "claude-home");
+        const workspace = path.join(tempDir, "workspace");
+        const agentsHome = `${tempDir}/isolated-home`;
+
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          "claude-user",
+          ["---", "name: claude-user", "description: Claude user skill.", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(agentsHome, ".agents", "skills"),
+          "claude-user",
+          ["---", "name: claude-user", "description: Portable user skill.", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(workspace, ".claude", "skills"),
+          "claude-project",
+          ["---", "name: claude-project", "description: Claude project skill.", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(workspace, ".agents", "skills"),
+          "claude-project",
+          ["---", "name: claude-project", "description: Portable project skill.", "---"].join("\n"),
+        );
+
+        const skills = yield* discoverClaudeSkills(
+          { homePath: configDir },
+          workspace,
+          undefined,
+          isolatedDiscoveryOptions(tempDir),
+        );
+        const byName = new Map(skills.map((skill) => [skill.name, skill]));
+
+        assert.equal(byName.size, 2);
+        assert.equal(byName.get("claude-user")?.scope, "user");
+        assert.equal(
+          byName.get("claude-user")?.path,
+          path.join(configDir, "skills", "claude-user", "SKILL.md"),
+        );
+        assert.equal(byName.get("claude-project")?.scope, "project");
+        assert.equal(
+          byName.get("claude-project")?.path,
+          path.join(workspace, ".claude", "skills", "claude-project", "SKILL.md"),
+        );
+      }),
   );
 
   it.effect("prefers project skills over user skills on name collisions", () =>
@@ -85,7 +180,12 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["---", "name: deploy", "description: Project deploy.", "---"].join("\n"),
       );
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
+      const skills = yield* discoverClaudeSkills(
+        { homePath: configDir },
+        workspace,
+        undefined,
+        isolatedDiscoveryOptions(tempDir),
+      );
 
       assert.equal(skills.length, 1);
       assert.equal(skills[0]?.scope, "project");
@@ -107,7 +207,12 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* fs.makeDirectory(skillsDir, { recursive: true });
       yield* fs.writeFileString(path.join(skillsDir, "README.md"), "not a skill");
 
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+      const skills = yield* discoverClaudeSkills(
+        { homePath: configDir },
+        undefined,
+        undefined,
+        isolatedDiscoveryOptions(tempDir),
+      );
 
       // A skill with no frontmatter falls back to its directory name; a skill
       // whose frontmatter fails to parse is skipped entirely (Claude Code
@@ -133,9 +238,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["---", "name: env-skill", "description: From env config dir.", "---"].join("\n"),
       );
 
-      const skills = yield* discoverClaudeSkills({ homePath: "" }, undefined, {
-        CLAUDE_CONFIG_DIR: environmentConfigDir,
-      });
+      const skills = yield* discoverClaudeSkills(
+        { homePath: "" },
+        undefined,
+        {
+          CLAUDE_CONFIG_DIR: environmentConfigDir,
+        },
+        isolatedDiscoveryOptions(tempDir),
+      );
 
       assert.deepEqual(
         skills.map((skill) => skill.name),
@@ -150,9 +260,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         "explicit-skill",
         ["---", "name: explicit-skill", "---"].join("\n"),
       );
-      const explicitSkills = yield* discoverClaudeSkills({ homePath: explicitHome }, undefined, {
-        CLAUDE_CONFIG_DIR: environmentConfigDir,
-      });
+      const explicitSkills = yield* discoverClaudeSkills(
+        { homePath: explicitHome },
+        undefined,
+        {
+          CLAUDE_CONFIG_DIR: environmentConfigDir,
+        },
+        isolatedDiscoveryOptions(tempDir),
+      );
       assert.deepEqual(
         explicitSkills.map((skill) => skill.name),
         ["explicit-skill"],
@@ -176,9 +291,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["---", "name: relative-skill", "---"].join("\n"),
       );
 
-      const skills = yield* discoverClaudeSkills({ homePath: "" }, workspace, {
-        CLAUDE_CONFIG_DIR: "relative-config",
-      });
+      const skills = yield* discoverClaudeSkills(
+        { homePath: "" },
+        workspace,
+        {
+          CLAUDE_CONFIG_DIR: "relative-config",
+        },
+        isolatedDiscoveryOptions(tempDir),
+      );
 
       assert.deepEqual(
         skills.map((skill) => skill.name),
@@ -197,6 +317,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const skills = yield* discoverClaudeSkills(
         { homePath: path.join(tempDir, "missing-home") },
         path.join(tempDir, "missing-workspace"),
+        undefined,
+        isolatedDiscoveryOptions(tempDir),
       );
 
       assert.deepEqual(skills, []);
