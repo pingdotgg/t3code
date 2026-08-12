@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   applyPreviewServerSnapshot,
+  readThreadPreviewState,
   reconcilePreviewServerSessions,
   resetPreviewStateForTests,
 } from "~/previewStateStore";
@@ -73,6 +74,7 @@ describe("reconcilePreviewRightPanelSurfaces", () => {
 
     openPreviewRightPanelSurface(threadRef, "tab-3");
 
+    expect(readThreadPreviewState(threadRef).activeTabId).toBe("tab-3");
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
     ).toEqual({
