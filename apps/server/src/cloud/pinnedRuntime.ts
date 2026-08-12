@@ -73,9 +73,8 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedErrorClass<
 /**
  * Installs `t3@<version>` into the pinned runtime directory unless a complete
  * install is already there, and returns its paths. The sentinel is written
- * only after npm exits 0; checking the entry file alone is not enough. npm
- * extracts files before running native builds (node-pty), so a killed
- * install leaves a plausible-looking but broken tree behind.
+ * only after npm exits 0; checking the entry file alone is not enough because
+ * an interrupted install can leave a plausible-looking but incomplete tree.
  */
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;

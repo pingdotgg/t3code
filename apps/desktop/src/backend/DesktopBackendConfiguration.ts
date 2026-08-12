@@ -215,8 +215,7 @@ interface WslPreflightSuccess {
   readonly linuxEntryPath: string;
   // Absolute path to the node binary the preflight validated after the shared
   // remote resolver repaired PATH. The launch must use this exact path so it
-  // doesn't fall through to a different/old node than the one node-pty was
-  // built against.
+  // doesn't fall through to a different/old node than the one validated.
   readonly nodePath: string;
   // PATH captured from the same login shell after the shared resolver loaded
   // version managers. The launch forwards this value directly without a shell.
@@ -240,7 +239,6 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   readonly distro: string | null;
   readonly windowsEntryPath: string;
   readonly windowsRepoRoot: string;
-  readonly allowBuild: boolean;
 }): Effect.fn.Return<
   WslPreflightSuccess | WslPreflightFailure,
   never,
@@ -309,7 +307,6 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   }
 
   const nodePtyResult = yield* wslEnv.ensureNodePty(runningDistro, input.windowsRepoRoot, {
-    allowBuild: input.allowBuild,
     nodeEngineRange: serverPackageJson.engines.node,
   });
   if (!nodePtyResult.ok) {
@@ -468,9 +465,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   // archive FILE. The Windows primary reads its entry through
   // ELECTRON_RUN_AS_NODE (asar-aware), but the WSL backend launches plain
   // `wsl.exe -- node`, which can't read inside an asar. electron-builder unpacks
-  // the server bundle + node-pty (see asarUnpack in build-desktop-artifact.ts)
-  // to the app.asar.unpacked sibling, so point WSL there. In dev appRoot is
-  // already a real directory, so this is a no-op.
+  // the server bundle + node_modules (see asarUnpack in
+  // build-desktop-artifact.ts) to the app.asar.unpacked sibling, so point WSL
+  // there. In dev appRoot is already a real directory, so this is a no-op.
   const wslAppRoot = environment.isPackaged
     ? environment.path.join(environment.resourcesPath, "app.asar.unpacked")
     : environment.appRoot;
@@ -480,14 +477,6 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     distro: input.distro,
     windowsEntryPath: wslEntryPath,
     windowsRepoRoot: wslAppRoot,
-    // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
-    // attached to the Windows artifact — see build-desktop-artifact.ts), so the
-    // WSL backend never needs a compiler, node-gyp, or network on first launch.
-    // Compiling from source is a dev-only convenience: a checkout has no shipped
-    // prebuilt, and developers have the toolchain. In packaged builds we instead
-    // surface a clear diagnostic if the prebuilt can't load (unsupported
-    // arch/distro), rather than silently dropping into a fragile runtime build.
-    allowBuild: !environment.isPackaged,
   });
 
   // Every operation after preflight uses the same concrete distro. In

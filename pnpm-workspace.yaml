@@ -17,7 +17,6 @@ allowBuilds:
   esbuild: true
   msgpackr-extract: true
   msw: false
-  node-pty: true
   sharp: true
   utf-8-validate: false
   workerd: false

@@ -29,6 +29,7 @@ import {
   resolveMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
   resolveFffNativeDependencies,
+  resolveNodePtyNativeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
@@ -259,7 +260,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         arch: "x64",
         allowBuilds: {
           electron: true,
-          "node-pty": true,
+          sharp: true,
           "browser-tabs-lock": false,
         },
         patchedDependencies: {
@@ -277,7 +278,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         },
         allowBuilds: {
           electron: true,
-          "node-pty": true,
+          sharp: true,
           "browser-tabs-lock": false,
         },
         patchedDependencies: {
@@ -593,6 +594,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
   });
 
+  it("promotes target node-pty prebuilds to direct staged dependencies", () => {
+    assert.deepStrictEqual(resolveNodePtyNativeDependencies("mac", "universal", "^1.1.0"), {
+      "@lydell/node-pty-darwin-arm64": "^1.1.0",
+      "@lydell/node-pty-darwin-x64": "^1.1.0",
+    });
+    assert.deepStrictEqual(resolveNodePtyNativeDependencies("win", "x64", "^1.1.0"), {
+      "@lydell/node-pty-win32-x64": "^1.1.0",
+    });
+    assert.deepStrictEqual(resolveNodePtyNativeDependencies("linux", "arm64", "^1.1.0"), {
+      "@lydell/node-pty-linux-arm64": "^1.1.0",
+    });
+  });
+
   it("resolves target Clerk passkey native artifacts", () => {
     assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("mac", "universal"), [
       {
@@ -678,7 +692,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: Option.none(),
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
-        wslPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -718,7 +731,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             verbose: Option.none(),
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
-            wslPrebuild: Option.none(),
           }),
         );
 
@@ -742,7 +754,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: Option.some(false),
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
-        wslPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
           ConfigProvider.layer(

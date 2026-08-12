@@ -20,14 +20,9 @@ const LIST_TIMEOUT = Duration.seconds(8);
 const PRE_WARM_TIMEOUT = Duration.seconds(10);
 const WSLPATH_TIMEOUT = Duration.seconds(10);
 const PROBE_TIMEOUT = Duration.seconds(10);
-const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
-const BUILD_TIMEOUT = Duration.minutes(5);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
-const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
-const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 
 export interface EnsureWslNodePtyOptions {
-  readonly allowBuild?: boolean;
   readonly nodeEngineRange?: string | null;
 }
 
@@ -188,7 +183,7 @@ const runWslShell = (
       }
       const handle = spawnResult.handle;
       // Drain stdout and stderr concurrently so neither pipe buffer can fill
-      // and stall the child (node-gyp rebuild emits large output on both).
+      // and stall the child.
       const [stdoutBytes, stderrBytes, exitCode] = yield* Effect.all(
         [Stream.runCollect(handle.stdout), Stream.runCollect(handle.stderr), handle.exitCode],
         { concurrency: "unbounded" },
@@ -216,14 +211,7 @@ const runWslShell = (
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
-const NODE_PTY_PREBUILD_MISSING_EXIT_CODE = 4;
-
-export const formatNodePtyProbeFailureReason = (exitCode: number): string | null =>
-  exitCode === NODE_PTY_PREBUILD_MISSING_EXIT_CODE
-    ? "WSL support is missing from this T3 Code build: the packaged Linux node-pty binary was not included. Rebuild the Windows artifact with `--wsl-prebuild <path-to-linux-pty.node>` or install a build that includes WSL support."
-    : null;
-
-const NODE_PTY_PROBE_SCRIPT = (
+export const buildWslNodePtyProbeScript = (
   linuxServerDir: string,
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
 printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
@@ -238,76 +226,11 @@ cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // ERR_MODULE_NOT_FOUND at launch (which, in wsl-only mode, would just fail to
 // launch with no fallback).
 try { require.resolve("effect"); } catch (_e) { process.exit(3); }
-const fs = require("node:fs");
-const path = require("node:path");
-const pkgDir = path.dirname(require.resolve("node-pty/package.json"));
-// node-pty 1.x is N-API based, so a single Linux pty.node is ABI-stable across
-// Node versions — require() succeeding IS the real compatibility test. Compare
-// only arch and node-pty version (a stale binary from a different node-pty),
-// NOT process.versions.modules: that would reject a perfectly loadable prebuilt
-// whenever the user's WSL Node ABI differs from the build's, defeating the
-// whole point of shipping one prebuilt for all Node versions.
-const expected = {
-  arch: process.arch,
-  nodePtyVersion: require("node-pty/package.json").version,
-};
-const prebuildDir = path.join(pkgDir, "prebuilds", "linux-" + process.arch);
-const marker = path.join(prebuildDir, "t3code-wsl-node-pty.json");
-const binary = path.join(prebuildDir, "pty.node");
-if (!fs.existsSync(marker) || !fs.existsSync(binary)) process.exit(${NODE_PTY_PREBUILD_MISSING_EXIT_CODE});
-require("node-pty");
-const actual = JSON.parse(fs.readFileSync(marker, "utf8"));
-for (const key of Object.keys(expected)) {
-  if (actual[key] !== expected[key]) process.exit(2);
-}
+// @lydell/node-pty selects @lydell/node-pty-linux-<arch> at runtime.
+// The Windows package install includes the matching Linux optional dependency
+// for WSL, so loading the wrapper is the real end-to-end compatibility check.
+require("@lydell/node-pty");
 NODE`;
-
-const TOOLCHAIN_CHECK_SCRIPT = [
-  "for tool in node make g++ python3; do",
-  '  command -v "$tool" >/dev/null 2>&1 || echo "missing:$tool"',
-  "done",
-  "if command -v node >/dev/null 2>&1; then",
-  `  ver="$(node -p 'process.versions.node' 2>/dev/null)"`,
-  '  if [ -n "$ver" ]; then printf "nodeVersion:%s\\n" "$ver"; fi',
-  "fi",
-].join("\n");
-
-const NODE_PTY_BUILD_SCRIPT = (linuxServerDir: string) =>
-  [
-    "set -e",
-    `cd ${shellQuote(linuxServerDir)}`,
-    `pkg_dir=$(node -p "require('node:path').dirname(require.resolve('node-pty/package.json'))")`,
-    `arch=$(node -p "process.arch")`,
-    `modules=$(node -p "process.versions.modules")`,
-    `node_pty_version=$(node -p "require('node-pty/package.json').version")`,
-    `cd "$pkg_dir"`,
-    "npx --yes node-gyp rebuild",
-    `prebuild_dir="prebuilds/linux-$arch"`,
-    `mkdir -p "$prebuild_dir"`,
-    `cp build/Release/pty.node "$prebuild_dir/pty.node"`,
-    `printf '{"arch":"%s","modules":"%s","nodePtyVersion":"%s"}\\n' "$arch" "$modules" "$node_pty_version" > "$prebuild_dir/t3code-wsl-node-pty.json"`,
-    `node -e 'require("node-pty")'`,
-  ].join("\n");
-
-export interface ToolchainReport {
-  readonly missingTools: ReadonlyArray<string>;
-  readonly nodeVersion: string | null;
-}
-
-export const parseToolchainReport = (stdout: string): ToolchainReport => {
-  const lines = stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  const missingTools = lines
-    .filter((line) => line.startsWith("missing:"))
-    .map((line) => line.slice("missing:".length));
-  const nodeVersionLine = lines.find((line) => line.startsWith("nodeVersion:"));
-  const nodeVersion = nodeVersionLine
-    ? nodeVersionLine.slice("nodeVersion:".length).trim() || null
-    : null;
-  return { missingTools, nodeVersion };
-};
 
 // Pulls the absolute node path the WSL distro resolved after the shared remote
 // resolver repaired PATH. Returns null when no node was found, which the caller
@@ -344,47 +267,6 @@ export const parseResolvedPath = (stdout: string): string | null => {
   return resolvedPath.length > 0 ? resolvedPath : null;
 };
 
-export const formatMissingToolsReason = (
-  report: ToolchainReport,
-  requiredRange: string | null,
-): string | null => {
-  const nodeMissing = report.missingTools.includes("node");
-  const nodeOutOfRange =
-    !nodeMissing &&
-    requiredRange !== null &&
-    report.nodeVersion !== null &&
-    !satisfiesSemverRange(report.nodeVersion, requiredRange);
-  const buildToolsMissing = report.missingTools.filter((tool) => tool !== "node");
-
-  if (!nodeMissing && !nodeOutOfRange && buildToolsMissing.length === 0) {
-    return null;
-  }
-
-  const issues: string[] = [];
-  const remediations: string[] = [];
-
-  if (nodeMissing) {
-    issues.push("node");
-    remediations.push(
-      `Node.js${requiredRange ? ` satisfying \`${requiredRange}\`` : " 18+"} (e.g. via nvm)`,
-    );
-  } else if (nodeOutOfRange) {
-    issues.push(`node ${report.nodeVersion} (requires ${requiredRange})`);
-    remediations.push(
-      `a newer Node.js satisfying \`${requiredRange}\` (e.g. \`nvm install 24 && nvm alias default 24\`)`,
-    );
-  }
-
-  if (buildToolsMissing.length > 0) {
-    issues.push(...buildToolsMissing);
-    remediations.push(
-      "the build toolchain (e.g. `sudo apt install -y build-essential python3` on Ubuntu/Debian)",
-    );
-  }
-
-  return `WSL distro is missing required tools: ${issues.join(", ")}. Install ${remediations.join(" and ")}, then retry.`;
-};
-
 const ensureNodePtyImpl = (
   distro: string | null,
   windowsRepoRoot: string,
@@ -404,13 +286,14 @@ const ensureNodePtyImpl = (
       } as const;
     }
     const linuxRepoRoot = linuxRepoRootOption.value;
-    // node-pty lives in the apps/server workspace's node_modules; resolve from
-    // there rather than the monorepo root, where Bun's hoist layout omits it.
+    // @lydell/node-pty lives in the apps/server workspace's node_modules;
+    // resolve from there rather than the monorepo root, where the package
+    // manager's hoist layout may omit it.
     const linuxServerDir = `${linuxRepoRoot}/apps/server`;
 
     const probe = yield* runWslShell(
       distro,
-      NODE_PTY_PROBE_SCRIPT(linuxServerDir),
+      buildWslNodePtyProbeScript(linuxServerDir),
       PROBE_TIMEOUT,
       options,
     );
@@ -426,32 +309,15 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    // No node at all, even after the shared resolver repaired PATH. Surface
-    // the specific, actionable toolchain message rather than a confusing
-    // node-pty error, and don't try to build.
+    // No node at all, even after the shared resolver repaired PATH. Surface an
+    // actionable runtime message rather than a confusing native-module error.
     if (nodePath === null) {
-      const toolchainCheck = yield* runWslShell(
-        distro,
-        TOOLCHAIN_CHECK_SCRIPT,
-        TOOLCHAIN_TIMEOUT,
-        options,
-      );
-      const toolchainTransportFailure = formatWslShellTransportFailureReason(
-        toolchainCheck.transportFailure,
-      );
-      if (toolchainTransportFailure !== null) {
-        return {
-          ok: false,
-          reason: toolchainTransportFailure,
-          fatal: false,
-          retryLimit: TOOLCHAIN_TRANSPORT_RETRY_LIMIT,
-        } as const;
-      }
-      const report = parseToolchainReport(toolchainCheck.stdout);
-      const reason =
-        formatMissingToolsReason(report, options.nodeEngineRange?.trim() || null) ??
-        "Node.js was not found in the WSL distro. Install it (e.g. via nvm) and restart the desktop app.";
-      return { ok: false, reason, fatal: true } as const;
+      const range = options.nodeEngineRange?.trim();
+      return {
+        ok: false,
+        reason: `Node.js${range ? ` satisfying \`${range}\`` : ""} was not found in the WSL distro. Install it (e.g. via nvm) and restart the desktop app.`,
+        fatal: true,
+      } as const;
     }
 
     if (resolvedPath === null) {
@@ -476,106 +342,26 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    if (probe.exitCode === 0) {
-      const rawVersion = parseNodeVersion(probe.stdout);
-      if (
-        rawVersion !== null &&
-        options.nodeEngineRange &&
-        !satisfiesSemverRange(rawVersion, options.nodeEngineRange.trim())
-      ) {
-        const range = options.nodeEngineRange.trim();
-        return {
-          ok: false,
-          reason: `WSL Node.js ${rawVersion} does not satisfy the server's required engine range (${range}). Install a compatible version, and restart the desktop app.`,
-          fatal: true,
-        } as const;
-      }
-      return { ok: true, nodePath, resolvedPath } as const;
-    }
-
-    if (options.allowBuild !== true) {
-      const packagedProbeFailure = formatNodePtyProbeFailureReason(probe.exitCode);
-      if (packagedProbeFailure !== null) {
-        return {
-          ok: false,
-          reason: packagedProbeFailure,
-          fatal: true,
-        } as const;
-      }
-    }
-
-    // node is present but node-pty's native module didn't load.
-    const toolchainCheck = yield* runWslShell(
-      distro,
-      TOOLCHAIN_CHECK_SCRIPT,
-      TOOLCHAIN_TIMEOUT,
-      options,
-    );
-    const toolchainTransportFailure = formatWslShellTransportFailureReason(
-      toolchainCheck.transportFailure,
-    );
-    if (toolchainTransportFailure !== null) {
+    const rawVersion = parseNodeVersion(probe.stdout);
+    if (
+      rawVersion !== null &&
+      options.nodeEngineRange &&
+      !satisfiesSemverRange(rawVersion, options.nodeEngineRange.trim())
+    ) {
+      const range = options.nodeEngineRange.trim();
       return {
         ok: false,
-        reason: toolchainTransportFailure,
-        fatal: false,
-        retryLimit: TOOLCHAIN_TRANSPORT_RETRY_LIMIT,
-      } as const;
-    }
-    const report = parseToolchainReport(toolchainCheck.stdout);
-
-    if (options.allowBuild !== true) {
-      // Packaged builds ship a prebuilt Linux node-pty, so no compiler, node-gyp,
-      // or network is needed — and we must not nag the user to install build
-      // tools they don't need. Still surface a missing/too-old Node (both the
-      // prebuilt and the server require a compatible Node); otherwise reaching
-      // here means the bundled binary itself couldn't load, which is almost
-      // always an unsupported CPU architecture or incompatible system libraries.
-      const nodeOnlyReason = formatMissingToolsReason(
-        {
-          missingTools: report.missingTools.filter((tool) => tool === "node"),
-          nodeVersion: report.nodeVersion,
-        },
-        options.nodeEngineRange?.trim() || null,
-      );
-      return {
-        ok: false,
-        reason:
-          nodeOnlyReason ??
-          "The bundled WSL backend binary (node-pty) could not be loaded in this distro. This usually means an unsupported CPU architecture or incompatible system libraries (glibc). Use a glibc-based x64/arm64 WSL distro such as Ubuntu; if you already are, please report this with your distro and the output of `uname -m`.",
+        reason: `WSL Node.js ${rawVersion} does not satisfy the server's required engine range (${range}). Install a compatible version, and restart the desktop app.`,
         fatal: true,
       } as const;
     }
 
-    // Dev only: no prebuilt is bundled in a checkout, so compile node-pty from
-    // source. Run the toolchain check first so a missing compiler or out-of-range
-    // Node surfaces a specific, actionable message instead of an opaque node-gyp
-    // failure. Developers have the toolchain; end users never reach this path.
-    const missingReason = formatMissingToolsReason(report, options.nodeEngineRange?.trim() || null);
-    if (missingReason !== null) {
-      return { ok: false, reason: missingReason, fatal: true } as const;
-    }
+    if (probe.exitCode === 0) return { ok: true, nodePath, resolvedPath } as const;
 
-    const build = yield* runWslShell(
-      distro,
-      NODE_PTY_BUILD_SCRIPT(linuxServerDir),
-      BUILD_TIMEOUT,
-      options,
-    );
-    const buildTransportFailure = formatWslShellTransportFailureReason(build.transportFailure);
-    if (buildTransportFailure !== null) {
-      return {
-        ok: false,
-        reason: buildTransportFailure,
-        fatal: false,
-        retryLimit: BUILD_TRANSPORT_RETRY_LIMIT,
-      } as const;
-    }
-    if (build.exitCode === 0) return { ok: true, nodePath, resolvedPath } as const;
-    const trimmedTail = `${build.stdout}${build.stderr}`.trim().slice(-500);
     return {
       ok: false,
-      reason: `node-pty Linux build failed (exit ${build.exitCode}): ${trimmedTail || "no stderr captured"}`,
+      reason:
+        "The @lydell/node-pty Linux prebuilt could not be loaded in this distro. T3 Code supports glibc-based x64/arm64 WSL distributions such as Ubuntu; if you already use one, please report this with your distro and the output of `uname -m`.",
       fatal: true,
     } as const;
   });

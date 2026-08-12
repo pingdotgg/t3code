@@ -10,15 +10,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildWslNodePtyProbeScript,
   buildWslNodeEnvPreamble,
   DesktopWslDistroListError,
-  formatMissingToolsReason,
-  formatNodePtyProbeFailureReason,
   formatWslShellTransportFailureReason,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
-  parseToolchainReport,
   probeWslDistros,
 } from "./DesktopWslEnvironment.ts";
 
@@ -88,19 +86,6 @@ describe("probeWslDistros", () => {
   });
 });
 
-describe("formatNodePtyProbeFailureReason", () => {
-  it("identifies a packaged build that omitted the Linux node-pty prebuild", () => {
-    const reason = formatNodePtyProbeFailureReason(4);
-
-    expect(reason).toContain("packaged Linux node-pty binary was not included");
-    expect(reason).toContain("--wsl-prebuild");
-  });
-
-  it("leaves other node-pty load failures to the compatibility diagnostic", () => {
-    expect(formatNodePtyProbeFailureReason(1)).toBeNull();
-  });
-});
-
 describe("formatWslShellTransportFailureReason", () => {
   it("distinguishes timeouts and spawn failures from normal shell exit codes", () => {
     expect(formatWslShellTransportFailureReason("timeout")).toContain("timed out");
@@ -125,32 +110,13 @@ describe("buildWslNodeEnvPreamble", () => {
   });
 });
 
-describe("parseToolchainReport", () => {
-  it("returns no missing tools and no node version on empty output", () => {
-    expect(parseToolchainReport("")).toEqual({ missingTools: [], nodeVersion: null });
-  });
+describe("buildWslNodePtyProbeScript", () => {
+  it("loads the prebuilt wrapper instead of compiling or probing the old package", () => {
+    const script = buildWslNodePtyProbeScript("/mnt/c/t3code/apps/server");
 
-  it("collects all missing: lines", () => {
-    const stdout = ["missing:make", "missing:g++", "nodeVersion:24.10.0"].join("\n");
-    expect(parseToolchainReport(stdout)).toEqual({
-      missingTools: ["make", "g++"],
-      nodeVersion: "24.10.0",
-    });
-  });
-
-  it("ignores blank lines and trims whitespace", () => {
-    const stdout = ["  missing:python3  ", "", "  nodeVersion:v22.16.0  "].join("\n");
-    expect(parseToolchainReport(stdout)).toEqual({
-      missingTools: ["python3"],
-      nodeVersion: "v22.16.0",
-    });
-  });
-
-  it("returns null node version when value after prefix is empty", () => {
-    expect(parseToolchainReport("nodeVersion:")).toEqual({
-      missingTools: [],
-      nodeVersion: null,
-    });
+    expect(script).toContain('require("@lydell/node-pty")');
+    expect(script).not.toContain('require("node-pty")');
+    expect(script).not.toContain("node-gyp");
   });
 });
 
@@ -214,48 +180,5 @@ describe("parseResolvedPath", () => {
   it("returns null when the resolved PATH is absent or empty", () => {
     expect(parseResolvedPath("nodePath:/usr/bin/node\n")).toBeNull();
     expect(parseResolvedPath("resolvedPath:\n")).toBeNull();
-  });
-});
-
-describe("formatMissingToolsReason", () => {
-  it("returns null when everything is present and node is in range", () => {
-    expect(
-      formatMissingToolsReason({ missingTools: [], nodeVersion: "24.10.0" }, "^24.10"),
-    ).toBeNull();
-  });
-
-  it("returns null when range is not specified and tools are present", () => {
-    expect(formatMissingToolsReason({ missingTools: [], nodeVersion: "18.0.0" }, null)).toBeNull();
-  });
-
-  it("flags missing node first", () => {
-    const reason = formatMissingToolsReason(
-      { missingTools: ["node", "make"], nodeVersion: null },
-      "^24.10",
-    );
-    expect(reason).toContain("node");
-    expect(reason).toContain("^24.10");
-    expect(reason).toContain("make");
-    expect(reason).toContain("nvm");
-  });
-
-  it("flags an out-of-range node version with the actual version surfaced", () => {
-    const reason = formatMissingToolsReason(
-      { missingTools: [], nodeVersion: "20.0.0" },
-      "^24.10 || ^22.16",
-    );
-    expect(reason).toContain("node 20.0.0");
-    expect(reason).toContain("requires ^24.10 || ^22.16");
-  });
-
-  it("flags missing build tools without node when node is fine", () => {
-    const reason = formatMissingToolsReason(
-      { missingTools: ["g++", "python3"], nodeVersion: "24.10.0" },
-      "^24.10",
-    );
-    expect(reason).toContain("g++");
-    expect(reason).toContain("python3");
-    expect(reason).toContain("build-essential");
-    expect(reason).not.toContain("nvm");
   });
 });
