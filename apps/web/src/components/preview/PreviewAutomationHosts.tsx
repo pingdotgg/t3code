@@ -393,6 +393,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               activeSnapshot = snapshot;
               tabId = activeTabId;
             }
+            reconcilePreviewRightPanelSurfaces(threadRef);
             const activeRuntimeTabId = previewRuntimeTabId(
               threadRef,
               readThreadPreviewState(threadRef).serverEpoch,
@@ -430,7 +431,6 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 updatePreviewServerSnapshot(threadRef, resizeResult.value);
               }
             }
-            reconcilePreviewRightPanelSurfaces(threadRef);
             const shouldPresentPreview = shouldOpenPreviewMiniPlayer(input);
             if (shouldPresentPreview) {
               usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
