@@ -7,16 +7,19 @@ import {
   resolveInitialThreadSidebarWidth,
   resolveThreadSidebarDefaultWidth,
   THREAD_MAIN_CONTENT_MIN_WIDTH,
+  THREAD_SIDEBAR_DEFAULT_WIDTH_RATIO,
   THREAD_SIDEBAR_MIN_WIDTH,
 } from "./threadSidebarWidth";
 
 describe("thread sidebar width", () => {
   it("uses a viewport percentage default when no preference is stored", () => {
-    expect(resolveInitialThreadSidebarWidth(null, 1200)).toBe(
-      resolveThreadSidebarDefaultWidth(1200),
+    const viewportWidth = 1200;
+    const expectedDefaultWidth = Math.floor(viewportWidth * THREAD_SIDEBAR_DEFAULT_WIDTH_RATIO);
+
+    expect(resolveInitialThreadSidebarWidth(null, viewportWidth)).toBe(
+      resolveThreadSidebarDefaultWidth(viewportWidth),
     );
-    expect(resolveThreadSidebarDefaultWidth(1200)).toBe(264);
-    expect(resolveThreadSidebarDefaultWidth(1200)).toBeGreaterThan(16 * 16);
+    expect(resolveThreadSidebarDefaultWidth(viewportWidth)).toBe(expectedDefaultWidth);
   });
 
   it("uses a stored width in the initial render", () => {
