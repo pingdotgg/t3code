@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import * as AetherTerminalManager from "../../terminal/AetherTerminalManager.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -41,6 +42,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager.TerminalManager;
+  const aetherTerminalManager = yield* AetherTerminalManager.AetherTerminalManager;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -56,12 +58,29 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  /**
+   * A cloud terminal outlives its thread unless something closes it: the
+   * workspace socket and its 30s keep-alive hold the (paid) VM warm
+   * indefinitely. This belongs HERE rather than at the dispatch site because
+   * `project.delete --force` has the decider emit child `thread.deleted`
+   * events internally — the dispatched command stays `project.delete`, so a
+   * command-keyed cleanup never runs for those threads. Every source of
+   * `thread.deleted` reaches this reactor.
+   */
+  const closeCloudTerminals = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: aetherTerminalManager.close({ threadId }),
+      message: "thread deletion cleanup skipped cloud terminal close",
+      threadId,
+    });
+
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    yield* closeCloudTerminals(threadId);
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

@@ -1193,18 +1193,17 @@ const makeWsRpcLayer = (
                 );
               }
 
-              if (
-                normalizedCommand.type === "thread.archive" ||
-                normalizedCommand.type === "thread.delete"
-              ) {
+              if (normalizedCommand.type === "thread.archive") {
                 // Close BOTH managers: a thread is either local- or Aether-backed,
-                // and closing the one with no sessions is a no-op. Also on delete —
-                // otherwise a deleted cloud thread leaks its VM socket and the
-                // terminal keep-alive holds the VM warm indefinitely. Settle keeps
-                // its terminals: a settled thread stays reachable and may be un-settled.
+                // and closing the one with no sessions is a no-op. Settle keeps its
+                // terminals: a settled thread stays reachable and may be un-settled.
+                // DELETION is not handled here — ThreadDeletionReactor owns it, so
+                // that a `project.delete` cascade (whose child `thread.deleted`
+                // events never surface as a dispatched command) tears its cloud
+                // terminals down too instead of leaking their VMs.
                 yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
                   Effect.catch((error) =>
-                    Effect.logWarning("failed to close thread terminals after archive/delete", {
+                    Effect.logWarning("failed to close thread terminals after archive", {
                       threadId: normalizedCommand.threadId,
                       error: error.message,
                     }),
@@ -1212,7 +1211,7 @@ const makeWsRpcLayer = (
                 );
                 yield* aetherTerminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
                   Effect.catch((error) =>
-                    Effect.logWarning("failed to close cloud terminals after archive/delete", {
+                    Effect.logWarning("failed to close cloud terminals after archive", {
                       threadId: normalizedCommand.threadId,
                       error: error.message,
                     }),
