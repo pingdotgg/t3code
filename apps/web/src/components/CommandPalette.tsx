@@ -124,9 +124,13 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
+import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
-import { resolveDefaultProviderModelSelection } from "../providerInstances";
+import {
+  deriveProviderInstanceEntries,
+  resolveDefaultProviderModelSelection,
+} from "../providerInstances";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup } from "./ui/command";
 import { Button } from "./ui/button";
@@ -584,6 +588,15 @@ function OpenCommandPaletteDialog(props: {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
   const providers = useAtomValue(primaryServerProvidersAtom);
+  const providerEntryByInstanceId = useMemo(
+    () =>
+      new Map(
+        deriveProviderInstanceEntries(providers).map(
+          (entry) => [entry.instanceId as string, entry] as const,
+        ),
+      ),
+    [providers],
+  );
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const environmentIds = useMemo(
@@ -1000,6 +1013,25 @@ function OpenCommandPaletteDialog(props: {
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
+        renderDescription: (thread, { projectTitle }) => {
+          const modelInstanceId =
+            thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+          const providerEntry = providerEntryByInstanceId.get(modelInstanceId) ?? null;
+          return (
+            <ThreadCommandSubtitle
+              environmentId={thread.environmentId}
+              projectCwd={projectCwdById.get(thread.projectId) ?? null}
+              projectTitle={projectTitle ?? null}
+              branch={thread.branch}
+              worktreePath={thread.worktreePath}
+              isCurrent={thread.id === activeThreadId}
+              driverKind={providerEntry?.driverKind ?? null}
+              providerDisplayName={
+                thread.session?.providerName ?? providerEntry?.displayName ?? modelInstanceId
+              }
+            />
+          );
+        },
         getContentMatch: (thread) => {
           const match = threadContentMatchByKey.get(
             threadSearchMatchKey({
@@ -1026,7 +1058,9 @@ function OpenCommandPaletteDialog(props: {
       activeThreadId,
       clientSettings.sidebarThreadSortOrder,
       navigate,
+      projectCwdById,
       projectTitleById,
+      providerEntryByInstanceId,
       threadContentMatchByKey,
       threadSearchQuery,
       threads,
