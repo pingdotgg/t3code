@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import { discoverClaudeProjectSkills, discoverClaudeSkills } from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -323,5 +323,48 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       assert.deepEqual(skills, []);
     }),
+  );
+
+  it.effect(
+    "discoverClaudeProjectSkills scans only the workspace and prefers .claude over .agents",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+        const configDir = path.join(tempDir, "claude-home");
+        const workspace = path.join(tempDir, "workspace");
+
+        // User-scope roots must be ignored by the project-only resolver.
+        yield* writeSkill(
+          path.join(configDir, "skills"),
+          "user-skill",
+          ["---", "name: user-skill", "description: User config skill.", "---"].join("\n"),
+        );
+        // Same name in both project roots: Claude-native wins.
+        yield* writeSkill(
+          path.join(workspace, ".agents", "skills"),
+          "deploy",
+          ["---", "name: deploy", "description: Portable project skill.", "---"].join("\n"),
+        );
+        yield* writeSkill(
+          path.join(workspace, ".claude", "skills"),
+          "deploy",
+          ["---", "name: deploy", "description: Claude project skill.", "---"].join("\n"),
+        );
+
+        const skills = yield* discoverClaudeProjectSkills(workspace);
+
+        assert.deepEqual(
+          skills.map((skill) => skill.name),
+          ["deploy"],
+        );
+        assert.equal(skills[0]?.scope, "project");
+        assert.equal(skills[0]?.description, "Claude project skill.");
+        assert.equal(
+          skills[0]?.path,
+          path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
+        );
+      }),
   );
 });

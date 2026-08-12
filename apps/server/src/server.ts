@@ -66,6 +66,7 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceAgentSkills from "./workspace/WorkspaceAgentSkills.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -336,10 +337,15 @@ const WorkspaceFileSystemLayerLive = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspaceEntriesLayerLive),
 );
 
+const WorkspaceAgentSkillsLayerLive = WorkspaceAgentSkills.layer.pipe(
+  Layer.provide(WorkspacePaths.layer),
+);
+
 const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePaths.layer,
   WorkspaceEntriesLayerLive,
   WorkspaceFileSystemLayerLive,
+  WorkspaceAgentSkillsLayerLive,
 );
 
 const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(

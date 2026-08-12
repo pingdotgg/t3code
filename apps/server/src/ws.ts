@@ -40,6 +40,7 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectListAgentSkillsError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
@@ -90,6 +91,7 @@ import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceAgentSkills from "./workspace/WorkspaceAgentSkills.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -376,6 +378,7 @@ const makeWsRpcLayer = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const workspaceAgentSkills = yield* WorkspaceAgentSkills.WorkspaceAgentSkills;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -1814,6 +1817,21 @@ const makeWsRpcLayer = (
                     cwd: input.cwd,
                     relativePath: input.relativePath,
                     ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsListAgentSkills]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsListAgentSkills,
+            workspaceAgentSkills.list(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListAgentSkillsError({
+                    cwd: input.cwd,
+                    message: `Failed to list project agent skills in '${input.cwd}'.`,
                     cause,
                   }),
               ),

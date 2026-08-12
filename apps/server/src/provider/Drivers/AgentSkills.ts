@@ -104,6 +104,35 @@ export const scanFilesystemSkillRoots = Effect.fn("scanFilesystemSkillRoots")(fu
 });
 
 /**
+ * Enumerate portable skills under the user home only (`~/.agents/skills`).
+ * Use this for environment-level (project-agnostic) snapshots; pair with
+ * `discoverProjectAgentSkills` for per-workspace resolution.
+ */
+export const discoverUserAgentSkills = Effect.fn("discoverUserAgentSkills")(function* (options?: {
+  readonly homeDirectory?: string;
+}): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  const homeDirectory = options?.homeDirectory ?? NodeOS.homedir();
+  return yield* scanFilesystemSkillRoots([
+    { directory: path.join(homeDirectory, ".agents", "skills"), scope: "user" },
+  ]);
+});
+
+/**
+ * Enumerate portable skills under a single workspace root only
+ * (`<workspaceRoot>/.agents/skills`). Resolve this per active project so a
+ * project's skills follow the project, not the server's launch directory.
+ */
+export const discoverProjectAgentSkills = Effect.fn("discoverProjectAgentSkills")(function* (
+  workspaceRoot: string,
+): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  return yield* scanFilesystemSkillRoots([
+    { directory: path.join(workspaceRoot, ".agents", "skills"), scope: "project" },
+  ]);
+});
+
+/**
  * Enumerate portable skills from the user home and optional workspace cwd.
  */
 export const discoverAgentSkills = Effect.fn("discoverAgentSkills")(function* (

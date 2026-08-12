@@ -109,6 +109,9 @@ import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectListAgentSkillsError,
+  ProjectListAgentSkillsInput,
+  ProjectListAgentSkillsResult,
   ProjectWriteFileError,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
@@ -200,6 +203,7 @@ export const WS_METHODS = {
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsListAgentSkills: "projects.listAgentSkills",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -638,6 +642,12 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
+export const WsProjectsListAgentSkillsRpc = Rpc.make(WS_METHODS.projectsListAgentSkills, {
+  payload: ProjectListAgentSkillsInput,
+  success: ProjectListAgentSkillsResult,
+  error: Schema.Union([ProjectListAgentSkillsError, EnvironmentAuthorizationError]),
+});
+
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -1018,6 +1028,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsProjectsListAgentSkillsRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,

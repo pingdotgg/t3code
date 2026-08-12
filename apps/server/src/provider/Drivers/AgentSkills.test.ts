@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAgentSkills } from "./AgentSkills.ts";
+import {
+  discoverAgentSkills,
+  discoverProjectAgentSkills,
+  discoverUserAgentSkills,
+} from "./AgentSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -125,6 +129,68 @@ it.layer(NodeServices.layer)("discoverAgentSkills", (it) => {
       );
 
       assert.deepEqual(skills, []);
+    }),
+  );
+
+  it.effect("discoverUserAgentSkills scans only the user home, not a workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-skills-" });
+      const agentsHome = path.join(tempDir, "agents-home");
+      const workspace = path.join(tempDir, "workspace");
+
+      yield* writeSkill(
+        path.join(agentsHome, ".agents", "skills"),
+        "home-skill",
+        ["---", "name: home-skill", "description: From home.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspace, ".agents", "skills"),
+        "workspace-skill",
+        ["---", "name: workspace-skill", "description: From workspace.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverUserAgentSkills({ homeDirectory: agentsHome });
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["home-skill"],
+      );
+      assert.equal(skills[0]?.scope, "user");
+    }),
+  );
+
+  it.effect("discoverProjectAgentSkills scans only the given workspace root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-skills-" });
+      const agentsHome = path.join(tempDir, "agents-home");
+      const workspace = path.join(tempDir, "workspace");
+
+      yield* writeSkill(
+        path.join(agentsHome, ".agents", "skills"),
+        "home-skill",
+        ["---", "name: home-skill", "description: From home.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(workspace, ".agents", "skills"),
+        "workspace-skill",
+        ["---", "name: workspace-skill", "description: From workspace.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverProjectAgentSkills(workspace);
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["workspace-skill"],
+      );
+      assert.equal(skills[0]?.scope, "project");
+      assert.equal(
+        skills[0]?.path,
+        path.join(workspace, ".agents", "skills", "workspace-skill", "SKILL.md"),
+      );
     }),
   );
 });

@@ -128,6 +128,7 @@ import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceAgentSkills from "./workspace/WorkspaceAgentSkills.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -569,6 +570,7 @@ const buildAppUnderTest = (options?: {
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
       ),
+      WorkspaceAgentSkills.layer.pipe(Layer.provide(WorkspacePaths.layer)),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(T3ProjectFileLoader.layer),

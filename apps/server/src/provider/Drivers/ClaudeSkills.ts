@@ -83,3 +83,20 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
   return yield* scanFilesystemSkillRoots(roots);
 });
+
+/**
+ * Enumerate Claude Code PROJECT skills for a single workspace root: the portable
+ * `<root>/.agents/skills` plus the Claude-native `<root>/.claude/skills`.
+ * Vendor-native wins on a same-scope collision (`.claude` roots come last).
+ * Resolve per active project so project skills follow the project, not the
+ * server launch directory.
+ */
+export const discoverClaudeProjectSkills = Effect.fn("discoverClaudeProjectSkills")(function* (
+  workspaceRoot: string,
+): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
+  return yield* scanFilesystemSkillRoots([
+    { directory: path.join(workspaceRoot, ".agents", "skills"), scope: "project" },
+    { directory: path.join(workspaceRoot, ".claude", "skills"), scope: "project" },
+  ]);
+});

@@ -5,6 +5,8 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
+import { ProviderDriverKind } from "./providerInstance.ts";
+import { ServerProviderSkill } from "./server.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
@@ -298,3 +300,23 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
     } as any);
   }
 }
+
+export const ProjectListAgentSkillsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  provider: ProviderDriverKind,
+});
+export type ProjectListAgentSkillsInput = typeof ProjectListAgentSkillsInput.Type;
+
+export const ProjectListAgentSkillsResult = Schema.Struct({
+  skills: Schema.Array(ServerProviderSkill),
+});
+export type ProjectListAgentSkillsResult = typeof ProjectListAgentSkillsResult.Type;
+
+export class ProjectListAgentSkillsError extends Schema.TaggedErrorClass<ProjectListAgentSkillsError>()(
+  "ProjectListAgentSkillsError",
+  {
+    cwd: Schema.optional(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
