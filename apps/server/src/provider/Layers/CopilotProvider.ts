@@ -53,11 +53,15 @@ const FALLBACK_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
-function copilotModelsFromSettings(
+export function buildCopilotProviderModels(
   customModels: ReadonlyArray<string> | undefined,
   builtInModels: ReadonlyArray<ServerProviderModel> = FALLBACK_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
+  return providerModelsFromSettings(
+    builtInModels.length > 0 ? builtInModels : FALLBACK_MODELS,
+    customModels ?? [],
+    EMPTY_CAPABILITIES,
+  );
 }
 
 function selectOptions(
@@ -134,7 +138,7 @@ export function isCopilotAuthFailure(value: unknown): boolean {
       .map((key) => collect(current[key], depth + 1))
       .join(" ");
   };
-  return /(?:not authenticated|unauthenticated|authentication|unauthorized|log(?:ged)? in|login|credential|token|gh auth)/i.test(
+  return /(?:not authenticated|unauthenticated|authentication|unauthorized|log(?:ged)? in|login|credential|(?:access|auth(?:entication)?|refresh|id|bearer|gh|github|copilot)[ _-]?token|gh auth)/i.test(
     collect(value, 0),
   );
 }
@@ -144,7 +148,7 @@ export function buildInitialCopilotProviderSnapshot(
 ): Effect.Effect<ServerProviderDraft> {
   return Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const models = copilotModelsFromSettings(settings.customModels);
+    const models = buildCopilotProviderModels(settings.customModels);
     return buildServerProvider({
       presentation: COPILOT_PRESENTATION,
       enabled: settings.enabled,
@@ -216,7 +220,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const fallbackModels = copilotModelsFromSettings(settings.customModels);
+  const fallbackModels = buildCopilotProviderModels(settings.customModels);
   if (!settings.enabled) return yield* buildInitialCopilotProviderSnapshot(settings);
 
   const versionResult = yield* runCopilotVersionCommand(settings, environment).pipe(
@@ -322,7 +326,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
     presentation: COPILOT_PRESENTATION,
     enabled: true,
     checkedAt,
-    models: copilotModelsFromSettings(settings.customModels, discoveredModels),
+    models: buildCopilotProviderModels(settings.customModels, discoveredModels),
     probe: {
       installed: true,
       version,

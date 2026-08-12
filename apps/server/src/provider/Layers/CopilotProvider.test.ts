@@ -7,6 +7,7 @@ import { CopilotSettings } from "@t3tools/contracts";
 import {
   buildCopilotDiscoveredModels,
   buildCopilotModelCapabilities,
+  buildCopilotProviderModels,
   buildInitialCopilotProviderSnapshot,
   checkCopilotProviderStatus,
   isCopilotAuthFailure,
@@ -52,9 +53,16 @@ describe("CopilotProvider helpers", () => {
     ).toMatchObject([{ slug: "gpt-5.4", name: "GPT-5.4" }]);
   });
 
+  it("preserves the auto fallback when ACP reports no models", () => {
+    expect(buildCopilotProviderModels([], [])).toMatchObject([
+      { slug: "auto", name: "Auto", isCustom: false },
+    ]);
+  });
+
   it("recognizes auth failures without treating generic startup errors as logged out", () => {
     expect(isCopilotAuthFailure(new Error("Not authenticated. Run copilot login."))).toBe(true);
     expect(isCopilotAuthFailure({ cause: { message: "GH_TOKEN is invalid" } })).toBe(true);
+    expect(isCopilotAuthFailure(new Error("Unexpected token in JSON"))).toBe(false);
     expect(isCopilotAuthFailure(new Error("ACP transport closed unexpectedly"))).toBe(false);
   });
 });

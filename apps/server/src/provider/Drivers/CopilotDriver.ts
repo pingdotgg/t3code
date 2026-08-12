@@ -153,7 +153,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build GitHub Copilot snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build GitHub Copilot snapshot.",
               cause,
             }),
         ),
