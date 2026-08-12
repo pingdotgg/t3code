@@ -431,22 +431,14 @@ export const make = Effect.gen(function* () {
 
         // Confirmed dirty trees already opted into destroying local files. Unconfirmed trees
         // try without --force first so Git itself refuses if user files appeared after status.
-        // Ignored build artifacts still require --force; a second status check keeps that path
-        // from deleting newly written tracked or untracked files.
-        if (dirtyConfirmed) {
-          const removeResult = yield* Effect.result(removeWorktree(true));
-          if (removeResult._tag === "Success") {
+        // Ignored build artifacts still require --force; a status check immediately before that
+        // call keeps newly written tracked or untracked files from being deleted.
+        if (!dirtyConfirmed) {
+          const gentleRemove = yield* Effect.result(removeWorktree(false));
+          if (gentleRemove._tag === "Success") {
             record("removed");
-          } else {
-            record("failed", removeResult.failure.message);
+            continue;
           }
-          continue;
-        }
-
-        const gentleRemove = yield* Effect.result(removeWorktree(false));
-        if (gentleRemove._tag === "Success") {
-          record("removed");
-          continue;
         }
 
         const statusBeforeForce = yield* Effect.result(git.statusDetailsLocal(canonicalTargetPath));
@@ -454,7 +446,7 @@ export const make = Effect.gen(function* () {
           record("failed", statusBeforeForce.failure.message);
           continue;
         }
-        if (statusBeforeForce.success.hasWorkingTreeChanges) {
+        if (statusBeforeForce.success.hasWorkingTreeChanges && !dirtyConfirmed) {
           record("skipped_dirty");
           continue;
         }
