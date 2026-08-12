@@ -270,14 +270,17 @@ function stripTrailingNewline(value: string): string {
 
 function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffReviewLine> {
   const rows: DiffReviewLine[] = [];
+  let oldContextStart = 1;
+  let newContextStart = 1;
 
   for (const hunk of fileDiff.hunks) {
     if (!fileDiff.isPartial) {
       const oldHunkStart = hunk.deletionStart + (hunk.deletionCount === 0 ? 1 : 0);
       const newHunkStart = hunk.additionStart + (hunk.additionCount === 0 ? 1 : 0);
-      for (let offset = hunk.collapsedBefore; offset > 0; offset -= 1) {
-        const oldLineNumber = oldHunkStart - offset;
-        const newLineNumber = newHunkStart - offset;
+      const contextLines = Math.min(oldHunkStart - oldContextStart, newHunkStart - newContextStart);
+      for (let offset = 0; offset < contextLines; offset += 1) {
+        const oldLineNumber = oldContextStart + offset;
+        const newLineNumber = newContextStart + offset;
         rows.push({
           change: "context",
           oldLineNumber,
@@ -335,26 +338,24 @@ function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffRev
         additionLineIndex += 1;
       }
     }
+
+    oldContextStart = hunk.deletionStart + hunk.deletionCount;
+    newContextStart = hunk.additionStart + hunk.additionCount;
+    if (hunk.deletionCount === 0) oldContextStart += 1;
+    if (hunk.additionCount === 0) newContextStart += 1;
   }
 
   if (!fileDiff.isPartial) {
-    const lastHunk = fileDiff.hunks.at(-1);
-    const oldStart = lastHunk
-      ? lastHunk.deletionStart + lastHunk.deletionCount + (lastHunk.deletionCount === 0 ? 1 : 0)
-      : 1;
-    const newStart = lastHunk
-      ? lastHunk.additionStart + lastHunk.additionCount + (lastHunk.additionCount === 0 ? 1 : 0)
-      : 1;
     const trailingLines = Math.min(
-      fileDiff.deletionLines.length - oldStart + 1,
-      fileDiff.additionLines.length - newStart + 1,
+      fileDiff.deletionLines.length - oldContextStart + 1,
+      fileDiff.additionLines.length - newContextStart + 1,
     );
     for (let offset = 0; offset < trailingLines; offset += 1) {
       rows.push({
         change: "context",
-        oldLineNumber: oldStart + offset,
-        newLineNumber: newStart + offset,
-        content: stripTrailingNewline(fileDiff.additionLines[newStart + offset - 1] ?? ""),
+        oldLineNumber: oldContextStart + offset,
+        newLineNumber: newContextStart + offset,
+        content: stripTrailingNewline(fileDiff.additionLines[newContextStart + offset - 1] ?? ""),
       });
     }
   }
