@@ -146,4 +146,53 @@ describe("CopilotAcpSupport", () => {
       expect(models).toEqual(["default"]);
     }),
   );
+
+  it.effect("refreshes model-dependent options before applying reasoning effort", () =>
+    Effect.gen(function* () {
+      const calls: Array<readonly [string, string]> = [];
+      let modelConfigured = false;
+      yield* applyCopilotSessionConfiguration({
+        runtime: {
+          getConfigOptions: Effect.sync(() =>
+            modelConfigured
+              ? [
+                  {
+                    id: "reasoning_effort",
+                    name: "Reasoning effort",
+                    type: "select" as const,
+                    currentValue: "medium",
+                    options: [{ value: "high", name: "High" }],
+                  },
+                ]
+              : [
+                  {
+                    id: "model",
+                    name: "Model",
+                    type: "select" as const,
+                    currentValue: "default",
+                    options: [{ value: "gpt-5.4", name: "GPT-5.4" }],
+                  },
+                ],
+          ),
+          setModel: (model) =>
+            Effect.sync(() => {
+              calls.push(["model", model]);
+              modelConfigured = true;
+            }),
+          setConfigOption: (id, value) =>
+            Effect.sync(() => {
+              calls.push([id, String(value)]);
+              return { configOptions: [] };
+            }),
+        },
+        model: "gpt-5.4",
+        selections: [{ id: "reasoningEffort", value: "high" }],
+        mapError: (context) => context.cause,
+      });
+      expect(calls).toEqual([
+        ["model", "gpt-5.4"],
+        ["reasoning_effort", "high"],
+      ]);
+    }),
+  );
 });

@@ -128,7 +128,7 @@ export function applyCopilotSessionConfiguration<E>(input: {
   }) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
-    const configOptions = yield* input.runtime.getConfigOptions;
+    let configOptions = yield* input.runtime.getConfigOptions;
     if (input.model?.trim()) {
       const model = resolveCopilotSessionModelId(input.model, configOptions);
       yield* input.runtime
@@ -138,6 +138,7 @@ export function applyCopilotSessionConfiguration<E>(input: {
             input.mapError({ cause, method: "session/set_config_option", configId: "model" }),
           ),
         );
+      configOptions = yield* input.runtime.getConfigOptions;
     }
 
     const reasoningEffort = selectedString(input.selections, "reasoningEffort");
