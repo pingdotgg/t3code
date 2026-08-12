@@ -28,6 +28,8 @@ describe("ProviderSettingsForm helpers", () => {
     expect(devin).toBeDefined();
     expect(deriveProviderSettingsFields(devin!).map((field) => field.key)).toEqual([
       "binaryPath",
+      "homePath",
+      "launchArgs",
       "permissionMode",
     ]);
 
