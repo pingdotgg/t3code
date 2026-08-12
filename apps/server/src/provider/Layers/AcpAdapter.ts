@@ -936,11 +936,17 @@ export function makeAcpProviderAdapter<Settings>(
       let cleanupContext: AcpSessionContext | undefined;
       let promptIncremented = false;
       return Effect.gen(function* () {
-        const ctx = yield* requireSession(input.threadId);
+        const { ctx, steeringTurnId, turnId } = yield* withThreadLock(
+          input.threadId,
+          Effect.gen(function* () {
+            const ctx = yield* requireSession(input.threadId);
+            const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+            const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+            ctx.promptsInFlight += 1;
+            return { ctx, steeringTurnId, turnId };
+          }),
+        );
         cleanupContext = ctx;
-        const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
-        const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
-        ctx.promptsInFlight += 1;
         promptIncremented = true;
         const turnModelSelection =
           input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
