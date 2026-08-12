@@ -59,7 +59,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
           ),
       }),
     shouldAutoApprovePermission: ({ runtimeMode, permissionKind }) =>
-      runtimeMode === "auto-accept-edits" &&
+      (runtimeMode === "auto-accept-edits" || runtimeMode === "auto") &&
       (permissionKind === "edit" || permissionKind === "delete" || permissionKind === "move"),
     resolveModelId: (model) => model?.trim() || "default",
   }).pipe(Effect.map((adapter) => adapter satisfies OmpAdapterShape));

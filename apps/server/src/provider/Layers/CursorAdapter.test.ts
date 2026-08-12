@@ -310,6 +310,8 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       });
       const firstTurn = yield* Fiber.join(firstTurnFiber);
       assert.equal(String(steeredTurn.turnId), String(firstTurn.turnId));
+      const thread = yield* adapter.readThread(threadId);
+      assert.equal(thread.turns.length, 1);
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const turnStartedEvents = runtimeEvents.filter((event) => event.type === "turn.started");

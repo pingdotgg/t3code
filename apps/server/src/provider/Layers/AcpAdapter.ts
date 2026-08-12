@@ -109,6 +109,7 @@ interface AcpProviderRuntimeFactoryInput<Settings> {
   readonly environment?: NodeJS.ProcessEnv;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly cwd: string;
+  readonly threadId: ThreadId;
   readonly runtimeMode: RuntimeMode;
   readonly resumeSessionId?: string;
   readonly clientInfo: AcpSessionRuntimeOptions["clientInfo"];
@@ -267,7 +268,7 @@ function findModeByAliases(
     }
   }
   for (const alias of normalizedAliases) {
-    const partial = modes.find((mode) => normalizeModeSearchText(mode).includes(alias));
+    const partial = modes.find((mode) => normalizeModeSearchText(mode).split(" ").includes(alias));
     if (partial) {
       return partial;
     }
@@ -602,6 +603,7 @@ export function makeAcpProviderAdapter<Settings>(
               ...(options?.environment ? { environment: options.environment } : {}),
               childProcessSpawner,
               cwd,
+              threadId: input.threadId,
               runtimeMode: input.runtimeMode,
               ...(resumeSessionId ? { resumeSessionId } : {}),
               clientInfo: { name: "t3-code", version: "0.0.0" },
@@ -929,12 +931,16 @@ export function makeAcpProviderAdapter<Settings>(
           return session;
         }).pipe(Effect.scoped),
       );
-    const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) =>
-      Effect.gen(function* () {
+    const sendTurn: ProviderAdapterShape<ProviderAdapterError>["sendTurn"] = (input) => {
+      let cleanupContext: AcpSessionContext | undefined;
+      let promptIncremented = false;
+      return Effect.gen(function* () {
         const ctx = yield* requireSession(input.threadId);
+        cleanupContext = ctx;
         const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
         ctx.promptsInFlight += 1;
+        promptIncremented = true;
         const turnModelSelection =
           input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
         const model = turnModelSelection?.model ?? ctx.session.model;
@@ -992,7 +998,6 @@ export function makeAcpProviderAdapter<Settings>(
               attachment,
             });
             if (!attachmentPath) {
-              ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
               return yield* new ProviderAdapterRequestError({
                 provider: PROVIDER,
                 method: "session/prompt",
@@ -1019,7 +1024,6 @@ export function makeAcpProviderAdapter<Settings>(
         }
 
         if (promptParts.length === 0) {
-          ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "sendTurn",
@@ -1037,7 +1041,12 @@ export function makeAcpProviderAdapter<Settings>(
             ),
           );
 
-        ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+        const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
+        if (turnRecord) {
+          turnRecord.items.push({ prompt: promptParts, result });
+        } else {
+          ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+        }
         ctx.session = {
           ...ctx.session,
           activeTurnId: turnId,
@@ -1058,14 +1067,22 @@ export function makeAcpProviderAdapter<Settings>(
             },
           });
         }
-        ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
 
         return {
           threadId: input.threadId,
           turnId,
           resumeCursor: ctx.session.resumeCursor,
         };
-      });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (promptIncremented && cleanupContext) {
+              cleanupContext.promptsInFlight = Math.max(0, cleanupContext.promptsInFlight - 1);
+            }
+          }),
+        ),
+      );
+    };
 
     const interruptTurn: ProviderAdapterShape<ProviderAdapterError>["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {

@@ -17,6 +17,11 @@ describe("buildOmpAcpSpawnInput", () => {
       args: ["acp", "--approval-mode", "write"],
       cwd: "/tmp/project",
     });
+    expect(buildOmpAcpSpawnInput(undefined, "/tmp/project", "auto")).toEqual({
+      command: "omp",
+      args: ["acp", "--approval-mode", "write"],
+      cwd: "/tmp/project",
+    });
     expect(buildOmpAcpSpawnInput(undefined, "/tmp/project", "full-access")).toEqual({
       command: "omp",
       args: ["acp", "--approval-mode", "yolo"],

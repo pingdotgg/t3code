@@ -23,15 +23,35 @@ function nonEmpty(value: string | null | undefined): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function withUniqueLabels(
+  choices: ReadonlyArray<ElicitationChoice>,
+): ReadonlyArray<ElicitationChoice> {
+  const counts = new Map<string, number>();
+  const used = new Set<string>();
+  return choices.map((choice) => {
+    let occurrence = counts.get(choice.label) ?? 0;
+    let label = choice.label;
+    do {
+      occurrence += 1;
+      label = occurrence === 1 ? choice.label : `${choice.label} (${occurrence})`;
+    } while (used.has(label));
+    counts.set(choice.label, occurrence);
+    used.add(label);
+    return label === choice.label ? choice : { ...choice, label };
+  });
+}
+
 function choicesForProperty(property: ElicitationProperty): ReadonlyArray<ElicitationChoice> {
   if (property.type === "string") {
     if (property.oneOf && property.oneOf.length > 0) {
-      return property.oneOf.map((option) => ({
-        label: nonEmpty(option.title) ?? option.const,
-        value: option.const,
-      }));
+      return withUniqueLabels(
+        property.oneOf.map((option) => ({
+          label: nonEmpty(option.title) ?? option.const,
+          value: option.const,
+        })),
+      );
     }
-    return (property.enum ?? []).map((value) => ({ label: value, value }));
+    return withUniqueLabels((property.enum ?? []).map((value) => ({ label: value, value })));
   }
   if (property.type === "boolean") {
     return [
@@ -41,12 +61,14 @@ function choicesForProperty(property: ElicitationProperty): ReadonlyArray<Elicit
   }
   if (property.type === "array") {
     if ("anyOf" in property.items) {
-      return property.items.anyOf.map((option) => ({
-        label: nonEmpty(option.title) ?? option.const,
-        value: option.const,
-      }));
+      return withUniqueLabels(
+        property.items.anyOf.map((option) => ({
+          label: nonEmpty(option.title) ?? option.const,
+          value: option.const,
+        })),
+      );
     }
-    return property.items.enum.map((value) => ({ label: value, value }));
+    return withUniqueLabels(property.items.enum.map((value) => ({ label: value, value })));
   }
   return [];
 }
@@ -123,7 +145,6 @@ function resolvePropertyValue(
     }
   }
 }
-
 /**
  * Project an ACP form elicitation onto T3 Code's provider-neutral structured
  * question surface. URL elicitations are intentionally not handled because
@@ -143,7 +164,10 @@ export function buildAcpElicitationForm(
   // absent.
   if (
     propertyEntries.some(
-      ([id, property]) => required.has(id) && choicesForProperty(property).length === 0,
+      ([id, property]) =>
+        required.has(id) &&
+        property.default === undefined &&
+        choicesForProperty(property).length === 0,
     )
   ) {
     return undefined;
@@ -152,6 +176,7 @@ export function buildAcpElicitationForm(
   const questionEntries = propertyEntries.filter(
     ([, property]) => choicesForProperty(property).length > 0,
   );
+  if (questionEntries.length === 0) return undefined;
   const questions = questionEntries.map(([id, property]) =>
     questionForProperty({
       request,

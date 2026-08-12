@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type {
   AcpProviderAdapterLiveOptions,
   AcpProviderExtensionRegistrationInput,
@@ -28,8 +29,8 @@ import {
   extractPlanMarkdown,
   extractTodosAsPlan,
 } from "../acp/CursorAcpExtension.ts";
-import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
+import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -148,6 +149,7 @@ export function makeCursorAdapter(
     registerExtensions: registerCursorExtensions,
     userInputRequestMethod: "cursor/ask_question",
     makeRuntime: ({
+      threadId,
       settings,
       environment,
       childProcessSpawner,
@@ -155,16 +157,35 @@ export function makeCursorAdapter(
       resumeSessionId,
       clientInfo,
       nativeLoggers,
-    }) =>
-      makeCursorAcpRuntime({
+    }) => {
+      const mcpSession = McpProviderSession.readMcpProviderSession(threadId);
+      return makeCursorAcpRuntime({
         cursorSettings: settings,
         ...(environment ? { environment } : {}),
         childProcessSpawner,
         cwd,
         ...(resumeSessionId ? { resumeSessionId } : {}),
         clientInfo,
+        ...(mcpSession
+          ? {
+              mcpServers: [
+                {
+                  type: "http" as const,
+                  name: "t3-code",
+                  url: mcpSession.endpoint,
+                  headers: [
+                    {
+                      name: "Authorization",
+                      value: mcpSession.authorizationHeader,
+                    },
+                  ],
+                },
+              ],
+            }
+          : {}),
         ...nativeLoggers,
-      }),
+      });
+    },
     applyModelSelection: ({ runtime, threadId, model, selections }) =>
       applyCursorAcpModelSelection({
         runtime,

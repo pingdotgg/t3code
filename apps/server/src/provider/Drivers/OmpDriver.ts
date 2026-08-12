@@ -148,8 +148,10 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         initialSnapshot: (settings) =>
           makePendingOmpProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        enrichSnapshot: ({ snapshot, publishSnapshot }) =>
-          enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities).pipe(
+        enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
+          enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+          }).pipe(
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.flatMap(publishSnapshot),
           ),
@@ -160,7 +162,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build OMP snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build OMP snapshot.",
               cause,
             }),
         ),

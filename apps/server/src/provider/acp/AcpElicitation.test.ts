@@ -62,6 +62,69 @@ describe("AcpElicitation", () => {
     });
   });
 
+  it("keeps duplicate choice titles distinguishable", () => {
+    const form = buildAcpElicitationForm({
+      mode: "form",
+      sessionId: "session-1",
+      message: "Choose a route",
+      requestedSchema: {
+        required: ["route"],
+        properties: {
+          route: {
+            type: "string",
+            oneOf: [
+              { const: "first", title: "Same label" },
+              { const: "second", title: "Same label" },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(form?.questions[0]?.options).toEqual([
+      { label: "Same label", description: "first" },
+      { label: "Same label (2)", description: "second" },
+    ]);
+    expect(form?.resolve({ route: "Same label (2)" })).toEqual({
+      action: { action: "accept", content: { route: "second" } },
+    });
+  });
+
+  it("accepts defaults for required optionless properties", () => {
+    const form = buildAcpElicitationForm({
+      mode: "form",
+      sessionId: "session-1",
+      message: "Choose a route",
+      requestedSchema: {
+        required: ["route"],
+        properties: {
+          route: { type: "string", default: "default-route" },
+          strategy: { type: "string", enum: ["safe", "fast"] },
+        },
+      },
+    });
+
+    expect(form?.resolve({ strategy: "safe" })).toEqual({
+      action: {
+        action: "accept",
+        content: { route: "default-route", strategy: "safe" },
+      },
+    });
+  });
+
+  it("cancels optionless forms without questions", () => {
+    expect(
+      buildAcpElicitationForm({
+        mode: "form",
+        sessionId: "session-1",
+        message: "Provide context",
+        requestedSchema: {
+          properties: { notes: { type: "string" } },
+        },
+      }),
+    ).toBeUndefined();
+  });
+
   it("supports multi-select answers", () => {
     const form = buildAcpElicitationForm({
       mode: "form",
