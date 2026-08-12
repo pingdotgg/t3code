@@ -373,43 +373,6 @@ public struct WorkspaceView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(reconnecting.name) reconnecting")
-        } else if model.snapshot.connection.state == .connecting
-            || model.snapshot.connection.state == .reconnecting {
-            Button { showingSettings = true } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "wifi.exclamationmark")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(connectionEnvironmentName)
-                        .lineLimit(1)
-                    Text("reconnecting")
-                        .fontWeight(.medium)
-                        .opacity(0.76)
-                }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(T3Colors.warning)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(connectionEnvironmentName) reconnecting")
-        } else if model.snapshot.connection.state == .disconnected {
-            HStack(spacing: 7) {
-                Image(systemName: "network.slash")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("\(connectionEnvironmentName) unreachable")
-                    .lineLimit(2)
-                    .font(.system(size: 13, weight: .semibold))
-                Button("Reconnect") {
-                    Task { await model.reload() }
-                }
-                .font(.caption.weight(.bold))
-                .buttonStyle(.plain)
-                .padding(.horizontal, 9)
-                .frame(height: 26)
-                .overlay {
-                    Capsule().stroke(T3Colors.danger.opacity(0.42), lineWidth: 1)
-                }
-            }
-            .foregroundStyle(T3Colors.danger)
-            .accessibilityElement(children: .contain)
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("T3")
@@ -547,20 +510,16 @@ public struct WorkspaceView: View {
         DailyUXCreationContext.projects(in: model.snapshot)
     }
 
-    private var connectionEnvironmentName: String {
-        model.snapshot.connection.environmentName
-            ?? model.snapshot.environments.first(where: \.isActive)?.name
-            ?? model.snapshot.environments.first?.name
-            ?? "Server"
-    }
-
     private var unreachableEnvironments: [FeatureEnvironment] {
-        model.snapshot.environments.filter { $0.connectionState == .disconnected }
+        model.snapshot.environments.filter {
+            $0.isEnabled && $0.connectionState == .disconnected
+        }
     }
 
     private var reconnectingEnvironments: [FeatureEnvironment] {
         model.snapshot.environments.filter {
-            $0.connectionState == .connecting || $0.connectionState == .reconnecting
+            $0.isEnabled
+                && ($0.connectionState == .connecting || $0.connectionState == .reconnecting)
         }
     }
 
@@ -812,11 +771,6 @@ struct HomeThreadRowContext: Equatable {
         let environmentByID = snapshot.environments.reduce(into: [String: FeatureEnvironment]()) {
             $0[$1.id] = $1
         }
-        let providerByID = snapshot.providers.reduce(into: [String: FeatureProvider]()) {
-            $0[$1.id] = $1
-        }
-        let activeEnvironmentID = snapshot.environments.first(where: \.isActive)?.id
-
         return snapshot.threads.reduce(into: [String: HomeThreadRowContext]()) { result, thread in
             let project = projectByID[thread.projectID]
             let environmentID = thread.environmentID ?? project?.environmentID
@@ -825,7 +779,11 @@ struct HomeThreadRowContext: Equatable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let explicitProvider = thread.providerName?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let configuredProvider = thread.providerID.flatMap { providerByID[$0] }
+            let configuredProvider = thread.providerID.flatMap { providerID in
+                environmentID.flatMap {
+                    snapshot.providersByEnvironment?[$0]?.first(where: { $0.id == providerID })
+                }
+            }
             let providerName = (explicitProvider?.isEmpty == false ? explicitProvider : nil)
                 ?? configuredProvider?.name
                 ?? thread.providerID
@@ -833,15 +791,9 @@ struct HomeThreadRowContext: Equatable {
             let providerID = thread.providerID ?? providerName
             let providerDriver = configuredProvider?.driver ?? thread.providerID ?? ""
 
-            let connectionState: FeatureConnection.State?
-            if environment?.isActive == true
-                || environmentID == nil
-                || activeEnvironmentID == nil
-                || environmentID == activeEnvironmentID {
-                connectionState = snapshot.connection.state
-            } else {
-                connectionState = environment?.connectionState
-            }
+            let connectionState = environment?.isEnabled == false
+                ? FeatureConnection.State.disconnected
+                : environment?.connectionState
 
             result[thread.id] = HomeThreadRowContext(
                 projectName: project?.name ?? "Project",

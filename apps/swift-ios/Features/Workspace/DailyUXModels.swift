@@ -98,12 +98,7 @@ enum DailyUXCreationContext {
     static func projects(in snapshot: FeatureSnapshot) -> [FeatureProject] {
         guard !snapshot.environments.isEmpty else { return snapshot.projects }
         let availableEnvironmentIDs = Set(
-            snapshot.environments.compactMap { environment in
-                let state = environment.isActive
-                    ? snapshot.connection.state
-                    : environment.connectionState
-                return state == .disconnected ? nil : environment.id
-            }
+            snapshot.environments.filter(\.isEnabled).map(\.id)
         )
         return snapshot.projects.filter {
             availableEnvironmentIDs.contains($0.environmentID)
@@ -111,11 +106,9 @@ enum DailyUXCreationContext {
     }
 
     static func projectGroups(in snapshot: FeatureSnapshot) -> [DailyUXProjectGroup] {
-        let preferences = projectGroupingPreferences(in: snapshot)
         return DailyUXProjectGrouping.groups(
             projects: projects(in: snapshot),
-            mode: preferences.projectGroupingMode,
-            overrides: preferences.projectGroupingOverrides
+            preferencesByEnvironment: snapshot.preferencesByEnvironment ?? [:]
         )
     }
 
@@ -123,27 +116,18 @@ enum DailyUXCreationContext {
         for project: FeatureProject,
         in snapshot: FeatureSnapshot
     ) -> String {
-        let preferences = projectGroupingPreferences(in: snapshot)
         let groups = DailyUXProjectGrouping.groups(
             projects: snapshot.projects,
-            mode: preferences.projectGroupingMode,
-            overrides: preferences.projectGroupingOverrides
+            preferencesByEnvironment: snapshot.preferencesByEnvironment ?? [:]
         )
         return DailyUXProjectGrouping.group(containing: project.id, in: groups)?.id
             ?? DailyUXProjectGrouping.logicalProjectID(
                 for: project,
-                mode: preferences.projectGroupingMode,
-                overrides: preferences.projectGroupingOverrides
+                mode: snapshot.preferencesByEnvironment?[project.environmentID]?
+                    .projectGroupingMode ?? .repository,
+                overrides: snapshot.preferencesByEnvironment?[project.environmentID]?
+                    .projectGroupingOverrides ?? [:]
             )
-    }
-
-    private static func projectGroupingPreferences(
-        in snapshot: FeatureSnapshot
-    ) -> FeatureEnvironmentPreferences {
-        let activeEnvironmentID = snapshot.environments.first(where: \.isActive)?.id
-        return activeEnvironmentID.flatMap {
-            snapshot.preferencesByEnvironment?[$0]
-        } ?? FeatureEnvironmentPreferences()
     }
 
     static func providers(
@@ -154,11 +138,7 @@ enum DailyUXCreationContext {
            let providers = snapshot.providersByEnvironment?[project.environmentID] {
             return providers
         }
-        guard let project,
-              let activeID = snapshot.environments.first(where: \.isActive)?.id,
-              project.environmentID != activeID else {
-            return snapshot.providers
-        }
+        guard let project else { return [] }
         guard let selection = project.defaultSelection else { return [] }
         return [
             FeatureProvider(
@@ -181,8 +161,7 @@ enum DailyUXCreationContext {
         in snapshot: FeatureSnapshot
     ) -> FeatureSelection? {
         let providers = providers(for: project, in: snapshot)
-        return DailyUXModelOptions.validated(snapshot.settings.defaultSelection, in: providers)
-            ?? DailyUXModelOptions.validated(project?.defaultSelection, in: providers)
+        return DailyUXModelOptions.validated(project?.defaultSelection, in: providers)
             ?? DailyUXModelOptions.preferredSelection(in: providers)
     }
 
@@ -200,9 +179,9 @@ enum DailyUXCreationContext {
         for project: FeatureProject?,
         in snapshot: FeatureSnapshot
     ) -> FeatureEnvironmentPreferences {
-        let environmentID = project?.environmentID
-            ?? snapshot.environments.first(where: \.isActive)?.id
-        guard let environmentID else { return FeatureEnvironmentPreferences() }
+        guard let environmentID = project?.environmentID else {
+            return FeatureEnvironmentPreferences()
+        }
         return snapshot.preferencesByEnvironment?[environmentID]
             ?? FeatureEnvironmentPreferences()
     }
@@ -235,14 +214,20 @@ enum DailyUXProjectGrouping {
     static func groups(
         projects: [FeatureProject],
         mode: FeatureEnvironmentPreferences.ProjectGroupingMode = .repository,
-        overrides: [String: FeatureEnvironmentPreferences.ProjectGroupingMode] = [:]
+        overrides: [String: FeatureEnvironmentPreferences.ProjectGroupingMode] = [:],
+        preferencesByEnvironment: [String: FeatureEnvironmentPreferences] = [:]
     ) -> [DailyUXProjectGroup] {
         var projectsByLogicalKey: [String: [FeatureProject]] = [:]
         var memberIDsByLogicalKey: [String: Set<String>] = [:]
         for physicalProjects in Dictionary(grouping: projects, by: physicalKey).values {
             guard let winner = physicalWinner(physicalProjects) else { continue }
             let identitySource = identitySource(projects: physicalProjects, winner: winner)
-            let groupingMode = resolvedMode(winner, mode: mode, overrides: overrides)
+            let preferences = preferencesByEnvironment[winner.environmentID]
+            let groupingMode = resolvedMode(
+                winner,
+                mode: preferences?.projectGroupingMode ?? mode,
+                overrides: preferences?.projectGroupingOverrides ?? overrides
+            )
             let key = logicalKey(identitySource, mode: groupingMode)
             projectsByLogicalKey[key, default: []].append(winner)
             memberIDsByLogicalKey[key, default: []].formUnion(physicalProjects.map(\.id))
@@ -646,7 +631,14 @@ extension FeatureThread {
             return providerName
         }
         guard let providerID else { return nil }
-        return snapshot.providers.first(where: { $0.id == providerID })?.name ?? providerID
+        let projectEnvironmentID = snapshot.projects
+            .first(where: { $0.id == projectID })?
+            .environmentID
+        let resolvedEnvironmentID = environmentID ?? projectEnvironmentID
+        let providers = resolvedEnvironmentID.flatMap {
+            snapshot.providersByEnvironment?[$0]
+        } ?? []
+        return providers.first(where: { $0.id == providerID })?.name ?? providerID
     }
 
     var needsAttention: Bool {

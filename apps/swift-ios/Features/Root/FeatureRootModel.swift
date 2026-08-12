@@ -116,59 +116,6 @@ public final class FeatureRootModel {
         }
     }
 
-    @discardableResult
-    public func activateEnvironment(_ id: String) async -> Bool {
-        isPerformingAction = true
-        defer { isPerformingAction = false }
-        let previousActiveID = snapshot.environments.first(where: \.isActive)?.id
-        var installedActivationSnapshot = false
-        do {
-            try await client.activateEnvironment(id: id)
-            let next = try await client.initialSnapshot()
-            installActivationSnapshot(next, previousActiveID: previousActiveID)
-            installedActivationSnapshot = true
-            guard Self.isUsableActivation(next, targetID: id) else {
-                throw FeatureConnectionUnavailableError()
-            }
-            return true
-        } catch {
-            // Activation can persist the new selection before its first refresh
-            // fails. Reconcile once so UI routing never keeps the previous
-            // environment while the client already targets the new one.
-            if !installedActivationSnapshot,
-               let recovered = try? await client.initialSnapshot() {
-                installActivationSnapshot(recovered, previousActiveID: previousActiveID)
-                if Self.isUsableActivation(recovered, targetID: id) {
-                    errorMessage = nil
-                    return true
-                }
-            }
-            if !Self.isBenignCancellation(error) {
-                errorMessage = error.localizedDescription
-            }
-            return false
-        }
-    }
-
-    private func installActivationSnapshot(
-        _ next: FeatureSnapshot,
-        previousActiveID: String?
-    ) {
-        let nextActiveID = next.environments.first(where: \.isActive)?.id
-        if nextActiveID != previousActiveID {
-            clearDetails()
-        }
-        install(next)
-    }
-
-    private static func isUsableActivation(
-        _ next: FeatureSnapshot,
-        targetID: String
-    ) -> Bool {
-        next.connection.state != .disconnected
-            && next.environments.contains { $0.id == targetID && $0.isActive }
-    }
-
     public func removeEnvironment(_ id: String) async {
         await stopOutboxDrain()
         await perform {
@@ -184,6 +131,18 @@ public final class FeatureRootModel {
             clearDetails()
         }
         scheduleOutboxDrain()
+    }
+
+    @discardableResult
+    public func setEnvironmentEnabled(_ id: String, enabled: Bool) async -> Bool {
+        await stopOutboxDrain()
+        let succeeded = await perform {
+            try await client.setEnvironmentEnabled(id: id, enabled: enabled)
+            install(try await client.initialSnapshot())
+            if !enabled { clearDetails() }
+        }
+        scheduleOutboxDrain()
+        return succeeded
     }
 
     public func disconnect() async {
@@ -659,14 +618,10 @@ public final class FeatureRootModel {
     }
 
     private var currentEnvironmentIdentity: String {
-        let active = snapshot.environments.first(where: \.isActive)
-        return [
-            active?.id,
-            active?.endpoint,
-            snapshot.connection.endpoint,
-        ]
-        .compactMap { $0 }
-        .joined(separator: "|")
+        snapshot.environments
+            .sorted { $0.id < $1.id }
+            .map { "\($0.id)|\($0.endpoint)|\($0.isEnabled)" }
+            .joined(separator: ";")
     }
 
     private func apply(_ event: FeatureEvent) {
@@ -999,7 +954,7 @@ public final class FeatureRootModel {
 
     private func provider(id: String?, environmentID: String) -> FeatureProvider? {
         guard let id else { return nil }
-        let providers = snapshot.providersByEnvironment?[environmentID] ?? snapshot.providers
+        let providers = snapshot.providersByEnvironment?[environmentID] ?? []
         return providers.first { $0.id == id }
     }
 
@@ -1324,8 +1279,7 @@ public final class FeatureRootModel {
         guard let environment = snapshot.environments.first(where: { $0.id == environmentID }) else {
             return false
         }
-        return environment.connectionState == .connected
-            || (environment.isActive && snapshot.connection.state == .connected)
+        return environment.isEnabled && environment.connectionState == .connected
     }
 
     static func shouldQueue(
@@ -1339,8 +1293,8 @@ public final class FeatureRootModel {
             return true
         }
         if let environment = snapshot.environments.first(where: { $0.id == environmentID }) {
-            let disconnected = environment.connectionState != .connected
-                && !(environment.isActive && snapshot.connection.state == .connected)
+            let disconnected = !environment.isEnabled
+                || environment.connectionState != .connected
             if disconnected { return true }
         }
         let message = error.localizedDescription.lowercased()

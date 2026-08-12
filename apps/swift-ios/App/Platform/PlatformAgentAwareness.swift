@@ -159,7 +159,7 @@ enum PlatformAgentAwarenessProjection {
         environmentID: String,
         snapshot: FeatureSnapshot
     ) -> String {
-        let providers = snapshot.providersByEnvironment?[environmentID] ?? snapshot.providers
+        let providers = snapshot.providersByEnvironment?[environmentID] ?? []
         let provider = thread.providerID.flatMap { providerID in
             providers.first { $0.id == providerID }
         }

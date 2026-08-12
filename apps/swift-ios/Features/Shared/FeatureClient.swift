@@ -11,7 +11,7 @@ public protocol FeatureClient: AnyObject {
     func events() -> AsyncStream<FeatureEvent>
 
     func pair(endpoint: String, token: String?) async throws
-    func activateEnvironment(id: String) async throws
+    func setEnvironmentEnabled(id: String, enabled: Bool) async throws
     func removeEnvironment(id: String) async throws
     func disconnect() async
 
@@ -152,7 +152,7 @@ public extension FeatureClient {
         AsyncStream { continuation in continuation.finish() }
     }
 
-    func activateEnvironment(id: String) async throws {}
+    func setEnvironmentEnabled(id: String, enabled: Bool) async throws {}
     func removeEnvironment(id: String) async throws {}
     func disconnect() async {}
     func addProject(path: String) async throws {}

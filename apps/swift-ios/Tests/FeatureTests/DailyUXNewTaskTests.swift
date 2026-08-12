@@ -200,7 +200,7 @@ struct DailyUXNewTaskTests {
 
         #expect(
             DailyUXCreationContext.projects(in: snapshot).map(\.id)
-                == ["active-project", "passive-project"]
+                == ["active-project", "passive-project", "offline-project"]
         )
         let passiveProviders = DailyUXCreationContext.providers(
             for: passiveProject,
@@ -447,7 +447,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func appDefaultWinsAndExplicitModelCarriesAcrossCompatibleProjects() throws {
+    func projectDefaultWinsAndExplicitModelCarriesAcrossCompatibleProjects() throws {
         let appDefault = FeatureSelection(providerID: "codex", modelID: "gpt-5.6-sol")
         let explicit = FeatureSelection(providerID: "codex", modelID: "gpt-5.6-luna")
         let project = FeatureProject(
@@ -470,10 +470,26 @@ struct DailyUXNewTaskTests {
                     ]
                 ),
             ],
+            providersByEnvironment: [
+                "studio": [
+                    .init(
+                        id: "codex",
+                        name: "Codex",
+                        models: [
+                            .init(id: "gpt-5.6-luna", name: "Luna"),
+                            .init(id: "gpt-5.6-terra", name: "Terra"),
+                            .init(id: "gpt-5.6-sol", name: "Sol"),
+                        ]
+                    ),
+                ],
+            ],
             settings: .init(defaultSelection: appDefault)
         )
 
-        #expect(DailyUXCreationContext.initialSelection(for: project, in: snapshot) == appDefault)
+        #expect(
+            DailyUXCreationContext.initialSelection(for: project, in: snapshot)
+                == FeatureSelection(providerID: "codex", modelID: "gpt-5.6-terra")
+        )
         #expect(
             DailyUXCreationContext.selection(
                 carrying: explicit,

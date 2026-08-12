@@ -27,10 +27,19 @@ public struct FeatureConnection: Sendable, Equatable, Codable {
 }
 
 public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, Codable {
+    public enum Source: String, Sendable, Equatable, Hashable, Codable {
+        case direct
+        case t3Connect
+    }
+
     public let id: String
     public var name: String
     public var endpoint: String
+    /// Internal stream-leader compatibility. Product routing must use the
+    /// project or thread environment instead.
     public var isActive: Bool
+    public var isEnabled: Bool
+    public var source: Source
     /// Reachability from the latest aggregate refresh. `nil` means the client
     /// has not probed this saved environment yet.
     public var connectionState: FeatureConnection.State?
@@ -41,6 +50,8 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         name: String,
         endpoint: String,
         isActive: Bool = false,
+        isEnabled: Bool = true,
+        source: Source = .direct,
         connectionState: FeatureConnection.State? = nil,
         connectionDetail: String? = nil
     ) {
@@ -48,8 +59,36 @@ public struct FeatureEnvironment: Identifiable, Sendable, Equatable, Hashable, C
         self.name = name
         self.endpoint = endpoint
         self.isActive = isActive
+        self.isEnabled = isEnabled
+        self.source = source
         self.connectionState = connectionState
         self.connectionDetail = connectionDetail
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case endpoint
+        case isActive
+        case isEnabled
+        case source
+        case connectionState
+        case connectionDetail
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        endpoint = try container.decode(String.self, forKey: .endpoint)
+        isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .direct
+        connectionState = try container.decodeIfPresent(
+            FeatureConnection.State.self,
+            forKey: .connectionState
+        )
+        connectionDetail = try container.decodeIfPresent(String.self, forKey: .connectionDetail)
     }
 }
 
@@ -886,8 +925,8 @@ public struct FeatureSnapshot: Sendable, Equatable, Codable {
     public var projects: [FeatureProject]
     public var threads: [FeatureThread]
     public var providers: [FeatureProvider]
-    /// Provider catalogues are environment-scoped. `providers` remains the
-    /// active environment's catalogue for source-compatible consumers.
+    /// Provider catalogues are environment-scoped. `providers` remains only
+    /// for decoding older cached snapshots and must not drive product choices.
     public var providersByEnvironment: [String: [FeatureProvider]]?
     /// Server-authoritative new-thread defaults keyed by saved environment.
     public var preferencesByEnvironment: [String: FeatureEnvironmentPreferences]?

@@ -126,7 +126,7 @@ struct PlatformDeepLinkTests {
     }
 
     @Test
-    func resolverScopesDuplicateWireIDsAndPrefersActiveEnvironment() throws {
+    func resolverRequiresEnvironmentForDuplicateWireIDs() throws {
         let active = FeatureEnvironment(
             id: "active",
             name: "Active",
@@ -177,7 +177,7 @@ struct PlatformDeepLinkTests {
                 in: snapshot,
                 environmentID: nil,
                 id: "shared-thread"
-            )?.id == activeThread.id
+            ) == nil
         )
         #expect(
             PlatformRouteResolver.thread(

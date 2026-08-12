@@ -48,6 +48,7 @@ public struct Environment: Codable, Identifiable, Equatable, Sendable {
     public var webSocketBaseURL: URL
     public var kind: EnvironmentKind
     public var descriptor: EnvironmentDescriptor?
+    public var isEnabled: Bool
 
     public init(
         id: String,
@@ -55,7 +56,8 @@ public struct Environment: Codable, Identifiable, Equatable, Sendable {
         httpBaseURL: URL,
         webSocketBaseURL: URL,
         kind: EnvironmentKind = .bearer,
-        descriptor: EnvironmentDescriptor? = nil
+        descriptor: EnvironmentDescriptor? = nil,
+        isEnabled: Bool = true
     ) {
         self.id = id
         self.label = label
@@ -63,6 +65,28 @@ public struct Environment: Codable, Identifiable, Equatable, Sendable {
         self.webSocketBaseURL = webSocketBaseURL
         self.kind = kind
         self.descriptor = descriptor
+        self.isEnabled = isEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case httpBaseURL
+        case webSocketBaseURL
+        case kind
+        case descriptor
+        case isEnabled
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        httpBaseURL = try container.decode(URL.self, forKey: .httpBaseURL)
+        webSocketBaseURL = try container.decode(URL.self, forKey: .webSocketBaseURL)
+        kind = try container.decodeIfPresent(EnvironmentKind.self, forKey: .kind) ?? .bearer
+        descriptor = try container.decodeIfPresent(EnvironmentDescriptor.self, forKey: .descriptor)
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
     }
 }
 

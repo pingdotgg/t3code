@@ -213,162 +213,39 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func failedActivationDoesNotReuseThePriorConnectedSnapshot() async {
+    func togglingConnectionRefreshesItsIndependentEnabledState() async {
         let client = FeatureClientStub()
         client.snapshot = FeatureSnapshot(
-            connection: .init(
-                state: .connected,
-                environmentName: "Old studio",
-                endpoint: "https://old.example"
-            ),
             environments: [
                 .init(
-                    id: "old",
-                    name: "Old studio",
-                    endpoint: "https://old.example",
-                    isActive: true,
-                    connectionState: .connected
-                ),
-                .init(
-                    id: "target",
-                    name: "Target studio",
-                    endpoint: "https://target.example",
-                    connectionState: .disconnected
-                ),
-            ]
-        )
-        client.activateEnvironmentError = FeatureCapabilityUnavailable("Activation")
-        client.threadDetail = FeatureThreadDetail(
-            thread: FeatureThread(id: "old-thread", projectID: "old-project", title: "Old"),
-            messages: [FeatureMessage(id: "message", role: .assistant, text: "Keep me")]
-        )
-        let model = testRootModel(client: client)
-        await model.reload()
-        _ = await model.detail(for: "old-thread")
-
-        let activated = await model.activateEnvironment("target")
-
-        #expect(!activated)
-        #expect(client.activatedEnvironmentID == "target")
-        #expect(model.snapshot.connection.state == .connected)
-        #expect(model.snapshot.environments.first(where: { $0.id == "old" })?.isActive == true)
-        #expect(model.snapshot.environments.first(where: { $0.id == "target" })?.isActive == false)
-        #expect(model.details["old-thread"] != nil)
-    }
-
-    @Test
-    func partialActivationFailureReconcilesTheRuntimeSelection() async {
-        let client = FeatureClientStub()
-        client.snapshot = FeatureSnapshot(
-            connection: .init(state: .connected),
-            environments: [
-                .init(
-                    id: "old",
-                    name: "Old studio",
-                    endpoint: "https://old.example",
-                    isActive: true,
+                    id: "studio",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isEnabled: true,
                     connectionState: .connected
                 ),
             ]
         )
-        client.snapshotAfterActivation = FeatureSnapshot(
-            connection: .init(
-                state: .disconnected,
-                environmentName: "Target studio",
-                endpoint: "https://target.example"
-            ),
+        client.snapshotAfterEnvironmentToggle = FeatureSnapshot(
             environments: [
                 .init(
-                    id: "target",
-                    name: "Target studio",
-                    endpoint: "https://target.example",
-                    isActive: true,
-                    connectionState: .disconnected
-                ),
-            ]
-        )
-        client.activateEnvironmentError = FeatureCapabilityUnavailable("Activation refresh")
-        let model = testRootModel(client: client)
-        await model.reload()
-
-        let activated = await model.activateEnvironment("target")
-
-        #expect(!activated)
-        #expect(model.snapshot.connection.state == .disconnected)
-        #expect(model.snapshot.environments.first?.id == "target")
-        #expect(model.snapshot.environments.first?.isActive == true)
-    }
-
-    @Test
-    func connectedRecoveryCompletesPartialActivation() async {
-        let client = FeatureClientStub()
-        client.snapshot = FeatureSnapshot(
-            connection: .init(state: .connected),
-            environments: [
-                .init(
-                    id: "old",
-                    name: "Old studio",
-                    endpoint: "https://old.example",
-                    isActive: true,
-                    connectionState: .connected
-                ),
-            ]
-        )
-        client.snapshotAfterActivation = FeatureSnapshot(
-            connection: .init(
-                state: .connected,
-                environmentName: "Target studio",
-                endpoint: "https://target.example"
-            ),
-            environments: [
-                .init(
-                    id: "target",
-                    name: "Target studio",
-                    endpoint: "https://target.example",
-                    isActive: true,
-                    connectionState: .connected
-                ),
-            ]
-        )
-        client.activateEnvironmentError = FeatureCapabilityUnavailable("Activation refresh")
-        let model = testRootModel(client: client)
-        await model.reload()
-
-        let activated = await model.activateEnvironment("target")
-
-        #expect(activated)
-        #expect(model.errorMessage == nil)
-        #expect(model.snapshot.connection.state == .connected)
-        #expect(model.snapshot.environments.first?.id == "target")
-    }
-
-    @Test
-    func disconnectedActivationDoesNotReportConnectionSuccess() async {
-        let client = FeatureClientStub()
-        client.snapshot = FeatureSnapshot(
-            connection: .init(
-                state: .disconnected,
-                environmentName: "Target studio",
-                endpoint: "https://target.example"
-            ),
-            environments: [
-                .init(
-                    id: "target",
-                    name: "Target studio",
-                    endpoint: "https://target.example",
-                    isActive: true,
+                    id: "studio",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isEnabled: false,
                     connectionState: .disconnected
                 ),
             ]
         )
         let model = testRootModel(client: client)
+        await model.reload()
 
-        let activated = await model.activateEnvironment("target")
+        let toggled = await model.setEnvironmentEnabled("studio", enabled: false)
 
-        #expect(!activated)
-        #expect(client.activatedEnvironmentID == "target")
-        #expect(model.snapshot.connection.state == .disconnected)
-        #expect(model.errorMessage?.contains("Could not connect") == true)
+        #expect(toggled)
+        #expect(client.enabledEnvironmentID == "studio")
+        #expect(client.environmentEnabledValue == false)
+        #expect(model.snapshot.environments.first?.isEnabled == false)
     }
 
     @Test
@@ -1328,7 +1205,7 @@ private final class FeatureClientStub: FeatureClient {
     private let eventContinuation: AsyncStream<FeatureEvent>.Continuation
     var snapshot = FeatureSnapshot()
     var backgroundSnapshotValue: FeatureSnapshot?
-    var snapshotAfterActivation: FeatureSnapshot?
+    var snapshotAfterEnvironmentToggle: FeatureSnapshot?
     var initialSnapshotCallCount = 0
     var backgroundSnapshotCallCount = 0
     var snapshotAfterPair: FeatureSnapshot?
@@ -1349,8 +1226,8 @@ private final class FeatureClientStub: FeatureClient {
     var sendMessageCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
-    var activateEnvironmentError: (any Error)?
-    var activatedEnvironmentID: String?
+    var enabledEnvironmentID: String?
+    var environmentEnabledValue: Bool?
     var removedEnvironmentID: String?
     var beforeSendMessage: (() throws -> Void)?
     var loadThreadError: (any Error)?
@@ -1385,8 +1262,8 @@ private final class FeatureClientStub: FeatureClient {
         if pairEndpoint != nil, let snapshotAfterPair {
             return snapshotAfterPair
         }
-        if activatedEnvironmentID != nil, let snapshotAfterActivation {
-            return snapshotAfterActivation
+        if enabledEnvironmentID != nil, let snapshotAfterEnvironmentToggle {
+            return snapshotAfterEnvironmentToggle
         }
         return snapshot
     }
@@ -1401,9 +1278,9 @@ private final class FeatureClientStub: FeatureClient {
         pairToken = token
     }
 
-    func activateEnvironment(id: String) async throws {
-        activatedEnvironmentID = id
-        if let activateEnvironmentError { throw activateEnvironmentError }
+    func setEnvironmentEnabled(id: String, enabled: Bool) async throws {
+        enabledEnvironmentID = id
+        environmentEnabledValue = enabled
     }
 
     func removeEnvironment(id: String) async throws {

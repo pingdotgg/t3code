@@ -1006,9 +1006,10 @@ public actor EnvironmentRuntime {
 
     public func activeEnvironment() async throws -> Environment? {
         let environments = try await environmentStore.load()
-        guard !environments.isEmpty else { return nil }
+        let enabled = environments.filter(\.isEnabled)
+        guard !enabled.isEmpty else { return nil }
         let activeID = try await environmentStore.activeEnvironmentID()
-        return environments.first(where: { $0.id == activeID }) ?? environments[0]
+        return enabled.first(where: { $0.id == activeID }) ?? enabled[0]
     }
 
     @discardableResult
@@ -1017,8 +1018,21 @@ public actor EnvironmentRuntime {
         guard let environment = environments.first(where: { $0.id == id }) else {
             throw RPCError.remote("Environment \(id) is not saved.")
         }
+        guard environment.isEnabled else {
+            throw RPCError.remote("Environment \(id) is disabled.")
+        }
         try await environmentStore.setActiveEnvironment(id: id)
         return await client(for: environment)
+    }
+
+    public func setEnabled(id: String, enabled: Bool) async throws {
+        let environments = try await environmentStore.setEnabled(id: id, enabled: enabled)
+        guard environments.contains(where: { $0.id == id }) else {
+            throw RPCError.remote("Environment \(id) is not saved.")
+        }
+        if !enabled, let client = clients[id] {
+            await client.disconnect()
+        }
     }
 
     public func activeClient() async throws -> T3Client? {
