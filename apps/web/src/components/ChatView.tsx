@@ -5254,7 +5254,18 @@ function ChatViewContent(props: ChatViewProps) {
         },
       });
       if (startResult._tag === "Failure") {
-        failure = startResult;
+        const interruptedDraftStarted =
+          isLocalDraftThread &&
+          isAtomCommandInterrupted(startResult) &&
+          (await waitForStartedServerThread(
+            scopeThreadRef(activeThread.environmentId, threadIdForSend),
+          ));
+        if (interruptedDraftStarted) {
+          turnStartSucceeded = true;
+          acknowledgeActiveThreadWoke();
+        } else {
+          failure = startResult;
+        }
       } else {
         turnStartSucceeded = true;
         acknowledgeActiveThreadWoke();

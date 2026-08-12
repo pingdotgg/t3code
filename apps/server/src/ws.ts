@@ -763,6 +763,25 @@ const makeWsRpcLayer = (
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
           let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
 
+          const existingThread = bootstrap?.createThread
+            ? yield* projectionSnapshotQuery.getThreadShellById(command.threadId).pipe(
+                Effect.map(Option.getOrNull),
+                Effect.mapError((cause) =>
+                  toDispatchCommandError(cause, "Failed to inspect bootstrap thread state."),
+                ),
+              )
+            : null;
+          const canResumeInterruptedBootstrap =
+            existingThread !== null &&
+            existingThread.projectId === bootstrap?.createThread?.projectId &&
+            existingThread.latestTurn === null &&
+            existingThread.session === null;
+
+          if (canResumeInterruptedBootstrap) {
+            targetProjectId = existingThread.projectId;
+            targetWorktreePath = existingThread.worktreePath;
+          }
+
           const cleanupCreatedThread = () =>
             createdThread
               ? serverCommandId("bootstrap-thread-delete").pipe(
@@ -893,7 +912,7 @@ const makeWsRpcLayer = (
             });
 
           const bootstrapProgram = Effect.gen(function* () {
-            if (bootstrap?.createThread) {
+            if (bootstrap?.createThread && !canResumeInterruptedBootstrap) {
               yield* orchestrationEngine.dispatch({
                 type: "thread.create",
                 commandId: yield* serverCommandId("bootstrap-thread-create"),
@@ -910,7 +929,7 @@ const makeWsRpcLayer = (
               createdThread = true;
             }
 
-            if (bootstrap?.prepareWorktree) {
+            if (bootstrap?.prepareWorktree && !targetWorktreePath) {
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
               // "Start from origin" is a stored default; repos without an
               // origin remote fall back to the local base branch instead of
