@@ -35,6 +35,11 @@ describe("serializeComposerFileLink", () => {
     );
   });
 
+  it("preserves a POSIX filename that contains a backslash", () => {
+    expect(serializeComposerFileLink("a\\b.txt")).toBe("[a\\\\b.txt](a%5Cb.txt)");
+    expect(serializeComposerFileLink("/tmp/a\\b.txt")).toBe("[a\\\\b.txt](/tmp/a%5Cb.txt)");
+  });
+
   it("preserves paths that legitimately start with an at sign", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",

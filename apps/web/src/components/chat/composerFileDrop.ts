@@ -138,6 +138,25 @@ export function partitionDroppedComposerFiles<T extends DroppedFileLike>(
   };
 }
 
+export function composerUnresolvedHostFileMessage(fileName: string): string {
+  return `'${fileName}' can't be mentioned in this environment. Only image files can be attached.`;
+}
+
+/**
+ * Mixed drops validate images first (which may clear the thread error), then
+ * mention availability. Keep both messages when both fail so an attachment
+ * limit is not hidden behind an unresolved-file error.
+ */
+export function composeComposerFileDropThreadError(
+  imageError: string | null,
+  mentionError: string | null,
+): string | null {
+  if (imageError !== null && mentionError !== null) {
+    return `${imageError} ${mentionError}`;
+  }
+  return imageError ?? mentionError;
+}
+
 /**
  * Resolve the on-disk path of an OS-dropped File via the desktop bridge.
  * Returns null outside the desktop shell (browsers expose no OS path) and on

@@ -146,6 +146,30 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
   });
 
+  it("collects a POSIX file link whose name contains a backslash", () => {
+    expect(collectComposerInlineTokens("[a\\\\b.txt](a%5Cb.txt) next")).toEqual([
+      {
+        type: "mention",
+        value: "a\\b.txt",
+        source: "[a\\\\b.txt](a%5Cb.txt)",
+        start: 0,
+        end: 21,
+      },
+    ]);
+  });
+
+  it("still collects older Windows mentions that used a backslash separator", () => {
+    expect(collectComposerInlineTokens("[file.ts](src%5Cfile.ts) next")).toEqual([
+      {
+        type: "mention",
+        value: "src\\file.ts",
+        source: "[file.ts](src%5Cfile.ts)",
+        start: 0,
+        end: 24,
+      },
+    ]);
+  });
+
   it("stays fast on unterminated bracket runs", () => {
     // Unbounded, the label body rescanned the rest of the text from every
     // whitespace: this input took seconds.
@@ -190,6 +214,12 @@ describe("replaceComposerFileLinksWithBasenames", () => {
   it("handles Windows separators in link destinations", () => {
     expect(replaceComposerFileLinksWithBasenames("[app.log](C:%5Crepo%5Capp.log) tail")).toBe(
       "app.log tail",
+    );
+  });
+
+  it("keeps a POSIX filename that contains a backslash", () => {
+    expect(replaceComposerFileLinksWithBasenames("[a\\\\b.txt](a%5Cb.txt) notes")).toBe(
+      "a\\b.txt notes",
     );
   });
 });

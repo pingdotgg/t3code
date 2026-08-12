@@ -2,7 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   canResolveComposerHostFilePaths,
+  composeComposerFileDropThreadError,
   composerMentionPathFromAbsolute,
+  composerUnresolvedHostFileMessage,
   hostPathUsableOnPlatform,
   partitionDroppedComposerFiles,
   workspaceRelativeDropPath,
@@ -195,5 +197,33 @@ describe("partitionDroppedComposerFiles", () => {
       "/Users/me/repo",
     );
     expect(result.mentionText).toBe("[my notes.txt](docs/my%20notes.txt) ");
+  });
+
+  it("keeps a POSIX backslash in the mention label", () => {
+    const result = partitionDroppedComposerFiles(
+      [file("a\\b.txt", "text/plain")],
+      () => "/Users/me/repo/a\\b.txt",
+      "/Users/me/repo",
+    );
+    expect(result.mentionText).toBe("[a\\\\b.txt](a%5Cb.txt) ");
+  });
+});
+
+describe("composeComposerFileDropThreadError", () => {
+  it("keeps both the image limit and the unresolved mention when both fail", () => {
+    expect(
+      composeComposerFileDropThreadError(
+        "You can attach up to 8 images per message.",
+        composerUnresolvedHostFileMessage("notes.txt"),
+      ),
+    ).toBe(
+      "You can attach up to 8 images per message. 'notes.txt' can't be mentioned in this environment. Only image files can be attached.",
+    );
+  });
+
+  it("returns whichever single error is present", () => {
+    expect(composeComposerFileDropThreadError("images only", null)).toBe("images only");
+    expect(composeComposerFileDropThreadError(null, "mention only")).toBe("mention only");
+    expect(composeComposerFileDropThreadError(null, null)).toBeNull();
   });
 });
