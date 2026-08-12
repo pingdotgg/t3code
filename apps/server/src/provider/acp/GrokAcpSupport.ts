@@ -201,6 +201,7 @@ export function parseGrokAcpModelMeta(meta: unknown): GrokAcpModelMeta {
   }
   const choices = [...unique.values()];
   const current = trimmedString(meta.reasoningEffort);
+  const defaultId = current ?? choices.find((choice) => choice.isDefault)?.id;
   const supportsReasoningEffort = meta.supportsReasoningEffort === true || choices.length > 0;
   const totalContextTokens =
     typeof meta.totalContextTokens === "number" &&
@@ -212,11 +213,12 @@ export function parseGrokAcpModelMeta(meta: unknown): GrokAcpModelMeta {
   return {
     supportsReasoningEffort,
     ...(current ? { reasoningEffort: current } : {}),
-    reasoningEfforts: choices.map((choice) =>
-      current && choice.id === current && choice.isDefault !== true
-        ? { ...choice, isDefault: true }
-        : choice,
-    ),
+    reasoningEfforts: choices.map((choice) => ({
+      id: choice.id,
+      label: choice.label,
+      ...(choice.description ? { description: choice.description } : {}),
+      ...(choice.id === defaultId ? { isDefault: true } : {}),
+    })),
     ...(totalContextTokens !== undefined ? { totalContextTokens } : {}),
   };
 }
@@ -261,10 +263,29 @@ export function requestedGrokReasoningEffort(
   if (!requested) {
     return undefined;
   }
-  if (advertised.length === 0 || advertised.includes(requested)) {
+  if (advertised.includes(requested)) {
     return requested;
   }
   return undefined;
+}
+
+export function grokMaxTokensByModelFromSessionSetup(
+  sessionSetupResult:
+    | EffectAcpSchema.LoadSessionResponse
+    | EffectAcpSchema.NewSessionResponse
+    | EffectAcpSchema.ResumeSessionResponse,
+): Map<string, number> {
+  const maxTokens = new Map<string, number>();
+  for (const model of sessionSetupResult.models?.availableModels ?? []) {
+    const tokens = parseGrokAcpModelMeta(model._meta).totalContextTokens;
+    if (tokens === undefined) {
+      continue;
+    }
+    const slug = resolveGrokAcpBaseModelId(model.modelId);
+    maxTokens.set(slug, tokens);
+    maxTokens.set(model.modelId, tokens);
+  }
+  return maxTokens;
 }
 
 export function grokReasoningEffortMenusFromSessionSetup(
@@ -346,9 +367,11 @@ export function applyGrokAcpModelSelection<E>(input: {
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<GrokAcpSelection, E> {
   const nextModelId = input.requestedModelId ?? input.currentModelId;
-  const nextEffort = input.requestedReasoningEffort ?? input.currentReasoningEffort;
   const shouldSwitchModel =
     input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
+  const nextEffort = shouldSwitchModel
+    ? input.requestedReasoningEffort
+    : (input.requestedReasoningEffort ?? input.currentReasoningEffort);
   const shouldSwitchEffort =
     input.requestedReasoningEffort !== undefined &&
     input.requestedReasoningEffort !== input.currentReasoningEffort;

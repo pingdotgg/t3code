@@ -59,6 +59,7 @@ import {
   currentGrokMaxTokensFromSessionSetup,
   currentGrokModelIdFromSessionSetup,
   currentGrokReasoningEffortFromSessionSetup,
+  grokMaxTokensByModelFromSessionSetup,
   grokReasoningEffortMenusFromSessionSetup,
   makeGrokAcpRuntime,
   requestedGrokReasoningEffort,
@@ -67,6 +68,7 @@ import {
 import {
   extractGrokTokenUsage,
   extractXAiAskUserQuestions,
+  grokPromptCountForTurns,
   grokRewindTargetForTurnCount,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
@@ -128,6 +130,7 @@ interface GrokSessionContext {
   currentModelId: string | undefined;
   currentReasoningEffort: string | undefined;
   reasoningEffortMenus: Map<string, ReadonlyArray<string>>;
+  maxTokensByModel: Map<string, number>;
   maxTokens: number | undefined;
   stopped: boolean;
 }
@@ -772,6 +775,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
           const boundModelId = boundSelection.modelId;
+          const maxTokensByModel = grokMaxTokensByModelFromSessionSetup(started.sessionSetupResult);
 
           const now = yield* nowIso;
           const session: ProviderSession = {
@@ -809,7 +813,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             reasoningEffortMenus: grokReasoningEffortMenusFromSessionSetup(
               started.sessionSetupResult,
             ),
-            maxTokens: currentGrokMaxTokensFromSessionSetup(started.sessionSetupResult),
+            maxTokensByModel,
+            maxTokens:
+              (boundModelId ? maxTokensByModel.get(boundModelId) : undefined) ??
+              currentGrokMaxTokensFromSessionSetup(started.sessionSetupResult),
             stopped: false,
           };
 
@@ -980,14 +987,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               const requestedTurnModelId = turnModelSelection?.model
                 ? resolveGrokAcpBaseModelId(turnModelSelection.model)
                 : undefined;
-              const advertisedTurnEfforts =
-                (requestedTurnModelId
-                  ? ctx.reasoningEffortMenus.get(requestedTurnModelId)
-                  : undefined) ??
-                (ctx.currentModelId
-                  ? ctx.reasoningEffortMenus.get(ctx.currentModelId)
-                  : undefined) ??
-                [];
+              const advertisedTurnEfforts = requestedTurnModelId
+                ? (ctx.reasoningEffortMenus.get(requestedTurnModelId) ?? [])
+                : ctx.currentModelId
+                  ? (ctx.reasoningEffortMenus.get(ctx.currentModelId) ?? [])
+                  : [];
               const turnSelection = yield* applyGrokAcpModelSelection({
                 runtime: ctx.acp,
                 currentModelId: ctx.currentModelId,
@@ -1001,7 +1005,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
               const currentModelId = turnSelection.modelId;
+              ctx.currentModelId = currentModelId;
               ctx.currentReasoningEffort = turnSelection.reasoningEffort;
+              if (currentModelId) {
+                ctx.maxTokens = ctx.maxTokensByModel.get(currentModelId) ?? ctx.maxTokens;
+              }
 
               const text = input.input?.trim();
               const imagePromptParts = yield* Effect.forEach(
@@ -1462,55 +1470,89 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       });
 
     const rollbackThread: GrokAdapterShape["rollbackThread"] = (threadId, numTurns) =>
-      Effect.gen(function* () {
-        const ctx = yield* requireSession(threadId);
-        if (!Number.isInteger(numTurns) || numTurns < 1) {
-          return yield* new ProviderAdapterValidationError({
-            provider: PROVIDER,
-            operation: "rollbackThread",
-            issue: "numTurns must be an integer >= 1.",
-          });
-        }
-        const pointsPayload = yield* ctx.acp
-          .request("_x.ai/rewind/points", {
-            sessionId: ctx.acpSessionId,
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, threadId, "_x.ai/rewind/points", error),
-            ),
+      withThreadLock(
+        threadId,
+        Effect.gen(function* () {
+          const ctx = yield* requireSession(threadId);
+          if (!Number.isInteger(numTurns) || numTurns < 1) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "rollbackThread",
+              issue: "numTurns must be an integer >= 1.",
+            });
+          }
+          const promptCount = grokPromptCountForTurns(ctx.turns, numTurns);
+          if (promptCount < 1) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "_x.ai/rewind/execute",
+              detail: "Grok has no rewind point for that many turns.",
+            });
+          }
+          const acpSessionId = ctx.acpSessionId;
+          const pointsPayload = yield* ctx.acp
+            .request("_x.ai/rewind/points", {
+              sessionId: acpSessionId,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                mapAcpToAdapterError(PROVIDER, threadId, "_x.ai/rewind/points", error),
+              ),
+            );
+          const liveCtx = yield* requireSession(threadId);
+          if (liveCtx.acpSessionId !== acpSessionId) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "_x.ai/rewind/execute",
+              detail: "Grok session changed before rewind completed.",
+            });
+          }
+          const target = grokRewindTargetForTurnCount(
+            parseGrokRewindPoints(pointsPayload),
+            promptCount,
           );
-        const target = grokRewindTargetForTurnCount(parseGrokRewindPoints(pointsPayload), numTurns);
-        if (!target) {
-          return yield* new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "_x.ai/rewind/execute",
-            detail: "Grok has no rewind point for that many turns.",
-          });
-        }
-        const executePayload = yield* ctx.acp
-          .request("_x.ai/rewind/execute", {
-            sessionId: ctx.acpSessionId,
-            targetPromptIndex: target.promptIndex,
-            mode: "conversation_only",
-            force: true,
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, threadId, "_x.ai/rewind/execute", error),
-            ),
+          if (!target) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "_x.ai/rewind/execute",
+              detail: "Grok has no rewind point for that many turns.",
+            });
+          }
+          const executePayload = yield* liveCtx.acp
+            .request("_x.ai/rewind/execute", {
+              sessionId: acpSessionId,
+              targetPromptIndex: target.promptIndex,
+              mode: "conversation_only",
+              force: true,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                mapAcpToAdapterError(PROVIDER, threadId, "_x.ai/rewind/execute", error),
+              ),
+            );
+          const committedCtx = yield* requireSession(threadId);
+          if (committedCtx.acpSessionId !== acpSessionId) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "_x.ai/rewind/execute",
+              detail: "Grok session changed before rewind completed.",
+            });
+          }
+          const executed = parseGrokRewindExecute(executePayload);
+          if (!executed?.success) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "_x.ai/rewind/execute",
+              detail: executed?.error ?? "Grok rewind did not succeed.",
+            });
+          }
+          committedCtx.turns = committedCtx.turns.slice(
+            0,
+            Math.max(0, committedCtx.turns.length - numTurns),
           );
-        const executed = parseGrokRewindExecute(executePayload);
-        if (!executed?.success) {
-          return yield* new ProviderAdapterRequestError({
-            provider: PROVIDER,
-            method: "_x.ai/rewind/execute",
-            detail: executed?.error ?? "Grok rewind did not succeed.",
-          });
-        }
-        ctx.turns = ctx.turns.slice(0, Math.max(0, ctx.turns.length - numTurns));
-        return { threadId, turns: ctx.turns };
-      });
+          return { threadId, turns: committedCtx.turns };
+        }),
+      );
 
     const stopSession: GrokAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(

@@ -506,8 +506,20 @@ export function grokRewindTargetForTurnCount(
     return undefined;
   }
   const ordered = [...points].sort((left, right) => left.promptIndex - right.promptIndex);
-  const target = ordered[Math.max(0, ordered.length - numTurns)];
-  return target;
+  if (numTurns > ordered.length) {
+    return undefined;
+  }
+  return ordered[ordered.length - numTurns];
+}
+
+export function grokPromptCountForTurns(
+  turns: ReadonlyArray<{ readonly items: ReadonlyArray<unknown> }>,
+  numTurns: number,
+): number {
+  if (!Number.isInteger(numTurns) || numTurns < 1) {
+    return 0;
+  }
+  return turns.slice(-numTurns).reduce((count, turn) => count + turn.items.length, 0);
 }
 
 export function parseGrokRewindExecute(payload: unknown): GrokRewindExecuteResult | undefined {

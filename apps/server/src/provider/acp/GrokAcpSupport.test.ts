@@ -58,7 +58,7 @@ describe("parseGrokAcpModelMeta", () => {
       reasoningEffort: "high",
       totalContextTokens: 500000,
       reasoningEfforts: [
-        { id: "xhigh", value: "xhigh", label: "Extra High Effort" },
+        { id: "xhigh", value: "xhigh", label: "Extra High Effort", default: true },
         { id: "high", value: "high", label: "High Effort", default: true },
         { id: "medium", value: "medium", label: "Medium Effort" },
       ],
@@ -67,6 +67,9 @@ describe("parseGrokAcpModelMeta", () => {
     expect(meta.reasoningEffort).toBe("high");
     expect(meta.totalContextTokens).toBe(500000);
     expect(meta.reasoningEfforts.map((choice) => choice.id)).toEqual(["xhigh", "high", "medium"]);
+    expect(
+      meta.reasoningEfforts.filter((choice) => choice.isDefault).map((choice) => choice.id),
+    ).toEqual(["high"]);
     expect(grokReasoningEffortCapabilities(meta.reasoningEfforts).optionDescriptors?.[0]?.id).toBe(
       GROK_REASONING_EFFORT_OPTION_ID,
     );
@@ -141,6 +144,21 @@ describe("applyGrokAcpModelSelection", () => {
       });
       expect(modelCalls).toEqual([]);
       expect(result).toEqual({ modelId: "grok-build", reasoningEffort: undefined });
+    }),
+  );
+
+  it.effect("does not carry the previous effort across a model switch", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        requestedModelId: "grok-4.5",
+        currentReasoningEffort: "xhigh",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([{ modelId: "grok-4.5" }]);
+      expect(result).toEqual({ modelId: "grok-4.5", reasoningEffort: undefined });
     }),
   );
 

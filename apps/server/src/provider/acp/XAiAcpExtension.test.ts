@@ -11,6 +11,7 @@ import { describe, expect } from "vite-plus/test";
 import {
   extractGrokTokenUsage,
   extractXAiAskUserQuestions,
+  grokPromptCountForTurns,
   grokRewindTargetForTurnCount,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
@@ -345,6 +346,8 @@ describe("Grok rewind and usage helpers", () => {
     });
     expect(grokRewindTargetForTurnCount(points, 1)?.promptIndex).toBe(2);
     expect(grokRewindTargetForTurnCount(points, 2)?.promptIndex).toBe(1);
+    expect(grokRewindTargetForTurnCount(points, 4)).toBeUndefined();
+    expect(grokPromptCountForTurns([{ items: [1] }, { items: [2, 3] }], 1)).toBe(2);
   });
 
   it("reads Grok token usage from prompt _meta", () => {
