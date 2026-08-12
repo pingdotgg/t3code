@@ -11,7 +11,7 @@ import {
   grokReasoningEffortConstraintsFromCapabilities,
   isValidGrokReasoningEffortToken,
   resolveGrokAcpBaseModelId,
-  resolveGrokReasoningEffortForSpawn,
+  resolveGrokReasoningEffortForSession,
   resolveGrokSpawnOptionValue,
 } from "./GrokAcpSupport.ts";
 
@@ -64,16 +64,9 @@ describe("buildGrokAcpSpawnInput", () => {
     });
   });
 
-  it("passes the reasoning effort as an agent spawn flag when selected", () => {
-    const spawn = buildGrokAcpSpawnInput(null, "/tmp/project", {}, "low");
-
+  it("uses the standard ACP agent command", () => {
+    const spawn = buildGrokAcpSpawnInput(null, "/tmp/project", {});
     expect(spawn.command).toBe("grok");
-    expect(spawn.args).toEqual(["agent", "--reasoning-effort", "low", "stdio"]);
-  });
-
-  it("omits the reasoning effort flag when no effort is selected", () => {
-    const spawn = buildGrokAcpSpawnInput(null, "/tmp/project", {}, undefined);
-
     expect(spawn.args).toEqual(["agent", "stdio"]);
   });
 });
@@ -92,13 +85,13 @@ describe("isValidGrokReasoningEffortToken", () => {
   });
 });
 
-describe("resolveGrokReasoningEffortForSpawn", () => {
+describe("resolveGrokReasoningEffortForSession", () => {
   const instanceId = ProviderInstanceId.make("grok");
 
   it("returns the selected effort for canonical levels", () => {
     for (const effort of ["low", "medium", "high"]) {
       expect(
-        resolveGrokReasoningEffortForSpawn({
+        resolveGrokReasoningEffortForSession({
           instanceId,
           model: "grok-4.5",
           options: [{ id: "reasoningEffort", value: effort }],
@@ -111,14 +104,14 @@ describe("resolveGrokReasoningEffortForSpawn", () => {
     // The agent clamps levels outside the model's menu to the model default
     // itself, and future menus may advertise new ids.
     expect(
-      resolveGrokReasoningEffortForSpawn({
+      resolveGrokReasoningEffortForSession({
         instanceId,
         model: "grok-4.5",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       }),
     ).toBe("xhigh");
     expect(
-      resolveGrokReasoningEffortForSpawn({
+      resolveGrokReasoningEffortForSession({
         instanceId,
         model: "grok-4.5",
         options: [{ id: "reasoningEffort", value: "turbo_v2" }],
@@ -143,7 +136,7 @@ describe("resolveGrokReasoningEffortForSpawn", () => {
     });
     expect(constraints).toEqual({ values: ["high", "turbo_v2"], defaultValue: "high" });
     expect(
-      resolveGrokReasoningEffortForSpawn(
+      resolveGrokReasoningEffortForSession(
         {
           instanceId,
           model: "grok-4.5",
@@ -153,7 +146,7 @@ describe("resolveGrokReasoningEffortForSpawn", () => {
       ),
     ).toBe("turbo_v2");
     expect(
-      resolveGrokReasoningEffortForSpawn(
+      resolveGrokReasoningEffortForSession(
         {
           instanceId,
           model: "grok-4.5",
@@ -166,7 +159,7 @@ describe("resolveGrokReasoningEffortForSpawn", () => {
 
   it("drops effort when the discovered model advertises no menu", () => {
     expect(
-      resolveGrokReasoningEffortForSpawn(
+      resolveGrokReasoningEffortForSession(
         {
           instanceId,
           model: "grok-4.5",
@@ -180,7 +173,7 @@ describe("resolveGrokReasoningEffortForSpawn", () => {
   it("drops malformed or non-string stored efforts", () => {
     for (const value of ["not a token", "-leading-dash", "x".repeat(33), "", "  "]) {
       expect(
-        resolveGrokReasoningEffortForSpawn({
+        resolveGrokReasoningEffortForSession({
           instanceId,
           model: "grok-4.5",
           options: [{ id: "reasoningEffort", value }],
@@ -188,7 +181,7 @@ describe("resolveGrokReasoningEffortForSpawn", () => {
       ).toBeUndefined();
     }
     expect(
-      resolveGrokReasoningEffortForSpawn({
+      resolveGrokReasoningEffortForSession({
         instanceId,
         model: "grok-4.5",
         options: [{ id: "reasoningEffort", value: true }],
@@ -197,10 +190,10 @@ describe("resolveGrokReasoningEffortForSpawn", () => {
   });
 
   it("returns undefined when the selection has no effort option", () => {
-    expect(resolveGrokReasoningEffortForSpawn(undefined)).toBeUndefined();
-    expect(resolveGrokReasoningEffortForSpawn({ instanceId, model: "grok-4.5" })).toBeUndefined();
+    expect(resolveGrokReasoningEffortForSession(undefined)).toBeUndefined();
+    expect(resolveGrokReasoningEffortForSession({ instanceId, model: "grok-4.5" })).toBeUndefined();
     expect(
-      resolveGrokReasoningEffortForSpawn({
+      resolveGrokReasoningEffortForSession({
         instanceId,
         model: "grok-4.5",
         options: [{ id: "serviceTier", value: "fast" }],
@@ -251,11 +244,14 @@ describe("resolveGrokSpawnOptionValue", () => {
 
 describe("applyGrokAcpModelSelection", () => {
   const makeRecordingRuntime = (failure?: EffectAcpErrors.AcpError) => {
-    const modelCalls: Array<string> = [];
+    const modelCalls: Array<{
+      readonly modelId: string;
+      readonly meta?: Readonly<Record<string, unknown>>;
+    }> = [];
     const runtime = {
-      setSessionModel: (modelId: string) =>
+      setSessionModel: (modelId: string, meta?: Readonly<Record<string, unknown>>) =>
         Effect.gen(function* () {
-          modelCalls.push(modelId);
+          modelCalls.push({ modelId, ...(meta === undefined ? {} : { meta }) });
           if (failure) return yield* failure;
           return {};
         }),
@@ -272,7 +268,7 @@ describe("applyGrokAcpModelSelection", () => {
         requestedModelId: "grok-mock-alt",
         mapError: (cause) => cause.message,
       });
-      expect(modelCalls).toEqual(["grok-mock-alt"]);
+      expect(modelCalls).toEqual([{ modelId: "grok-mock-alt" }]);
       expect(result).toBe("grok-mock-alt");
     }),
   );
@@ -287,6 +283,21 @@ describe("applyGrokAcpModelSelection", () => {
         mapError: (cause) => cause.message,
       });
       expect(modelCalls).toEqual([]);
+      expect(result).toBe("grok-build");
+    }),
+  );
+
+  it.effect("applies reasoning metadata when the requested model matches current", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-build",
+        requestedModelId: "grok-build",
+        reasoningEffort: "low",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([{ modelId: "grok-build", meta: { reasoningEffort: "low" } }]);
       expect(result).toBe("grok-build");
     }),
   );

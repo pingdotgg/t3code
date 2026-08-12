@@ -37,12 +37,11 @@ export function threadShellHasStarted(
 }
 
 /**
- * Providers that cannot change models mid-thread bind option values the same
- * way (Grok reasoning effort is applied as an agent spawn flag at session
- * start and a loaded session keeps its original value), so a started thread
- * cannot apply a new option selection on that provider instance. Mirrors the
- * web composer's `isStartedThreadOptionChangeBlocked`. Cross-provider handoff
- * drafts use a different instance id and stay editable.
+ * Providers that cannot change models mid-thread also bind option values to
+ * the active session, so a started thread cannot apply a new option selection
+ * on that provider instance. Mirrors the web composer's
+ * `isStartedThreadOptionChangeBlocked`. Cross-provider handoff drafts use a
+ * different instance id and stay editable.
  */
 export function startedThreadOptionChangeBlocked(input: {
   readonly config: T3ServerConfig | null | undefined;
@@ -165,7 +164,7 @@ export function resolveOutboxModelSelection(input: {
 
 /**
  * Delivery-time outbox selection: pick the queued message's environment from
- * the multi-environment config map, then pin stale same-instance spawn-bound
+ * the multi-environment config map, then pin stale same-instance locked
  * options to committed. Cross-provider handoff drafts remain intact. A missing
  * environment config defers only a conflicting same-instance selection; other
  * deliveries do not need provider lock metadata.

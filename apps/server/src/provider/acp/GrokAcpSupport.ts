@@ -48,10 +48,8 @@ export const GROK_FALLBACK_REASONING_EFFORTS_BY_MODEL: ReadonlyMap<
 /**
  * Effort levels are advertised per model via ACP `_meta`, so the token guard
  * is syntactic rather than a fixed catalog: a fixed set would silently drop a
- * future menu-advertised level. Shared by discovery parsing and spawn so a
- * menu entry cannot advertise a value the spawn later omits. The agent itself
- * clamps levels outside the model's menu to the model default (verified
- * against grok 0.2.117).
+ * future menu-advertised level. Shared by discovery parsing and session model
+ * metadata so a menu entry cannot advertise an unsafe protocol value.
  */
 const GROK_REASONING_EFFORT_TOKEN = /^[a-z0-9][a-z0-9._-]{0,31}$/i;
 
@@ -60,7 +58,7 @@ export interface GrokReasoningEffortConstraints {
   readonly values: ReadonlyArray<string>;
 }
 
-/** CLI-safe effort token for discovery menus and `--reasoning-effort` spawn. */
+/** Protocol-safe effort token for discovery menus and session model metadata. */
 export function isValidGrokReasoningEffortToken(value: string): boolean {
   return GROK_REASONING_EFFORT_TOKEN.test(value);
 }
@@ -94,11 +92,11 @@ export function grokReasoningEffortConstraintsFromCapabilities(
 
 /**
  * Grok ACP has no session/set_config_option (configOptions is null as of
- * 0.2.x), so reasoning effort can only be applied via the agent spawn flag.
+ * 1.0.0), so reasoning effort is applied through session/set_model metadata.
  * Malformed stored values are dropped. Well-formed stale values normalize to
  * the advertised model default when discovered constraints are available.
  */
-export function resolveGrokReasoningEffortForSpawn(
+export function resolveGrokReasoningEffortForSession(
   modelSelection: ModelSelection | null | undefined,
   constraints?: GrokReasoningEffortConstraints | null,
 ): string | undefined {
@@ -131,7 +129,7 @@ export function resolveGrokSpawnOptionValue(
     return undefined;
   }
   return (
-    resolveGrokReasoningEffortForSpawn(modelSelection, constraints) ??
+    resolveGrokReasoningEffortForSession(modelSelection, constraints) ??
     constraints?.defaultValue ??
     (constraints === undefined
       ? GROK_FALLBACK_REASONING_EFFORTS_BY_MODEL.get(
@@ -150,21 +148,16 @@ interface GrokAcpRuntimeInput extends Omit<
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly grokSettings: GrokAcpRuntimeGrokSettings | null | undefined;
   readonly environment?: NodeJS.ProcessEnv;
-  readonly reasoningEffort?: string | undefined;
 }
 
 export function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeGrokSettings | null | undefined,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
-  reasoningEffort?: string | undefined,
 ): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: grokSettings?.binaryPath || "grok",
-    args:
-      reasoningEffort === undefined
-        ? ["agent", "stdio"]
-        : ["agent", "--reasoning-effort", reasoningEffort, "stdio"],
+    args: ["agent", "stdio"],
     cwd,
     env: {
       ...environment,
@@ -208,12 +201,7 @@ export const makeGrokAcpRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...input,
-        spawn: buildGrokAcpSpawnInput(
-          input.grokSettings,
-          input.cwd,
-          input.environment,
-          input.reasoningEffort,
-        ),
+        spawn: buildGrokAcpSpawnInput(input.grokSettings, input.cwd, input.environment),
         authMethodId: resolveGrokAuthMethodId(input.environment),
         // Current Grok treats Ctrl+C cancellation as a barrier against stale
         // background-task wake prompts until the next genuine user turn.
@@ -250,14 +238,19 @@ export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
+  readonly reasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<string | undefined, E> {
   const shouldSwitchModel =
-    input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
+    input.requestedModelId !== undefined &&
+    (input.requestedModelId !== input.currentModelId || input.reasoningEffort !== undefined);
   if (!shouldSwitchModel) {
     return Effect.succeed(input.currentModelId);
   }
   return input.runtime
-    .setSessionModel(input.requestedModelId)
+    .setSessionModel(
+      input.requestedModelId,
+      input.reasoningEffort === undefined ? undefined : { reasoningEffort: input.reasoningEffort },
+    )
     .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
 }

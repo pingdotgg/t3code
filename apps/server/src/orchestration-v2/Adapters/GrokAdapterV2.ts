@@ -3,6 +3,7 @@ import {
   defaultInstanceIdForDriver,
   GrokSettings,
   type ModelCapabilities,
+  type ModelSelection,
   ProviderDriverKind,
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
@@ -13,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import type * as EffectAcpErrors from "effect-acp/errors";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
@@ -22,8 +23,7 @@ import {
   grokReasoningEffortConstraintsFromCapabilities,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
-  resolveGrokReasoningEffortForSpawn,
-  resolveGrokSpawnOptionValue,
+  resolveGrokReasoningEffortForSession,
 } from "../../provider/acp/GrokAcpSupport.ts";
 import {
   extractXAiAcpBackgroundToolMutation,
@@ -47,7 +47,6 @@ import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers
 import { IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderContinuationRequests } from "../ProviderContinuationRequests.ts";
 import { ProviderAdapterV2 } from "../ProviderAdapter.ts";
-import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -107,6 +106,7 @@ export interface GrokAdapterV2Options {
   readonly getModelCapabilities?: (
     model: string,
   ) => Effect.Effect<ModelCapabilities | null | undefined>;
+  readonly isRuntimeReady?: Effect.Effect<boolean>;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly makeRuntime?: (
@@ -168,7 +168,7 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     ReturnType<typeof grokReasoningEffortConstraintsFromCapabilities>
   >();
   const refreshReasoningEffortConstraints = (
-    selection: Parameters<typeof resolveGrokReasoningEffortForSpawn>[0],
+    selection: Parameters<typeof resolveGrokReasoningEffortForSession>[0],
   ) => {
     if (options.getModelCapabilities === undefined || selection == null) {
       return Effect.void;
@@ -188,18 +188,8 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
       Effect.asVoid,
     );
   };
-  const refreshTransitionReasoningEffortConstraints = (
-    input: Parameters<NonNullable<AcpAdapterV2Flavor["planSelectionTransition"]>>[0],
-  ) =>
-    Effect.all(
-      [
-        refreshReasoningEffortConstraints(input.current),
-        refreshReasoningEffortConstraints(input.target),
-      ],
-      { discard: true },
-    );
   const reasoningEffortConstraints = (
-    selection: Parameters<typeof resolveGrokReasoningEffortForSpawn>[0],
+    selection: Parameters<typeof resolveGrokReasoningEffortForSession>[0],
   ) => {
     if (selection == null) {
       return undefined;
@@ -209,10 +199,8 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
       ? reasoningEffortConstraintsByModel.get(modelId)
       : undefined;
   };
-  const resolveSpawnOptionValue: NonNullable<AcpAdapterV2Flavor["resolveSpawnOptionValue"]> = (
-    selection,
-    optionId,
-  ) => resolveGrokSpawnOptionValue(selection, optionId, reasoningEffortConstraints(selection));
+  const resolveReasoningEffort = (selection: ModelSelection) =>
+    resolveGrokReasoningEffortForSession(selection, reasoningEffortConstraints(selection));
   const makeRuntime =
     options.makeRuntime ??
     ((input: AcpAdapterV2RuntimeInput) =>
@@ -222,11 +210,18 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
         grokSettings: options.settings,
         environment: options.environment,
         childProcessSpawner: options.childProcessSpawner,
-        reasoningEffort: resolveGrokReasoningEffortForSpawn(
-          input.modelSelection,
-          reasoningEffortConstraints(input.modelSelection),
-        ),
       }));
+  const makeReadyRuntime = (input: AcpAdapterV2RuntimeInput) =>
+    (options.isRuntimeReady ?? Effect.succeed(true)).pipe(
+      Effect.flatMap((ready) =>
+        ready
+          ? makeRuntime(input)
+          : new EffectAcpErrors.AcpTransportError({
+              detail: "Grok CLI is unavailable. T3 Code requires Grok v1.0.0 or newer.",
+              cause: "Grok provider runtime is not ready",
+            }),
+      ),
+    );
 
   return {
     driver: GROK_PROVIDER,
@@ -253,23 +248,43 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     // still accepts image content blocks (verified with real screenshots).
     supportsImagePrompts: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
-    // Grok ACP does not implement session/set_config_option; effort is only
-    // honored as an agent spawn flag (probe: grok 0.2.117, 2026-07-31).
-    spawnOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
-    resolveSpawnOptionValue,
-    planSelectionTransition: (input) =>
-      refreshTransitionReasoningEffortConstraints(input).pipe(
-        Effect.map(() =>
-          acpSelectionTransition({
-            ...input,
-            spawnOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
-            resolveSpawnOptionValue,
-          }),
-        ),
+    // Grok applies reasoning through session/set_model `_meta`, not ACP config
+    // options.
+    sessionModelOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
+    resolveSessionModelMeta: (selection) =>
+      refreshReasoningEffortConstraints(selection).pipe(
+        Effect.map(() => {
+          const reasoningEffort = resolveReasoningEffort(selection);
+          return reasoningEffort === undefined ? undefined : { reasoningEffort };
+        }),
       ),
+    readSessionModelMeta: (startResult) => {
+      const modelState = startResult.sessionSetupResult.models;
+      const currentModel = modelState?.availableModels.find(
+        (model) => model.modelId === modelState.currentModelId,
+      );
+      const reasoningEffort = currentModel?._meta?.reasoningEffort;
+      return typeof reasoningEffort === "string" ? { reasoningEffort } : undefined;
+    },
+    normalizeSessionModelSelection: (selection, meta) => {
+      const reasoningEffort = meta?.reasoningEffort;
+      if (typeof reasoningEffort !== "string") return selection;
+      const options = selection.options ?? [];
+      if (!options.some((option) => option.id === GROK_REASONING_EFFORT_OPTION_ID)) {
+        return selection;
+      }
+      return {
+        ...selection,
+        options: options.map((option) =>
+          option.id === GROK_REASONING_EFFORT_OPTION_ID
+            ? { ...option, value: reasoningEffort }
+            : option,
+        ),
+      };
+    },
     makeRuntime: (input) =>
       refreshReasoningEffortConstraints(input.modelSelection).pipe(
-        Effect.flatMap(() => makeRuntime(input)),
+        Effect.flatMap(() => makeReadyRuntime(input)),
       ),
     registerExtensions: registerGrokAcpExtensions,
     extractSubagentUpdate: extractXAiAcpSubagentUpdate,
@@ -339,6 +354,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
         ...(input.getModelCapabilities === undefined
           ? {}
           : { getModelCapabilities: input.getModelCapabilities }),
+        ...(input.isRuntimeReady === undefined ? {} : { isRuntimeReady: input.isRuntimeReady }),
         continuationRequests,
         nativeLogging: (threadId) =>
           makeNativeLogger({

@@ -186,7 +186,7 @@ export function useThreadOutboxDrain(): void {
   const sendQueuedMessage = useCallback(
     async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
       const baseSettings = resolveQueuedThreadSettings(queuedMessage, thread);
-      // Pin stale same-instance spawn-bound options to the committed selection
+      // Pin stale same-instance locked options to the committed selection
       // before settings sync / send so permanent rejections are not retried.
       // Read configs at delivery time so unrelated environment updates do not
       // recreate this callback or capture a stale map identity.

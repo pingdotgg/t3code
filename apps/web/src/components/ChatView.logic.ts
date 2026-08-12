@@ -465,12 +465,10 @@ export function getStartedThreadModelChangeBlockReason(input: {
 }
 
 /**
- * Providers that cannot change models mid-thread bind their option values the
- * same way: Grok reasoning effort is only honored as an agent spawn flag at
- * session start (grok 0.2.117 keeps a loaded session's original effort even
- * when respawned with a different flag), so a started thread cannot apply a
- * new value. Locked provider-option rows render disabled and the committed
- * selection stays in force; there is no toast or click-to-apply path.
+ * Providers that cannot change models mid-thread also bind their option values
+ * to the active session. Locked provider-option rows render disabled and the
+ * committed selection stays in force; there is no toast or click-to-apply
+ * path.
  *
  * Compare provider *instance* ids, not driver kinds: two Grok instances must
  * keep independent, editable options when composing a handoff away from the
@@ -530,7 +528,7 @@ export function resolveTraitsOptionChangeBlocked(input: {
  *
  * When session options are locked on the same instance and model as committed
  * metadata, show the committed thread selection so the traits UI matches the
- * in-force spawn-bound values rather than draft or sticky values the session
+ * in-force values rather than draft or sticky values the session
  * never applied. Cross-instance handoff, model changes, and the narrow window
  * where runtime lock still points at an old instance while committed metadata
  * has moved keep the selected draft options.

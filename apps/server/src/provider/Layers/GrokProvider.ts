@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,7 +21,6 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   buildServerProvider,
   isCommandMissingCause,
-  parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
@@ -37,11 +37,26 @@ import {
   resolveGrokAcpBaseModelId,
 } from "../acp/GrokAcpSupport.ts";
 
-const GROK_PRESENTATION = {
-  displayName: "Grok",
-  showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
-} as const;
+const MINIMUM_GROK_VERSION = "1.0.0";
+
+export function parseGrokCliVersion(output: string): string | null {
+  const match = output.match(
+    /\bv?(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)(?![0-9A-Za-z.+-])/,
+  );
+  return match?.[1] ?? null;
+}
+
+export function grokVersionIsSupported(version: string | null): boolean {
+  return version !== null && compareSemverVersions(version, MINIMUM_GROK_VERSION) >= 0;
+}
+
+function grokPresentation(version: string | null) {
+  return {
+    displayName: "Grok",
+    showInteractionModeToggle: false,
+    requiresNewThreadForModelChange: !grokVersionIsSupported(version),
+  } as const;
+}
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
@@ -67,7 +82,7 @@ export function buildInitialGrokProviderSnapshot(
 
     if (!grokSettings.enabled) {
       return buildServerProvider({
-        presentation: GROK_PRESENTATION,
+        presentation: grokPresentation(null),
         enabled: false,
         checkedAt,
         models,
@@ -82,7 +97,7 @@ export function buildInitialGrokProviderSnapshot(
     }
 
     return buildServerProvider({
-      presentation: GROK_PRESENTATION,
+      presentation: grokPresentation(null),
       enabled: true,
       checkedAt,
       models,
@@ -200,9 +215,8 @@ export function grokReasoningEffortMenuFromAcpMeta(
   const entries: Array<GrokReasoningEffortMenuEntry> = [];
   for (const rawEntry of rawEfforts) {
     if (!isRecord(rawEntry)) continue;
-    // The flag value is what the spawn consumes; prefer it over the menu id.
-    // Reject tokens the spawn guard would later drop so discovery and spawn
-    // stay aligned without a fixed known-level catalog.
+    // The metadata value is what session/set_model consumes; prefer it over
+    // the menu id. Reject unsafe tokens before they reach protocol metadata.
     const rawValue = typeof rawEntry["value"] === "string" ? rawEntry["value"].trim() : "";
     const rawId = typeof rawEntry["id"] === "string" ? rawEntry["id"].trim() : "";
     const hasValidValue = isValidGrokReasoningEffortToken(rawValue);
@@ -335,7 +349,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 
   if (!grokSettings.enabled) {
     return buildServerProvider({
-      presentation: GROK_PRESENTATION,
+      presentation: grokPresentation(null),
       enabled: false,
       checkedAt,
       models: fallbackModels,
@@ -360,7 +374,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       errorTag: error._tag,
     });
     return buildServerProvider({
-      presentation: GROK_PRESENTATION,
+      presentation: grokPresentation(null),
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
@@ -378,7 +392,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
 
   if (Option.isNone(versionResult.success)) {
     return buildServerProvider({
-      presentation: GROK_PRESENTATION,
+      presentation: grokPresentation(null),
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
@@ -393,7 +407,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseGrokCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
   if (versionOutput.code !== 0) {
     yield* Effect.logWarning("Grok CLI version probe exited with a non-zero status.", {
       exitCode: versionOutput.code,
@@ -401,7 +415,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       stderrLength: versionOutput.stderr.length,
     });
     return buildServerProvider({
-      presentation: GROK_PRESENTATION,
+      presentation: grokPresentation(version),
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
@@ -411,6 +425,36 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         status: "error",
         auth: { status: "unknown" },
         message: "Grok CLI is installed but failed to run.",
+      },
+    });
+  }
+  if (version === null) {
+    return buildServerProvider({
+      presentation: grokPresentation(null),
+      enabled: grokSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: `Unable to determine the Grok CLI version. T3 Code requires Grok v${MINIMUM_GROK_VERSION} or newer.`,
+      },
+    });
+  }
+  if (!grokVersionIsSupported(version)) {
+    return buildServerProvider({
+      presentation: grokPresentation(version),
+      enabled: grokSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unknown" },
+        message: `Grok v${version} is too old. Upgrade to v${MINIMUM_GROK_VERSION} or newer.`,
       },
     });
   }
@@ -424,7 +468,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       errorTag: causeErrorTag(discoveryExit.cause),
     });
     return buildServerProvider({
-      presentation: GROK_PRESENTATION,
+      presentation: grokPresentation(version),
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
@@ -442,7 +486,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       `Grok ACP model discovery timed out after ${GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`,
     );
     return buildServerProvider({
-      presentation: GROK_PRESENTATION,
+      presentation: grokPresentation(version),
       enabled: grokSettings.enabled,
       checkedAt,
       models: fallbackModels,
@@ -462,7 +506,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       : fallbackModels;
 
   return buildServerProvider({
-    presentation: GROK_PRESENTATION,
+    presentation: grokPresentation(version),
     enabled: grokSettings.enabled,
     checkedAt,
     models,

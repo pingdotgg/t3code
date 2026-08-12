@@ -28,7 +28,7 @@ import {
   currentGrokModelIdFromSessionSetup,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
-  resolveGrokReasoningEffortForSpawn,
+  resolveGrokReasoningEffortForSession,
 } from "../provider/acp/GrokAcpSupport.ts";
 
 const GROK_TIMEOUT_MS = 180_000;
@@ -38,6 +38,7 @@ const isTextGenerationError = Schema.is(TextGenerationError);
 export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  isRuntimeReady: Effect.Effect<boolean> = Effect.succeed(true),
 ) {
   const crypto = yield* Crypto.Crypto;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -60,7 +61,14 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
+      if (!(yield* isRuntimeReady)) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Grok CLI is unavailable. T3 Code requires Grok v1.0.0 or newer.",
+        });
+      }
       const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
+      const reasoningEffort = resolveGrokReasoningEffortForSession(modelSelection);
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
@@ -68,7 +76,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
-        reasoningEffort: resolveGrokReasoningEffortForSpawn(modelSelection),
       }).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
       yield* runtime.handleSessionUpdate((notification) => {
@@ -89,6 +96,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
           runtime,
           currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
           requestedModelId: resolvedModel,
+          reasoningEffort,
           mapError: (cause) =>
             new TextGenerationError({
               operation,

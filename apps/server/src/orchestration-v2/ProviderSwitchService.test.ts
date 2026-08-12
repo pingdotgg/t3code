@@ -9,20 +9,14 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
 
 import { AcpProviderCapabilitiesV2 } from "./Adapters/AcpAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import {
-  GROK_REASONING_EFFORT_OPTION_ID,
-  resolveGrokSpawnOptionValue,
-} from "../provider/acp/GrokAcpSupport.ts";
+import { GROK_REASONING_EFFORT_OPTION_ID } from "../provider/acp/GrokAcpSupport.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { acpSelectionTransition } from "./ProviderSelectionTransition.ts";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
-
-const isProviderSwitchPlanError = Schema.is(ProviderSwitch.ProviderSwitchPlanError);
 
 const driver = ProviderDriverKind.make("codex");
 const currentInstanceId = ProviderInstanceId.make("codex_primary");
@@ -105,14 +99,7 @@ function grokTestLayer() {
     instanceId: currentInstanceId,
     driver: grokDriver,
     getCapabilities: () => Effect.succeed(grokCapabilitiesWithModelSwitch),
-    planSelectionTransition: (input) =>
-      Effect.succeed(
-        acpSelectionTransition({
-          ...input,
-          spawnOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
-          resolveSpawnOptionValue: resolveGrokSpawnOptionValue,
-        }),
-      ),
+    planSelectionTransition: (input) => Effect.succeed(acpSelectionTransition(input)),
     openSession: () => Effect.die("ProviderSwitchService tests do not open sessions."),
   };
   const registry = Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
@@ -188,7 +175,7 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
   ),
 );
 
-it.effect("plans Grok spawn-bound option changes through the live service seam", () =>
+it.effect("plans Grok reasoning changes through the live service seam", () =>
   Effect.gen(function* () {
     const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
     const explicitHigh = yield* service.plan({
@@ -201,20 +188,15 @@ it.effect("plans Grok spawn-bound option changes through the live service seam",
     });
     assert.equal(explicitHigh.transition.type, "switch_model_in_session");
 
-    const changedEffort = yield* Effect.flip(
-      service.plan({
-        projection: grokProjection(),
-        targetModelSelection: {
-          instanceId: currentInstanceId,
-          model: "grok-4.5",
-          options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "low" }],
-        },
-      }),
-    );
-    assert.isTrue(isProviderSwitchPlanError(changedEffort.cause));
-    if (isProviderSwitchPlanError(changedEffort.cause)) {
-      assert.include(String(changedEffort.cause.cause), "spawn-bound option");
-    }
+    const changedEffort = yield* service.plan({
+      projection: grokProjection(),
+      targetModelSelection: {
+        instanceId: currentInstanceId,
+        model: "grok-4.5",
+        options: [{ id: GROK_REASONING_EFFORT_OPTION_ID, value: "low" }],
+      },
+    });
+    assert.equal(changedEffort.transition.type, "switch_model_in_session");
 
     const changedModel = yield* service.plan({
       projection: grokProjection(),

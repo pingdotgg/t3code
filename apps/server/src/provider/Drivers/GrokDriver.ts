@@ -108,8 +108,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         env: processEnv,
       });
 
-      const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
-
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
@@ -145,6 +143,15 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         ),
       );
 
+      const isRuntimeReady = snapshot.getSnapshot.pipe(
+        Effect.map((current) => current.status === "ready"),
+      );
+      const textGeneration = yield* makeGrokTextGeneration(
+        effectiveConfig,
+        processEnv,
+        isRuntimeReady,
+      );
+
       const orchestrationAdapter = yield* GrokAdapterV2Driver.create({
         instanceId,
         displayName,
@@ -152,6 +159,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         environment,
         enabled,
         config,
+        isRuntimeReady,
         getModelCapabilities: (model) =>
           snapshot.getSnapshot.pipe(
             Effect.map((current) => {

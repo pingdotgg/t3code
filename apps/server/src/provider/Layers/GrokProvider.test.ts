@@ -12,6 +12,8 @@ import {
   checkGrokProviderStatus,
   grokModelCapabilitiesFromReasoningEffortMenu,
   grokReasoningEffortMenuFromAcpMeta,
+  grokVersionIsSupported,
+  parseGrokCliVersion,
 } from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -61,6 +63,23 @@ describe("buildInitialGrokProviderSnapshot", () => {
   );
 });
 
+describe("Grok minimum version", () => {
+  it("requires the first version with verified session model metadata", () => {
+    expect(grokVersionIsSupported(null)).toBe(false);
+    expect(grokVersionIsSupported("0.2.117")).toBe(false);
+    expect(grokVersionIsSupported("1.0.0-beta.1")).toBe(false);
+    expect(grokVersionIsSupported("1.0.0")).toBe(true);
+    expect(grokVersionIsSupported("1.1.0")).toBe(true);
+  });
+
+  it("preserves prerelease metadata from CLI output", () => {
+    expect(parseGrokCliVersion("grok-cli 1.0.0-beta.1")).toBe("1.0.0-beta.1");
+    expect(parseGrokCliVersion("grok-cli 1.1.0-beta-1")).toBe("1.1.0-beta-1");
+    expect(parseGrokCliVersion("grok-cli 1.1.0-beta-")).toBe("1.1.0-beta-");
+    expect(parseGrokCliVersion("grok-cli 1.0.0-beta-1+exp.sha")).toBe("1.0.0-beta-1+exp.sha");
+  });
+});
+
 describe("grokReasoningEffortMenuFromAcpMeta", () => {
   it("maps the advertised menu with labels, descriptions, and the default", () => {
     const menu = grokReasoningEffortMenuFromAcpMeta(GROK_4_5_ACP_META);
@@ -95,7 +114,7 @@ describe("grokReasoningEffortMenuFromAcpMeta", () => {
     expect(menu?.currentValue).toBe("high");
   });
 
-  it("prefers the advertised spawn value over the menu id", () => {
+  it("prefers the advertised metadata value over the menu id", () => {
     const menu = grokReasoningEffortMenuFromAcpMeta({
       supportsReasoningEffort: true,
       reasoningEfforts: [{ id: "menu-high", value: "high", label: "High Effort", default: true }],
@@ -324,7 +343,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           const grokPath = path.join(dir, "grok");
           yield* fs.writeFileString(
             grokPath,
-            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+            ["#!/bin/sh", 'printf "grok-cli 1.0.0\\n"', "exit 0", ""].join("\n"),
           );
           yield* fs.chmod(grokPath, 0o755);
 
@@ -338,6 +357,59 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
       expect(snapshot.message).toContain("ACP startup failed");
+    }),
+  );
+
+  it.effect("rejects Grok versions older than 1.0.0 before ACP startup", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-old-version-" });
+          const grokPath = path.join(dir, "grok");
+          yield* fs.writeFileString(
+            grokPath,
+            ["#!/bin/sh", 'printf "grok-cli 0.2.117\\n"', "exit 0", ""].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.version).toBe("0.2.117");
+      expect(snapshot.message).toBe("Grok v0.2.117 is too old. Upgrade to v1.0.0 or newer.");
+    }),
+  );
+
+  it.effect("rejects Grok prereleases before ACP startup", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-prerelease-" });
+          const grokPath = path.join(dir, "grok");
+          yield* fs.writeFileString(
+            grokPath,
+            ["#!/bin/sh", 'printf "grok-cli 1.0.0-beta.1\\n"', "exit 0", ""].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.version).toBe("1.0.0-beta.1");
+      expect(snapshot.message).toBe("Grok v1.0.0-beta.1 is too old. Upgrade to v1.0.0 or newer.");
     }),
   );
 });

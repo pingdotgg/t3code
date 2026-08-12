@@ -2115,7 +2115,7 @@ describe("AcpAdapterV2", () => {
     );
   });
 
-  it.effect("reconfigures a loaded ACP session from its own active setup metadata", () =>
+  it.effect("applies session model metadata on new and loaded ACP sessions", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2133,6 +2133,15 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          sessionModelOptionIds: ["reasoningEffort"],
+          resolveSessionModelMeta: (selection) => {
+            const reasoningEffort = selection.options?.find(
+              (option) => option.id === "reasoningEffort",
+            )?.value;
+            return Effect.succeed(
+              typeof reasoningEffort === "string" ? { reasoningEffort } : undefined,
+            );
+          },
           makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
         },
         fileSystem,
@@ -2150,8 +2159,26 @@ describe("AcpAdapterV2", () => {
       const alternateSelection = {
         instanceId,
         model: "grok-mock-alt",
+        options: [{ id: "reasoningEffort", value: "low" }],
       } satisfies ModelSelection;
-      const originalSelection = { instanceId, model: "grok-build" } satisfies ModelSelection;
+      const alternateHighSelection = {
+        instanceId,
+        model: "grok-mock-alt",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } satisfies ModelSelection;
+      const alternateWithoutEffort = {
+        instanceId,
+        model: "grok-mock-alt",
+      } satisfies ModelSelection;
+      const originalSelection = {
+        instanceId,
+        model: "grok-build",
+      } satisfies ModelSelection;
+      const originalHighSelection = {
+        instanceId,
+        model: "grok-build",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } satisfies ModelSelection;
       const runtime = yield* adapter.openSession({
         threadId: firstThreadId,
         providerSessionId: ProviderSessionId.make("provider-session-acp-active-setup"),
@@ -2172,6 +2199,96 @@ describe("AcpAdapterV2", () => {
           runtimePolicy,
           modelSelection: alternateSelection,
           now,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: firstThreadId,
+          providerThread: firstProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: alternateHighSelection,
+          now,
+          ordinal: 2,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: firstThreadId,
+          providerThread: firstProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: alternateHighSelection,
+          now,
+          ordinal: 3,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: firstThreadId,
+          providerThread: firstProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: alternateWithoutEffort,
+          now,
+          ordinal: 4,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: firstThreadId,
+          providerThread: firstProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: alternateSelection,
+          now,
+          ordinal: 5,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: firstThreadId,
+          providerThread: firstProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: originalSelection,
+          now,
+          ordinal: 6,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: firstThreadId,
+          providerThread: firstProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection: alternateSelection,
+          now,
+          ordinal: 7,
         }),
       );
       yield* runtime.events.pipe(
@@ -2201,9 +2318,9 @@ describe("AcpAdapterV2", () => {
           providerThread: secondProviderThread,
           instanceId,
           runtimePolicy,
-          modelSelection: originalSelection,
+          modelSelection: originalHighSelection,
           now,
-          ordinal: 2,
+          ordinal: 8,
         }),
       );
       yield* runtime.events.pipe(
@@ -2215,7 +2332,50 @@ describe("AcpAdapterV2", () => {
         (event) =>
           event.direction === "outgoing" && rawProtocolMethod(event) === "session/set_model",
       );
-      assert.lengthOf(setModelRequests, 2);
+      assert.lengthOf(setModelRequests, 8);
+      assert.deepEqual(
+        setModelRequests.map((event) => rawProtocolRequest(event)?.params),
+        [
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "low" },
+          },
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "high" },
+          },
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+          },
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "low" },
+          },
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-build",
+          },
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "low" },
+          },
+          {
+            sessionId: "mock-session-2",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "low" },
+          },
+          {
+            sessionId: "mock-session-2",
+            modelId: "grok-build",
+            _meta: { reasoningEffort: "high" },
+          },
+        ],
+      );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 

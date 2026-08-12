@@ -33,6 +33,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -212,6 +213,24 @@ export interface AcpAdapterV2Flavor {
     Crypto.Crypto | Scope.Scope
   >;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
+  /**
+   * Selection option ids applied through `session/set_model` `_meta` instead
+   * of `session/set_config_option`.
+   */
+  readonly sessionModelOptionIds?: ReadonlyArray<string>;
+  /** Resolve provider-specific metadata applied with `session/set_model`. */
+  readonly resolveSessionModelMeta?: (
+    selection: ModelSelection,
+  ) => Effect.Effect<Readonly<Record<string, unknown>> | undefined>;
+  /** Read the metadata currently applied to the active ACP model. */
+  readonly readSessionModelMeta?: (
+    startResult: AcpSessionRuntimeStartResult,
+  ) => Readonly<Record<string, unknown>> | undefined;
+  /** Normalize session-model option values to the metadata sent on the wire. */
+  readonly normalizeSessionModelSelection?: (
+    selection: ModelSelection,
+    meta: Readonly<Record<string, unknown>> | undefined,
+  ) => ModelSelection;
   /**
    * Selection option ids the flavor consumes as process spawn arguments
    * (via `AcpAdapterV2RuntimeInput.modelSelection`) because the agent does not
@@ -1452,6 +1471,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         const activeSessionId = yield* Ref.make<string | null>(null);
         const activeSessionSetup = yield* Ref.make<AcpSessionRuntimeStartResult | null>(null);
+        const activeSessionModelId = yield* Ref.make<string | null>(null);
+        const activeSessionModelMeta = yield* Ref.make<
+          Readonly<Record<string, unknown>> | undefined
+        >(undefined);
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeProcessSpawnOptionValues = yield* Ref.make<AcpProcessSpawnOptionValues>(
           new Map<string, string | boolean | undefined>(),
@@ -1839,11 +1862,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           Effect.void;
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
-        const makeRuntimeInput = (runtimeGeneration: number): AcpAdapterV2RuntimeInput => ({
+        const makeRuntimeInput = (
+          runtimeGeneration: number,
+          modelSelection: ModelSelection,
+        ): AcpAdapterV2RuntimeInput => ({
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
           mcpServers: acpMcpServers(input.threadId),
           interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
-          modelSelection: input.modelSelection,
+          modelSelection,
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
@@ -4656,8 +4682,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           }
           runtimeScope = yield* Scope.make();
           const runtimeGeneration = yield* Ref.get(runtimeCallbackGeneration);
+          const spawnSelection = (yield* Ref.get(activeSelection)) ?? input.modelSelection;
           runtime = yield* flavor
-            .makeRuntime(makeRuntimeInput(runtimeGeneration))
+            .makeRuntime(makeRuntimeInput(runtimeGeneration, spawnSelection))
             .pipe(
               Effect.provideService(Scope.Scope, runtimeScope),
               Effect.provideService(Crypto.Crypto, options.crypto),
@@ -4665,7 +4692,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           yield* Ref.set(
             activeProcessSpawnOptionValues,
             resolveAcpProcessSpawnOptionValues({
-              modelSelection: input.modelSelection,
+              modelSelection: spawnSelection,
               spawnOptionIds: flavor.spawnOptionIds ?? [],
               ...(flavor.resolveSpawnOptionValue === undefined
                 ? {}
@@ -4684,7 +4711,17 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
 
         const started = yield* runtime.start();
         yield* Ref.set(activeSessionId, started.sessionId);
-        yield* Ref.set(activeSessionSetup, started);
+        const recordActiveSessionSetup = Effect.fnUntraced(function* (
+          setup: AcpSessionRuntimeStartResult,
+        ) {
+          yield* Ref.set(activeSessionSetup, setup);
+          yield* Ref.set(
+            activeSessionModelId,
+            setup.sessionSetupResult.models?.currentModelId ?? null,
+          );
+          yield* Ref.set(activeSessionModelMeta, flavor.readSessionModelMeta?.(setup));
+        });
+        yield* recordActiveSessionSetup(started);
         const capabilities = negotiatedCapabilities(flavor.capabilities, started);
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
@@ -4719,31 +4756,49 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           priorSelection: ModelSelection | null,
         ) {
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
+          const sessionModelMeta =
+            flavor.resolveSessionModelMeta === undefined
+              ? undefined
+              : yield* flavor.resolveSessionModelMeta(modelSelection);
+          const currentModel = yield* Ref.get(activeSessionModelId);
+          const currentSessionModelMeta = yield* Ref.get(activeSessionModelMeta);
+          const sessionModelMetaChanged = !Equal.equals(sessionModelMeta, currentSessionModelMeta);
           if (
             requestedModel.length > 0 &&
             requestedModel !== "auto" &&
             requestedModel !== "default"
           ) {
-            const currentModel = startResult.sessionSetupResult.models?.currentModelId;
-            if (currentModel !== requestedModel) {
+            if (currentModel !== requestedModel || sessionModelMetaChanged) {
               if (startResult.sessionSetupResult.models != null) {
-                yield* runtime.setSessionModel(requestedModel);
+                yield* runtime.setSessionModel(requestedModel, sessionModelMeta);
+                yield* Ref.set(activeSessionModelId, requestedModel);
+                yield* Ref.set(activeSessionModelMeta, sessionModelMeta);
               } else if (
+                sessionModelMeta === undefined &&
                 startResult.sessionSetupResult.configOptions?.some(
                   (option) => option.category === "model",
                 ) === true
               ) {
                 yield* runtime.setModel(requestedModel);
+                yield* Ref.set(activeSessionModelId, requestedModel);
+                yield* Ref.set(activeSessionModelMeta, undefined);
+              } else if (sessionModelMeta !== undefined) {
+                return yield* new ProviderAdapterProtocolError({
+                  driver,
+                  detail: `ACP session ${startResult.sessionId} does not expose session model metadata support.`,
+                });
               }
             }
           }
           const spawnOptionIds = flavor.spawnOptionIds ?? [];
           const spawnOptionIdSet = new Set(spawnOptionIds);
+          const sessionModelOptionIdSet = new Set(flavor.sessionModelOptionIds ?? []);
           const resolveSpawnOptionValue =
             flavor.resolveSpawnOptionValue ?? getModelSelectionOptionValue;
           const processSpawnOptionValues = yield* Ref.get(activeProcessSpawnOptionValues);
           const sessionConfigSelections = (modelSelection.options ?? []).filter(
-            (selection) => !spawnOptionIdSet.has(selection.id),
+            (selection) =>
+              !spawnOptionIdSet.has(selection.id) && !sessionModelOptionIdSet.has(selection.id),
           );
           // Orchestrator transitions reject spawn-bound changes before metadata
           // or dispatch. Direct adapter and version-skew callers can still
@@ -4785,13 +4840,17 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             );
             if (planMode !== undefined) yield* runtime.setMode(planMode.id);
           }
-          return resolveEffectiveAcpSelection({
+          const effectiveSelection = resolveEffectiveAcpSelection({
             requested: modelSelection,
             priorSelection,
             spawnOptionIds,
             resolveSpawnOptionValue,
             processSpawnOptionValues,
           });
+          return (
+            flavor.normalizeSessionModelSelection?.(effectiveSelection, sessionModelMeta) ??
+            effectiveSelection
+          );
         });
 
         const openedSelection = yield* configureSession(
@@ -5167,6 +5226,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
+          yield* Ref.set(activeSessionModelId, null);
+          yield* Ref.set(activeSessionModelMeta, undefined);
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(snapshot, {
             order: [],
@@ -5194,7 +5255,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);
-              yield* Ref.set(activeSessionSetup, activated);
+              yield* recordActiveSessionSetup(activated);
               // Activation after restart (or first load) reuses the process's
               // spawn-time selection as prior so spawn-bound options stay fixed.
               const activatedSelection = yield* configureSession(
@@ -5671,7 +5732,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                       threadInput.providerThread.appThreadId,
                     );
                     yield* Ref.set(activeSessionId, activated.sessionId);
-                    yield* Ref.set(activeSessionSetup, activated);
+                    yield* recordActiveSessionSetup(activated);
                     const nextSelection = threadInput.modelSelection ?? input.modelSelection;
                     // resumeThread activation reuses spawn-time selection so
                     // spawn-bound options survive runtime restart.
@@ -6090,7 +6151,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                       mcpServers: acpMcpServers(snapshotInput.providerThread.appThreadId),
                     });
                     yield* Ref.set(activeSessionId, activated.sessionId);
-                    yield* Ref.set(activeSessionSetup, activated);
+                    yield* recordActiveSessionSetup(activated);
                     yield* Ref.set(activeSelection, null);
                   }
                   const state = yield* Ref.get(snapshot);
@@ -6160,7 +6221,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     mcpServers: acpMcpServers(forkInput.targetThreadId),
                   });
                   yield* Ref.set(activeSessionId, forked.sessionId);
-                  yield* Ref.set(activeSessionSetup, forked);
+                  yield* recordActiveSessionSetup(forked);
                   yield* Ref.set(activeSelection, null);
                   const now = yield* DateTime.now;
                   return makeProviderThread({

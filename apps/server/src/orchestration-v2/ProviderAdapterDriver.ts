@@ -34,6 +34,7 @@ export interface ProviderAdapterDriverCreateInput<Config> {
   readonly getModelCapabilities?: (
     model: string,
   ) => Effect.Effect<ModelCapabilities | null | undefined>;
+  readonly isRuntimeReady?: Effect.Effect<boolean>;
 }
 
 export interface ProviderAdapterDriver<Config, R = never> {
