@@ -279,9 +279,26 @@ function modeState(): AcpSchema.SessionModeState {
 }
 
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
+  {
+    modelId: "grok-build",
+    name: "Grok Build",
+    _meta: {
+      supportsReasoningEffort: true,
+      reasoningEffort: "high",
+      totalContextTokens: 500000,
+      reasoningEfforts: [
+        { id: "xhigh", value: "xhigh", label: "Extra High Effort" },
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "medium", value: "medium", label: "Medium Effort" },
+        { id: "low", value: "low", label: "Low Effort" },
+      ],
+    },
+  },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
+const enableRewind = process.env.T3_ACP_ENABLE_REWIND === "1";
+const emitUsage = process.env.T3_ACP_EMIT_USAGE === "1";
+let rewindPoints: Array<{ prompt_index: number; prompt_preview: string }> = [];
 
 function modelState(): AcpSchema.SessionModelState {
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
@@ -392,7 +409,12 @@ const program = Effect.gen(function* () {
         );
       }
       currentModelId = request.modelId;
-      return {};
+      return {
+        _meta: {
+          model: { Ok: request.modelId },
+          ...(request._meta ?? {}),
+        },
+      };
     }),
   );
 
@@ -873,11 +895,52 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return { stopReason: "end_turn" };
+      if (enableRewind) {
+        const preview =
+          request.prompt.find((block) => block.type === "text" && "text" in block)?.text ?? "";
+        rewindPoints.push({
+          prompt_index: rewindPoints.length,
+          prompt_preview: typeof preview === "string" ? preview : "",
+        });
+      }
+
+      return {
+        stopReason: "end_turn",
+        ...(emitUsage
+          ? {
+              _meta: {
+                usage: {
+                  input_tokens: 10,
+                  output_tokens: 4,
+                  reasoning_tokens: 3,
+                },
+              },
+            }
+          : {}),
+      };
     }),
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    if (method === "_x.ai/rewind/points") {
+      return Effect.succeed({ rewind_points: rewindPoints });
+    }
+    if (method === "_x.ai/rewind/execute") {
+      const record = typeof params === "object" && params !== null ? params : {};
+      const target =
+        "targetPromptIndex" in record && typeof record.targetPromptIndex === "number"
+          ? record.targetPromptIndex
+          : undefined;
+      if (target === undefined) {
+        return Effect.succeed({ success: false, error: "missing targetPromptIndex" });
+      }
+      rewindPoints = rewindPoints.filter((point) => point.prompt_index < target);
+      return Effect.succeed({
+        success: true,
+        target_prompt_index: target,
+        mode: "conversation_only",
+      });
+    }
     if (method === "cursor/list_available_models") {
       return Effect.succeed({
         models: availableModels(),

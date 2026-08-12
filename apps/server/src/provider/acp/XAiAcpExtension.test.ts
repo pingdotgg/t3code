@@ -9,10 +9,13 @@ import * as Schema from "effect/Schema";
 import { describe, expect } from "vite-plus/test";
 
 import {
+  extractGrokTokenUsage,
   extractXAiAskUserQuestions,
+  grokRewindTargetForTurnCount,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
+  parseGrokRewindPoints,
   XAiAskUserQuestionRequest,
 } from "./XAiAcpExtension.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -329,4 +332,31 @@ describe("XAiAcpExtension", () => {
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+});
+
+describe("Grok rewind and usage helpers", () => {
+  it("picks the rewind target that drops the last N turns", () => {
+    const points = parseGrokRewindPoints({
+      rewind_points: [
+        { prompt_index: 0, prompt_preview: "first" },
+        { prompt_index: 1, prompt_preview: "second" },
+        { prompt_index: 2, prompt_preview: "third" },
+      ],
+    });
+    expect(grokRewindTargetForTurnCount(points, 1)?.promptIndex).toBe(2);
+    expect(grokRewindTargetForTurnCount(points, 2)?.promptIndex).toBe(1);
+  });
+
+  it("reads Grok token usage from prompt _meta", () => {
+    expect(
+      extractGrokTokenUsage({
+        usage: { input_tokens: 10, output_tokens: 4, reasoning_tokens: 3 },
+      }),
+    ).toMatchObject({
+      usedTokens: 17,
+      inputTokens: 10,
+      outputTokens: 4,
+      reasoningOutputTokens: 3,
+    });
+  });
 });

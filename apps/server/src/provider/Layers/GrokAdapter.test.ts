@@ -1197,7 +1197,6 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
-
   // Production calls startSession from a request fiber that finishes as soon as
   // the session exists. `Effect.forkChild` made the notification consumer a
   // child of that fiber, and Effect interrupts a fiber's children when it
@@ -1263,5 +1262,121 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       // they wait on virtual time that never advances, and a regression would
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
+  );
+
+  it.effect("sends session/set_model _meta.reasoningEffort", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-effort-set-model");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-effort-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-build",
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+      });
+
+      yield* waitForFileContent(requestLogPath, 80, "session/set_model");
+      const lines = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const setModel = lines.find((line) => line.method === "session/set_model");
+      assert.isDefined(setModel);
+      assert.equal(
+        (setModel?.params as { _meta?: { reasoningEffort?: string } } | undefined)?._meta
+          ?.reasoningEffort,
+        "xhigh",
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("emits token usage from the Grok prompt result", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-usage");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_USAGE: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const usage = yield* Deferred.make<ProviderRuntimeEvent>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "thread.token-usage.updated" ? Deferred.succeed(usage, event) : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "count tokens", attachments: [] });
+      const event = yield* Deferred.await(usage);
+      assert.equal(event.type, "thread.token-usage.updated");
+      if (event.type === "thread.token-usage.updated") {
+        assert.equal(event.payload.usage.usedTokens, 17);
+        assert.equal(event.payload.usage.inputTokens, 10);
+      }
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("rolls back Grok conversation turns through rewind", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-rewind");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_ENABLE_REWIND: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const firstTurnDone = yield* Deferred.make<void>();
+      const secondTurnDone = yield* Deferred.make<void>();
+      const completedTurns = yield* Ref.make(0);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "turn.completed"
+          ? Ref.updateAndGet(completedTurns, (count) => count + 1).pipe(
+              Effect.flatMap((count) => {
+                if (count === 1) {
+                  return Deferred.succeed(firstTurnDone, undefined);
+                }
+                if (count === 2) {
+                  return Deferred.succeed(secondTurnDone, undefined);
+                }
+                return Effect.void;
+              }),
+            )
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "first", attachments: [] });
+      yield* Deferred.await(firstTurnDone);
+      yield* adapter.sendTurn({ threadId, input: "second", attachments: [] });
+      yield* Deferred.await(secondTurnDone);
+
+      const rolled = yield* adapter.rollbackThread(threadId, 1);
+      assert.equal(rolled.turns.length, 1);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
   );
 });

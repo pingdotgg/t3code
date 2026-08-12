@@ -14,7 +14,6 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
@@ -29,27 +28,33 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  fallbackGrokReasoningEffortCapabilities,
+  grokReasoningEffortCapabilities,
+  isGrokAcpAuthFailure,
+  makeGrokAcpRuntime,
+  parseGrokAcpModelMeta,
+  resolveGrokAcpBaseModelId,
+} from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
   badgeLabel: "Early Access",
   showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
+  requiresNewThreadForModelChange: false,
 } as const;
-const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [],
-});
+const FALLBACK_CAPABILITIES: ModelCapabilities = fallbackGrokReasoningEffortCapabilities();
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const GROK_API_KEY_ENV = "XAI_API_KEY";
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "grok-build",
     name: "Grok Build",
     isCustom: false,
-    capabilities: EMPTY_CAPABILITIES,
+    capabilities: FALLBACK_CAPABILITIES,
   },
 ];
 
@@ -96,7 +101,7 @@ function grokModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
   builtInModels: ReadonlyArray<ServerProviderModel> = GROK_BUILT_IN_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
+  return providerModelsFromSettings(builtInModels, customModels ?? [], FALLBACK_CAPABILITIES);
 }
 
 function buildGrokDiscoveredModelsFromSessionModelState(
@@ -113,11 +118,14 @@ function buildGrokDiscoveredModelsFromSessionModelState(
         return undefined;
       }
       seen.add(slug);
+      const meta = parseGrokAcpModelMeta(model._meta);
       return {
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        capabilities: meta.supportsReasoningEffort
+          ? grokReasoningEffortCapabilities(meta.reasoningEfforts)
+          : FALLBACK_CAPABILITIES,
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
@@ -256,8 +264,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     Effect.exit,
   );
   if (Exit.isFailure(discoveryExit)) {
+    const authFailed = isGrokAcpAuthFailure(discoveryExit.cause);
     yield* Effect.logWarning("Grok ACP model discovery failed", {
       errorTag: causeErrorTag(discoveryExit.cause),
+      authFailed,
     });
     return buildServerProvider({
       presentation: GROK_PRESENTATION,
@@ -268,8 +278,10 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         installed: true,
         version,
         status: "error",
-        auth: { status: "unknown" },
-        message: "Grok CLI is installed but ACP startup failed. Check server logs for details.",
+        auth: { status: authFailed ? "unauthenticated" : "unknown" },
+        message: authFailed
+          ? "Grok CLI is not authenticated. Run `grok login` and try again."
+          : "Grok CLI is installed but ACP startup failed. Check server logs for details.",
       },
     });
   }
@@ -306,7 +318,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       installed: true,
       version,
       status: "ready",
-      auth: { status: "unknown" },
+      auth: environment[GROK_API_KEY_ENV]?.trim()
+        ? { status: "authenticated", type: "api_key", label: "XAI_API_KEY" }
+        : { status: "authenticated", type: "session", label: "grok.com" },
     },
   });
 });
