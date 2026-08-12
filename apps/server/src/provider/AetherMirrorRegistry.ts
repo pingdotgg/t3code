@@ -27,6 +27,7 @@ import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Semaphore from "effect/Semaphore";
 
 /**
  * `realpath`, or `undefined` when the path is simply not on disk yet. ENOENT
@@ -83,6 +84,20 @@ export class AetherMirrorRegistry extends Context.Service<
     readonly register: (cwd: string, key: string) => Effect.Effect<void>;
     /** Release one claim; the cwd unlocks when its last claim goes. */
     readonly deregister: (cwd: string, key: string) => Effect.Effect<void>;
+    /**
+     * Run `effect` while the claim table is FROZEN: no register/deregister
+     * lands while it runs. The write guards need this because an ownership
+     * check and the mutation it authorises are two steps — a session
+     * registering in between would let a local write reach a checkout that is
+     * an active one-way mirror by the time it hits disk, silently corrupting
+     * the next reset-and-apply.
+     *
+     * Frozen regions run CONCURRENTLY with one another (they only read the
+     * table), so guarded mutations keep their existing parallelism; only a
+     * register/deregister waits, and only for the mutations already in flight
+     * — which is the true precondition for claiming a checkout as a mirror.
+     */
+    readonly whileClaimsFrozen: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
     /** Does any active Aether thread own this cwd? */
     readonly ownsCwd: (cwd: string) => Effect.Effect<boolean>;
     /**
@@ -101,28 +116,46 @@ export class AetherMirrorRegistry extends Context.Service<
   }
 >()("t3/provider/AetherMirrorRegistry") {}
 
+/**
+ * Permits on the claim lock: readers (frozen regions) take one, a
+ * register/deregister takes them all. The count only bounds how many guarded
+ * mutations may be in flight at once before they queue — far above anything a
+ * user-driven RPC surface produces.
+ */
+const CLAIM_LOCK_PERMITS = 1024;
+
 export const make = Effect.sync(() => {
   const claims = new Map<string, Set<string>>();
+  const claimLock = Semaphore.makeUnsafe(CLAIM_LOCK_PERMITS);
+  const whileClaimsFrozen = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    claimLock.withPermits(1)(effect);
+  const withClaimsExclusive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    claimLock.withPermits(CLAIM_LOCK_PERMITS)(effect);
   return AetherMirrorRegistry.of({
+    whileClaimsFrozen,
     register: (cwd, key) =>
-      Effect.gen(function* () {
-        const normalized = yield* canonicalize(cwd);
-        const keys = claims.get(normalized) ?? new Set<string>();
-        keys.add(key);
-        claims.set(normalized, keys);
-      }),
+      withClaimsExclusive(
+        Effect.gen(function* () {
+          const normalized = yield* canonicalize(cwd);
+          const keys = claims.get(normalized) ?? new Set<string>();
+          keys.add(key);
+          claims.set(normalized, keys);
+        }),
+      ),
     deregister: (cwd, key) =>
-      Effect.gen(function* () {
-        const normalized = yield* canonicalize(cwd);
-        const keys = claims.get(normalized);
-        if (keys === undefined) {
-          return;
-        }
-        keys.delete(key);
-        if (keys.size === 0) {
-          claims.delete(normalized);
-        }
-      }),
+      withClaimsExclusive(
+        Effect.gen(function* () {
+          const normalized = yield* canonicalize(cwd);
+          const keys = claims.get(normalized);
+          if (keys === undefined) {
+            return;
+          }
+          keys.delete(key);
+          if (keys.size === 0) {
+            claims.delete(normalized);
+          }
+        }),
+      ),
     ownsCwd: (cwd) => canonicalize(cwd).pipe(Effect.map((normalized) => claims.has(normalized))),
     ownsTargetPath: (cwd, target) =>
       Effect.gen(function* () {
