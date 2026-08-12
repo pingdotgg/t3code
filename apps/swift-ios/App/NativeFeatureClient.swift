@@ -3826,7 +3826,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func mapEnvironment(_ environment: Environment, activeID: String?) -> FeatureEnvironment {
         let serverVersion = serverConfigsByEnvironmentID[environment.id]?
-            .environment?.serverVersion
+            .serverVersion(fallingBackTo: environment.descriptor?.serverVersion)
         return FeatureEnvironment(
             id: environment.id,
             name: environment.label,
