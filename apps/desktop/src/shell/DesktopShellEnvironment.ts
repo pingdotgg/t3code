@@ -195,19 +195,19 @@ const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
   ...trimNonEmpty(env.APPDATA).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\npm`],
+      onSome: (value) => [`${value}/npm`],
     }),
   ),
   ...trimNonEmpty(env.LOCALAPPDATA).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\Programs\\nodejs`, `${value}\\Volta\\bin`, `${value}\\pnpm`],
+      onSome: (value) => [`${value}/Programs/nodejs`, `${value}/Volta/bin`, `${value}/pnpm`],
     }),
   ),
   ...trimNonEmpty(env.USERPROFILE).pipe(
     Option.match({
       onNone: () => [],
-      onSome: (value) => [`${value}\\.local\\bin`, `${value}\\.bun\\bin`, `${value}\\scoop\\shims`],
+      onSome: (value) => [`${value}/.local/bin`, `${value}/.bun/bin`, `${value}/scoop/shims`],
     }),
   ),
 ];

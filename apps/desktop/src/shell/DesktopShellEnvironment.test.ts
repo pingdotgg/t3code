@@ -416,14 +416,14 @@ describe("DesktopShellEnvironment", () => {
       const path = yield* Effect.promise(() => import("node:path"));
 
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
-      const knownPath = path.join(tempDir, "nodejs");
+      const knownPath = path.join(tempDir, "Programs", "nodejs");
       fs.mkdirSync(knownPath, { recursive: true });
 
       try {
         fs.writeFileSync(path.join(knownPath, "node.exe"), "");
 
-        // PATH doesn't have node, but knownWindowsCliDirs will (simulated by tempDir inside PROGRAMFILES)
-        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32", PROGRAMFILES: tempDir };
+        // PATH doesn't have node, but knownWindowsCliDirs will (simulated by tempDir inside LOCALAPPDATA)
+        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32", LOCALAPPDATA: tempDir };
         const commands: ChildProcess.Command[] = [];
 
         yield* runShellEnvironment({
