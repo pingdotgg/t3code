@@ -748,7 +748,7 @@ export function projectPiExternalProject(input: {
   readonly cwd: string;
   readonly records: ReadonlyArray<PiSessionCatalogRecord>;
 }): OrchestrationProjectShell {
-  const title = input.cwd.split(/[\\/]/u).findLast(Boolean) ?? input.cwd;
+  const title = projectPiExternalProjectTitle(input.cwd);
   const sorted = [...input.records].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   return {
     id: input.projectId,
@@ -760,6 +760,12 @@ export function projectPiExternalProject(input: {
     createdAt: sorted[0]?.createdAt ?? "1970-01-01T00:00:00.000Z",
     updatedAt: sorted.at(-1)?.updatedAt ?? "1970-01-01T00:00:00.000Z",
   };
+}
+
+export function projectPiExternalProjectTitle(cwd: string): string {
+  const segments = cwd.split(/[\\/]/u).filter(Boolean);
+  if (segments.length === 0) return cwd;
+  return segments.length === 1 ? segments[0]! : segments.slice(-2).join("/");
 }
 
 function livePayload(event: unknown) {
