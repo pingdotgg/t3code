@@ -480,6 +480,14 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
 
+  // The right-panel surface launcher claims its shortcut letters while it is
+  // visible (data attribute set in RightPanelTabs); those keys open surfaces
+  // instead of typing into the composer.
+  const launcherKeys = document
+    .querySelector("[data-surface-launcher-keys]")
+    ?.getAttribute("data-surface-launcher-keys");
+  if (launcherKeys && launcherKeys.toLowerCase().includes(event.key.toLowerCase())) return false;
+
   return true;
 }
 
