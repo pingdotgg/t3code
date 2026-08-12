@@ -106,6 +106,9 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       const normalizedRepoRoots = canonicalCommand.repoRoots
         ? yield* Effect.forEach(canonicalCommand.repoRoots, normalizeProjectWorkspaceRoot)
         : undefined;
+      // The normalizer only canonicalizes supplied paths. The stateful decider
+      // prepends the project's current primary root when repoRoots is updated
+      // without workspaceRoot.
       const repoRoots = normalizedRepoRoots
         ? [
             ...new Set([

@@ -12,13 +12,12 @@ export class WorkspaceFileError extends Schema.TaggedErrorClass<WorkspaceFileErr
   "WorkspaceFileError",
   {
     workspaceFilePath: Schema.String,
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    operation: Schema.Literals(["read-file", "parse-document", "decode-folders"]),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `WorkspaceFile ${this.operation} failed for ${this.workspaceFilePath}: ${this.detail}`;
+    return `Workspace file operation '${this.operation}' failed for '${this.workspaceFilePath}'.`;
   }
 }
 
@@ -46,20 +45,19 @@ export interface ResolvedWorkspaceFile {
   readonly repoRoots: ReadonlyArray<string>;
 }
 
-export interface WorkspaceFileShape {
-  /**
-   * Read and resolve a `.code-workspace` file: parse JSONC, resolve every
-   * folder path, and classify git vs non-git. Missing/renamed folders are
-   * surfaced (`exists: false`) rather than causing a failure.
-   */
-  readonly read: (
-    workspaceFilePath: string,
-  ) => Effect.Effect<ResolvedWorkspaceFile, WorkspaceFileError>;
-}
-
-export class WorkspaceFile extends Context.Service<WorkspaceFile, WorkspaceFileShape>()(
-  "t3/workspace/WorkspaceFile",
-) {}
+export class WorkspaceFile extends Context.Service<
+  WorkspaceFile,
+  {
+    /**
+     * Read and resolve a `.code-workspace` file: parse JSONC, resolve every
+     * folder path, and classify git vs non-git. Missing/renamed folders are
+     * surfaced (`exists: false`) rather than causing a failure.
+     */
+    readonly read: (
+      workspaceFilePath: string,
+    ) => Effect.Effect<ResolvedWorkspaceFile, WorkspaceFileError>;
+  }
+>()("t3/workspace/WorkspaceFile") {}
 
 const FOLDER_RESOLVE_CONCURRENCY = 16;
 
@@ -79,7 +77,7 @@ function expandHomePath(input: string, path: Path.Path): string {
   return input;
 }
 
-export const makeWorkspaceFile = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -95,7 +93,7 @@ export const makeWorkspaceFile = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  const read: WorkspaceFileShape["read"] = Effect.fn("WorkspaceFile.read")(
+  const read: WorkspaceFile["Service"]["read"] = Effect.fn("WorkspaceFile.read")(
     function* (workspaceFilePath) {
       const absoluteFilePath = path.resolve(expandHomePath(workspaceFilePath.trim(), path));
       const anchorDir = path.dirname(absoluteFilePath);
@@ -105,8 +103,7 @@ export const makeWorkspaceFile = Effect.gen(function* () {
           (cause) =>
             new WorkspaceFileError({
               workspaceFilePath,
-              operation: "WorkspaceFile.read:readFile",
-              detail: cause.message,
+              operation: "read-file",
               cause,
             }),
         ),
@@ -117,8 +114,7 @@ export const makeWorkspaceFile = Effect.gen(function* () {
           (cause) =>
             new WorkspaceFileError({
               workspaceFilePath,
-              operation: "WorkspaceFile.read:parse",
-              detail: cause.message,
+              operation: "parse-document",
               cause,
             }),
         ),
@@ -134,8 +130,7 @@ export const makeWorkspaceFile = Effect.gen(function* () {
           (cause) =>
             new WorkspaceFileError({
               workspaceFilePath,
-              operation: "WorkspaceFile.read:folders",
-              detail: cause.message,
+              operation: "decode-folders",
               cause,
             }),
         ),
@@ -175,7 +170,7 @@ export const makeWorkspaceFile = Effect.gen(function* () {
     },
   );
 
-  return { read } satisfies WorkspaceFileShape;
+  return WorkspaceFile.of({ read });
 });
 
-export const WorkspaceFileLive = Layer.effect(WorkspaceFile, makeWorkspaceFile);
+export const layer = Layer.effect(WorkspaceFile, make);

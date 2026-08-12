@@ -317,20 +317,23 @@ function mapSessionRow(
 function normalizeRepoRoots(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
 ): ReadonlyArray<string> {
-  return row.repoRoots.length > 0 ? row.repoRoots : [row.workspaceRoot];
+  return [...new Set([row.workspaceRoot, ...row.repoRoots])];
 }
 
 function mapProjectShellRow(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
-  repositoryIdentities: ReadonlyArray<RepositoryIdentity>,
+  resolvedIdentities: {
+    readonly primary: RepositoryIdentity | null;
+    readonly all: ReadonlyArray<RepositoryIdentity>;
+  },
 ): OrchestrationProjectShell {
   return {
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
     repoRoots: normalizeRepoRoots(row),
-    repositoryIdentity: repositoryIdentities[0] ?? null,
-    repositoryIdentities,
+    repositoryIdentity: resolvedIdentities.primary,
+    repositoryIdentities: resolvedIdentities.all,
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
     faviconPath: row.faviconPath ?? null,
@@ -402,7 +405,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           seen.add(identity.canonicalKey);
           identities.push(identity);
         }
-        return [row.projectId, identities] as const;
+        return [
+          row.projectId,
+          {
+            primary: identityByRoot.get(row.workspaceRoot) ?? null,
+            all: identities,
+          },
+        ] as const;
       }),
     );
   });
@@ -1580,14 +1589,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               );
 
               const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) => {
-                const projectIdentities = repositoryIdentities.get(row.projectId) ?? [];
+                const projectIdentities = repositoryIdentities.get(row.projectId) ?? {
+                  primary: null,
+                  all: [],
+                };
                 return {
                   id: row.projectId,
                   title: row.title,
                   workspaceRoot: row.workspaceRoot,
                   repoRoots: normalizeRepoRoots(row),
-                  repositoryIdentity: projectIdentities[0] ?? null,
-                  repositoryIdentities: projectIdentities,
+                  repositoryIdentity: projectIdentities.primary,
+                  repositoryIdentities: projectIdentities.all,
                   defaultModelSelection: row.defaultModelSelection,
                   defaultThreadEnvMode: row.defaultThreadEnvMode,
                   faviconPath: row.faviconPath ?? null,
@@ -1939,7 +1951,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               projects: Arr.filterMap(projectRows, (row) =>
                 row.deletedAt === null
                   ? Result.succeed(
-                      mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? []),
+                      mapProjectShellRow(
+                        row,
+                        repositoryIdentities.get(row.projectId) ?? { primary: null, all: [] },
+                      ),
                     )
                   : Result.failVoid,
               ),
@@ -2086,7 +2101,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               projects: Arr.filterMap(projectRows, (row) =>
                 row.deletedAt === null && activeProjectIds.has(row.projectId)
                   ? Result.succeed(
-                      mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? []),
+                      mapProjectShellRow(
+                        row,
+                        repositoryIdentities.get(row.projectId) ?? { primary: null, all: [] },
+                      ),
                     )
                   : Result.failVoid,
               ),
@@ -2212,15 +2230,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.flatMap((option) =>
           Option.isNone(option)
             ? Effect.succeed(Option.none<OrchestrationProject>())
-            : repositoryIdentityResolver.resolveMany(normalizeRepoRoots(option.value)).pipe(
+            : Effect.all({
+                primary: repositoryIdentityResolver.resolve(option.value.workspaceRoot),
+                all: repositoryIdentityResolver.resolveMany(normalizeRepoRoots(option.value)),
+              }).pipe(
                 Effect.map((projectIdentities) =>
                   Option.some({
                     id: option.value.projectId,
                     title: option.value.title,
                     workspaceRoot: option.value.workspaceRoot,
                     repoRoots: normalizeRepoRoots(option.value),
-                    repositoryIdentity: projectIdentities[0] ?? null,
-                    repositoryIdentities: projectIdentities,
+                    repositoryIdentity: projectIdentities.primary,
+                    repositoryIdentities: projectIdentities.all,
                     defaultModelSelection: option.value.defaultModelSelection,
                     defaultThreadEnvMode: option.value.defaultThreadEnvMode,
                     faviconPath: option.value.faviconPath ?? null,
@@ -2245,13 +2266,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       Effect.flatMap((option) =>
         Option.isNone(option)
           ? Effect.succeed(Option.none<OrchestrationProjectShell>())
-          : repositoryIdentityResolver
-              .resolveMany(normalizeRepoRoots(option.value))
-              .pipe(
-                Effect.map((projectIdentities) =>
-                  Option.some(mapProjectShellRow(option.value, projectIdentities)),
-                ),
+          : Effect.all({
+              primary: repositoryIdentityResolver.resolve(option.value.workspaceRoot),
+              all: repositoryIdentityResolver.resolveMany(normalizeRepoRoots(option.value)),
+            }).pipe(
+              Effect.map((projectIdentities) =>
+                Option.some(mapProjectShellRow(option.value, projectIdentities)),
               ),
+            ),
       ),
     );
 

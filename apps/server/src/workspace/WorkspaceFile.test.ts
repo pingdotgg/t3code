@@ -5,9 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
-import { WorkspaceFile, WorkspaceFileLive } from "./WorkspaceFile.ts";
+import { WorkspaceFile, layer } from "./WorkspaceFile.ts";
 
-const TestLayer = WorkspaceFileLive.pipe(Layer.provideMerge(NodeServices.layer));
+const TestLayer = layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const makeTempDir = Effect.fn(function* (prefix: string) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -37,7 +37,7 @@ const writeFile = Effect.fn(function* (filePath: string, contents: string) {
   return filePath;
 });
 
-it.layer(TestLayer)("WorkspaceFileLive", (it) => {
+it.layer(TestLayer)("WorkspaceFile.layer", (it) => {
   it.effect(
     "parses JSONC, resolves relative + absolute folders, and classifies git vs non-git",
     () =>
@@ -158,7 +158,7 @@ it.layer(TestLayer)("WorkspaceFileLive", (it) => {
         .pipe(Effect.flip);
 
       expect(error._tag).toBe("WorkspaceFileError");
-      expect(error.operation).toBe("WorkspaceFile.read:readFile");
+      expect(error.operation).toBe("read-file");
     }),
   );
 });

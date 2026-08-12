@@ -219,12 +219,14 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
           .pipe(
             Effect.map(Option.some),
-            Effect.catchTag("WorkspacePathOutsideRootError", (cause) => {
-              pathValidationError ??= new AssetWorkspacePathValidationError({
-                resource: input.resource,
-                cause,
-              });
-              return Effect.succeed(Option.none());
+            Effect.catchTags({
+              WorkspacePathOutsideRootError: (cause) => {
+                pathValidationError ??= new AssetWorkspacePathValidationError({
+                  resource: input.resource,
+                  cause,
+                });
+                return Effect.succeed(Option.none());
+              },
             }),
           );
         if (Option.isNone(resolved)) continue;

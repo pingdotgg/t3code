@@ -263,7 +263,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
@@ -276,6 +276,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           exceptProjectId: command.projectId,
         });
       }
+      const nextWorkspaceRoot = command.workspaceRoot ?? project.workspaceRoot;
+      const nextRepoRoots =
+        command.repoRoots !== undefined
+          ? [...new Set([nextWorkspaceRoot, ...command.repoRoots])]
+          : command.workspaceRoot !== undefined
+            ? [
+                ...new Set([
+                  nextWorkspaceRoot,
+                  ...(project.repoRoots ?? [project.workspaceRoot]).filter(
+                    (root) => root !== project.workspaceRoot,
+                  ),
+                ]),
+              ]
+            : undefined;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -290,7 +304,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
           ...(command.workspaceFile !== undefined ? { workspaceFile: command.workspaceFile } : {}),
-          ...(command.repoRoots !== undefined ? { repoRoots: command.repoRoots } : {}),
+          ...(nextRepoRoots !== undefined ? { repoRoots: nextRepoRoots } : {}),
           ...(command.defaultModelSelection !== undefined
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),

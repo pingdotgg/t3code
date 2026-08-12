@@ -5,9 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
-import { WorkspaceGitScan, WorkspaceGitScanLive } from "./WorkspaceGitScan.ts";
+import { WorkspaceGitScan, layer } from "./WorkspaceGitScan.ts";
 
-const TestLayer = WorkspaceGitScanLive.pipe(Layer.provideMerge(NodeServices.layer));
+const TestLayer = layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const makeTempDir = Effect.fn(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -36,7 +36,7 @@ const touch = Effect.fn(function* (...segments: ReadonlyArray<string>) {
   return absolutePath;
 });
 
-it.layer(TestLayer)("WorkspaceGitScanLive", (it) => {
+it.layer(TestLayer)("WorkspaceGitScan.layer", (it) => {
   it.effect("detects sibling git repos and parent without .git", () =>
     Effect.gen(function* () {
       const scan = yield* WorkspaceGitScan;

@@ -97,8 +97,8 @@ export const make = Effect.gen(function* () {
   // Diff every repo root the thread spans and concatenate the patches
   // (multi-repo). Checkpoint ref names are uniform across roots, so the same
   // from/to refs apply to each. A root whose ref is missing (captured later, or
-  // capture failed) is skipped best-effort rather than failing the whole diff.
-  // Per-repo section grouping in the diff payload is a later slice (2c).
+  // capture failed) is skipped, while operational failures still propagate so
+  // callers never mistake an unreadable repository for an empty diff.
   const diffAcrossRoots = Effect.fn("CheckpointDiffQuery.diffAcrossRoots")(function* (input: {
     readonly roots: ReadonlyArray<string>;
     readonly fromCheckpointRef: CheckpointRef;
@@ -109,24 +109,35 @@ export const make = Effect.gen(function* () {
     const segments = yield* Effect.forEach(
       input.roots,
       (root) =>
-        checkpointStore
-          .diffCheckpoints({
+        Effect.gen(function* () {
+          const [hasFromRef, hasToRef] = yield* Effect.all([
+            checkpointStore.hasCheckpointRef({
+              cwd: root,
+              checkpointRef: input.fromCheckpointRef,
+            }),
+            checkpointStore.hasCheckpointRef({
+              cwd: root,
+              checkpointRef: input.toCheckpointRef,
+            }),
+          ]);
+          if (!hasFromRef || !hasToRef) {
+            yield* Effect.logWarning("turn diff checkpoint ref unavailable for root", {
+              threadId: input.threadId,
+              root,
+              hasFromRef,
+              hasToRef,
+            });
+            return { repoRoot: root, diff: "" };
+          }
+          const diff = yield* checkpointStore.diffCheckpoints({
             cwd: root,
             fromCheckpointRef: input.fromCheckpointRef,
             toCheckpointRef: input.toCheckpointRef,
             fallbackFromToHead: false,
             ignoreWhitespace: input.ignoreWhitespace,
-          })
-          .pipe(
-            Effect.map((diff) => ({ repoRoot: root, diff })),
-            Effect.catch((error) =>
-              Effect.logWarning("turn diff unavailable for root", {
-                threadId: input.threadId,
-                root,
-                detail: error.message,
-              }).pipe(Effect.as({ repoRoot: root, diff: "" })),
-            ),
-          ),
+          });
+          return { repoRoot: root, diff };
+        }),
       { concurrency: 4 },
     );
     return segments.filter((segment) => segment.diff.trim().length > 0);

@@ -519,6 +519,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          const nextWorkspaceRoot = event.payload.workspaceRoot ?? existingRow.value.workspaceRoot;
+          const nextRepoRoots =
+            event.payload.repoRoots !== undefined
+              ? [...new Set([nextWorkspaceRoot, ...event.payload.repoRoots])]
+              : event.payload.workspaceRoot !== undefined
+                ? [
+                    ...new Set([
+                      nextWorkspaceRoot,
+                      ...existingRow.value.repoRoots.filter(
+                        (root) => root !== existingRow.value.workspaceRoot,
+                      ),
+                    ]),
+                  ]
+                : existingRow.value.repoRoots;
           yield* projectionProjectRepository.upsert({
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
@@ -528,9 +542,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.workspaceFile !== undefined
               ? { workspaceFile: event.payload.workspaceFile }
               : {}),
-            ...(event.payload.repoRoots !== undefined
-              ? { repoRoots: event.payload.repoRoots }
-              : {}),
+            repoRoots: nextRepoRoots,
             ...(event.payload.defaultModelSelection !== undefined
               ? { defaultModelSelection: event.payload.defaultModelSelection }
               : {}),

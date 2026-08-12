@@ -871,6 +871,19 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // A multi-repo revert is only complete when every root restores. Keep the
+    // provider conversation, projected timeline, and stale refs untouched on a
+    // partial filesystem failure so the same request can be retried safely.
+    if (failedRoots.length > 0) {
+      yield* appendRevertFailureActivity({
+        threadId: event.payload.threadId,
+        turnCount: event.payload.turnCount,
+        detail: `Reverted ${restoredRoots.length} of ${restoreResults.length} repositories; failed: ${failedRoots.join(", ")}. Retry the revert to finish all repositories.`,
+        createdAt: now,
+      }).pipe(Effect.catch(() => Effect.void));
+      return;
+    }
+
     // Invalidate the workspace entry cache so the @-mention file picker
     // reflects the reverted filesystem state for each reverted root.
     yield* Effect.forEach(restoredRoots, (root) => workspaceEntries.refresh(root), {
@@ -909,17 +922,6 @@ const make = Effect.gen(function* () {
             ),
         { discard: true },
       );
-    }
-
-    // Some roots reverted and others failed: surface the partial failure but
-    // still complete the revert for the roots that succeeded.
-    if (failedRoots.length > 0) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: `Reverted ${restoredRoots.length} of ${restoreResults.length} repositories; failed: ${failedRoots.join(", ")}.`,
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
     }
 
     yield* orchestrationEngine

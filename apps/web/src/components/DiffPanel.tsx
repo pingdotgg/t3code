@@ -133,6 +133,7 @@ function BranchDiffRepoSection({
   repoRoot,
   scope,
   ignoreWhitespace,
+  refreshVersion,
   resolvedTheme,
   renderFileDiffEntry,
 }: {
@@ -141,6 +142,7 @@ function BranchDiffRepoSection({
   readonly repoRoot: string;
   readonly scope: "branch" | "unstaged";
   readonly ignoreWhitespace: boolean;
+  readonly refreshVersion: number;
   readonly resolvedTheme: string;
   readonly renderFileDiffEntry: (fileDiff: FileDiffMetadata, repoRoot?: string) => ReactNode;
 }) {
@@ -151,6 +153,11 @@ function BranchDiffRepoSection({
     }),
   );
   useRefreshOnReopen(preview.refresh, preview.data !== null);
+  const refreshRef = useRef(preview.refresh);
+  refreshRef.current = preview.refresh;
+  useEffect(() => {
+    if (refreshVersion > 0) refreshRef.current();
+  }, [refreshVersion]);
   const source = preview.data?.sources.find(
     (entry) => entry.kind === (scope === "unstaged" ? "working-tree" : "branch-range"),
   );
@@ -206,6 +213,7 @@ export default function DiffPanel({
   // across the worktree-path branch view and checkpoint-group turn view). null
   // shows every repo.
   const [branchRepoFilter, setBranchRepoFilter] = useState<string | null>(null);
+  const [branchRepoRefreshVersion, setBranchRepoRefreshVersion] = useState(0);
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
@@ -374,6 +382,10 @@ export default function DiffPanel({
     ? fallbackBranchDiffPreview
     : primaryBranchDiffPreview;
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
+  const refreshBranchDiffPreviews = useCallback(() => {
+    refreshBranchDiffPreview();
+    setBranchRepoRefreshVersion((version) => version + 1);
+  }, [refreshBranchDiffPreview]);
   const canRefreshGitDiff =
     isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
@@ -382,10 +394,10 @@ export default function DiffPanel({
 
   useEffect(() => {
     if (!canRefreshGitDiff) return;
-    const refreshOnFocus = () => refreshBranchDiffPreview();
+    const refreshOnFocus = () => refreshBranchDiffPreviews();
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
-  }, [canRefreshGitDiff, refreshBranchDiffPreview]);
+  }, [canRefreshGitDiff, refreshBranchDiffPreviews]);
 
   useEffect(() => {
     const current = {
@@ -401,9 +413,9 @@ export default function DiffPanel({
       return;
     }
     if (previous.turnId === current.turnId) return;
-    refreshBranchDiffPreview();
+    refreshBranchDiffPreviews();
     lastCompletedTurnRefreshRef.current = current;
-  }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.turnId, refreshBranchDiffPreview]);
+  }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.turnId, refreshBranchDiffPreviews]);
 
   // Refresh the active diff sources when the panel reopens so a stale cached
   // patch never lingers (see useRefreshOnReopen). Covers the single-repo branch/
@@ -1044,7 +1056,7 @@ export default function DiffPanel({
                   size="icon-sm"
                   variant="ghost"
                   aria-label={branchDiffPreview.isPending ? "Refreshing diff" : "Refresh diff"}
-                  onClick={refreshBranchDiffPreview}
+                  onClick={refreshBranchDiffPreviews}
                 />
               }
             >
@@ -1183,6 +1195,7 @@ export default function DiffPanel({
                     repoRoot={entry.repoRoot}
                     scope={selectedGitScope}
                     ignoreWhitespace={diffIgnoreWhitespace}
+                    refreshVersion={branchRepoRefreshVersion}
                     resolvedTheme={resolvedTheme}
                     renderFileDiffEntry={renderFileDiffEntry}
                   />
@@ -1215,6 +1228,10 @@ export default function DiffPanel({
                   const composedPath = event.nativeEvent.composedPath?.() ?? [];
                   for (const node of composedPath) {
                     if (!(node instanceof HTMLElement)) continue;
+                    // Grouped checkpoint entries carry their own repository-aware
+                    // open handler. Let it own the click so the outer single-root
+                    // handler cannot open the same path against the primary repo.
+                    if (node.hasAttribute("data-diff-repo-root")) return;
                     // Header controls keep their own actions. In particular, the chevron must
                     // not also trigger the row handler or the two toggles cancel each other.
                     if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {

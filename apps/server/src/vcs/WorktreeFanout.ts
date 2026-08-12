@@ -13,6 +13,7 @@
  * @module WorktreeFanout
  */
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 
 import type {
   GitCommandError,
@@ -44,6 +45,10 @@ export interface WorktreeFanoutDeps {
     input: VcsCreateWorktreeInput,
   ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
   readonly removeWorktree: (input: VcsRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
+  readonly deleteBranch: (input: {
+    readonly cwd: string;
+    readonly branch: string;
+  }) => Effect.Effect<void, GitCommandError>;
 }
 
 export interface CreateThreadWorktreesInput {
@@ -107,16 +112,22 @@ export const removeThreadWorktrees = (
     readonly force?: boolean;
   },
 ): Effect.Effect<void, GitCommandError> =>
-  Effect.forEach(
-    input.worktrees,
-    (worktree) =>
-      deps.removeWorktree({
-        cwd: worktree.repoRoot,
-        path: worktree.worktreePath,
-        ...(input.force === undefined ? {} : { force: input.force }),
-      }),
-    { concurrency: 1, discard: true },
-  );
+  Effect.gen(function* () {
+    const results = yield* Effect.forEach(
+      input.worktrees,
+      (worktree) =>
+        deps
+          .removeWorktree({
+            cwd: worktree.repoRoot,
+            path: worktree.worktreePath,
+            ...(input.force === undefined ? {} : { force: input.force }),
+          })
+          .pipe(Effect.result),
+      { concurrency: 1 },
+    );
+    const firstFailure = results.find(Result.isFailure);
+    if (firstFailure) return yield* firstFailure.failure;
+  });
 
 /**
  * Create one worktree per target, transactionally. On the first failure every
@@ -129,6 +140,7 @@ export const createThreadWorktrees = (
 ): Effect.Effect<ReadonlyArray<CreatedThreadWorktree>, GitCommandError> =>
   Effect.gen(function* () {
     const created: CreatedThreadWorktree[] = [];
+    const createdBranches: Array<{ readonly repoRoot: string; readonly branch: string }> = [];
     const takenNames = new Set<string>();
 
     yield* Effect.forEach(
@@ -154,6 +166,9 @@ export const createThreadWorktrees = (
             worktreePath: result.worktree.path,
             refName: result.worktree.refName,
           });
+          if (target.newBranch) {
+            createdBranches.push({ repoRoot: target.repoRoot, branch: target.newBranch });
+          }
         }),
       { concurrency: 1, discard: true },
     ).pipe(
@@ -161,10 +176,18 @@ export const createThreadWorktrees = (
         // Roll back the worktrees created before the failure, then re-raise the
         // original error. Rollback failures are swallowed so the caller sees the
         // root cause rather than a cleanup error.
-        removeThreadWorktrees(deps, { worktrees: created, force: true }).pipe(
-          Effect.ignore,
-          Effect.andThen(Effect.fail(error)),
-        ),
+        Effect.gen(function* () {
+          yield* removeThreadWorktrees(deps, { worktrees: created, force: true }).pipe(
+            Effect.ignore,
+          );
+          yield* Effect.forEach(
+            createdBranches,
+            ({ repoRoot, branch }) =>
+              deps.deleteBranch({ cwd: repoRoot, branch }).pipe(Effect.ignore),
+            { concurrency: 1, discard: true },
+          );
+          return yield* error;
+        }),
       ),
     );
 

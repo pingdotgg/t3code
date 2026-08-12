@@ -1970,6 +1970,78 @@ it.effect(
   },
 );
 
+it.effect(
+  "ProjectionSnapshotQuery does not promote an attached repository to the primary identity",
+  () => {
+    const attachedIdentity = {
+      canonicalKey: "github.com/acme/attached",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/acme/attached.git",
+      },
+      rootPath: "/tmp/attached",
+    };
+    const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
+      Layer.provideMerge(
+        Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+          resolve: (cwd: string) =>
+            Effect.succeed(cwd === "/tmp/attached" ? attachedIdentity : null),
+          resolveMany: () => Effect.succeed([attachedIdentity]),
+        }),
+      ),
+      Layer.provideMerge(SqlitePersistenceMemory),
+    );
+
+    return Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          repo_roots,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        ) VALUES (
+          'project-primary-non-git',
+          'Primary non-Git',
+          '/tmp/container',
+          '["/tmp/container","/tmp/attached"]',
+          NULL,
+          '[]',
+          '2026-04-05T00:00:00.000Z',
+          '2026-04-05T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      const project = yield* snapshotQuery.getActiveProjectByWorkspaceRoot("/tmp/container");
+      assert.equal(project._tag, "Some");
+      if (project._tag === "Some") {
+        assert.equal(project.value.repositoryIdentity, null);
+        assert.deepStrictEqual(project.value.repositoryIdentities, [attachedIdentity]);
+      }
+
+      const shell = yield* snapshotQuery.getProjectShellById(
+        asProjectId("project-primary-non-git"),
+      );
+      assert.equal(shell._tag, "Some");
+      if (shell._tag === "Some") {
+        assert.equal(shell.value.repositoryIdentity, null);
+        assert.deepStrictEqual(shell.value.repositoryIdentities, [attachedIdentity]);
+      }
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) => {
   // A thread shaped like real fan-out usage: user turns interleaved with
   // subagent turns (no user pending message), plus a turnless straggler user

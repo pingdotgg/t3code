@@ -1003,6 +1003,7 @@ const makeWsRpcLayer = (
                 {
                   createWorktree: gitWorkflow.createWorktree,
                   removeWorktree: gitWorkflow.removeWorktree,
+                  deleteBranch: gitWorkflow.deleteBranch,
                 },
                 {
                   worktreesDir: config.worktreesDir,
@@ -2016,6 +2017,7 @@ const makeWsRpcLayer = (
                 ...new Set(
                   [
                     thread.value.worktreePath ?? undefined,
+                    ...thread.value.worktrees.map((worktree) => worktree.worktreePath),
                     ...(project.value.repoRoots ?? []),
                     project.value.workspaceRoot,
                   ].filter((root): root is string => typeof root === "string" && root.length > 0),
@@ -2036,8 +2038,15 @@ const makeWsRpcLayer = (
               Effect.mapError(
                 (cause) =>
                   new FilesystemScanGitReposError({
-                    message: cause.detail,
-                    cause,
+                    parentPath: cause.parentPath,
+                    normalizedParentPath: cause.normalizedParentPath,
+                    failure:
+                      cause._tag === "WorkspaceGitScanStatFailedError"
+                        ? "stat_failed"
+                        : cause._tag === "WorkspaceGitScanNotDirectoryError"
+                          ? "not_directory"
+                          : "read_directory_failed",
+                    ...(cause._tag === "WorkspaceGitScanNotDirectoryError" ? {} : { cause }),
                   }),
               ),
             ),
@@ -2062,7 +2071,13 @@ const makeWsRpcLayer = (
               Effect.mapError(
                 (cause) =>
                   new FilesystemReadWorkspaceFileError({
-                    message: cause.detail,
+                    workspaceFilePath: cause.workspaceFilePath,
+                    failure:
+                      cause.operation === "read-file"
+                        ? "read_failed"
+                        : cause.operation === "parse-document"
+                          ? "parse_failed"
+                          : "folders_invalid",
                     cause,
                   }),
               ),

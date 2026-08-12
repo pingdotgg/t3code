@@ -3392,9 +3392,13 @@ function ChatViewContent(props: ChatViewProps) {
       // carries its own isolated-run worktree in `worktrees` (keyed by repo
       // root), so an explicit root opens in that repo's worktree when one
       // exists, falling back to the plain repo root otherwise.
+      const rootWorktree = rootOverride
+        ? activeThread?.worktrees.find(
+            (entry) => entry.repoRoot === rootOverride || entry.worktreePath === rootOverride,
+          )
+        : undefined;
       const worktreePath = rootOverride
-        ? (activeThread?.worktrees.find((entry) => entry.repoRoot === rootOverride)?.worktreePath ??
-          null)
+        ? (rootWorktree?.worktreePath ?? null)
         : activeThreadWorktreePath;
       const cwd = rootOverride
         ? (worktreePath ?? rootOverride)
@@ -3440,8 +3444,12 @@ function ChatViewContent(props: ChatViewProps) {
       ) {
         return;
       }
+      const selectedTerminalSummary = activeThreadKnownSessions.find(
+        (session) => session.target.terminalId === activeRightPanelSurface.activeTerminalId,
+      )?.state.summary;
       const terminalId = nextTerminalId(allocatableActiveTerminalIds);
-      const cwd = gitCwd ?? activeProject.workspaceRoot;
+      const worktreePath = selectedTerminalSummary?.worktreePath ?? activeThreadWorktreePath;
+      const cwd = selectedTerminalSummary?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
       useRightPanelStore
         .getState()
         .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
@@ -3452,10 +3460,10 @@ function ChatViewContent(props: ChatViewProps) {
           threadId: activeThreadId,
           terminalId,
           cwd,
-          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+          ...(worktreePath != null ? { worktreePath } : {}),
           env: projectScriptRuntimeEnv({
             project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
+            worktreePath,
           }),
         },
       });
@@ -3464,6 +3472,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeProject,
       activeRightPanelSurface,
       activeThreadId,
+      activeThreadKnownSessions,
       activeThreadRef,
       activeThreadWorktreePath,
       allocatableActiveTerminalIds,

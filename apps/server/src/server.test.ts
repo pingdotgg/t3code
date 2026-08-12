@@ -130,8 +130,8 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
-import { WorkspaceGitScanLive } from "./workspace/WorkspaceGitScan.ts";
-import { WorkspaceFileLive } from "./workspace/WorkspaceFile.ts";
+import * as WorkspaceGitScan from "./workspace/WorkspaceGitScan.ts";
+import * as WorkspaceFile from "./workspace/WorkspaceFile.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -573,8 +573,8 @@ const buildAppUnderTest = (options?: {
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
       ),
-      WorkspaceGitScanLive,
-      WorkspaceFileLive,
+      WorkspaceGitScan.layer,
+      WorkspaceFile.layer,
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(T3ProjectFileLoader.layer),

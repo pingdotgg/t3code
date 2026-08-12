@@ -17,13 +17,17 @@ const THREAD_ID = "thread-1";
 interface Recorder {
   readonly created: string[];
   readonly removed: string[];
+  readonly deletedBranches: string[];
 }
 
-function makeDeps(options?: { readonly failOnCwd?: string }): {
+function makeDeps(options?: {
+  readonly failOnCwd?: string;
+  readonly failRemovePaths?: ReadonlySet<string>;
+}): {
   deps: WorktreeFanoutDeps;
   recorder: Recorder;
 } {
-  const recorder: Recorder = { created: [], removed: [] };
+  const recorder: Recorder = { created: [], removed: [], deletedBranches: [] };
   const deps: WorktreeFanoutDeps = {
     createWorktree: (input: VcsCreateWorktreeInput) =>
       options?.failOnCwd === input.cwd
@@ -45,8 +49,20 @@ function makeDeps(options?: { readonly failOnCwd?: string }): {
             };
           }),
     removeWorktree: (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         recorder.removed.push(input.path);
+        if (options?.failRemovePaths?.has(input.path)) {
+          return yield* new GitCommandError({
+            operation: "removeWorktree",
+            command: "git worktree remove",
+            cwd: input.cwd,
+            detail: "injected removal failure",
+          });
+        }
+      }),
+    deleteBranch: (input) =>
+      Effect.sync(() => {
+        recorder.deletedBranches.push(`${input.cwd}:${input.branch}`);
       }),
   };
   return { deps, recorder };
@@ -126,6 +142,7 @@ describe("createThreadWorktrees", () => {
       // backend was created before frontend failed; it must be force-removed.
       expect(recorder.created).toEqual(["/t3/worktrees/project-1/thread-1/backend"]);
       expect(recorder.removed).toEqual(["/t3/worktrees/project-1/thread-1/backend"]);
+      expect(recorder.deletedBranches).toEqual(["/Users/me/backend:t3/run"]);
     }),
   );
 });
@@ -143,6 +160,23 @@ describe("removeThreadWorktrees", () => {
       });
 
       expect(recorder.removed).toEqual(["/t3/worktrees/p/t/backend", "/t3/worktrees/p/t/frontend"]);
+    }),
+  );
+
+  it.effect("attempts every removal and then surfaces the first failure", () =>
+    Effect.gen(function* () {
+      const firstPath = "/t3/worktrees/p/t/backend";
+      const { deps, recorder } = makeDeps({ failRemovePaths: new Set([firstPath]) });
+      const error = yield* removeThreadWorktrees(deps, {
+        worktrees: [
+          { repoRoot: "/Users/me/backend", worktreePath: firstPath },
+          { repoRoot: "/Users/me/frontend", worktreePath: "/t3/worktrees/p/t/frontend" },
+        ],
+        force: true,
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(GitCommandError);
+      expect(recorder.removed).toEqual([firstPath, "/t3/worktrees/p/t/frontend"]);
     }),
   );
 });

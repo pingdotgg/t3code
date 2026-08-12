@@ -571,6 +571,9 @@ function OpenCommandPaletteDialog(props: {
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
+  const updateProject = useAtomCommand(projectEnvironment.update, {
+    reportFailure: false,
+  });
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
@@ -1691,6 +1694,28 @@ function OpenCommandPaletteDialog(props: {
         cwd,
       );
       if (existing) {
+        if (options?.repoRoots && options.repoRoots.length > 0) {
+          const updateResult = await updateProject({
+            environmentId: existing.environmentId,
+            input: {
+              projectId: existing.id,
+              workspaceRoot: options.repoRoots[0]!,
+              repoRoots: options.repoRoots,
+              ...(options.workspaceFile ? { workspaceFile: options.workspaceFile } : {}),
+            },
+          });
+          if (updateResult._tag === "Failure") {
+            const error = squashAtomCommandFailure(updateResult);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to update repositories",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+            return;
+          }
+        }
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -1780,6 +1805,7 @@ function OpenCommandPaletteDialog(props: {
     [
       handleNewThread,
       createProject,
+      updateProject,
       environments,
       navigate,
       primaryEnvironmentId,

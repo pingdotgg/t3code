@@ -758,6 +758,20 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notInclude(error.detail, "Git command failed in");
       }),
     );
+
+    it.effect("deletes a local branch after worktree rollback", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createRef({ cwd, refName: "t3/rollback-branch" });
+
+        yield* driver.deleteBranch({ cwd, branch: "t3/rollback-branch" });
+
+        const branches = yield* driver.listLocalBranchNames(cwd);
+        assert.notInclude(branches, "t3/rollback-branch");
+      }),
+    );
   });
 
   describe("review diff previews", () => {

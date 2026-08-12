@@ -1473,6 +1473,7 @@ function ChatMarkdown({
           displayPath={fileLinkMeta.displayPath}
           workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
           line={fileLinkMeta.line}
+          fileRoot={fileLinkMeta.fileRoot}
           label={labelParts.join(" · ")}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}

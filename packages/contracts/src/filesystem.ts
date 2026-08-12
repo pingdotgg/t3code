@@ -92,13 +92,36 @@ export const FilesystemScanGitReposResult = Schema.Struct({
 });
 export type FilesystemScanGitReposResult = typeof FilesystemScanGitReposResult.Type;
 
+export const FilesystemScanGitReposFailure = Schema.Literals([
+  "stat_failed",
+  "not_directory",
+  "read_directory_failed",
+]);
+export type FilesystemScanGitReposFailure = typeof FilesystemScanGitReposFailure.Type;
+
 export class FilesystemScanGitReposError extends Schema.TaggedErrorClass<FilesystemScanGitReposError>()(
   "FilesystemScanGitReposError",
   {
+    parentPath: TrimmedNonEmptyString,
+    normalizedParentPath: TrimmedNonEmptyString,
+    failure: FilesystemScanGitReposFailure,
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly parentPath: string;
+    readonly normalizedParentPath: string;
+    readonly failure: FilesystemScanGitReposFailure;
+    readonly cause?: unknown;
+  }) {
+    super({
+      ...props,
+      message: `Failed to scan Git repositories under '${props.parentPath}' (${props.failure}).`,
+    });
+  }
+}
 
 export const FilesystemReadWorkspaceFileInput = Schema.Struct({
   workspaceFilePath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
@@ -131,10 +154,31 @@ export const FilesystemReadWorkspaceFileResult = Schema.Struct({
 });
 export type FilesystemReadWorkspaceFileResult = typeof FilesystemReadWorkspaceFileResult.Type;
 
+export const FilesystemReadWorkspaceFileFailure = Schema.Literals([
+  "read_failed",
+  "parse_failed",
+  "folders_invalid",
+]);
+export type FilesystemReadWorkspaceFileFailure = typeof FilesystemReadWorkspaceFileFailure.Type;
+
 export class FilesystemReadWorkspaceFileError extends Schema.TaggedErrorClass<FilesystemReadWorkspaceFileError>()(
   "FilesystemReadWorkspaceFileError",
   {
+    workspaceFilePath: TrimmedNonEmptyString,
+    failure: FilesystemReadWorkspaceFileFailure,
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly workspaceFilePath: string;
+    readonly failure: FilesystemReadWorkspaceFileFailure;
+    readonly cause?: unknown;
+  }) {
+    super({
+      ...props,
+      message: `Failed to read workspace file '${props.workspaceFilePath}' (${props.failure}).`,
+    });
+  }
+}
