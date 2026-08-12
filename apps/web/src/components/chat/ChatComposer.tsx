@@ -48,7 +48,9 @@ import {
   makeComposerMentionDragHandlers,
 } from "./composerMentionDrag";
 import {
+  composeComposerFileDropThreadError,
   composerMentionPathFromAbsolute,
+  composerUnresolvedHostFileMessage,
   hostPathUsableOnPlatform,
   partitionDroppedComposerFiles,
   resolveOsDroppedFilePath,
@@ -2289,7 +2291,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: images
   // ------------------------------------------------------------------
-  const addComposerImages = async (files: File[]) => {
+  const addComposerImages = async (
+    files: File[],
+    options?: { fallbackThreadError?: string | null },
+  ) => {
     if (!activeThreadId || files.length === 0) return;
     if (pendingUserInputs.length > 0) {
       toastManager.add({
@@ -2322,7 +2327,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       acceptedFiles.push(file);
       reservedCount += 1;
     }
-    setThreadError(threadId, error);
+    // Mixed drops call this first; its setThreadError(null) would wipe a
+    // mention error, so fold that message in here instead of writing after.
+    setThreadError(
+      threadId,
+      composeComposerFileDropThreadError(error, options?.fallbackThreadError ?? null),
+    );
     if (acceptedFiles.length === 0) return;
 
     pendingImageCompressionsRef.current.set(threadId, pendingCount + acceptedFiles.length);
@@ -2408,17 +2418,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (files.length === 0) return;
     event.preventDefault();
     const imageFiles = files.filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length > 0) {
-      void addComposerImages(imageFiles);
-    }
     const firstUnresolved = files.find(
       (file) => !file.type.startsWith("image/") && resolveDroppedFileAbsolutePath(file) === null,
     );
-    if (firstUnresolved !== undefined && activeThreadId) {
-      setThreadError(
-        activeThreadId,
-        `'${firstUnresolved.name}' can't be mentioned in this environment. Only image files can be attached.`,
-      );
+    const mentionError =
+      firstUnresolved !== undefined
+        ? composerUnresolvedHostFileMessage(firstUnresolved.name)
+        : null;
+    if (imageFiles.length > 0) {
+      void addComposerImages(imageFiles, { fallbackThreadError: mentionError });
+    } else if (mentionError !== null && activeThreadId) {
+      setThreadError(activeThreadId, mentionError);
     }
   };
 
@@ -2459,17 +2469,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       resolveDroppedFileAbsolutePath,
       gitCwd,
     );
-    if (dropped.imageFiles.length > 0) {
-      void addComposerImages(dropped.imageFiles);
-    }
-    // After addComposerImages: its synchronous validation clears the thread
-    // error, and this message must survive a mixed drop.
     const firstUnresolved = dropped.unresolvedFileNames[0];
-    if (firstUnresolved !== undefined && activeThreadId) {
-      setThreadError(
-        activeThreadId,
-        `'${firstUnresolved}' can't be mentioned in this environment. Only image files can be attached.`,
-      );
+    const mentionError =
+      firstUnresolved !== undefined ? composerUnresolvedHostFileMessage(firstUnresolved) : null;
+    if (dropped.imageFiles.length > 0) {
+      void addComposerImages(dropped.imageFiles, { fallbackThreadError: mentionError });
+    } else if (mentionError !== null && activeThreadId) {
+      setThreadError(activeThreadId, mentionError);
     }
     if (dropped.mentionText !== null) {
       // No focusComposer() here: the insert path focuses on the next frame,
