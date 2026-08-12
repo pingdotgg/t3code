@@ -101,7 +101,6 @@ import {
   PreviewRefreshInput,
   PreviewReportStatusInput,
   PreviewResizeInput,
-  PreviewSessionLookupError,
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
@@ -428,23 +427,24 @@ export const WsPreviewNavigateRpc = Rpc.make(WS_METHODS.previewNavigate, {
 
 export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   payload: PreviewReportStatusInput,
-  error: PreviewSessionLookupError,
+  error: PreviewError,
 });
 
 export const WsPreviewResizeRpc = Rpc.make(WS_METHODS.previewResize, {
   payload: PreviewResizeInput,
   success: PreviewSessionSnapshot,
-  error: PreviewSessionLookupError,
+  error: PreviewError,
 });
 
 export const WsPreviewRefreshRpc = Rpc.make(WS_METHODS.previewRefresh, {
   payload: PreviewRefreshInput,
-  error: PreviewSessionLookupError,
+  error: PreviewError,
 });
 
 // Idempotent: missing tabs are a no-op, so there is no error channel.
 export const WsPreviewCloseRpc = Rpc.make(WS_METHODS.previewClose, {
   payload: PreviewCloseInput,
+  error: PreviewError,
 });
 
 export const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {

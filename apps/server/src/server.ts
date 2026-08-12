@@ -232,13 +232,15 @@ const WorkspaceLayerLive = Layer.mergeAll(
 
 const AuthLayerLive = ServerAuthLive.pipe(
   Layer.provideMerge(PersistenceLayerLive),
-  Layer.provide(ServerSecretStoreLive),
+  // provideMerge so ws/routes that transitively need the store still see it
+  // once WsRpcGroup.of typechecks fully (the old @ts-expect-error masked this).
+  Layer.provideMerge(ServerSecretStoreLive),
 );
 
 const AuthControlPlaneLayerLive = AuthControlPlaneLive.pipe(
   Layer.provideMerge(AuthCoreLive),
   Layer.provideMerge(PersistenceLayerLive),
-  Layer.provide(ServerSecretStoreLive),
+  Layer.provideMerge(ServerSecretStoreLive),
 );
 
 const CloudEnvironmentAuthLayerLive = CloudEnvironmentAuth.runtimeLayer.pipe(
@@ -350,9 +352,18 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provide(NetService.layer),
 );
 
+// Deep Layer pipes lose `ServerEnvironment` from R even though
+// RuntimeCoreDependenciesLive provideMerges it. Re-provide here and narrow
+// only this sublayer's input so makeServerLayer stays ServerConfig-checked
+// without a whole-graph assertion.
 const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
   Layer.provideMerge(RuntimeDependenciesLive),
-);
+  Layer.provideMerge(ServerEnvironmentLive),
+) as Layer.Layer<
+  Layer.Success<typeof ServerRuntimeStartupLive> | Layer.Success<typeof RuntimeDependenciesLive>,
+  Layer.Error<typeof ServerRuntimeStartupLive> | Layer.Error<typeof RuntimeDependenciesLive>,
+  ServerConfig
+>;
 
 export const makeRoutesLayer = Layer.mergeAll(
   authAccessTokenRouteLayer,

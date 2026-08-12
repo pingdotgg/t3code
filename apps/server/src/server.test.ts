@@ -24,6 +24,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RelayClientInstallFailedError,
   ResolvedKeybindingRule,
   type RuntimeMode,
   ThreadId,
@@ -33,6 +34,12 @@ import {
   EditorId,
 } from "@t3tools/contracts";
 import { FIX_REVIEW_ISSUES_WORKFLOW_ID } from "@t3tools/shared/workflows/fixReviewIssues";
+import * as RelayClient from "@t3tools/shared/relayClient";
+import {
+  CLOUDFLARED_VERSION,
+  CLOUDFLARED_PATH_ENV_NAME,
+  type RelayClientShape,
+} from "@t3tools/shared/relayClient";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import {
@@ -235,7 +242,9 @@ const browserOtlpTracingLayer = Layer.mergeAll(
 
 const authTestLayer = ServerAuthLive.pipe(
   Layer.provide(SqlitePersistenceMemory),
-  Layer.provide(ServerSecretStoreLive),
+  // Match production AuthLayerLive: expose the store so fully-typed ws routes
+  // can resolve it from the test app layer.
+  Layer.provideMerge(ServerSecretStoreLive),
 );
 
 const makeBrowserOtlpPayload = (spanName: string) =>
@@ -361,6 +370,7 @@ const buildAppUnderTest = (options?: {
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
     providerService?: Partial<ProviderServiceShape>;
+    relayClient?: Partial<RelayClientShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -681,7 +691,27 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provideMerge(authTestLayer),
       Layer.provideMerge(SidebarStateLive.pipe(Layer.provide(SqlitePersistenceMemory))),
-      Layer.provideMerge(CloudHttpRuntimeLayerLive.pipe(Layer.provide(authTestLayer))),
+      Layer.provideMerge(
+        options?.layers?.relayClient
+          ? // mergeAll after the cast cloud layer: later RelayClient wins at runtime
+            // while other cloud services stay available for route construction.
+            Layer.mergeAll(
+              CloudHttpRuntimeLayerLive.pipe(Layer.provide(authTestLayer)),
+              Layer.succeed(
+                RelayClient.RelayClient,
+                RelayClient.RelayClient.of({
+                  resolve: Effect.succeed({
+                    status: "missing" as const,
+                    version: CLOUDFLARED_VERSION,
+                  }),
+                  install: Effect.die("Not implemented in server test."),
+                  installWithProgress: () => Effect.die("Not implemented in server test."),
+                  ...options.layers.relayClient,
+                }),
+              ),
+            )
+          : CloudHttpRuntimeLayerLive.pipe(Layer.provide(authTestLayer)),
+      ),
       Layer.provide(_workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
@@ -3278,6 +3308,115 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc cloud.getRelayClientStatus", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      // Executes the handler body against the real RelayClient service so an
+      // unbound identifier or unencodable return value fails this test.
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.cloudGetRelayClientStatus]({})),
+      );
+
+      assert.equal(response.version, CLOUDFLARED_VERSION);
+      assertTrue(
+        response.status === "available" ||
+          response.status === "missing" ||
+          response.status === "unsupported",
+      );
+      if (response.status === "available") {
+        assertTrue(response.executablePath.length > 0);
+        assertTrue(
+          response.source === "override" ||
+            response.source === "managed" ||
+            response.source === "path",
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc cloud.installRelayClient", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const toolsDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-relay-client-" });
+      const executablePath = path.join(
+        toolsDir,
+        process.platform === "win32" ? "cloudflared.exe" : "cloudflared",
+      );
+      // Point the managed client at a local executable so install short-circuits
+      // after the checking stage and never hits the network.
+      yield* fs.writeFileString(executablePath, "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(executablePath, 0o755);
+      const previousOverride = process.env[CLOUDFLARED_PATH_ENV_NAME];
+      process.env[CLOUDFLARED_PATH_ENV_NAME] = executablePath;
+
+      try {
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const events = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.cloudInstallRelayClient]({}).pipe(Stream.runCollect),
+          ),
+        );
+
+        const eventList = [...events];
+        assert.isAtLeast(eventList.length, 2);
+        assert.deepEqual(eventList[0], { type: "progress", stage: "checking" });
+        const complete = eventList[eventList.length - 1];
+        assert.equal(complete?.type, "complete");
+        if (complete?.type === "complete") {
+          assert.equal(complete.status.status, "available");
+          assert.equal(complete.status.version, CLOUDFLARED_VERSION);
+        }
+      } finally {
+        if (previousOverride === undefined) {
+          delete process.env[CLOUDFLARED_PATH_ENV_NAME];
+        } else {
+          process.env[CLOUDFLARED_PATH_ENV_NAME] = previousOverride;
+        }
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc cloud.installRelayClient failures", () =>
+    Effect.gen(function* () {
+      const installError = new RelayClient.RelayClientInstallError({
+        reason: "write_failed",
+        message: "simulated relay client install failure",
+      });
+      yield* buildAppUnderTest({
+        layers: {
+          relayClient: {
+            installWithProgress: (report) =>
+              report({ type: "progress", stage: "checking" }).pipe(
+                Effect.andThen(Effect.fail(installError)),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      // Proves the handler maps RelayClientInstallError into the declared
+      // RelayClientInstallFailedError channel (unencodable errors kill streams).
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.cloudInstallRelayClient]({}).pipe(Stream.runCollect, Effect.result),
+        ),
+      );
+
+      assertFailure(
+        result,
+        new RelayClientInstallFailedError({
+          reason: "write_failed",
+          message: "simulated relay client install failure",
+        }),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc server.upsertKeybinding", () =>
     Effect.gen(function* () {
       const rule: KeybindingRule = {
@@ -3589,6 +3728,35 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(readResponse.contents, "export const needle = 1;");
       assert.equal(readResponse.byteLength, 24);
       assert.equal(readResponse.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.listEntries", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-list-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "src"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspaceDir, "src", "listed-file.ts"),
+        "export const listed = true;",
+      );
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      // Exercises the listEntries handler body over a real socket.
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsListEntries]({
+            cwd: workspaceDir,
+          }),
+        ),
+      );
+
+      assert.isTrue(response.entries.some((entry) => entry.path === "src"));
+      assert.isTrue(response.entries.some((entry) => entry.path === "src/listed-file.ts"));
+      assert.equal(response.truncated, false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

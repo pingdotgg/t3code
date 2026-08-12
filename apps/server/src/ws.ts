@@ -39,6 +39,7 @@ import {
   OrchestrationGetTurnDiffStateError,
   ORCHESTRATION_WS_METHODS,
   ProjectSearchEntriesError,
+  ProjectListEntriesError,
   ProjectReadFileError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
@@ -63,9 +64,12 @@ import {
   SourceControlRepositoryError,
   ServerProviderUpdateError,
   KeybindingsConfigError,
+  type RelayClientInstallProgressEvent,
+  RelayClientInstallFailedError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import * as RelayClient from "@t3tools/shared/relayClient";
 import {
   buildReviewChangesPrompt,
   parseReviewChangesScope,
@@ -248,6 +252,8 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       // Optional so the ws layer stays buildable without the provider runtime;
       // prewarming is a best-effort hint.
       const providerService = yield* Effect.serviceOption(ProviderService);
+      // Optional so partial server builds/tests without cloud runtime still construct.
+      const relayClient = yield* Effect.serviceOption(RelayClient.RelayClient);
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
@@ -860,12 +866,6 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           ),
         );
 
-      // TODO: `cloud.getRelayClientStatus`, `cloud.installRelayClient`, and
-      // `projects.listEntries` are declared in the contract and called by
-      // client-runtime, but this server has no handler for them yet. The
-      // suppression covers only that missing-handler assertion; every handler
-      // below is still type checked.
-      // @ts-expect-error -- unimplemented RPC handlers, tracked separately
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -1618,6 +1618,81 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               ),
             ),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsListEntries]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsListEntries,
+            // Empty-query search returns the full workspace index (files + dirs),
+            // which is what mobile's file tree browser expects from listEntries.
+            workspaceEntries
+              .search({
+                cwd: input.cwd,
+                query: "",
+                limit: 25_000,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectListEntriesError({
+                      message: `Failed to list workspace entries: ${cause.detail}`,
+                      cause,
+                    }),
+                ),
+              ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudGetRelayClientStatus,
+            Option.match(relayClient, {
+              onNone: () =>
+                Effect.succeed({
+                  status: "missing" as const,
+                  version: RelayClient.CLOUDFLARED_VERSION,
+                }),
+              onSome: (client) => client.resolve,
+            }),
+            { "rpc.aggregate": "cloud" },
+          ),
+        [WS_METHODS.cloudInstallRelayClient]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.cloudInstallRelayClient,
+            Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>(
+              (queue) =>
+                Option.match(relayClient, {
+                  onNone: () =>
+                    Queue.failCause(
+                      queue,
+                      Cause.fail(
+                        new RelayClientInstallFailedError({
+                          reason: "write_failed",
+                          message: "Relay client management is not available on this server.",
+                        }),
+                      ),
+                    ),
+                  onSome: (client) =>
+                    client
+                      .installWithProgress((event) => Queue.offer(queue, event).pipe(Effect.asVoid))
+                      .pipe(
+                        Effect.mapError(
+                          (error) =>
+                            new RelayClientInstallFailedError({
+                              reason: error.reason,
+                              message: error.message,
+                            }),
+                        ),
+                        Effect.matchCauseEffect({
+                          onFailure: (cause) => Queue.failCause(queue, cause),
+                          onSuccess: (status) =>
+                            Queue.offer(queue, {
+                              type: "complete" as const,
+                              status,
+                            }).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid),
+                        }),
+                      ),
+                }),
+            ),
+            { "rpc.aggregate": "cloud" },
           ),
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(

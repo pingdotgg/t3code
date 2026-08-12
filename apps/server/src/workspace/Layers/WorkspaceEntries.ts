@@ -471,13 +471,30 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
             trimLeadingPattern: /^[@./]+/,
           });
           const limit = Math.max(0, Math.floor(input.limit));
+          const kindFiltered =
+            input.kind === undefined
+              ? index.entries
+              : index.entries.filter((entry) => entry.kind === input.kind);
+
+          // Empty query is a full-index list (dirs before files, path order).
+          // Ranked insertion is O(n²) at the 25k index cap; sort once instead.
+          if (!normalizedQuery) {
+            const ordered = kindFiltered.toSorted((left, right) => {
+              if (left.kind !== right.kind) {
+                return left.kind === "directory" ? -1 : 1;
+              }
+              return left.path.localeCompare(right.path);
+            });
+            return {
+              entries: ordered.slice(0, limit),
+              truncated: index.truncated || ordered.length > limit,
+            };
+          }
+
           const rankedEntries: RankedWorkspaceEntry[] = [];
           let matchedEntryCount = 0;
 
-          for (const entry of index.entries) {
-            if (input.kind !== undefined && entry.kind !== input.kind) {
-              continue;
-            }
+          for (const entry of kindFiltered) {
             const score = scoreEntry(entry, normalizedQuery);
             if (score === null) {
               continue;
