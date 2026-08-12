@@ -7,21 +7,14 @@
  * — if any root fails, the worktrees created so far are removed before the error
  * propagates, so a partial fan-out never leaks orphaned worktrees.
  *
- * The git operations are injected (`createWorktree` / `removeWorktree`) so the
- * fan-out policy and its rollback are unit-testable without a real repository.
- *
  * @module WorktreeFanout
  */
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
-import type {
-  GitCommandError,
-  OrchestrationThreadWorktree,
-  VcsCreateWorktreeInput,
-  VcsCreateWorktreeResult,
-  VcsRemoveWorktreeInput,
-} from "@t3tools/contracts";
+import type { GitCommandError, OrchestrationThreadWorktree } from "@t3tools/contracts";
+
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 /** A single repo root to materialize a worktree for. */
 export interface WorktreeFanoutTarget {
@@ -38,17 +31,6 @@ export interface CreatedThreadWorktree {
   readonly repoRoot: string;
   readonly worktreePath: string;
   readonly refName: string;
-}
-
-export interface WorktreeFanoutDeps {
-  readonly createWorktree: (
-    input: VcsCreateWorktreeInput,
-  ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
-  readonly removeWorktree: (input: VcsRemoveWorktreeInput) => Effect.Effect<void, GitCommandError>;
-  readonly deleteBranch: (input: {
-    readonly cwd: string;
-    readonly branch: string;
-  }) => Effect.Effect<void, GitCommandError>;
 }
 
 export interface CreateThreadWorktreesInput {
@@ -105,18 +87,16 @@ export function worktreePlacement(input: {
 
 /** Remove a set of fanned-out worktrees. Best-effort: removals run for every
  * entry and only the first failure (if any) is surfaced. */
-export const removeThreadWorktrees = (
-  deps: WorktreeFanoutDeps,
-  input: {
-    readonly worktrees: ReadonlyArray<OrchestrationThreadWorktree>;
-    readonly force?: boolean;
-  },
-): Effect.Effect<void, GitCommandError> =>
+export const removeThreadWorktrees = (input: {
+  readonly worktrees: ReadonlyArray<OrchestrationThreadWorktree>;
+  readonly force?: boolean;
+}): Effect.Effect<void, GitCommandError, GitWorkflowService.GitWorkflowService> =>
   Effect.gen(function* () {
+    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const results = yield* Effect.forEach(
       input.worktrees,
       (worktree) =>
-        deps
+        gitWorkflow
           .removeWorktree({
             cwd: worktree.repoRoot,
             path: worktree.worktreePath,
@@ -135,10 +115,14 @@ export const removeThreadWorktrees = (
  * propagates, so callers never observe a partially-fanned-out thread.
  */
 export const createThreadWorktrees = (
-  deps: WorktreeFanoutDeps,
   input: CreateThreadWorktreesInput,
-): Effect.Effect<ReadonlyArray<CreatedThreadWorktree>, GitCommandError> =>
+): Effect.Effect<
+  ReadonlyArray<CreatedThreadWorktree>,
+  GitCommandError,
+  GitWorkflowService.GitWorkflowService
+> =>
   Effect.gen(function* () {
+    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const created: CreatedThreadWorktree[] = [];
     const createdBranches: Array<{ readonly repoRoot: string; readonly branch: string }> = [];
     const takenNames = new Set<string>();
@@ -155,7 +139,7 @@ export const createThreadWorktrees = (
             takenNames,
           });
           takenNames.add(basenameOf(worktreePath));
-          const result = yield* deps.createWorktree({
+          const result = yield* gitWorkflow.createWorktree({
             cwd: target.repoRoot,
             refName: target.baseRef,
             ...(target.newBranch ? { newRefName: target.newBranch } : {}),
@@ -177,13 +161,11 @@ export const createThreadWorktrees = (
         // original error. Rollback failures are swallowed so the caller sees the
         // root cause rather than a cleanup error.
         Effect.gen(function* () {
-          yield* removeThreadWorktrees(deps, { worktrees: created, force: true }).pipe(
-            Effect.ignore,
-          );
+          yield* removeThreadWorktrees({ worktrees: created, force: true }).pipe(Effect.ignore);
           yield* Effect.forEach(
             createdBranches,
             ({ repoRoot, branch }) =>
-              deps.deleteBranch({ cwd: repoRoot, branch }).pipe(Effect.ignore),
+              gitWorkflow.deleteBranch({ cwd: repoRoot, branch }).pipe(Effect.ignore),
             { concurrency: 1, discard: true },
           );
           return yield* error;

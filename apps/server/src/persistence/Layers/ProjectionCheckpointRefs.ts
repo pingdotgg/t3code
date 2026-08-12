@@ -9,7 +9,6 @@ import {
   ListCheckpointRefsInput,
   ProjectionCheckpointRef,
   ProjectionCheckpointRefsRepository,
-  type ProjectionCheckpointRefsRepositoryShape,
 } from "../Services/ProjectionCheckpointRefs.ts";
 
 const makeProjectionCheckpointRefsRepository = Effect.gen(function* () {
@@ -72,44 +71,47 @@ const makeProjectionCheckpointRefsRepository = Effect.gen(function* () {
       `,
   });
 
-  const replaceForCheckpoint: ProjectionCheckpointRefsRepositoryShape["replaceForCheckpoint"] = (
-    input,
-  ) =>
-    sql
-      .withTransaction(
-        deleteForCheckpoint({
-          threadId: input.threadId,
-          checkpointTurnCount: input.checkpointTurnCount,
-        }).pipe(
-          Effect.flatMap(() =>
-            Effect.forEach(
-              input.refs,
-              (ref) =>
-                insertCheckpointRefRow({
-                  threadId: input.threadId,
-                  checkpointTurnCount: input.checkpointTurnCount,
-                  repoRoot: ref.repoRoot,
-                  checkpointRef: ref.checkpointRef,
-                }),
-              { discard: true },
+  const replaceForCheckpoint: ProjectionCheckpointRefsRepository["Service"]["replaceForCheckpoint"] =
+    (input) =>
+      sql
+        .withTransaction(
+          deleteForCheckpoint({
+            threadId: input.threadId,
+            checkpointTurnCount: input.checkpointTurnCount,
+          }).pipe(
+            Effect.flatMap(() =>
+              Effect.forEach(
+                input.refs,
+                (ref) =>
+                  insertCheckpointRefRow({
+                    threadId: input.threadId,
+                    checkpointTurnCount: input.checkpointTurnCount,
+                    repoRoot: ref.repoRoot,
+                    checkpointRef: ref.checkpointRef,
+                  }),
+                { discard: true },
+              ),
             ),
           ),
-        ),
-      )
-      .pipe(
-        Effect.mapError(
-          toPersistenceSqlError("ProjectionCheckpointRefsRepository.replaceForCheckpoint:query"),
-        ),
-      );
+        )
+        .pipe(
+          Effect.mapError(
+            toPersistenceSqlError("ProjectionCheckpointRefsRepository.replaceForCheckpoint:query"),
+          ),
+        );
 
-  const listByCheckpoint: ProjectionCheckpointRefsRepositoryShape["listByCheckpoint"] = (input) =>
+  const listByCheckpoint: ProjectionCheckpointRefsRepository["Service"]["listByCheckpoint"] = (
+    input,
+  ) =>
     listCheckpointRefRows(input).pipe(
       Effect.mapError(
         toPersistenceSqlError("ProjectionCheckpointRefsRepository.listByCheckpoint:query"),
       ),
     );
 
-  const deleteByThreadId: ProjectionCheckpointRefsRepositoryShape["deleteByThreadId"] = (input) =>
+  const deleteByThreadId: ProjectionCheckpointRefsRepository["Service"]["deleteByThreadId"] = (
+    input,
+  ) =>
     deleteCheckpointRefRowsByThread(input).pipe(
       Effect.mapError(
         toPersistenceSqlError("ProjectionCheckpointRefsRepository.deleteByThreadId:query"),
@@ -120,7 +122,7 @@ const makeProjectionCheckpointRefsRepository = Effect.gen(function* () {
     replaceForCheckpoint,
     listByCheckpoint,
     deleteByThreadId,
-  } satisfies ProjectionCheckpointRefsRepositoryShape;
+  } satisfies ProjectionCheckpointRefsRepository["Service"];
 });
 
 export const ProjectionCheckpointRefsRepositoryLive = Layer.effect(

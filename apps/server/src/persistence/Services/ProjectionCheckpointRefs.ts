@@ -48,38 +48,29 @@ export const DeleteCheckpointRefsByThreadIdInput = Schema.Struct({
 export type DeleteCheckpointRefsByThreadIdInput = typeof DeleteCheckpointRefsByThreadIdInput.Type;
 
 /**
- * ProjectionCheckpointRefsRepositoryShape - Service API for per-root checkpoint refs.
- */
-export interface ProjectionCheckpointRefsRepositoryShape {
-  /**
-   * Replace the full set of per-root refs for a checkpoint.
-   *
-   * Deletes any existing rows for `(threadId, checkpointTurnCount)` and inserts
-   * the supplied rows, transactionally. An empty `refs` array clears the set.
-   */
-  readonly replaceForCheckpoint: (
-    input: ReplaceCheckpointRefsInput,
-  ) => Effect.Effect<void, ProjectionRepositoryError>;
-
-  /**
-   * List the per-root refs for a checkpoint, ordered by repo root.
-   */
-  readonly listByCheckpoint: (
-    input: ListCheckpointRefsInput,
-  ) => Effect.Effect<ReadonlyArray<ProjectionCheckpointRef>, ProjectionRepositoryError>;
-
-  /**
-   * Delete all checkpoint refs for a thread (thread teardown / full revert).
-   */
-  readonly deleteByThreadId: (
-    input: DeleteCheckpointRefsByThreadIdInput,
-  ) => Effect.Effect<void, ProjectionRepositoryError>;
-}
-
-/**
  * ProjectionCheckpointRefsRepository - Service tag for per-root checkpoint ref persistence.
  */
 export class ProjectionCheckpointRefsRepository extends Context.Service<
   ProjectionCheckpointRefsRepository,
-  ProjectionCheckpointRefsRepositoryShape
+  {
+    /**
+     * Replace the full set of per-root refs for a checkpoint.
+     *
+     * Deletes any existing rows for `(threadId, checkpointTurnCount)` and inserts
+     * the supplied rows, transactionally. An empty `refs` array clears the set.
+     */
+    readonly replaceForCheckpoint: (
+      input: ReplaceCheckpointRefsInput,
+    ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+    /** List the per-root refs for a checkpoint, ordered by repo root. */
+    readonly listByCheckpoint: (
+      input: ListCheckpointRefsInput,
+    ) => Effect.Effect<ReadonlyArray<ProjectionCheckpointRef>, ProjectionRepositoryError>;
+
+    /** Delete all checkpoint refs for a thread (thread teardown / full revert). */
+    readonly deleteByThreadId: (
+      input: DeleteCheckpointRefsByThreadIdInput,
+    ) => Effect.Effect<void, ProjectionRepositoryError>;
+  }
 >()("t3/persistence/Services/ProjectionCheckpointRefs/ProjectionCheckpointRefsRepository") {}

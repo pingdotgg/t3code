@@ -1,13 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { GitCommandError, type VcsCreateWorktreeInput } from "@t3tools/contracts";
+
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 import {
   createThreadWorktrees,
   removeThreadWorktrees,
   worktreePlacement,
-  type WorktreeFanoutDeps,
 } from "./WorktreeFanout.ts";
 
 const WORKTREES_DIR = "/t3/worktrees";
@@ -20,15 +22,12 @@ interface Recorder {
   readonly deletedBranches: string[];
 }
 
-function makeDeps(options?: {
+function makeGitWorkflowLayer(options?: {
   readonly failOnCwd?: string;
   readonly failRemovePaths?: ReadonlySet<string>;
-}): {
-  deps: WorktreeFanoutDeps;
-  recorder: Recorder;
-} {
+}) {
   const recorder: Recorder = { created: [], removed: [], deletedBranches: [] };
-  const deps: WorktreeFanoutDeps = {
+  const service = {
     createWorktree: (input: VcsCreateWorktreeInput) =>
       options?.failOnCwd === input.cwd
         ? Effect.fail(
@@ -64,8 +63,11 @@ function makeDeps(options?: {
       Effect.sync(() => {
         recorder.deletedBranches.push(`${input.cwd}:${input.branch}`);
       }),
+  } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>;
+  return {
+    layer: Layer.mock(GitWorkflowService.GitWorkflowService)(service),
+    recorder,
   };
-  return { deps, recorder };
 }
 
 describe("worktreePlacement", () => {
@@ -96,8 +98,8 @@ describe("worktreePlacement", () => {
 describe("createThreadWorktrees", () => {
   it.effect("creates one worktree per repo root, keyed by origin", () =>
     Effect.gen(function* () {
-      const { deps, recorder } = makeDeps();
-      const created = yield* createThreadWorktrees(deps, {
+      const { layer, recorder } = makeGitWorkflowLayer();
+      const created = yield* createThreadWorktrees({
         worktreesDir: WORKTREES_DIR,
         projectId: PROJECT_ID,
         threadId: THREAD_ID,
@@ -105,7 +107,7 @@ describe("createThreadWorktrees", () => {
           { repoRoot: "/Users/me/backend", baseRef: "main", newBranch: "t3/run" },
           { repoRoot: "/Users/me/frontend", baseRef: "develop", newBranch: "t3/run" },
         ],
-      });
+      }).pipe(Effect.provide(layer));
 
       expect(created).toEqual([
         {
@@ -126,8 +128,8 @@ describe("createThreadWorktrees", () => {
 
   it.effect("rolls back already-created worktrees on partial failure", () =>
     Effect.gen(function* () {
-      const { deps, recorder } = makeDeps({ failOnCwd: "/Users/me/frontend" });
-      const result = yield* createThreadWorktrees(deps, {
+      const { layer, recorder } = makeGitWorkflowLayer({ failOnCwd: "/Users/me/frontend" });
+      const result = yield* createThreadWorktrees({
         worktreesDir: WORKTREES_DIR,
         projectId: PROJECT_ID,
         threadId: THREAD_ID,
@@ -136,7 +138,7 @@ describe("createThreadWorktrees", () => {
           { repoRoot: "/Users/me/frontend", baseRef: "develop", newBranch: "t3/run" },
           { repoRoot: "/Users/me/shared", baseRef: "main", newBranch: "t3/run" },
         ],
-      }).pipe(Effect.flip);
+      }).pipe(Effect.provide(layer), Effect.flip);
 
       expect(result).toBeInstanceOf(GitCommandError);
       // backend was created before frontend failed; it must be force-removed.
@@ -150,14 +152,14 @@ describe("createThreadWorktrees", () => {
 describe("removeThreadWorktrees", () => {
   it.effect("removes every fanned-out worktree", () =>
     Effect.gen(function* () {
-      const { deps, recorder } = makeDeps();
-      yield* removeThreadWorktrees(deps, {
+      const { layer, recorder } = makeGitWorkflowLayer();
+      yield* removeThreadWorktrees({
         worktrees: [
           { repoRoot: "/Users/me/backend", worktreePath: "/t3/worktrees/p/t/backend" },
           { repoRoot: "/Users/me/frontend", worktreePath: "/t3/worktrees/p/t/frontend" },
         ],
         force: true,
-      });
+      }).pipe(Effect.provide(layer));
 
       expect(recorder.removed).toEqual(["/t3/worktrees/p/t/backend", "/t3/worktrees/p/t/frontend"]);
     }),
@@ -166,14 +168,16 @@ describe("removeThreadWorktrees", () => {
   it.effect("attempts every removal and then surfaces the first failure", () =>
     Effect.gen(function* () {
       const firstPath = "/t3/worktrees/p/t/backend";
-      const { deps, recorder } = makeDeps({ failRemovePaths: new Set([firstPath]) });
-      const error = yield* removeThreadWorktrees(deps, {
+      const { layer, recorder } = makeGitWorkflowLayer({
+        failRemovePaths: new Set([firstPath]),
+      });
+      const error = yield* removeThreadWorktrees({
         worktrees: [
           { repoRoot: "/Users/me/backend", worktreePath: firstPath },
           { repoRoot: "/Users/me/frontend", worktreePath: "/t3/worktrees/p/t/frontend" },
         ],
         force: true,
-      }).pipe(Effect.flip);
+      }).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(GitCommandError);
       expect(recorder.removed).toEqual([firstPath, "/t3/worktrees/p/t/frontend"]);

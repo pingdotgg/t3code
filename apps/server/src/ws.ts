@@ -999,19 +999,12 @@ const makeWsRpcLayer = (
                       ),
               );
 
-              const created = yield* createThreadWorktrees(
-                {
-                  createWorktree: gitWorkflow.createWorktree,
-                  removeWorktree: gitWorkflow.removeWorktree,
-                  deleteBranch: gitWorkflow.deleteBranch,
-                },
-                {
-                  worktreesDir: config.worktreesDir,
-                  projectId: worktreeProjectId ?? command.threadId,
-                  threadId: command.threadId,
-                  targets,
-                },
-              );
+              const created = yield* createThreadWorktrees({
+                worktreesDir: config.worktreesDir,
+                projectId: worktreeProjectId ?? command.threadId,
+                threadId: command.threadId,
+                targets,
+              }).pipe(Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow));
 
               const worktrees = created.map((entry) => ({
                 repoRoot: entry.repoRoot,
