@@ -71,9 +71,14 @@ struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
         }
 
         guard current != nil else {
+            let displaced = deferred
+            deferred = nil
             let presentation = FeatureNewTaskPresentation(request: request)
             current = presentation
-            return FeatureNewTaskPresentationEffects(presentation: presentation)
+            return FeatureNewTaskPresentationEffects(
+                presentation: presentation,
+                released: displaced.map { [$0] } ?? []
+            )
         }
 
         let displaced = pending
@@ -146,6 +151,21 @@ struct FeatureNewTaskPresentationCoordinator: Equatable, Sendable {
             dismissalID: dismissalID,
             released: released
         )
+    }
+}
+
+enum FeatureNewTaskPresentationTiming {
+    static func requiresDismissalCallback(dismissalID: UUID, presentedID: UUID?) -> Bool {
+        presentedID == dismissalID
+    }
+
+    static func canPresent(
+        id: UUID,
+        currentID: UUID?,
+        awaitingDismissalID: UUID?,
+        presentedID: UUID?
+    ) -> Bool {
+        currentID == id && awaitingDismissalID != id && presentedID == nil
     }
 }
 
@@ -880,17 +900,33 @@ public struct WorkspaceView: View {
                 releaseIncomingSharePresentation(shareID)
             }
         }
-        if let dismissalID = effects.dismissalID,
-           presentedNewTask?.id == dismissalID {
+        if let dismissalID = effects.dismissalID {
             newTaskAwaitingDismissalID = dismissalID
-            presentedNewTask = nil
-            scheduleNewTaskDismissalFallback(id: dismissalID)
+            if FeatureNewTaskPresentationTiming.requiresDismissalCallback(
+                dismissalID: dismissalID,
+                presentedID: presentedNewTask?.id
+            ) {
+                presentedNewTask = nil
+                scheduleNewTaskDismissalFallback(id: dismissalID)
+            } else {
+                newTaskDismissalFallback?.cancel()
+                newTaskDismissalFallback = Task { @MainActor in
+                    await Task.yield()
+                    guard newTaskAwaitingDismissalID == dismissalID,
+                          presentedNewTask?.id != dismissalID else { return }
+                    completeNewTaskDismissal(id: dismissalID)
+                }
+            }
         }
         if let presentation = effects.presentation {
             Task { @MainActor in
                 await Task.yield()
-                guard newTaskPresentationCoordinator.current?.id == presentation.id,
-                      presentedNewTask == nil else { return }
+                guard FeatureNewTaskPresentationTiming.canPresent(
+                    id: presentation.id,
+                    currentID: newTaskPresentationCoordinator.current?.id,
+                    awaitingDismissalID: newTaskAwaitingDismissalID,
+                    presentedID: presentedNewTask?.id
+                ) else { return }
                 presentedNewTask = presentation
             }
         }
