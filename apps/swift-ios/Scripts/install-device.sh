@@ -84,19 +84,8 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
   fi
 
   GIT_REPO_REMOTE="upstream"
-  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" 2>/dev/null || true)"
-  if [[ -z "${GIT_REPO_URL}" ]]; then
+  if ! git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" >/dev/null 2>&1; then
     GIT_REPO_REMOTE="origin"
-    GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" 2>/dev/null || true)"
-  fi
-  GIT_REPO_URL="${GIT_REPO_URL%.git}"
-  case "${GIT_REPO_URL}" in
-    https://*@*) GIT_REPO_URL="https://${GIT_REPO_URL#*@}" ;;
-    ssh://git@*) GIT_REPO_URL="https://${GIT_REPO_URL#ssh://git@}" ;;
-    git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
-  esac
-  if [[ "${GIT_REPO_URL}" != https://github.com/* ]]; then
-    GIT_REPO_URL=""
   fi
   # Prefer an explicit comparison line, then the public repository's default.
   GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
@@ -115,8 +104,23 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
   GIT_REMOTE_CONTAINMENT="$(
     git -C "${APP_DIR}" branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null || true
   )"
-  if [[ "${GIT_COMMIT}" == *-dirty ]] || \
-     ! grep -Eq "^${GIT_REPO_REMOTE}/" <<< "${GIT_REMOTE_CONTAINMENT}"; then
+  GIT_REPO_REMOTE=""
+  if [[ "${GIT_COMMIT}" != *-dirty ]]; then
+    for candidate in upstream origin; do
+      if grep -Eq "^${candidate}/" <<< "${GIT_REMOTE_CONTAINMENT}"; then
+        GIT_REPO_REMOTE="${candidate}"
+        break
+      fi
+    done
+  fi
+  GIT_REPO_URL="$(git -C "${APP_DIR}" remote get-url "${GIT_REPO_REMOTE}" 2>/dev/null || true)"
+  GIT_REPO_URL="${GIT_REPO_URL%.git}"
+  case "${GIT_REPO_URL}" in
+    https://*@*) GIT_REPO_URL="https://${GIT_REPO_URL#*@}" ;;
+    ssh://git@*) GIT_REPO_URL="https://${GIT_REPO_URL#ssh://git@}" ;;
+    git@*) GIT_REPO_URL="https://$(printf '%s' "${GIT_REPO_URL#git@}" | tr ':' '/')" ;;
+  esac
+  if [[ "${GIT_REPO_URL}" != https://github.com/* ]]; then
     GIT_REPO_URL=""
   fi
   if [[ -z "${GIT_BASE_REF}" ]]; then
