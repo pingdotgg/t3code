@@ -124,6 +124,8 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
+const processUptimeMs = () => Math.round(process.uptime() * 1000);
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -143,9 +145,11 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
 }: RunMigrationsOptions = {}) {
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
-  yield* migrations.length === 0
-    ? Effect.logDebug("Database schema is current")
-    : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
+  const migrationLog =
+    migrations.length === 0
+      ? Effect.logDebug("Database schema is current")
+      : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
+  yield* migrationLog.pipe(Effect.annotateLogs({ processUptimeMs: processUptimeMs() }));
   return executedMigrations;
 });
 

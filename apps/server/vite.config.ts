@@ -12,8 +12,45 @@ const bundledPackagePrefixes = [
   "effect-codex-app-server",
 ];
 
+// WSL loads the packaged CLI through a Windows filesystem mount resolved by
+// wslpath (commonly /mnt/c). Resolving a large dependency graph there is
+// substantially slower than reading a few bundled chunks. Bundle direct runtime
+// dependencies by default so adding a normal JS dependency cannot silently
+// regress startup. Exceptions own native binaries, target another runtime, or
+// resolve package assets at runtime and must stay in node_modules.
+const externalRuntimePackageNames = new Set([
+  // Resolves its CLI and other files from the installed package.
+  "@anthropic-ai/claude-agent-sdk",
+
+  // Loaded only when the server runs under Bun.
+  "@effect/platform-bun",
+  "@effect/sql-sqlite-bun",
+
+  // Load platform-specific native binaries from node_modules.
+  "@ff-labs/fff-node",
+  "node-pty",
+]);
+const runtimePackageNames = new Set(Object.keys(packageJson.dependencies));
+
+function packageNameFromId(id: string): string {
+  if (id.startsWith("@")) {
+    const [scope, name] = id.split("/");
+    return scope && name ? `${scope}/${name}` : id;
+  }
+
+  return id.split("/")[0] ?? id;
+}
+
 export function shouldBundleCliDependency(id: string): boolean {
-  return bundledPackagePrefixes.some((prefix) => id.startsWith(prefix));
+  const packageName = packageNameFromId(id);
+  if (externalRuntimePackageNames.has(packageName)) {
+    return false;
+  }
+
+  return (
+    runtimePackageNames.has(packageName) ||
+    bundledPackagePrefixes.some((prefix) => id.startsWith(prefix))
+  );
 }
 
 const repoEnv = loadRepoEnv();

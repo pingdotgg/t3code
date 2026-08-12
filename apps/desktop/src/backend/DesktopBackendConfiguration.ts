@@ -447,8 +447,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     noBrowser: true,
     port: input.port,
     // Omit t3Home so the Linux backend uses its own home dir instead of
-    // the Windows-side baseDir (which would be a /mnt/c path and share
-    // the SQLite file with the primary).
+    // the Windows-side baseDir, which would share the primary's SQLite file
+    // through the Windows filesystem mount.
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
     // PortSchema rejects 0, so when tailscale serve is disabled we still
@@ -468,9 +468,10 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   // archive FILE. The Windows primary reads its entry through
   // ELECTRON_RUN_AS_NODE (asar-aware), but the WSL backend launches plain
   // `wsl.exe -- node`, which can't read inside an asar. electron-builder unpacks
-  // the server bundle + node-pty (see asarUnpack in build-desktop-artifact.ts)
-  // to the app.asar.unpacked sibling, so point WSL there. In dev appRoot is
-  // already a real directory, so this is a no-op.
+  // the server bundle and intentionally external runtime dependencies (see
+  // asarUnpack in build-desktop-artifact.ts) to the app.asar.unpacked sibling,
+  // so point WSL there. In dev appRoot is already a real directory, so this is
+  // a no-op.
   const wslAppRoot = environment.isPackaged
     ? environment.path.join(environment.resourcesPath, "app.asar.unpacked")
     : environment.appRoot;
@@ -522,9 +523,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   // Build an explicit copy of process.env minus T3CODE_HOME (dev-runner
   // exports the Windows-side base dir for the primary; if it leaks into
-  // the WSL backend the Linux side ends up sharing C:\Users\...\.t3 via
-  // /mnt/c, which means both backends read/write the same database and
-  // their env-ids collide).
+  // the WSL backend the Linux side reaches the same .t3 directory through
+  // the Windows filesystem mount, so both backends write the same database
+  // and their environment IDs collide).
   const parentEnvWithoutT3Home: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (key === "T3CODE_HOME") continue;

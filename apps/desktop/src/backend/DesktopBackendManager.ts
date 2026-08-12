@@ -25,6 +25,7 @@
 
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -89,7 +90,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly env: Record<string, string | undefined>;
   // When true the spawner merges the desktop process.env on top of `env`;
   // when false `env` is passed verbatim. WSL mode opts out so a leaking
-  // T3CODE_HOME can't pin the WSL backend to /mnt/c/...\.t3.
+  // T3CODE_HOME can't pin the WSL backend to a Windows-mounted .t3 directory.
   readonly extendEnv: boolean;
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
@@ -636,8 +637,11 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const state = yield* Ref.make(initialState);
   const mutex = yield* Semaphore.make(1);
 
-  const { logWarning: logInstanceWarning, logError: logInstanceError } =
-    DesktopObservability.makeComponentLogger(`desktop-backend-instance:${spec.id}`);
+  const {
+    logInfo: logInstanceInfo,
+    logWarning: logInstanceWarning,
+    logError: logInstanceError,
+  } = DesktopObservability.makeComponentLogger(`desktop-backend-instance:${spec.id}`);
 
   const updateActiveRun = (runId: number, f: (run: ActiveBackendRun) => ActiveBackendRun) =>
     Ref.update(state, withActiveRun(runId, f));
@@ -886,6 +890,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           );
         });
 
+        const runStartedAt = yield* Clock.currentTimeMillis;
+        const elapsedMs = Clock.currentTimeMillis.pipe(Effect.map((now) => now - runStartedAt));
+
         const program = runBackendProcess({
           ...config.value,
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
@@ -896,6 +903,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...run,
               pid: Option.some(pid),
             }));
+            yield* logInstanceInfo("backend process spawned", {
+              pid,
+              port: config.value.bootstrap.port,
+              cwd: config.value.cwd,
+              entryPath: config.value.entryPath,
+              executablePath: config.value.executablePath,
+              bootstrapDelivery: config.value.bootstrapDelivery,
+              elapsedMs: yield* elapsedMs,
+            });
             yield* backendOutputLog.beginSession({
               details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
             });
@@ -906,31 +922,49 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               exitObserved: true,
             })),
           onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
-            const isCurrentRun = yield* Ref.modify(state, (latest) => {
-              const activeRun = Option.getOrUndefined(latest.active);
-              if (activeRun?.id !== runId) {
-                return [false, latest] as const;
-              }
-
-              return [
-                true,
+            const { isCurrentRun, pid } = yield* Ref.modify(
+              state,
+              (
+                latest,
+              ): readonly [
                 {
-                  ...latest,
-                  restartAttempt: 0,
-                  ready: true,
+                  readonly isCurrentRun: boolean;
+                  readonly pid: Option.Option<number>;
                 },
-              ] as const;
-            });
+                BackendManagerState,
+              ] => {
+                const activeRun = Option.getOrUndefined(latest.active);
+                if (activeRun?.id !== runId) {
+                  return [{ isCurrentRun: false, pid: Option.none<number>() }, latest] as const;
+                }
+
+                return [
+                  { isCurrentRun: true, pid: activeRun.pid },
+                  {
+                    ...latest,
+                    restartAttempt: 0,
+                    ready: true,
+                  },
+                ] as const;
+              },
+            );
             if (!isCurrentRun) {
               return;
             }
 
+            yield* logInstanceInfo("backend readiness succeeded", {
+              pid: Option.getOrUndefined(pid),
+              httpBaseUrl: config.value.httpBaseUrl.href,
+              elapsedMs: yield* elapsedMs,
+            });
             yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {
               yield* logInstanceWarning("backend readiness check failed during bootstrap", {
                 error: error.message,
+                httpBaseUrl: config.value.httpBaseUrl.href,
+                elapsedMs: yield* elapsedMs,
               });
               yield* backendOutputLog.persistFailureSnapshot({
                 details: error.message,

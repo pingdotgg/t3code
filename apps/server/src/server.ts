@@ -127,6 +127,8 @@ const ApplicationObservabilityLive = ObservabilityLive.pipe(
   Layer.provideMerge(ResourceAttributionLayerLive),
 );
 
+const processUptimeMs = () => Math.round(process.uptime() * 1000);
+
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
     if (typeof Bun !== "undefined") {
@@ -482,7 +484,13 @@ export const makeServerLayer = Layer.unwrap(
 
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {
-        yield* HttpServer.HttpServer;
+        const server = yield* HttpServer.HttpServer;
+        const address = server.address;
+        yield* Effect.logInfo("HTTP server listening", {
+          address: HttpServer.formatAddress(address),
+          port: address._tag === "TcpAddress" ? address.port : undefined,
+          processUptimeMs: processUptimeMs(),
+        });
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
       }),

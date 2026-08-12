@@ -229,14 +229,12 @@ const NODE_PTY_PROBE_SCRIPT = (
 printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
 printf 'resolvedPath:%s\\n' "$PATH"
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
-// The server bundle externalizes its deps to node_modules, and the WSL Node
-// can't read inside app.asar, so confirm those deps are unpacked on the real
-// filesystem before reporting the backend healthy. "effect" is the framework
-// every server module imports; resolving it validates the whole node_modules
-// tree. Exit 3 marks this distinct from a node-pty problem so the caller can
-// report it accurately instead of letting the server crash on
-// ERR_MODULE_NOT_FOUND at launch (which, in wsl-only mode, would just fail to
-// launch with no fallback).
+// The pure-JS startup graph is bundled, but native and asset-owning runtime
+// dependencies remain in node_modules. WSL Node can't read inside app.asar, so
+// confirm the unpacked production dependency tree is reachable before reporting
+// the backend healthy. "effect" is a stable direct dependency and inexpensive
+// resolution sentinel; node-pty is loaded and validated below. Exit 3 marks a
+// missing dependency tree distinctly from a node-pty compatibility problem.
 try { require.resolve("effect"); } catch (_e) { process.exit(3); }
 const fs = require("node:fs");
 const path = require("node:path");
@@ -462,11 +460,10 @@ const ensureNodePtyImpl = (
       } as const;
     }
 
-    // Server dependencies (e.g. "effect") couldn't be resolved on the WSL
-    // filesystem — a packaging regression, since the server bundle needs its
-    // node_modules unpacked from the asar. Fatal so wsl-only mode falls back to
-    // Windows and dual mode surfaces the reason inline, instead of the server
-    // crash-looping on ERR_MODULE_NOT_FOUND once it actually launches.
+    // The external production dependency tree couldn't be resolved on the WSL
+    // filesystem. This is a packaging regression: intentionally external native
+    // and asset-owning packages must be unpacked from the asar. Fatal so wsl-only
+    // mode falls back to Windows and dual mode surfaces the reason inline.
     if (probe.exitCode === 3) {
       return {
         ok: false,
