@@ -52,8 +52,12 @@ export const APP_ZOOM_CSS_VARIABLE = "--app-zoom";
 
 /**
  * `outerWidth` is measured in screen points and `innerWidth` in the renderer's
- * zoomed CSS pixels, so their ratio is the page zoom factor. Reading it here
- * avoids a main-process round trip for a value the renderer already has.
+ * zoomed CSS pixels, so their ratio is the page zoom factor.
+ *
+ * Only a fallback for a renderer without the desktop bridge: the two values do
+ * not agree with each other until the window has settled, so at startup this
+ * reads a default `outerWidth` against an already-final `innerWidth` and
+ * reports a wildly wrong factor. Prefer `readAppZoomFactor()`.
  */
 export function readWindowZoomFactor(view: Pick<Window, "outerWidth" | "innerWidth">): number {
   const { outerWidth, innerWidth } = view;
@@ -64,6 +68,36 @@ export function readWindowZoomFactor(view: Pick<Window, "outerWidth" | "innerWid
   // Anything outside Chromium's zoom range means the window is mid-transition
   // (minimised, restoring) rather than genuinely zoomed.
   return zoomFactor >= 0.25 && zoomFactor <= 5 ? zoomFactor : 1;
+}
+
+/**
+ * What the zoom factor can be read from: the desktop bridge when the app is
+ * running under Electron, and the window's own dimensions otherwise.
+ */
+export type AppZoomSource = Pick<Window, "outerWidth" | "innerWidth"> & {
+  readonly desktopBridge?: { readonly getZoomFactor?: () => number } | undefined;
+};
+
+/**
+ * The window's page-zoom factor.
+ *
+ * Chromium owns this value, so the desktop bridge reports it directly and it is
+ * correct from the first paint. Deriving it from the window's own dimensions
+ * instead made the title bar depend on startup timing: until the window settled
+ * into its saved bounds, a default `outerWidth` divided by the final
+ * `innerWidth` read as ~0.36, which inflated the row to roughly 100px and left
+ * it towering over the traffic lights until the next zoom or resize corrected
+ * it. The measurement stays only as a fallback for a renderer without the
+ * bridge, where there is nothing better to go on.
+ */
+export function readAppZoomFactor(view: AppZoomSource): number {
+  const bridgeZoomFactor = view.desktopBridge?.getZoomFactor?.();
+  if (typeof bridgeZoomFactor === "number" && Number.isFinite(bridgeZoomFactor)) {
+    if (bridgeZoomFactor > 0) {
+      return bridgeZoomFactor;
+    }
+  }
+  return readWindowZoomFactor(view);
 }
 
 /**
@@ -78,7 +112,7 @@ export function syncDocumentAppZoomVariable(): () => void {
   const update = () => {
     document.documentElement.style.setProperty(
       APP_ZOOM_CSS_VARIABLE,
-      readWindowZoomFactor(window).toFixed(4),
+      readAppZoomFactor(window).toFixed(4),
     );
   };
 

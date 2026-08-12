@@ -811,6 +811,12 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   zoomWindow: (direction: "in" | "out" | "reset") => Promise<void>;
+  /**
+   * The window's current page-zoom factor, read straight from the renderer
+   * rather than inferred from window dimensions, which do not agree with each
+   * other until the window has settled after startup.
+   */
+  getZoomFactor: () => number;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;

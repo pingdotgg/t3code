@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  readAppZoomFactor,
   readWindowZoomFactor,
   TITLEBAR_ROW_CLASS,
   TITLEBAR_TRAFFIC_LIGHT_INSET_CLASS,
@@ -19,6 +20,42 @@ describe("readWindowZoomFactor", () => {
     ["a non-finite measurement", { outerWidth: Number.NaN, innerWidth: 1600 }],
   ])("falls back to 1 for %s", (_label, view) => {
     expect(readWindowZoomFactor(view)).toBe(1);
+  });
+});
+
+describe("readAppZoomFactor", () => {
+  it("takes the factor from the desktop bridge rather than the window's own size", () => {
+    // Regression: the window's dimensions do not agree with each other until it
+    // has settled into its saved bounds, so at startup a default `outerWidth`
+    // divided by an already-final `innerWidth` read as ~0.36. The row divides
+    // by this factor, so it inflated to ~100px and towered over the traffic
+    // lights until a later zoom or resize happened to correct it.
+    const startingUp = { outerWidth: 1067, innerWidth: 2990 };
+
+    expect(readWindowZoomFactor(startingUp)).toBeCloseTo(0.357, 2);
+    expect(readAppZoomFactor({ ...startingUp, desktopBridge: { getZoomFactor: () => 1 } })).toBe(1);
+  });
+
+  it("reports the real factor while the window is genuinely zoomed", () => {
+    expect(
+      readAppZoomFactor({
+        outerWidth: 1600,
+        innerWidth: 1600,
+        desktopBridge: { getZoomFactor: () => 1.5 },
+      }),
+    ).toBe(1.5);
+  });
+
+  it.each([
+    ["no bridge at all", undefined],
+    ["a bridge without the method", {}],
+    ["a nonsensical factor", { getZoomFactor: () => 0 }],
+    ["a non-finite factor", { getZoomFactor: () => Number.NaN }],
+  ])("falls back to the window measurement given %s", (_label, desktopBridge) => {
+    expect(readAppZoomFactor({ outerWidth: 1200, innerWidth: 1600, desktopBridge })).toBeCloseTo(
+      0.75,
+      2,
+    );
   });
 });
 
