@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -933,4 +933,81 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+/** One entry of the sidebar's environment filter menu. */
+export interface SidebarEnvironmentFilterOption {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly isPrimary: boolean;
+}
+
+/**
+ * Builds the sidebar's environment filter options, sorted by label so the
+ * menu order is stable regardless of connection-catalog churn.
+ */
+export function buildSidebarEnvironmentFilterOptions(input: {
+  environments: readonly { readonly environmentId: EnvironmentId; readonly label: string }[];
+  primaryEnvironmentId: EnvironmentId | null;
+}): SidebarEnvironmentFilterOption[] {
+  return input.environments
+    .toSorted((left, right) => left.label.localeCompare(right.label))
+    .map((environment) => ({
+      environmentId: environment.environmentId,
+      label: environment.label,
+      isPrimary: environment.environmentId === input.primaryEnvironmentId,
+    }));
+}
+
+/**
+ * True when the project filter can stay applied under an environment scope:
+ * either no environment is selected, or the group has at least one member on
+ * that environment. When false the project filter must reset, because a group
+ * with no matching member could only ever produce blank rows.
+ */
+export function projectScopeKeptUnderEnvironmentScope(input: {
+  memberProjectRefs: readonly { readonly environmentId: string; readonly projectId: string }[];
+  environmentScopeId: string | null;
+}): boolean {
+  if (input.environmentScopeId === null) return true;
+  return input.memberProjectRefs.some(
+    (projectRef) => projectRef.environmentId === input.environmentScopeId,
+  );
+}
+
+/**
+ * Narrows the project menu to groups that could produce rows under the current
+ * environment scope. A group with no member on the selected environment would
+ * be auto-cleared the moment it got picked, so it is hidden instead of offered.
+ */
+export function filterSidebarProjectsByEnvironmentScope<
+  TProject extends {
+    readonly memberProjectRefs: readonly {
+      readonly environmentId: string;
+      readonly projectId: string;
+    }[];
+  },
+>(projectGroups: readonly TProject[], environmentScopeId: string | null): TProject[] {
+  if (environmentScopeId === null) return projectGroups as TProject[];
+  return projectGroups.filter((group) =>
+    projectScopeKeptUnderEnvironmentScope({
+      memberProjectRefs: group.memberProjectRefs,
+      environmentScopeId,
+    }),
+  );
+}
+
+/**
+ * True when the environment scope must be dropped: the scoped environment left
+ * the catalog, or so few environments remain that the filter menu is hidden.
+ * With a single surviving environment a scope filters nothing but would stick
+ * anyway, with no menu left to reset it from.
+ */
+export function shouldResetEnvironmentScope(input: {
+  environmentScopeId: string | null;
+  environmentCount: number;
+  environmentLabelById: ReadonlyMap<string, unknown>;
+}): boolean {
+  if (input.environmentScopeId === null) return false;
+  return input.environmentCount <= 1 || !input.environmentLabelById.has(input.environmentScopeId);
 }
