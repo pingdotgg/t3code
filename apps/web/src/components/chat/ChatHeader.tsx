@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type GitHubWorkflow,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -42,6 +43,10 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { projectEnvironment } from "~/state/projects";
+import { useEnvironmentQuery } from "~/state/query";
+import { readLocalApi } from "~/localApi";
+import { sourceControlEnvironment } from "~/state/sourceControl";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -62,6 +67,7 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  activeThreadBranch: string | null;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -116,6 +122,7 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  activeThreadBranch,
   onOpenPullRequest,
   onNewThreadInProject,
   onRunProjectScript,
@@ -140,6 +147,100 @@ export const ChatHeader = memo(function ChatHeader({
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const runGithubWorkflowCommand = useAtomCommand(projectEnvironment.runGithubWorkflow, {
+    reportFailure: false,
+  });
+  const githubWorkflowCwd = gitCwd ?? activeProjectCwd;
+  const sourceControlDiscovery = useEnvironmentQuery(
+    githubWorkflowCwd === null
+      ? null
+      : sourceControlEnvironment.discovery({
+          environmentId: activeThreadEnvironmentId,
+          input: {},
+        }),
+  );
+  const githubReady =
+    sourceControlDiscovery.data?.sourceControlProviders.some(
+      (provider) =>
+        provider.kind === "github" &&
+        provider.status === "available" &&
+        provider.auth.status === "authenticated",
+    ) === true;
+  const githubWorkflowQuery = useEnvironmentQuery(
+    githubWorkflowCwd === null || !githubReady
+      ? null
+      : projectEnvironment.githubWorkflows({
+          environmentId: activeThreadEnvironmentId,
+          input: { cwd: githubWorkflowCwd },
+        }),
+  );
+  const runGithubWorkflow = useCallback(
+    async (workflow: GitHubWorkflow, inputs: Record<string, string>) => {
+      if (!githubWorkflowCwd || !activeThreadBranch) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to start workflow",
+          description: "This thread does not have a branch to dispatch.",
+        });
+        return false;
+      }
+      const toastId = toastManager.add({
+        type: "loading",
+        title: `Starting ${workflow.name}…`,
+        timeout: 0,
+        data: { threadRef: activeThreadRef },
+      });
+      const result = await runGithubWorkflowCommand({
+        environmentId: activeThreadEnvironmentId,
+        input: {
+          cwd: githubWorkflowCwd,
+          filename: workflow.filename,
+          ref: activeThreadBranch,
+          inputs,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) {
+          toastManager.close(toastId);
+          return false;
+        }
+        const error = squashAtomCommandFailure(result);
+        toastManager.update(toastId, {
+          type: "error",
+          title: "Workflow failed to start",
+          description: error instanceof Error ? error.message : "GitHub rejected the dispatch.",
+          data: { threadRef: activeThreadRef },
+        });
+        return false;
+      }
+      const runUrl = result.value.url;
+      toastManager.update(toastId, {
+        type: "success",
+        title: `${workflow.name} started`,
+        description: runUrl
+          ? `Dispatched on ${activeThreadBranch}.`
+          : `Dispatched on ${activeThreadBranch}. Upgrade GitHub CLI (gh) to get a direct link to the workflow run.`,
+        timeout: 0,
+        ...(runUrl
+          ? {
+              actionProps: {
+                children: "View run",
+                onClick: () => void readLocalApi()?.shell.openExternal(runUrl),
+              },
+            }
+          : {}),
+        data: { threadRef: activeThreadRef, dismissAfterVisibleMs: 10_000 },
+      });
+      return true;
+    },
+    [
+      activeThreadBranch,
+      activeThreadEnvironmentId,
+      activeThreadRef,
+      githubWorkflowCwd,
+      runGithubWorkflowCommand,
+    ],
+  );
   // Inline rename, keyed by thread: navigating away drops an in-progress
   // rename instead of committing stale text. Cleared on thread change (not
   // just hidden) so returning to the thread doesn't revive the old draft.
@@ -317,6 +418,8 @@ export const ChatHeader = memo(function ChatHeader({
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}
             onDeleteScript={onDeleteProjectScript}
+            githubWorkflows={githubWorkflowQuery.data?.workflows ?? []}
+            onRunGithubWorkflow={runGithubWorkflow}
           />
         )}
         {showOpenInPicker && (

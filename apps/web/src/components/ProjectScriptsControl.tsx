@@ -1,5 +1,6 @@
 import type {
   ProjectScript,
+  GitHubWorkflow,
   ResolvedKeybindingsConfig,
   T3ProjectFileScript,
 } from "@t3tools/contracts";
@@ -34,10 +35,13 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { GitHubIcon } from "./Icons";
+import { GitHubWorkflowDialog } from "./GitHubWorkflowDialog";
 
 export type { NewProjectScriptInput, ProjectScriptActionResult };
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+const NO_GITHUB_WORKFLOWS: ReadonlyArray<GitHubWorkflow> = [];
 
 interface ProjectScriptsControlProps {
   scripts: ReadonlyArray<ProjectScript>;
@@ -52,6 +56,11 @@ interface ProjectScriptsControlProps {
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  githubWorkflows?: ReadonlyArray<GitHubWorkflow>;
+  onRunGithubWorkflow?: (
+    workflow: GitHubWorkflow,
+    inputs: Record<string, string>,
+  ) => Promise<boolean>;
 }
 
 export default function ProjectScriptsControl({
@@ -63,12 +72,15 @@ export default function ProjectScriptsControl({
   onAddScript,
   onUpdateScript,
   onDeleteScript,
+  githubWorkflows = NO_GITHUB_WORKFLOWS,
+  onRunGithubWorkflow,
 }: ProjectScriptsControlProps) {
   const [actionsMenuOpen, setActionsMenuOpen] = useState({
     scripts: false,
     imports: false,
   });
   const [editorRequest, setEditorRequest] = useState<ProjectScriptEditorRequest | null>(null);
+  const [selectedWorkflow, setSelectedWorkflow] = useState<GitHubWorkflow | null>(null);
 
   const primaryScript = useMemo(() => {
     if (preferredScriptId) {
@@ -132,7 +144,7 @@ export default function ProjectScriptsControl({
 
   const importMenuItems = importableScripts.length > 0 && (
     <>
-      {primaryScript && <MenuSeparator />}
+      {primaryScript && githubWorkflows.length === 0 ? <MenuSeparator /> : null}
       <MenuGroup>
         <MenuGroupLabel>From t3.json</MenuGroupLabel>
         {importableScripts.map((fileScript) => (
@@ -149,6 +161,33 @@ export default function ProjectScriptsControl({
           </MenuItem>
         ))}
       </MenuGroup>
+    </>
+  );
+
+  const githubWorkflowItems = githubWorkflows.length > 0 && (
+    <>
+      <MenuSeparator />
+      <MenuGroup>
+        <MenuGroupLabel>from GitHub Actions</MenuGroupLabel>
+        {githubWorkflows.map((workflow) => (
+          <MenuItem
+            key={workflow.filename}
+            className={dropdownItemClassName}
+            onClick={() => {
+              setActionsMenuOpen({ scripts: false, imports: false });
+              if (workflow.inputs.length === 0 && onRunGithubWorkflow) {
+                void onRunGithubWorkflow(workflow, {});
+                return;
+              }
+              setSelectedWorkflow(workflow);
+            }}
+          >
+            <GitHubIcon className="size-4" />
+            <span className="truncate">{workflow.name}</span>
+          </MenuItem>
+        ))}
+      </MenuGroup>
+      <MenuSeparator />
     </>
   );
 
@@ -233,6 +272,7 @@ export default function ProjectScriptsControl({
                   </MenuItem>
                 );
               })}
+              {githubWorkflowItems}
               {importMenuItems}
               <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
@@ -241,20 +281,48 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </Group>
-      ) : importableScripts.length > 0 ? (
+      ) : importableScripts.length > 0 || githubWorkflows.length > 0 ? (
         <Menu
           highlightItemOnHover={false}
           open={actionsMenuOpen.imports}
           onOpenChange={(open) => setActionsMenuOpen({ scripts: false, imports: open })}
         >
           <MenuTrigger render={<Button size="xs" variant="outline" aria-label="Project actions" />}>
-            <PlusIcon className="size-3.5" />
+            {githubWorkflows.length > 0 ? (
+              <GitHubIcon className="size-3.5" />
+            ) : (
+              <PlusIcon className="size-3.5" />
+            )}
             <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-              Add action
+              {githubWorkflows.length > 0 ? "Actions" : "Add action"}
             </span>
             <ChevronDownIcon className="size-3.5" />
           </MenuTrigger>
           <MenuPopup align="end">
+            {githubWorkflows.length > 0 ? (
+              <>
+                <MenuGroup>
+                  <MenuGroupLabel>from GitHub Actions</MenuGroupLabel>
+                  {githubWorkflows.map((workflow) => (
+                    <MenuItem
+                      key={workflow.filename}
+                      className={dropdownItemClassName}
+                      onClick={() => {
+                        if (workflow.inputs.length === 0 && onRunGithubWorkflow) {
+                          void onRunGithubWorkflow(workflow, {});
+                          return;
+                        }
+                        setSelectedWorkflow(workflow);
+                      }}
+                    >
+                      <GitHubIcon className="size-4" />
+                      <span className="truncate">{workflow.name}</span>
+                    </MenuItem>
+                  ))}
+                </MenuGroup>
+                <MenuSeparator />
+              </>
+            ) : null}
             {importMenuItems}
             <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
               <PlusIcon className="size-4" />
@@ -294,6 +362,13 @@ export default function ProjectScriptsControl({
         onDelete={(scriptId) => void onDeleteScript(scriptId)}
         onClose={() => setEditorRequest(null)}
       />
+      {onRunGithubWorkflow ? (
+        <GitHubWorkflowDialog
+          workflow={selectedWorkflow}
+          onClose={() => setSelectedWorkflow(null)}
+          onRun={onRunGithubWorkflow}
+        />
+      ) : null}
     </>
   );
 }

@@ -44,6 +44,19 @@ T3 Code works with the platforms your team already uses:
 - Open the review directly in your browser with one click
 - Check out a teammate's branch to review code locally
 
+### Run GitHub Actions
+
+When a GitHub project contains workflow files with a `workflow_dispatch` trigger, T3 Code lists
+them automatically in the chat header's **Actions** menu. Each workflow uses its GitHub name, or
+its filename when no name is set.
+
+Select a workflow to start it on the thread's branch. Workflows with manual inputs open a form
+with their defaults filled in and choice options shown as menus. After GitHub accepts the run, use
+**View run** in the confirmation message to open that specific run on GitHub.
+
+This requires an authenticated GitHub CLI on the machine running the T3 Code server and a
+`.github/workflows` directory in the project.
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

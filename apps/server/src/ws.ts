@@ -113,6 +113,7 @@ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRe
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitHubWorkflowService from "./sourceControl/GitHubWorkflowService.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -377,6 +378,7 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const githubWorkflows = yield* GitHubWorkflowService.GitHubWorkflowService;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -1804,6 +1806,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.githubWorkflowsList]: (input) =>
+          observeRpcEffect(WS_METHODS.githubWorkflowsList, githubWorkflows.list(input), {
+            "rpc.aggregate": "source-control",
+          }),
+        [WS_METHODS.githubWorkflowsRun]: (input) =>
+          observeRpcEffect(WS_METHODS.githubWorkflowsRun, githubWorkflows.run(input), {
+            "rpc.aggregate": "source-control",
+          }),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
@@ -2285,6 +2295,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           Effect.provide(
             makeWsRpcLayer(session, previewAutomationBroker).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(
+                GitHubWorkflowService.layer.pipe(
+                  Layer.provide(GitHubCli.layer.pipe(Layer.provide(VcsProcess.layer))),
+                ),
+              ),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS

@@ -45,6 +45,12 @@ import {
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
+  GitHubWorkflowListInput,
+  GitHubWorkflowListResult,
+  GitHubWorkflowRunInput,
+  GitHubWorkflowRunResult,
+} from "./githubWorkflow.ts";
+import {
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
   ReviewDiffPreviewError,
@@ -181,6 +187,7 @@ import {
   SourceControlDiscoveryResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
+  SourceControlProviderError,
   SourceControlRepositoryError,
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
@@ -219,6 +226,10 @@ export const WS_METHODS = {
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+
+  // GitHub Actions workflow methods
+  githubWorkflowsList: "githubWorkflows.list",
+  githubWorkflowsRun: "githubWorkflows.run",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -614,6 +625,18 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
+export const WsGitHubWorkflowsListRpc = Rpc.make(WS_METHODS.githubWorkflowsList, {
+  payload: GitHubWorkflowListInput,
+  success: GitHubWorkflowListResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsGitHubWorkflowsRunRpc = Rpc.make(WS_METHODS.githubWorkflowsRun, {
+  payload: GitHubWorkflowRunInput,
+  success: GitHubWorkflowRunResult,
+  error: Schema.Union([SourceControlProviderError, EnvironmentAuthorizationError]),
+});
+
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -991,6 +1014,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsGitHubWorkflowsListRpc,
+  WsGitHubWorkflowsRunRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
