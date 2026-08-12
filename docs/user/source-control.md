@@ -44,6 +44,13 @@ T3 Code works with the platforms your team already uses:
 - Open the review directly in your browser with one click
 - Check out a teammate's branch to review code locally
 
+**Review local changes commit by commit**
+
+- Open the Diff pane's scope menu and pick a commit under **Commits** to see only the changes that
+  commit introduced
+- The list covers the commits in the current branch comparison (up to the 100 most recent), so
+  changing the base ref rescopes it
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

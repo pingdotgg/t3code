@@ -818,6 +818,134 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("lists branch commits and previews a selected commit on demand", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/commits"]);
+        yield* writeTextFile(cwd, "README.md", "# first commit\nunchanged context\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "change readme"]);
+        const readmeCommitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(cwd, "second.ts", "export const second = true;\n");
+        yield* git(cwd, ["add", "second.ts"]);
+        yield* git(cwd, ["commit", "-m", "add second file"]);
+        const secondCommitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        const branchPreview = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+
+        assert.deepStrictEqual(
+          branchPreview.branchCommits.map(({ sha, subject }) => ({ sha, subject })),
+          [
+            { sha: secondCommitSha, subject: "add second file" },
+            { sha: readmeCommitSha, subject: "change readme" },
+          ],
+        );
+        assert.isFalse(branchPreview.branchCommitsTruncated);
+
+        const commitPreview = yield* driver.getReviewDiffPreview({
+          cwd,
+          commitSha: readmeCommitSha,
+        });
+        const commitSource = commitPreview.sources.find((source) => source.kind === "commit");
+        assert.isDefined(commitSource);
+        assert.isEmpty(commitPreview.branchCommits);
+        assert.include(commitSource.diff, "README.md");
+        assert.notInclude(commitSource.diff, "second.ts");
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            baseRef: commitSource.baseRef,
+            headRef: commitSource.headRef,
+          }),
+        );
+        assert.strictEqual(contents.oldContents, "# test\n");
+        assert.strictEqual(contents.newContents, "# first commit\nunchanged context\n");
+      }),
+    );
+
+    it.effect("returns the branch commits without any patch when asked for commits only", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/commits-only"]);
+        yield* writeTextFile(cwd, "tracked.ts", "export const tracked = true;\n");
+        yield* git(cwd, ["add", "tracked.ts"]);
+        yield* git(cwd, ["commit", "-m", "add tracked file"]);
+        const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        // Dirty state the full preview would turn into patches, so an empty `sources` shows
+        // the listing skipped that work rather than finding nothing to report.
+        yield* writeTextFile(cwd, "tracked.ts", "export const tracked = false;\n");
+        yield* writeTextFile(cwd, "untracked.ts", "export const untracked = true;\n");
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          commitsOnly: true,
+        });
+
+        assert.isEmpty(preview.sources);
+        assert.deepStrictEqual(
+          preview.branchCommits.map(({ sha, subject }) => ({ sha, subject })),
+          [{ sha: commitSha, subject: "add tracked file" }],
+        );
+        assert.isFalse(preview.branchCommitsTruncated);
+      }),
+    );
+
+    it.effect("keeps a truncated prefix when the branch commit listing exceeds its cap", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/long-subject"]);
+        // A single subject past the output cap: the listing degrades to a truncated
+        // prefix instead of collapsing to no commits at all.
+        yield* writeTextFile(cwd, "message.txt", `${"long subject ".repeat(25_000)}\n`);
+        yield* git(cwd, ["add", "message.txt"]);
+        yield* git(cwd, ["commit", "-F", "message.txt"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, baseRef: initialBranch });
+
+        assert.strictEqual(preview.branchCommits.length, 1);
+        assert.isTrue(preview.branchCommitsTruncated);
+      }),
+    );
+
+    it.effect("previews a root commit against the empty tree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const rootCommitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, commitSha: rootCommitSha });
+
+        const commitSource = preview.sources.find((source) => source.kind === "commit");
+        assert.isDefined(commitSource);
+        assert.strictEqual(commitSource.baseRef, null);
+        assert.include(commitSource.diff, "new file mode");
+        assert.include(commitSource.diff, "+# test");
+      }),
+    );
+
+    it.effect("fails when a selected commit is no longer in the repository", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .getReviewDiffPreview({ cwd, commitSha: "0".repeat(40) })
+          .pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitCommandError");
+      }),
+    );
+
     it.effect("loads full file contents for working-tree diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
