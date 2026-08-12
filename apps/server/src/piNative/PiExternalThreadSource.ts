@@ -425,6 +425,9 @@ export class PiExternalThreadSource extends Context.Service<
       let catalogSequence = 0;
       let catalogSignature = "";
       let cachedRecords: ReadonlyArray<PiSessionCatalogRecord> | undefined;
+      // Replaced wholesale at the end of each build, never cleared: an in-flight
+      // rebuild must not make live threads look unknown to concurrent readers.
+      let cachedScopedThreadIds: ReadonlySet<ThreadId> = new Set();
       let cachedOmittedThreadCount = 0;
       let cachedInternal: OrchestrationShellSnapshot | undefined;
       let cachedAssociation: Association | undefined;
@@ -493,6 +496,7 @@ export class PiExternalThreadSource extends Context.Service<
         const scopedRecords = resolvedRecords.filter((record) =>
           association.projectIdByThread.has(record.threadId),
         );
+        cachedScopedThreadIds = new Set(scopedRecords.map((record) => record.threadId));
         const projectedThreads = scopedRecords.slice(0, CATALOG_MAX_THREADS).map((record) => {
           const projectId = association.projectIdByThread.get(record.threadId)!;
           const lifecycle = validExternalLifecycleOverride(
@@ -561,9 +565,12 @@ export class PiExternalThreadSource extends Context.Service<
         },
       );
 
+      // Reads, subscriptions, and dispatch all resolve through here, so scoping
+      // it keeps every path agreeing on which sessions exist: a session outside
+      // the user's projects is unknown, not readable-but-unwritable.
       const findRecord = (threadId: ThreadId) =>
         Effect.sync(() =>
-          isPiExternalThreadId(threadId)
+          isPiExternalThreadId(threadId) && cachedScopedThreadIds.has(threadId)
             ? cachedRecords?.find((record) => record.threadId === threadId)
             : undefined,
         );

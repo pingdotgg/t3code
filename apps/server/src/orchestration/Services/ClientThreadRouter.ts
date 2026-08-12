@@ -324,10 +324,13 @@ export function getExternalThreadSubscription(
                 }),
               };
         }),
+        // The code rides along so clients can tell "this thread is gone" apart
+        // from a transient failure and back off instead of hot-retrying.
         Stream.mapError(
           (cause) =>
             new OrchestrationGetSnapshotError({
               message: `Failed to subscribe to external thread ${input.threadId}`,
+              code: cause.code,
               cause,
             }),
         ),

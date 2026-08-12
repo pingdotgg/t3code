@@ -172,7 +172,14 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   readonly onExpectedFailure?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
-  readonly retryExpectedFailureAfter?: Duration.Input;
+  /**
+   * How long to wait before resubscribing after an expected failure. Pass a
+   * function to vary the delay by cause — returning `null` stops the retry, for
+   * failures that will not resolve on their own.
+   */
+  readonly retryExpectedFailureAfter?:
+    | Duration.Input
+    | ((cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>) => Duration.Input | null);
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
 }
 
@@ -250,14 +257,16 @@ export function subscribeDynamic<TTag extends EnvironmentSubscriptionRpcTag>(
                             const handled = Stream.fromEffect(
                               options.onExpectedFailure(cause),
                             ).pipe(Stream.drain);
-                            if (options.retryExpectedFailureAfter === undefined) {
+                            const retryAfter =
+                              typeof options.retryExpectedFailureAfter === "function"
+                                ? options.retryExpectedFailureAfter(cause)
+                                : options.retryExpectedFailureAfter;
+                            if (retryAfter === undefined || retryAfter === null) {
                               return handled;
                             }
                             return handled.pipe(
                               Stream.concat(
-                                Stream.fromEffect(
-                                  Effect.sleep(options.retryExpectedFailureAfter),
-                                ).pipe(Stream.drain),
+                                Stream.fromEffect(Effect.sleep(retryAfter)).pipe(Stream.drain),
                               ),
                               Stream.concat(subscribeToSession()),
                             );
