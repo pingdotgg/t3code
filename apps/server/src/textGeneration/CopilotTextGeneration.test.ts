@@ -89,6 +89,7 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
     return withFakeAcpCopilot(
       {
         T3_ACP_AUTH_METHOD_ID: "copilot-login",
+        T3_ACP_INITIAL_MODEL_ID: "gpt-5.4",
         T3_ACP_REQUEST_LOG_PATH: requestLogPath,
         T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
           subject: "Add GitHub Copilot provider",
@@ -114,9 +115,10 @@ it.layer(CopilotTextGenerationTestLayer)("CopilotTextGeneration", (it) => {
             requests.some(
               (request) =>
                 request.method === "session/set_config_option" &&
-                request.params?.configId === "model",
+                request.params?.configId === "model" &&
+                request.params?.value === "default",
             ),
-          ).toBe(false);
+          ).toBe(true);
         }),
     );
   });

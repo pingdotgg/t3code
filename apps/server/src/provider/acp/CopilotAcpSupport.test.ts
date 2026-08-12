@@ -115,4 +115,35 @@ describe("CopilotAcpSupport", () => {
       ]);
     }),
   );
+
+  it.effect("resets a resumed concrete model to the negotiated automatic model", () =>
+    Effect.gen(function* () {
+      const models: Array<string> = [];
+      yield* applyCopilotSessionConfiguration({
+        runtime: {
+          getConfigOptions: Effect.succeed([
+            {
+              id: "model",
+              name: "Model",
+              type: "select",
+              currentValue: "gpt-5.4",
+              options: [
+                { value: "default", name: "Auto" },
+                { value: "gpt-5.4", name: "GPT-5.4" },
+              ],
+            },
+          ]),
+          setModel: (model) =>
+            Effect.sync(() => {
+              models.push(model);
+            }),
+          setConfigOption: () => Effect.succeed({ configOptions: [] }),
+        },
+        model: "auto",
+        selections: [],
+        mapError: (context) => context.cause,
+      });
+      expect(models).toEqual(["default"]);
+    }),
+  );
 });

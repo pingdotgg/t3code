@@ -94,6 +94,26 @@ function hasConfigOption(
   return options.some((option) => option.id === id);
 }
 
+function resolveCopilotSessionModelId(
+  requestedModel: string,
+  options: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+): string {
+  const model = resolveCopilotModelId(requestedModel);
+  if (model !== "auto" && model !== "default") return model;
+
+  const modelOption = options.find((option) => option.id === "model");
+  if (!modelOption || modelOption.type !== "select") return model;
+  const choices = modelOption.options.flatMap((option) =>
+    "value" in option ? [option] : option.options,
+  );
+  const aliases = model === "auto" ? ["auto", "default"] : ["default", "auto"];
+  return (
+    aliases.flatMap((alias) => choices.filter((choice) => choice.value === alias))[0]?.value ??
+    choices.find((choice) => /^(?:auto(?:matic)?|default)$/i.test(choice.name.trim()))?.value ??
+    model
+  );
+}
+
 export function applyCopilotSessionConfiguration<E>(input: {
   readonly runtime: Pick<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -108,20 +128,18 @@ export function applyCopilotSessionConfiguration<E>(input: {
   }) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
+    const configOptions = yield* input.runtime.getConfigOptions;
     if (input.model?.trim()) {
-      const model = resolveCopilotModelId(input.model);
-      if (model !== "auto" && model !== "default") {
-        yield* input.runtime
-          .setModel(model)
-          .pipe(
-            Effect.mapError((cause) =>
-              input.mapError({ cause, method: "session/set_config_option", configId: "model" }),
-            ),
-          );
-      }
+      const model = resolveCopilotSessionModelId(input.model, configOptions);
+      yield* input.runtime
+        .setModel(model)
+        .pipe(
+          Effect.mapError((cause) =>
+            input.mapError({ cause, method: "session/set_config_option", configId: "model" }),
+          ),
+        );
     }
 
-    const configOptions = yield* input.runtime.getConfigOptions;
     const reasoningEffort = selectedString(input.selections, "reasoningEffort");
     if (reasoningEffort && hasConfigOption(configOptions, "reasoning_effort")) {
       yield* input.runtime.setConfigOption("reasoning_effort", reasoningEffort).pipe(

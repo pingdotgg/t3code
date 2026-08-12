@@ -78,7 +78,7 @@ const permissionToolKind = process.env.T3_ACP_PERMISSION_TOOL_KIND === "edit" ? 
 const sessionId = "mock-session-1";
 
 let currentModeId = "ask";
-let currentModelId = "default";
+let currentModelId = process.env.T3_ACP_INITIAL_MODEL_ID?.trim() || "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
