@@ -1,7 +1,6 @@
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -382,24 +381,16 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
   ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem> {
     const fileSystem = yield* FileSystem.FileSystem;
 
-    // Start the slow profile probe in the background immediately.
-    const profileFiber = yield* Effect.fork(
-      readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true })
-    );
-
-    // Concurrently run the no-profile probe as a fast baseline.
-    const noProfile = yield* readWindowsEnvironment(["PATH"], { loadProfile: false });
-
-    const fastMergedPath = mergePaths("win32", [
+    // Fast pre-check using static paths (no PowerShell required)
+    const staticPaths = mergePaths("win32", [
       trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
-      trimNonEmpty(noProfile.PATH),
       readEnvPath(config.env),
     ]);
 
     let nodeFound = false;
     let fnmFound = false;
-    if (Option.isSome(fastMergedPath)) {
-      for (const dir of fastMergedPath.value.split(";")) {
+    if (Option.isSome(staticPaths)) {
+      for (const dir of staticPaths.value.split(";")) {
         const cleanDir = dir.trim().replace(/^"+|"+$/g, "");
         if (!nodeFound && (yield* Effect.orElseSucceed(fileSystem.exists(`${cleanDir}/node.exe`), () => false))) {
           nodeFound = true;
@@ -411,14 +402,24 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
       }
     }
 
-    // Only wait for the expensive PowerShell profile if the fast baseline is insufficient,
-    // or if the user actively uses fnm (which requires FNM_DIR from the profile).
-    let profile: EnvironmentPatch = {};
-    if (nodeFound && !fnmFound) {
-      yield* Fiber.interrupt(profileFiber);
-    } else {
-      profile = yield* Fiber.join(profileFiber);
-    }
+    const skipProfile = nodeFound && !fnmFound;
+
+    // Run the necessary probes concurrently, bounded by the slowest single probe
+    const [noProfile, profile] = yield* Effect.all(
+      [
+        readWindowsEnvironment(["PATH"], { loadProfile: false }),
+        skipProfile
+          ? Effect.succeed({})
+          : readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
+      ],
+      { concurrency: 2 },
+    );
+
+    const fastMergedPath = mergePaths("win32", [
+      trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
+      trimNonEmpty(noProfile.PATH),
+      readEnvPath(config.env),
+    ]);
 
     const mergedPath = mergePaths("win32", [
       trimNonEmpty(profile.PATH),
