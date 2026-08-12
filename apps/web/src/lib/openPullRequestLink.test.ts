@@ -5,6 +5,7 @@ import {
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
+  shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
 
 describe("openPullRequestLink", () => {
@@ -31,6 +32,17 @@ describe("openPullRequestLink", () => {
       }),
     );
     await expect(result).rejects.not.toHaveProperty("message", expect.stringContaining("secret"));
+  });
+});
+
+describe("shouldOpenPullRequestExternally", () => {
+  it("uses the browser for command-click and control-click", () => {
+    expect(shouldOpenPullRequestExternally({ metaKey: true, ctrlKey: false })).toBe(true);
+    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: true })).toBe(true);
+  });
+
+  it("keeps an unmodified click in the pull request view", () => {
+    expect(shouldOpenPullRequestExternally({ metaKey: false, ctrlKey: false })).toBe(false);
   });
 });
 
