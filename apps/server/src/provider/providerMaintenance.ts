@@ -190,8 +190,10 @@ function makeVitePlusGlobalProviderMaintenanceCapabilities(
 
 function makeHomebrewProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  installedFormula?: string | null,
 ): ProviderMaintenanceCapabilities {
-  if (!definition.homebrewFormula) {
+  const formula = installedFormula ?? definition.homebrewFormula;
+  if (!formula) {
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName: definition.npmPackageName,
@@ -202,9 +204,15 @@ function makeHomebrewProviderMaintenanceCapabilities(
     provider: definition.provider,
     packageName: definition.npmPackageName,
     updateExecutable: "brew",
-    updateArgs: ["upgrade", definition.homebrewFormula],
+    updateArgs: ["upgrade", formula],
     updateLockKey: "homebrew",
   });
+}
+
+function extractHomebrewFormulaFromPath(commandPath: string): string | null {
+  const normalized = commandPath.replaceAll("\\", "/");
+  const match = /\/(?:cellar|caskroom)\/([^/]+)\//i.exec(normalized);
+  return match ? match[1] : null;
 }
 
 function makeNativeProviderMaintenanceCapabilities(
@@ -314,7 +322,10 @@ export function resolvePackageManagedProviderMaintenance(
       return makeNpmGlobalProviderMaintenanceCapabilities(definition);
     }
     if (commandPaths.some(isHomebrewCommandPath)) {
-      return makeHomebrewProviderMaintenanceCapabilities(definition);
+      const installedFormula = commandPaths
+        .map(extractHomebrewFormulaFromPath)
+        .find((formula) => formula !== null);
+      return makeHomebrewProviderMaintenanceCapabilities(definition, installedFormula ?? null);
     }
   }
 
