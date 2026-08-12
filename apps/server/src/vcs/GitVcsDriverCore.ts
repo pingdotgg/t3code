@@ -27,6 +27,7 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
@@ -97,6 +98,45 @@ const NON_REPOSITORY_REMOTE_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitRemot
   behindCount: 0,
   aheadOfDefaultCount: 0,
 });
+
+/**
+ * Git on Windows refuses to create or delete a path longer than MAX_PATH (260)
+ * unless `core.longpaths` is set. The OS-level LongPathsEnabled setting does not
+ * cover it: git opts in per repository, and it is off by default.
+ *
+ * Worktrees are where this bites. A worktree base path is longer than the
+ * repository root, so a repository that clones fine can still fail to check out
+ * into a worktree, and fail to be removed afterwards. Removal is the worse half:
+ * git drops its administrative record before deleting files, so a partial delete
+ * strands the directory where `git worktree list` can no longer see it.
+ *
+ * Passed per invocation through `GIT_CONFIG_*` rather than argv so the config
+ * reaches every git subcommand without changing the command line, and nothing is
+ * written to the user's config. Appended after any entries the caller already
+ * set so an inherited `GIT_CONFIG_COUNT` keeps working.
+ *
+ * A `GIT_CONFIG_COUNT` that is not a count is left alone. Git rejects a bogus
+ * value itself, and appending to it would overwrite the caller's first entry and
+ * turn that loud failure into a silently different config.
+ */
+export const windowsLongPathConfigEnv = (
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => {
+  if (platform !== "win32") {
+    return {};
+  }
+  const inherited = env.GIT_CONFIG_COUNT?.trim();
+  if (inherited !== undefined && inherited !== "" && !/^\d+$/.test(inherited)) {
+    return {};
+  }
+  const count = inherited === undefined || inherited === "" ? 0 : Number.parseInt(inherited, 10);
+  return {
+    GIT_CONFIG_COUNT: String(count + 1),
+    [`GIT_CONFIG_KEY_${count}`]: "core.longpaths",
+    [`GIT_CONFIG_VALUE_${count}`]: "true",
+  };
+};
 
 type TraceTailState = {
   processedChars: number;
@@ -704,6 +744,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig;
   const crypto = yield* Crypto.Crypto;
+  const hostPlatform = yield* HostProcessPlatform;
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
     function* (input) {
@@ -728,14 +769,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               }),
           ),
         );
+        const spawnEnv = {
+          ...process.env,
+          ...input.env,
+          ...trace2Monitor.env,
+        };
         const child = yield* commandSpawner
           .spawn(
             ChildProcess.make("git", commandInput.args, {
               cwd: commandInput.cwd,
               env: {
-                ...process.env,
-                ...input.env,
-                ...trace2Monitor.env,
+                ...spawnEnv,
+                ...windowsLongPathConfigEnv(hostPlatform, spawnEnv),
               },
             }),
           )

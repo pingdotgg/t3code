@@ -15,8 +15,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { ServerConfig } from "../config.ts";
-import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
+import {
+  makeGitVcsDriverCore,
+  splitNullSeparatedGitStdoutPaths,
+  windowsLongPathConfigEnv,
+} from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -1664,5 +1669,122 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notEqual(originMain.exitCode, 0);
       }),
     );
+  });
+});
+
+describe("Windows long path configuration", () => {
+  const captureGitEnv = (platform: NodeJS.Platform) => {
+    const captured: Array<NodeJS.ProcessEnv> = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        if (!ChildProcess.isStandardCommand(command)) {
+          return assert.fail("expected a standard Git command");
+        }
+        captured.push(command.options.env ?? {});
+        return makeSuccessfulHandle("");
+      }),
+    );
+    const layer = GitVcsDriver.layer.pipe(
+      Layer.provide(ServerConfigLayer),
+      Layer.provideMerge(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+      Layer.provide(Layer.succeed(HostProcessPlatform, platform)),
+    );
+
+    return Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir("git-longpath-test-");
+
+      yield* driver.execute({
+        operation: "GitVcsDriverTest.execute",
+        cwd,
+        args: ["status"],
+      });
+
+      assert.equal(captured.length, 1);
+      return captured[0] ?? {};
+    }).pipe(Effect.provide(layer));
+  };
+
+  /**
+   * Asserted by locating the injected entry rather than by pinning it to index
+   * zero: the spawned environment inherits the host's, so a machine that already
+   * exports GIT_CONFIG_* shifts the index without changing the behaviour here.
+   */
+  const findLongPathIndex = (env: NodeJS.ProcessEnv): string | undefined => {
+    const key = Object.keys(env).find(
+      (candidate) => candidate.startsWith("GIT_CONFIG_KEY_") && env[candidate] === "core.longpaths",
+    );
+    return key?.slice("GIT_CONFIG_KEY_".length);
+  };
+
+  it.effect("reaches the spawned git process on Windows", () =>
+    Effect.gen(function* () {
+      const env = yield* captureGitEnv("win32");
+
+      const index = findLongPathIndex(env);
+      assert.notEqual(index, undefined);
+      assert.equal(env[`GIT_CONFIG_VALUE_${index}`], "true");
+    }),
+  );
+
+  it.effect("is left off platforms without MAX_PATH", () =>
+    Effect.gen(function* () {
+      const env = yield* captureGitEnv("linux");
+
+      assert.equal(findLongPathIndex(env), undefined);
+    }),
+  );
+});
+
+describe("windowsLongPathConfigEnv", () => {
+  it("enables core.longpaths on Windows", () => {
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", {}), {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.longpaths",
+      GIT_CONFIG_VALUE_0: "true",
+    });
+  });
+
+  it("adds nothing on platforms without MAX_PATH", () => {
+    assert.deepStrictEqual(windowsLongPathConfigEnv("linux", {}), {});
+    assert.deepStrictEqual(windowsLongPathConfigEnv("darwin", { GIT_CONFIG_COUNT: "2" }), {});
+  });
+
+  it("appends after inherited entries instead of overwriting them", () => {
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: "2" }), {
+      GIT_CONFIG_COUNT: "3",
+      GIT_CONFIG_KEY_2: "core.longpaths",
+      GIT_CONFIG_VALUE_2: "true",
+    });
+  });
+
+  it("treats an absent or empty count as no inherited entries", () => {
+    const expected = {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.longpaths",
+      GIT_CONFIG_VALUE_0: "true",
+    };
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: "" }), expected);
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: "  " }), expected);
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: "0" }), expected);
+  });
+
+  it("leaves a malformed count alone so git still reports it", () => {
+    for (const malformed of ["not-a-number", "2x", "-1", "1.5"]) {
+      assert.deepStrictEqual(
+        windowsLongPathConfigEnv("win32", {
+          GIT_CONFIG_COUNT: malformed,
+          GIT_CONFIG_KEY_0: "user.name",
+          GIT_CONFIG_VALUE_0: "inherited",
+        }),
+        {},
+        `expected no injection for GIT_CONFIG_COUNT=${malformed}`,
+      );
+    }
   });
 });
