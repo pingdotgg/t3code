@@ -34,6 +34,8 @@ public struct NewThreadView: View {
     @State private var pendingIncomingShareID: String?
     @State private var restoredIncomingShareID: String?
     @State private var showingDiscardIncomingShare = false
+    @State private var isRoutingIncomingShare = false
+    @State private var incomingShareErrorMessage: String?
     @FocusState private var promptFocused: Bool
 
     public init(
@@ -172,6 +174,17 @@ public struct NewThreadView: View {
         } message: {
             Text("Check your connection and try again.")
         }
+        .alert(
+            "Shared draft needs attention",
+            isPresented: Binding(
+                get: { incomingShareErrorMessage != nil },
+                set: { if !$0 { incomingShareErrorMessage = nil } }
+            )
+        ) {
+            Button("OK") { incomingShareErrorMessage = nil }
+        } message: {
+            Text(incomingShareErrorMessage ?? "Try again.")
+        }
         .confirmationDialog(
             "Discard this shared draft?",
             isPresented: $showingDiscardIncomingShare,
@@ -198,7 +211,7 @@ public struct NewThreadView: View {
             }
                 .font(.body)
                 .foregroundStyle(T3Colors.textSecondary)
-                .disabled(isSubmitting)
+                .disabled(isSubmitting || isRoutingIncomingShare)
             Spacer()
         }
         .padding(.horizontal, 16)
@@ -226,7 +239,7 @@ public struct NewThreadView: View {
                         }
                 }
                 .buttonStyle(.plain)
-                .disabled(isSubmitting)
+                .disabled(isSubmitting || isRoutingIncomingShare)
                 .padding(.leading, 5)
                 .accessibilityLabel("Choose project")
                 .accessibilityValue(
@@ -268,7 +281,9 @@ public struct NewThreadView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(isSubmitting || creationEnvironments.count < 2)
+            .disabled(
+                isSubmitting || isRoutingIncomingShare || creationEnvironments.count < 2
+            )
             .accessibilityLabel("Computer")
             .accessibilityValue(environmentName)
             .offset(y: 31)
@@ -589,6 +604,9 @@ public struct NewThreadView: View {
 
     @discardableResult
     private func selectProject(_ id: String) -> Bool {
+        guard NewTaskIncomingShareRoutingPolicy.canChangeProject(
+            isRoutingIncomingShare: isRoutingIncomingShare
+        ) else { return false }
         guard id != projectID else { return true }
         guard creationProjects.contains(where: { $0.id == id }) else { return false }
         persistCurrentDraftImmediately()
@@ -735,6 +753,10 @@ public struct NewThreadView: View {
             return
         }
         let routedShareID = pendingIncomingShareID
+        if routedShareID != nil { isRoutingIncomingShare = true }
+        defer {
+            if routedShareID != nil { isRoutingIncomingShare = false }
+        }
         if let routedShareID {
             let sourceKey = FeatureComposerDraftStore.incomingShareKey(shareID: routedShareID)
             await NewTaskDraftWriteFence.wait(immediateDraftSaveTasks[sourceKey])
@@ -792,7 +814,7 @@ public struct NewThreadView: View {
             }
             return
         }
-        if let routingError { model.errorMessage = routingError }
+        if let routingError { incomingShareErrorMessage = routingError }
 
         let liveDraft = composerDraft
         let liveSelectionIsExplicit = selectionIsExplicit
@@ -984,12 +1006,22 @@ public struct NewThreadView: View {
         guard let shareID = pendingIncomingShareID else { return }
         let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
         let pendingSave = immediateDraftSaveTasks.removeValue(forKey: key)
+        let snapshot = composerDraft
         Task { @MainActor in
             await NewTaskDraftWriteFence.cancelAndWait(pendingSave)
-            guard await acknowledgeIncomingShare(shareID) else { return }
+            let result = await NewTaskIncomingShareDiscard.perform(
+                shareID: shareID,
+                draft: snapshot,
+                key: key,
+                store: draftStore,
+                acknowledge: acknowledgeIncomingShare
+            )
+            guard result == .discarded else {
+                incomingShareErrorMessage = result.userMessage
+                return
+            }
             restoredIncomingShareID = nil
             pendingIncomingShareID = nil
-            try? await draftStore.removeDraft(for: key)
             dismiss()
         }
     }
@@ -1068,6 +1100,56 @@ enum NewTaskIncomingShareAcknowledgementPolicy {
             && pendingShareID?.caseInsensitiveCompare(routedShareID) == .orderedSame
             && currentProjectID == routedProjectID
             && restoreContextProjectID == routedProjectID
+    }
+}
+
+enum NewTaskIncomingShareRoutingPolicy {
+    static func canChangeProject(isRoutingIncomingShare: Bool) -> Bool {
+        !isRoutingIncomingShare
+    }
+}
+
+enum NewTaskIncomingShareDiscardResult: Equatable {
+    case discarded
+    case cleanupFailed
+    case acknowledgementFailed(draftRestored: Bool)
+
+    var userMessage: String? {
+        switch self {
+        case .discarded:
+            nil
+        case .cleanupFailed:
+            "The shared draft couldn’t be discarded. It is still safe; try again."
+        case .acknowledgementFailed(true):
+            "The shared draft couldn’t be discarded. It was restored so you can try again."
+        case .acknowledgementFailed(false):
+            "The shared draft couldn’t be discarded. The original share is still safe; try again."
+        }
+    }
+}
+
+enum NewTaskIncomingShareDiscard {
+    static func perform(
+        shareID: String,
+        draft: FeatureComposerDraft,
+        key: String,
+        store: FeatureComposerDraftStore,
+        acknowledge: (String) async -> Bool
+    ) async -> NewTaskIncomingShareDiscardResult {
+        do {
+            try await store.removeDraft(for: key)
+        } catch {
+            return .cleanupFailed
+        }
+        guard await acknowledge(shareID) else {
+            do {
+                try await store.setDraft(draft, for: key)
+                return .acknowledgementFailed(draftRestored: true)
+            } catch {
+                return .acknowledgementFailed(draftRestored: false)
+            }
+        }
+        return .discarded
     }
 }
 

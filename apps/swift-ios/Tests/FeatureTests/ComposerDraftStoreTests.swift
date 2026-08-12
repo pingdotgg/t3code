@@ -431,6 +431,68 @@ struct ComposerDraftStoreTests {
         ))
     }
 
+    @Test func projectSelectionIsLockedWhileAnIncomingShareRouteIsCommitting() {
+        #expect(NewTaskIncomingShareRoutingPolicy.canChangeProject(
+            isRoutingIncomingShare: false
+        ))
+        #expect(!NewTaskIncomingShareRoutingPolicy.canChangeProject(
+            isRoutingIncomingShare: true
+        ))
+    }
+
+    @Test func failedDiscardAcknowledgementRestoresTheStagedDraft() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let shareID = "share-discard-retry"
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let draft = FeatureComposerDraft(text: "Keep me safe")
+        try await store.setDraft(draft, for: key)
+
+        let result = await NewTaskIncomingShareDiscard.perform(
+            shareID: shareID,
+            draft: draft,
+            key: key,
+            store: store,
+            acknowledge: { _ in false }
+        )
+
+        #expect(result == .acknowledgementFailed(draftRestored: true))
+        #expect(try await store.draft(for: key) == draft)
+    }
+
+    @Test func successfulDiscardRemovesTheStagedDraftBeforeAcknowledging() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let shareID = "share-discard-success"
+        let key = FeatureComposerDraftStore.incomingShareKey(shareID: shareID)
+        let draft = FeatureComposerDraft(text: "Discard me")
+        try await store.setDraft(draft, for: key)
+        let draftWasRemoved = ComposerDraftTestFlag()
+
+        let result = await NewTaskIncomingShareDiscard.perform(
+            shareID: shareID,
+            draft: draft,
+            key: key,
+            store: store,
+            acknowledge: { _ in
+                await draftWasRemoved.set((try? await store.draft(for: key)) == nil)
+                return true
+            }
+        )
+
+        #expect(result == .discarded)
+        #expect(await draftWasRemoved.value)
+        #expect(try await store.draft(for: key) == nil)
+    }
+
     @Test func sharedThreadNavigationRequestsAComposerReload() {
         let importDraft = FeatureComposerIncomingShareDraft(
             shareID: "share-1",
@@ -480,5 +542,13 @@ struct ComposerDraftStoreTests {
             remainingIncomingShareID: nil,
             releasedIncomingShareID: "share-a"
         ))
+    }
+}
+
+private actor ComposerDraftTestFlag {
+    private(set) var value = false
+
+    func set(_ value: Bool) {
+        self.value = value
     }
 }
