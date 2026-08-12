@@ -3,7 +3,6 @@ import * as NodeModule from "node:module";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
@@ -23,31 +22,31 @@ export class NodePtyModuleLoadError extends Schema.TaggedErrorClass<NodePtyModul
 }
 
 type NodePtyModuleLoader = () => Promise<typeof import("@lydell/node-pty")>;
+type NodePtyRequireFactory = (filename: string | URL) => {
+  readonly resolve: (request: string) => string;
+};
 
 let didEnsureSpawnHelperExecutable = false;
 
-const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
-  const requireForNodePty = NodeModule.createRequire(import.meta.url);
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
+export const resolveNodePtySpawnHelperPath = Effect.fn(
+  "NodePtyAdapter.resolveNodePtySpawnHelperPath",
+)(function* (createRequire: NodePtyRequireFactory = NodeModule.createRequire) {
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
 
-  const packageJsonPath = requireForNodePty.resolve("@lydell/node-pty/package.json");
-  const packageDir = path.dirname(packageJsonPath);
-  const candidates = [
-    path.join(packageDir, "build", "Release", "spawn-helper"),
-    path.join(packageDir, "build", "Debug", "spawn-helper"),
-    path.join(packageDir, "prebuilds", `${platform}-${architecture}`, "spawn-helper"),
-  ];
-
-  for (const candidate of candidates) {
-    if (yield* fs.exists(candidate)) {
-      return candidate;
-    }
-  }
-  return null;
-}).pipe(Effect.orElseSucceed(() => null));
+  return yield* Effect.try({
+    try: () => {
+      const requireForAdapter = createRequire(import.meta.url);
+      const packageJsonPath = requireForAdapter.resolve("@lydell/node-pty/package.json");
+      const requireForNodePty = createRequire(packageJsonPath);
+      return requireForNodePty
+        .resolve(`@lydell/node-pty-${platform}-${architecture}/spawn-helper`)
+        .replace("app.asar", "app.asar.unpacked")
+        .replace("node_modules.asar", "node_modules.asar.unpacked");
+    },
+    catch: () => null,
+  }).pipe(Effect.orElseSucceed(() => null));
+});
 
 const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -55,7 +54,7 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
   if (platform === "win32") return;
   if (didEnsureSpawnHelperExecutable) return;
 
-  const helperPath = yield* resolveNodePtySpawnHelperPath;
+  const helperPath = yield* resolveNodePtySpawnHelperPath();
   if (!helperPath) return;
   didEnsureSpawnHelperExecutable = true;
 
@@ -114,7 +113,6 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
   loadNodePtyModule: NodePtyModuleLoader = () => import("@lydell/node-pty"),
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
 
@@ -131,7 +129,6 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
   const ensureNodePtySpawnHelperExecutableCached = yield* Effect.cached(
     ensureNodePtySpawnHelperExecutable().pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcessPlatform, platform),
       Effect.provideService(HostProcessArchitecture, architecture),
       Effect.orElseSucceed(() => undefined),
