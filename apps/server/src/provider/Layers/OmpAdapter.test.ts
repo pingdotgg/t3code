@@ -91,6 +91,8 @@ it.effect("OMP adapter starts a scoped ACP session with profile and runtime poli
           .filter(Boolean),
         ["acp", "--profile", "work", "--approval-mode", "yolo"],
       );
+      const rollbackError = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.flip);
+      assert.equal(rollbackError._tag, "ProviderAdapterRequestError");
 
       yield* adapter.stopSession(threadId);
     }).pipe(Effect.provide(testLayer)),

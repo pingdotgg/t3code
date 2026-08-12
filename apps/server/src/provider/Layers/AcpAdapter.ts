@@ -899,7 +899,7 @@ export function makeAcpProviderAdapter<Settings>(
                 cause,
               }),
             ),
-            Effect.forkChild,
+            Effect.forkIn(sessionScope),
           );
 
           ctx.notificationFiber = nf;
@@ -1145,7 +1145,7 @@ export function makeAcpProviderAdapter<Settings>(
       numTurns,
     ) =>
       Effect.gen(function* () {
-        const ctx = yield* requireSession(threadId);
+        yield* requireSession(threadId);
         if (!Number.isInteger(numTurns) || numTurns < 1) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -1153,9 +1153,13 @@ export function makeAcpProviderAdapter<Settings>(
             issue: "numTurns must be an integer >= 1.",
           });
         }
-        const nextLength = Math.max(0, ctx.turns.length - numTurns);
-        ctx.turns.splice(nextLength);
-        return { threadId, turns: ctx.turns };
+        // ACP has no rollback operation. Do not trim local history while the
+        // provider retains the removed turns; return an explicit error instead.
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "session/rollback",
+          detail: `${definition.displayName} ACP sessions do not support rollback.`,
+        });
       });
 
     const stopSession: ProviderAdapterShape<ProviderAdapterError>["stopSession"] = (threadId) =>
