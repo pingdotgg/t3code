@@ -495,6 +495,24 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+export const GitHubAccountSelection = Schema.Struct({
+  login: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  tokenSource: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+});
+export type GitHubAccountSelection = typeof GitHubAccountSelection.Type;
+
+export const GitHubAccountRouting = Schema.Record(
+  TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  Schema.Struct({
+    defaultAccount: Schema.optionalKey(GitHubAccountSelection),
+    ownerOverrides: Schema.Record(
+      TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+      GitHubAccountSelection,
+    ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  }),
+);
+export type GitHubAccountRouting = typeof GitHubAccountRouting.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -588,6 +606,7 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  githubAccountRouting: GitHubAccountRouting.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -731,6 +750,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  githubAccountRouting: Schema.optionalKey(GitHubAccountRouting),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

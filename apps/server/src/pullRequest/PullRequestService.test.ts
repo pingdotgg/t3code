@@ -1160,6 +1160,42 @@ it.effect("keeps two hosts of one provider kind as two accounts", () =>
   }),
 );
 
+it.effect("keeps owner-specific accounts separate on the same GitHub host", () =>
+  Effect.gen(function* () {
+    const viewersUsed = new Map<string, string>();
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "acme", workspaceRoot: "/acme", repository: "acme/web" }),
+        project({ id: "p2", title: "personal", workspaceRoot: "/me", repository: "bilal/site" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getBatchKey: (input) => Effect.succeed(input.repository.split("/")[0]!),
+          getViewer: (input) =>
+            Effect.succeed(input.repository.startsWith("acme/") ? "work-user" : "bilal"),
+          listChangeRequests: (input) => {
+            viewersUsed.set(input.repository, input.viewer);
+            return Effect.succeed({
+              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: true,
+            });
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(Object.fromEntries(viewersUsed), {
+      "acme/web": "work-user",
+      "bilal/site": "bilal",
+    });
+    assert.strictEqual(result.viewers["github.com acme/web"], "work-user");
+    assert.strictEqual(result.viewers["github.com bilal/site"], "bilal");
+  }),
+);
+
 it.effect("reports repositories on a host that could not be read", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

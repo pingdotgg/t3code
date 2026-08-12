@@ -3,6 +3,7 @@ import type {
   SourceControlProviderDiscoveryItem,
   SourceControlProviderInfo,
   SourceControlProviderKind,
+  GitHubAuthAccount,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -97,12 +98,14 @@ export function providerAuth(input: {
   readonly account?: string | undefined;
   readonly host?: string | undefined;
   readonly detail?: string | undefined;
+  readonly githubAccounts?: ReadonlyArray<GitHubAuthAccount> | undefined;
 }): SourceControlProviderAuth {
   return {
     status: input.status,
     account: authAccount(input.account),
     host: authHost(input.host),
     detail: authDetail(input.detail),
+    ...(input.githubAccounts === undefined ? {} : { githubAccounts: input.githubAccounts }),
   };
 }
 

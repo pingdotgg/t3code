@@ -196,7 +196,14 @@ export interface PullRequestProviderApi {
   /** The signed-in account, which is what involvement filtering compares against. */
   readonly getViewer: (input: {
     readonly cwd: string;
+    readonly host: string;
+    readonly repository: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
+
+  /** Opaque identity used to keep only compatible repositories in the same provider batch. */
+  readonly getBatchKey?: (
+    input: ProviderRepositoryRef,
+  ) => Effect.Effect<string, PullRequestProviderError>;
 
   readonly listChangeRequests: (
     input: ProviderRepositoryRef & {

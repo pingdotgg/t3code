@@ -68,6 +68,12 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
    ```
 3. Open **Settings → Source Control** in T3 Code and verify GitHub shows as authenticated
 
+When GitHub CLI has more than one authenticated account for the same host, expand GitHub in
+**Settings → Source Control** to choose the default account. You can also assign a different
+signed-in account to repositories owned by a specific organization or user. T3 Code uses the
+credentials already managed by GitHub CLI or its token environment variables; token values are
+not stored in T3 Code settings or sent to clients.
+
 You can now clone, publish, and create pull requests.
 
 ### For GitLab

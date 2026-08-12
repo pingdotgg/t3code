@@ -67,7 +67,12 @@ function reasonFor(
   error: GitHubPullRequestCli.GitHubPullRequestCliError,
 ): PullRequestProviderError["reason"] {
   if (error._tag === "GitHubCliUnavailableError") return "missing-tool";
-  if (error._tag === "GitHubCliAuthenticationError") return "unauthenticated";
+  if (
+    error._tag === "GitHubCliAuthenticationError" ||
+    error._tag === "GitHubTokenEnvironmentUnavailableError" ||
+    error._tag === "GitHubTokenOutputEmptyError"
+  )
+    return "unauthenticated";
   return "failed";
 }
 
@@ -114,8 +119,16 @@ export const make = Effect.gen(function* () {
     kind: "github",
     capabilities: CAPABILITIES,
 
+    getBatchKey: (input) => cli.getBatchKey(input).pipe(Effect.mapError(fail("getBatchKey"))),
+
     getViewer: (input) =>
-      cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+      cli
+        .getViewerLogin({
+          cwd: input.cwd,
+          host: input.host,
+          repository: input.repository,
+        })
+        .pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli

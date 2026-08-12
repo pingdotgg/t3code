@@ -102,6 +102,30 @@ describe("pull request involvement filtering", () => {
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
   });
+
+  it("uses repository-specific viewers for owner account overrides", () => {
+    const mixed = [
+      entry({
+        number: 1,
+        repository: "acme/web",
+        author: { login: "work-user", name: null, avatarUrl: null },
+      }),
+      entry({
+        number: 2,
+        repository: "bilal/site",
+        author: { login: "Bilal", name: null, avatarUrl: null },
+      }),
+    ];
+    const viewers = {
+      "github.com": "work-user",
+      "github.com acme/web": "work-user",
+      "github.com bilal/site": "Bilal",
+    };
+
+    expect(
+      filterPullRequestsByInvolvement(mixed, viewers, "authored").map((item) => item.number),
+    ).toEqual([1, 2]);
+  });
 });
 
 describe("pull request grouping", () => {

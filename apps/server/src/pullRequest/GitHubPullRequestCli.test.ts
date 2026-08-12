@@ -941,6 +941,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
 
       const args = callAt(0).args;
+      expect(callAt(0).repositories).toEqual(["acme/web"]);
       expect(args).toContain("--hostname");
       expect(args).toContain("github.acme.dev");
       expect(args).toContain("owner=acme");
@@ -1298,12 +1299,37 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("uses the requested host token when looking up the viewer", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("octocat")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const viewer = yield* cli.getViewerLogin({
+        cwd: "/w",
+        host: "github.acme.test",
+        repository: "acme/web",
+      });
+
+      assert.strictEqual(viewer, "octocat");
+      expect(callAt(0).args).toEqual([
+        "api",
+        "user",
+        "--hostname",
+        "github.acme.test",
+        "--jq",
+        ".login",
+      ]);
+    }),
+  );
+
   it.effect("fails when the authenticated account has no login", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w" }));
+      const error = yield* Effect.flip(
+        cli.getViewerLogin({ cwd: "/w", host: "github.com", repository: "acme/web" }),
+      );
 
       assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
     }),

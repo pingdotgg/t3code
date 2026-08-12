@@ -275,8 +275,16 @@ export interface GitHubPullRequestDiffSlice {
 export class GitHubPullRequestCli extends Context.Service<
   GitHubPullRequestCli,
   {
+    readonly getBatchKey: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+    }) => Effect.Effect<string, GitHubPullRequestCliError>;
+
     readonly getViewerLogin: (input: {
       readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
     }) => Effect.Effect<string, GitHubPullRequestCliError>;
 
     readonly listPullRequests: (input: {
@@ -658,38 +666,49 @@ export const make = Effect.gen(function* () {
   const graphql = (input: {
     readonly cwd: string;
     readonly host: string;
+    readonly repository: string;
     readonly query: string;
     readonly variables: Readonly<Record<string, string>>;
   }) =>
     github
       .execute({
         cwd: input.cwd,
+        host: input.host,
+        repositories: [input.repository],
         args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
         stdin: encodeGraphQlRequestJson({ query: input.query, variables: input.variables }),
       })
       .pipe(Effect.asVoid);
 
   /** A GraphQL read whose answer is decoded, reporting a failure against the read that made it. */
-  const graphqlRead = <A>(input: {
-    readonly cwd: string;
-    readonly host: string;
-    readonly operation: string;
-    /** Variables as `-f` flags, for values this module composed itself. */
-    readonly variables?: ReadonlyArray<readonly [string, string]>;
-    /**
-     * Variables carrying words the reader typed. Document and variables travel over stdin
-     * together, because argv is visible in process listings and is echoed back inside a
-     * process-runner failure message.
-     */
-    readonly privateVariables?: Readonly<Record<string, string>>;
-    readonly query: string;
-    readonly decode: (raw: string) => Result.Result<A, unknown>;
-  }): Effect.Effect<A, GitHubPullRequestCliError> =>
-    github
+  const graphqlRead = <A>(
+    input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly operation: string;
+      /** Variables as `-f` flags, for values this module composed itself. */
+      readonly variables?: ReadonlyArray<readonly [string, string]>;
+      /**
+       * Variables carrying words the reader typed. Document and variables travel over stdin
+       * together, because argv is visible in process listings and is echoed back inside a
+       * process-runner failure message.
+       */
+      readonly privateVariables?: Readonly<Record<string, string>>;
+      readonly query: string;
+      readonly decode: (raw: string) => Result.Result<A, unknown>;
+    } & (
+      | { readonly repository: string; readonly repositories?: never }
+      | { readonly repository?: never; readonly repositories: ReadonlyArray<string> }
+    ),
+  ): Effect.Effect<A, GitHubPullRequestCliError> => {
+    const repositories = input.repositories ?? [input.repository];
+    return github
       .execute(
         input.privateVariables === undefined
           ? {
               cwd: input.cwd,
+              host: input.host,
+              repositories,
               args: [
                 "api",
                 "graphql",
@@ -702,6 +721,8 @@ export const make = Effect.gen(function* () {
             }
           : {
               cwd: input.cwd,
+              host: input.host,
+              repositories,
               args: ["api", "graphql", "--hostname", input.host, "--input", "-"],
               stdin: encodeGraphQlRequestJson({
                 query: input.query,
@@ -724,6 +745,7 @@ export const make = Effect.gen(function* () {
               );
         }),
       );
+  };
 
   /**
    * One page of the patch, read from the files API. GitHub refuses `pr diff` outright past 300
@@ -748,6 +770,8 @@ export const make = Effect.gen(function* () {
     return github
       .execute({
         cwd: input.cwd,
+        host: input.host,
+        repositories: [input.repository],
         args: [
           "api",
           "--hostname",
@@ -810,6 +834,8 @@ export const make = Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         const refsResult = yield* github.execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           args: [
             "api",
             "--hostname",
@@ -850,6 +876,8 @@ export const make = Effect.gen(function* () {
           github
             .execute({
               cwd: input.cwd,
+              host: input.host,
+              repositories: [input.repository],
               args: [
                 "api",
                 "--hostname",
@@ -892,15 +920,31 @@ export const make = Effect.gen(function* () {
       });
 
   return GitHubPullRequestCli.of({
+    getBatchKey: (input) =>
+      github.getBatchKey({
+        cwd: input.cwd,
+        host: input.host,
+        repositories: [input.repository],
+      }),
+
     getViewerLogin: (input) =>
-      github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
-        Effect.flatMap((result) => {
-          const login = result.stdout.trim();
-          return login.length > 0
-            ? Effect.succeed(login)
-            : Effect.fail(new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd }));
-        }),
-      ),
+      github
+        .execute({
+          cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
+          args: ["api", "user", "--hostname", input.host, "--jq", ".login"],
+        })
+        .pipe(
+          Effect.flatMap((result) => {
+            const login = result.stdout.trim();
+            return login.length > 0
+              ? Effect.succeed(login)
+              : Effect.fail(
+                  new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd }),
+                );
+          }),
+        ),
 
     listPullRequests: (input) => {
       const fallbackMaxRows = Math.max(input.limit + 1, PULL_REQUEST_FALLBACK_MAX_ROWS);
@@ -911,6 +955,8 @@ export const make = Effect.gen(function* () {
         github
           .execute({
             cwd: input.cwd,
+            host: input.host,
+            repositories: [input.repository],
             args: [
               "pr",
               "list",
@@ -1005,6 +1051,7 @@ export const make = Effect.gen(function* () {
       return graphqlRead({
         cwd: input.cwd,
         host: input.host,
+        repositories: input.repositories,
         operation: "searchPullRequests",
         // The reader's own words are in the query, so it travels over stdin rather than in argv.
         privateVariables: { q: query },
@@ -1040,6 +1087,7 @@ export const make = Effect.gen(function* () {
           return graphqlRead({
             cwd: input.cwd,
             host: input.host,
+            repositories: chunk.map(({ repository }) => repository),
             operation: "listPullRequestStats",
             query,
             decode: decodePullRequestStatsJson,
@@ -1060,6 +1108,8 @@ export const make = Effect.gen(function* () {
       github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           args: [
             "pr",
             "view",
@@ -1089,6 +1139,8 @@ export const make = Effect.gen(function* () {
       github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           args: [
             "pr",
             "view",
@@ -1142,6 +1194,8 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           args: ["pr", "diff", String(input.number), ...repositoryArgs(input), "--color", "never"],
           maxOutputBytes: DIFF_MAX_OUTPUT_BYTES,
           timeoutMs: DIFF_TIMEOUT_MS,
@@ -1180,6 +1234,7 @@ export const make = Effect.gen(function* () {
           graphqlRead({
             cwd: input.cwd,
             host: input.host,
+            repository: input.repository,
             operation: "listReviewThreadComments",
             variables: [
               ["-f", `owner=${owner}`],
@@ -1203,6 +1258,7 @@ export const make = Effect.gen(function* () {
           graphqlRead({
             cwd: input.cwd,
             host: input.host,
+            repository: input.repository,
             operation: "listReviewThreadComments",
             variables: [["-f", `threadId=${threadId}`], cursorVariable(cursor)],
             query: REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY,
@@ -1284,6 +1340,8 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           args: [
             "api",
             "graphql",
@@ -1315,6 +1373,8 @@ export const make = Effect.gen(function* () {
       github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           args: [
             "repo",
             "view",
@@ -1344,6 +1404,7 @@ export const make = Effect.gen(function* () {
       return graphqlRead({
         cwd: input.cwd,
         host: input.host,
+        repository: input.repository,
         operation: "getViewerAccess",
         variables: [
           ["-f", `owner=${owner}`],
@@ -1360,6 +1421,7 @@ export const make = Effect.gen(function* () {
       return graphqlRead({
         cwd: input.cwd,
         host: input.host,
+        repository: input.repository,
         operation: "listReviewerCandidates",
         variables: [
           ["-f", `owner=${owner}`],
@@ -1376,6 +1438,8 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           // Posting to a login GitHub has already been asked about is what a re-request is, so
           // there is nothing to say here about somebody who has reviewed once already. The body
           // travels over stdin for the reason every other one does: argv is visible in process
@@ -1400,6 +1464,8 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           args: ["pr", subcommand!, String(input.number), ...repositoryArgs(input), ...flags],
         })
         .pipe(Effect.asVoid);
@@ -1409,6 +1475,8 @@ export const make = Effect.gen(function* () {
       github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           // The body travels over stdin: argv is visible in process listings and is echoed
           // back inside process-runner failure messages.
           args: [
@@ -1428,6 +1496,8 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          host: input.host,
+          repositories: [input.repository],
           // The whole review is one request, so nothing is visible to anyone else until the
           // verdict is sent. The payload travels over stdin for the same reason a comment
           // body does: argv is visible in process listings and echoed back in failures.
@@ -1454,6 +1524,7 @@ export const make = Effect.gen(function* () {
       graphql({
         cwd: input.cwd,
         host: input.host,
+        repository: input.repository,
         query: REVIEW_THREAD_REPLY_GRAPHQL_MUTATION,
         variables: { threadId: input.threadId, body: input.body },
       }),
@@ -1462,6 +1533,7 @@ export const make = Effect.gen(function* () {
       graphql({
         cwd: input.cwd,
         host: input.host,
+        repository: input.repository,
         query: input.resolved
           ? RESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION
           : UNRESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,

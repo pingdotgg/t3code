@@ -113,11 +113,20 @@ export const SourceControlProviderAuthStatus = Schema.Literals([
 ]);
 export type SourceControlProviderAuthStatus = typeof SourceControlProviderAuthStatus.Type;
 
+export const GitHubAuthAccount = Schema.Struct({
+  host: TrimmedNonEmptyString,
+  login: TrimmedNonEmptyString,
+  tokenSource: TrimmedNonEmptyString,
+  active: Schema.Boolean,
+});
+export type GitHubAuthAccount = typeof GitHubAuthAccount.Type;
+
 export const SourceControlProviderAuth = Schema.Struct({
   status: SourceControlProviderAuthStatus,
   account: Schema.Option(TrimmedNonEmptyString),
   host: Schema.Option(TrimmedNonEmptyString),
   detail: Schema.Option(TrimmedNonEmptyString),
+  githubAccounts: Schema.optionalKey(Schema.Array(GitHubAuthAccount)),
 });
 export type SourceControlProviderAuth = typeof SourceControlProviderAuth.Type;
 

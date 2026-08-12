@@ -7,6 +7,7 @@ import {
   type ChangeRequest,
   type ChangeRequestState,
 } from "@t3tools/contracts";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
@@ -19,6 +20,12 @@ import {
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
+
+function authTarget(context: SourceControlProvider.SourceControlProviderContext | undefined) {
+  if (context === undefined) return {};
+  const [host, ...path] = normalizeGitRemoteUrl(context.remoteUrl).split("/");
+  return host && path.length >= 2 ? { host, repositories: [path.join("/")] } : {};
+}
 
 function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {
   return {
@@ -53,6 +60,18 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
       status: "authenticated",
       account: authenticatedAccount.account,
       host,
+      githubAccounts: authStatus.accounts.flatMap((account) =>
+        account.authenticated && account.tokenSource !== null
+          ? [
+              {
+                host: account.host,
+                login: account.account,
+                tokenSource: account.tokenSource,
+                active: account.active,
+              },
+            ]
+          : [],
+      ),
     });
   }
 
@@ -103,6 +122,7 @@ export const make = Effect.gen(function* () {
         return github
           .listOpenPullRequests({
             cwd: input.cwd,
+            ...authTarget(input.context),
             headSelector: input.headSelector,
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           })
@@ -129,6 +149,7 @@ export const make = Effect.gen(function* () {
       return github
         .execute({
           cwd: input.cwd,
+          ...authTarget(input.context),
           args: [
             "pr",
             "list",
@@ -188,7 +209,7 @@ export const make = Effect.gen(function* () {
     kind: "github",
     listChangeRequests,
     getChangeRequest: (input) =>
-      github.getPullRequest(input).pipe(
+      github.getPullRequest({ ...input, ...authTarget(input.context) }).pipe(
         Effect.map(toChangeRequest),
         Effect.mapError(
           (error) =>
@@ -209,6 +230,7 @@ export const make = Effect.gen(function* () {
       github
         .createPullRequest({
           cwd: input.cwd,
+          ...authTarget(input.context),
           baseBranch: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
@@ -231,22 +253,28 @@ export const make = Effect.gen(function* () {
           ),
         ),
     getRepositoryCloneUrls: (input) =>
-      github.getRepositoryCloneUrls(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "getRepositoryCloneUrls",
-              command: error.command,
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .getRepositoryCloneUrls({
+          ...input,
+          ...authTarget(input.context),
+          repository: input.repository,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "getRepositoryCloneUrls",
+                command: error.command,
+                cwd: input.cwd,
+                repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.repository,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
     createRepository: (input) =>
       github.createRepository(input).pipe(
         Effect.mapError(
@@ -265,7 +293,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getDefaultBranch: (input) =>
-      github.getDefaultBranch(input).pipe(
+      github.getDefaultBranch({ ...input, ...authTarget(input.context) }).pipe(
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
@@ -279,7 +307,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     checkoutChangeRequest: (input) =>
-      github.checkoutPullRequest(input).pipe(
+      github.checkoutPullRequest({ ...input, ...authTarget(input.context) }).pipe(
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({

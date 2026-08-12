@@ -52,6 +52,7 @@ import {
   JujutsuIcon,
   type Icon,
 } from "../Icons";
+import { GitHubAccountSettings, hasMultipleGitHubAccountsOnHost } from "./GitHubAccountSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -509,6 +510,7 @@ function EmptySourceControlDiscovery({
 
 export function SourceControlSettingsPanel() {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const settings = usePrimarySettings();
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -574,7 +576,13 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
+                  {item.kind === "github" &&
+                  (hasMultipleGitHubAccountsOnHost(item.auth.githubAccounts ?? []) ||
+                    Object.keys(settings.githubAccountRouting).length > 0) ? (
+                    <GitHubAccountSettings accounts={item.auth.githubAccounts ?? []} />
+                  ) : undefined}
+                </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}

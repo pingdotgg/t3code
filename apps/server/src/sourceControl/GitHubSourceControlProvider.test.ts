@@ -178,6 +178,48 @@ it.effect("treats empty non-open change request listing output as no results", (
   }),
 );
 
+it.effect("drops transport ports from GitHub Enterprise auth targets", () =>
+  Effect.gen(function* () {
+    const listInputs: Array<Parameters<GitHubCli.GitHubCli["Service"]["listOpenPullRequests"]>[0]> =
+      [];
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        listInputs.push(input);
+        return Effect.succeed([]);
+      },
+    });
+
+    for (const remoteUrl of [
+      "https://github.example:8443/owner/repo.git",
+      "ssh://git@github.example:2222/owner/repo.git",
+    ]) {
+      yield* provider.listChangeRequests({
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: "github",
+            name: "GitHub Enterprise",
+            baseUrl: "https://github.example",
+          },
+          remoteName: "origin",
+          remoteUrl,
+        },
+        headSelector: "feature/accounts",
+        state: "open",
+        limit: 10,
+      });
+    }
+
+    assert.deepStrictEqual(
+      listInputs.map(({ host, repositories }) => ({ host, repositories })),
+      [
+        { host: "github.example", repositories: ["owner/repo"] },
+        { host: "github.example", repositories: ["owner/repo"] },
+      ],
+    );
+  }),
+);
+
 it.effect("creates GitHub PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
@@ -327,6 +369,7 @@ it("parses GitHub auth status accounts by host and active state", () => {
         account: "active-user",
         authenticated: true,
         active: true,
+        tokenSource: "keyring",
         error: null,
       },
       {
@@ -334,6 +377,7 @@ it("parses GitHub auth status accounts by host and active state", () => {
         account: "stale-user",
         authenticated: false,
         active: false,
+        tokenSource: "keyring",
         error: null,
       },
       {
@@ -341,10 +385,53 @@ it("parses GitHub auth status accounts by host and active state", () => {
         account: "enterprise-user",
         authenticated: true,
         active: false,
+        tokenSource: "keyring",
         error: null,
       },
     ],
   );
+});
+
+it("keeps duplicate GitHub logins distinct by token source", () => {
+  const auth = GitHubSourceControlProvider.discovery.parseAuth(
+    processResult(
+      JSON.stringify({
+        hosts: {
+          "github.com": [
+            {
+              state: "success",
+              active: true,
+              host: "github.com",
+              login: "DominicVonk",
+              tokenSource: "GITHUB_TOKEN",
+            },
+            {
+              state: "success",
+              active: false,
+              host: "github.com",
+              login: "DominicVonk",
+              tokenSource: "keyring",
+            },
+          ],
+        },
+      }),
+    ),
+  );
+
+  assert.deepStrictEqual(auth.githubAccounts, [
+    {
+      host: "github.com",
+      login: "DominicVonk",
+      tokenSource: "GITHUB_TOKEN",
+      active: true,
+    },
+    {
+      host: "github.com",
+      login: "DominicVonk",
+      tokenSource: "keyring",
+      active: false,
+    },
+  ]);
 });
 
 it("reports unauthenticated when GitHub JSON has accounts but none are valid", () => {
