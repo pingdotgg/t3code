@@ -18,4 +18,14 @@ describe("StartTruncatedPath", () => {
     expect(markup).toContain("whitespace-nowrap");
     expect(markup).toContain("min-w-0");
   });
+
+  it("shows the full path in a tooltip", () => {
+    const path = "apps/desktop/src/components/very/long/CommitDialog.tsx";
+
+    const markup = renderToStaticMarkup(<StartTruncatedPath path={path} />);
+
+    expect(markup).toContain('data-slot="tooltip-trigger"');
+    expect(markup).toContain("data-base-ui-tooltip-trigger");
+    expect(markup).toContain(path);
+  });
 });
