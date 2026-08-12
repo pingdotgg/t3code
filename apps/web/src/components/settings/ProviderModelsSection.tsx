@@ -239,7 +239,10 @@ export function ProviderModelsSection({
           ) {
             capLabels.push("Reasoning");
           }
-          const hasDetails = capLabels.length > 0 || model.name !== model.slug;
+          const hasDetails =
+            capLabels.length > 0 ||
+            model.name !== model.slug ||
+            (model.description != null && model.description.length > 0);
 
           return (
             <div
