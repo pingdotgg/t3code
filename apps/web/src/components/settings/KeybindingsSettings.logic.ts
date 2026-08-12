@@ -10,7 +10,8 @@ import {
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
 
-import { isMacPlatform } from "../../lib/utils";
+import { resolveModModifier } from "../../keybindings";
+import { getShortcutRuntime, type ShortcutRuntime } from "../../shortcutRuntime";
 
 export type KeybindingSource = "Default" | "Custom" | "Project";
 
@@ -318,12 +319,17 @@ export function normalizeShortcutKeyToken(key: string): string | null {
 export function keybindingFromKeyboardEvent(
   event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
   platform: string,
+  runtime: ShortcutRuntime = getShortcutRuntime(),
 ): string | null {
   const keyToken = normalizeShortcutKeyToken(event.key);
   if (!keyToken) return null;
 
+  // Capture must mirror matching: whichever physical modifier `mod` currently
+  // resolves to becomes "mod", so a binding recorded in the browser still
+  // works in the desktop app (and vice versa) instead of being pinned to the
+  // literal key that happened to be pressed.
   const parts: string[] = [];
-  if (isMacPlatform(platform)) {
+  if (resolveModModifier(platform, runtime) === "meta") {
     if (event.metaKey) parts.push("mod");
     if (event.ctrlKey) parts.push("ctrl");
   } else {

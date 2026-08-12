@@ -9,6 +9,18 @@ import {
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
+import { getShortcutRuntime, type ShortcutRuntime } from "./shortcutRuntime";
+
+/**
+ * Resolves the abstract `mod` token to a concrete modifier.
+ *
+ * Only `mod` flips. An explicit `cmd+k` or `ctrl+k` in a keybinding config is
+ * a deliberate choice and is matched and rendered literally in every runtime.
+ */
+export function resolveModModifier(platform: string, runtime: ShortcutRuntime): "meta" | "ctrl" {
+  if (!isMacPlatform(platform)) return "ctrl";
+  return runtime === "desktop" ? "meta" : "ctrl";
+}
 
 export interface ShortcutEventLike {
   type?: string;
@@ -37,6 +49,7 @@ export interface ShortcutMatchContext {
 
 interface ShortcutMatchOptions {
   platform?: string;
+  runtime?: ShortcutRuntime;
   context?: Partial<ShortcutMatchContext>;
 }
 
@@ -89,8 +102,9 @@ function matchesShortcutModifiers(
   event: ShortcutModifierStateLike,
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
+  runtime = getShortcutRuntime(),
 ): boolean {
-  const useMetaForMod = isMacPlatform(platform);
+  const useMetaForMod = resolveModModifier(platform, runtime) === "meta";
   const expectedMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
   const expectedCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
   return (
@@ -105,13 +119,18 @@ function matchesShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
+  runtime = getShortcutRuntime(),
 ): boolean {
-  if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
+  if (!matchesShortcutModifiers(event, shortcut, platform, runtime)) return false;
   return resolveEventKeys(event).has(shortcut.key);
 }
 
 function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
   return options?.platform ?? navigator.platform;
+}
+
+function resolveRuntime(options: ShortcutMatchOptions | undefined): ShortcutRuntime {
+  return options?.runtime ?? getShortcutRuntime();
 }
 
 function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatchContext {
@@ -147,8 +166,12 @@ function matchesWhenClause(
   return evaluateWhenNode(whenAst, context);
 }
 
-function shortcutConflictKey(shortcut: KeybindingShortcut, platform = navigator.platform): string {
-  const useMetaForMod = isMacPlatform(platform);
+function shortcutConflictKey(
+  shortcut: KeybindingShortcut,
+  platform = navigator.platform,
+  runtime = getShortcutRuntime(),
+): string {
+  const useMetaForMod = resolveModModifier(platform, runtime) === "meta";
   const metaKey = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
   const ctrlKey = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
 
@@ -167,6 +190,7 @@ function findEffectiveShortcutForCommand(
   options?: ShortcutMatchOptions,
 ): KeybindingShortcut | null {
   const platform = resolvePlatform(options);
+  const runtime = resolveRuntime(options);
   const context = resolveContext(options);
   const claimedShortcuts = new Set<string>();
 
@@ -175,7 +199,7 @@ function findEffectiveShortcutForCommand(
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
 
-    const conflictKey = shortcutConflictKey(binding.shortcut, platform);
+    const conflictKey = shortcutConflictKey(binding.shortcut, platform, runtime);
     if (claimedShortcuts.has(conflictKey)) {
       continue;
     }
@@ -204,13 +228,14 @@ export function resolveShortcutCommand(
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
+  const runtime = resolveRuntime(options);
   const context = resolveContext(options);
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesShortcut(event, binding.shortcut, platform)) continue;
+    if (!matchesShortcut(event, binding.shortcut, platform, runtime)) continue;
     return binding.command;
   }
   return null;
@@ -230,15 +255,18 @@ function formatShortcutKeyLabel(key: string): string {
 export function formatShortcutLabel(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
+  runtime = getShortcutRuntime(),
 ): string {
   const keyLabel = formatShortcutKeyLabel(shortcut.key);
-  const useMetaForMod = isMacPlatform(platform);
+  const useMetaForMod = resolveModModifier(platform, runtime) === "meta";
   const showMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
   const showCtrl = shortcut.ctrlKey || (shortcut.modKey && !useMetaForMod);
   const showAlt = shortcut.altKey;
   const showShift = shortcut.shiftKey;
 
-  if (useMetaForMod) {
+  // Mac renders glyphs even when `mod` resolves to Ctrl in the browser, so key
+  // symbol style follows the platform while the modifier itself follows the runtime.
+  if (isMacPlatform(platform)) {
     return `${showCtrl ? "\u2303" : ""}${showAlt ? "\u2325" : ""}${showShift ? "\u21e7" : ""}${showMeta ? "\u2318" : ""}${keyLabel}`;
   }
 
@@ -261,8 +289,9 @@ export function shortcutLabelForCommand(
       ? ({ platform: options } satisfies ResolvedShortcutLabelOptions)
       : options;
   const platform = resolvePlatform(resolvedOptions);
+  const runtime = resolveRuntime(resolvedOptions);
   const shortcut = findEffectiveShortcutForCommand(keybindings, command, resolvedOptions);
-  return shortcut ? formatShortcutLabel(shortcut, platform) : null;
+  return shortcut ? formatShortcutLabel(shortcut, platform, runtime) : null;
 }
 
 export function threadJumpCommandForIndex(index: number): ThreadJumpKeybindingCommand | null {
@@ -296,11 +325,12 @@ export function shouldShowThreadJumpHintsForModifiers(
   options?: ShortcutMatchOptions,
 ): boolean {
   const platform = resolvePlatform(options);
+  const runtime = resolveRuntime(options);
 
   for (const command of THREAD_JUMP_KEYBINDING_COMMANDS) {
     const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
     if (!shortcut) continue;
-    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
+    if (matchesShortcutModifiers(modifiers, shortcut, platform, runtime)) {
       return true;
     }
   }
@@ -335,11 +365,12 @@ export function shouldShowModelPickerJumpHintsForModifiers(
   options?: ShortcutMatchOptions,
 ): boolean {
   const platform = resolvePlatform(options);
+  const runtime = resolveRuntime(options);
 
   for (const command of MODEL_PICKER_JUMP_KEYBINDING_COMMANDS) {
     const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
     if (!shortcut) continue;
-    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
+    if (matchesShortcutModifiers(modifiers, shortcut, platform, runtime)) {
       return true;
     }
   }

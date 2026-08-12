@@ -64,6 +64,25 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+shift+k");
   });
 
+  it("captures the flipped modifier as mod in a macOS browser session", () => {
+    // Control is what `mod` resolves to there, so it must round-trip as "mod"
+    // rather than a literal "ctrl" that would never flip back on desktop.
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "K", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
+        "MacIntel",
+        "browser",
+      ),
+    ).toBe("mod+shift+k");
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "K", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
+        "MacIntel",
+        "browser",
+      ),
+    ).toBe("meta+shift+k");
+  });
+
   it("serializes shortcuts and when expressions for upserts", () => {
     expect(
       shortcutToKeybindingInput({

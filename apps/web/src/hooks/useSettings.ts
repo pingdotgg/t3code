@@ -25,6 +25,8 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { isElectron } from "~/env";
+import { resolveShortcutRuntime, setShortcutRuntime } from "~/shortcutRuntime";
 import { ensureLocalApi } from "~/localApi";
 import {
   getThemeDefinition,
@@ -272,6 +274,27 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
  * sidebar and then swap it out once persisted settings land — remounting the
  * whole tree for everyone instead of only for legacy opt-ins.
  */
+/**
+ * Keeps the module-level shortcut runtime aligned with the persisted opt-out.
+ *
+ * The keybinding matcher runs inside plain `keydown` listeners rather than
+ * React render, so the runtime lives in a module singleton and syncs through a
+ * plain subscription. Call once during startup.
+ */
+export function startShortcutRuntimeSync(): () => void {
+  const apply = () => {
+    setShortcutRuntime(
+      resolveShortcutRuntime({
+        isElectron,
+        modKeyFlipEnabled: getClientSettingsSnapshot().browserModKeyFlip,
+      }),
+    );
+  };
+
+  apply();
+  return subscribeClientSettings(apply);
+}
+
 export function useLegacySidebarEnabled(): boolean {
   const settingsHydrated = useClientSettingsHydrated();
   const legacySidebarEnabled = useClientSettingsValue().legacySidebarEnabled;
