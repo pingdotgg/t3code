@@ -130,6 +130,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "new-threads",
   },
   {
+    id: "new-thread-open-files",
+    title: "Open files panel in new chats",
+    to: "/settings/general",
+  },
+  {
+    id: "new-thread-open-terminal",
+    title: "Open terminal in new chats",
+    to: "/settings/general",
+  },
+  {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/general",

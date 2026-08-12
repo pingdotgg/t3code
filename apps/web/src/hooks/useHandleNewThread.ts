@@ -16,6 +16,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
+import { applyNewThreadPanelDefaults } from "../newThreadPanelDefaults";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -267,6 +268,13 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
+          // This draft is presented as a new chat, so it gets the configured
+          // default panel layout too — otherwise turning the preference on
+          // appears to do nothing until the project's next real thread. A
+          // draft that already has a layout keeps it.
+          void applyNewThreadPanelDefaults(
+            scopeThreadRef(projectRef.environmentId, emptyStoredDraftThread.threadId),
+          );
           const opened = {
             draftId: emptyStoredDraftThread.draftId,
             threadId: emptyStoredDraftThread.threadId,
@@ -314,6 +322,11 @@ export function useNewThreadHandler() {
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        // Presented as a new chat like the reuse path above, so it gets the
+        // configured default panel layout too.
+        void applyNewThreadPanelDefaults(
+          scopeThreadRef(projectRef.environmentId, latestActiveDraftThread.threadId),
+        );
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
@@ -377,6 +390,7 @@ export function useNewThreadHandler() {
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
+        void applyNewThreadPanelDefaults(scopeThreadRef(projectRef.environmentId, threadId));
         if (carryModelSelection) {
           // After sticky state so the viewed thread's exact selection
           // (model + options like effort and context window) wins over the

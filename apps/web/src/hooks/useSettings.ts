@@ -185,6 +185,17 @@ export function getClientSettings(): ClientSettings {
   return getClientSettingsSnapshot();
 }
 
+/**
+ * The client settings, once the persisted ones have landed. The snapshot reads
+ * as the defaults until hydration completes, so a one-shot decision taken at
+ * startup — rather than a subscription that re-renders on change — has to wait
+ * for this instead of reading {@link getClientSettings} directly.
+ */
+export async function getHydratedClientSettings(): Promise<ClientSettings> {
+  await hydrateClientSettings();
+  return getClientSettingsSnapshot();
+}
+
 export function useClientSettingsHydrated(): boolean {
   return useSyncExternalStore(
     subscribeClientSettingsHydration,

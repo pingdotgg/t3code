@@ -103,6 +103,30 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
+describe("ClientSettings new-thread panel defaults", () => {
+  it("defaults both new-thread panels to closed", () => {
+    const settings = decodeClientSettings({});
+    expect(settings.newThreadOpenFilesPanel).toBe(false);
+    expect(settings.newThreadOpenTerminal).toBe(false);
+  });
+
+  it("preserves explicit new-thread panel opt-ins", () => {
+    const decoded = decodeClientSettings({
+      newThreadOpenFilesPanel: true,
+      newThreadOpenTerminal: true,
+    });
+    expect(decoded.newThreadOpenFilesPanel).toBe(true);
+    expect(decoded.newThreadOpenTerminal).toBe(true);
+
+    const patch = decodeClientSettingsPatch({
+      newThreadOpenFilesPanel: true,
+      newThreadOpenTerminal: true,
+    });
+    expect(patch.newThreadOpenFilesPanel).toBe(true);
+    expect(patch.newThreadOpenTerminal).toBe(true);
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({
