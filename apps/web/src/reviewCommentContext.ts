@@ -278,13 +278,16 @@ function stripTrailingNewline(value: string): string {
   return value.endsWith("\n") ? value.slice(0, -1) : value;
 }
 
-function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffReviewLine> {
+function buildDiffReviewLines(
+  fileDiff: FileDiffMetadata,
+  includeExpandedContext = !fileDiff.isPartial,
+): ReadonlyArray<DiffReviewLine> {
   const rows: DiffReviewLine[] = [];
   let oldContextStart = 1;
   let newContextStart = 1;
 
   for (const hunk of fileDiff.hunks) {
-    if (!fileDiff.isPartial) {
+    if (includeExpandedContext) {
       const oldHunkStart = hunk.deletionStart + (hunk.deletionCount === 0 ? 1 : 0);
       const newHunkStart = hunk.additionStart + (hunk.additionCount === 0 ? 1 : 0);
       const contextLines = Math.min(oldHunkStart - oldContextStart, newHunkStart - newContextStart);
@@ -355,7 +358,7 @@ function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffRev
     if (hunk.additionCount === 0) newContextStart += 1;
   }
 
-  if (!fileDiff.isPartial) {
+  if (includeExpandedContext) {
     const trailingLines = Math.min(
       fileDiff.deletionLines.length - oldContextStart + 1,
       fileDiff.additionLines.length - newContextStart + 1,
@@ -421,13 +424,54 @@ function findDiffReviewLineIndex(
   return lines.findIndex((line) => line[fallbackKey] === lineNumber);
 }
 
+function resolveExpandedContextPosition(
+  fileDiff: FileDiffMetadata,
+  lineNumber: number,
+  side: SelectionSide | undefined,
+): PullRequestReviewPosition | null {
+  if (fileDiff.isPartial) return null;
+
+  const selectedSide = side === "deletions" ? "left" : "right";
+  let oldContextStart = 1;
+  let newContextStart = 1;
+  const resolveGap = (
+    oldContextEnd: number,
+    newContextEnd: number,
+  ): PullRequestReviewPosition | null => {
+    const contextLines = Math.min(oldContextEnd - oldContextStart, newContextEnd - newContextStart);
+    const selectedStart = selectedSide === "left" ? oldContextStart : newContextStart;
+    const offset = lineNumber - selectedStart;
+    if (offset < 0 || offset >= contextLines) return null;
+    return {
+      kind: "context",
+      oldLine: oldContextStart + offset,
+      newLine: newContextStart + offset,
+      side: selectedSide,
+    };
+  };
+
+  for (const hunk of fileDiff.hunks) {
+    const oldContextEnd = hunk.deletionStart + (hunk.deletionCount === 0 ? 1 : 0);
+    const newContextEnd = hunk.additionStart + (hunk.additionCount === 0 ? 1 : 0);
+    const position = resolveGap(oldContextEnd, newContextEnd);
+    if (position) return position;
+    oldContextStart = oldContextEnd + hunk.deletionCount;
+    newContextStart = newContextEnd + hunk.additionCount;
+  }
+
+  return resolveGap(fileDiff.deletionLines.length + 1, fileDiff.additionLines.length + 1);
+}
+
 /** Resolve the host-facing coordinates of a line selected in the diff viewer. */
 export function resolveDiffReviewPosition(
   fileDiff: FileDiffMetadata,
   lineNumber: number,
   side: SelectionSide | undefined,
 ): PullRequestReviewPosition | null {
-  const lines = buildDiffReviewLines(fileDiff);
+  const expandedPosition = resolveExpandedContextPosition(fileDiff, lineNumber, side);
+  if (expandedPosition) return expandedPosition;
+
+  const lines = buildDiffReviewLines(fileDiff, false);
   const line = lines[findDiffReviewLineIndex(lines, lineNumber, side)];
   if (line === undefined) return null;
 
