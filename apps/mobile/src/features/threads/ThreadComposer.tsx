@@ -416,7 +416,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
       const providerCommands: ComposerCommandItem[] = [];
+      const slashNames = new Set<string>();
       for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
+        slashNames.add(cmd.name.toLowerCase());
         if (!cmd.name.toLowerCase().includes(q)) continue;
         providerCommands.push({
           id: `pcmd:${cmd.name}`,
@@ -427,7 +429,26 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         });
       }
 
-      return [...builtIn, ...providerCommands];
+      // Skills normally open with `$`, but users look under `/` for agent
+      // skills (e.g. AI Hero grill-me). Surface enabled skills in this menu too.
+      const skillCommands: ComposerCommandItem[] = [];
+      for (const skill of selectedProviderStatus?.skills ?? []) {
+        if (skill.enabled === false) continue;
+        if (slashNames.has(skill.name.toLowerCase())) continue;
+        const label = skill.displayName ?? skill.name;
+        if (q && !skill.name.toLowerCase().includes(q) && !label.toLowerCase().includes(q)) {
+          continue;
+        }
+        skillCommands.push({
+          id: `skill:${skill.name}`,
+          type: "skill" as const,
+          skill,
+          label: `/${skill.name}`,
+          description: skill.shortDescription ?? skill.description ?? "",
+        });
+      }
+
+      return [...builtIn, ...providerCommands, ...skillCommands];
     }
 
     if (composerTrigger.kind === "skill") {

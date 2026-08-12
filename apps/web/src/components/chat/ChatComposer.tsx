@@ -1074,12 +1074,56 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: command.description ?? command.input?.hint ?? "Run provider command",
         }),
       );
+      // Skills are normally under `$`, but users expect agent skills (e.g. AI Hero
+      // /grill-me) in the `/` command menu. Include enabled skills here so they
+      // appear as commands; selecting still inserts `$name` (T3 skill form).
+      const slashCommandNames = new Set(
+        (selectedProviderStatus?.slashCommands ?? []).map((command) => command.name.toLowerCase()),
+      );
+      const skillCommandItems = (selectedProviderStatus?.skills ?? [])
+        .filter((skill) => skill.enabled !== false)
+        .filter((skill) => !slashCommandNames.has(skill.name.toLowerCase()))
+        .map((skill) => ({
+          id: `skill:${selectedProvider}:${skill.name}`,
+          type: "skill" as const,
+          provider: selectedProvider,
+          skill,
+          label: `/${skill.name}`,
+          description:
+            skill.shortDescription ??
+            skill.description ??
+            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+        }));
       const query = composerTrigger.query.trim().toLowerCase();
-      const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
+      const slashCommandItems = [
+        ...builtInSlashCommandItems,
+        ...providerSlashCommandItems,
+        ...skillCommandItems,
+      ];
       if (!query) {
         return slashCommandItems;
       }
-      return searchSlashCommandItems(slashCommandItems, query);
+      const matchedSlash = searchSlashCommandItems(
+        [...builtInSlashCommandItems, ...providerSlashCommandItems],
+        query,
+      );
+      const matchedSkills = searchProviderSkills(
+        (selectedProviderStatus?.skills ?? []).filter((skill) => skill.enabled !== false),
+        query,
+      )
+        .filter((skill) => !slashCommandNames.has(skill.name.toLowerCase()))
+        .map((skill) => ({
+          id: `skill:${selectedProvider}:${skill.name}`,
+          type: "skill" as const,
+          provider: selectedProvider,
+          skill,
+          label: `/${skill.name}`,
+          description:
+            skill.shortDescription ??
+            skill.description ??
+            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+        }));
+      return [...matchedSlash, ...matchedSkills];
     }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
