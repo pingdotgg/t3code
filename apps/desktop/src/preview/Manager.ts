@@ -50,6 +50,11 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
+import {
+  type NativeKeybindingCaptureInput,
+  nativeKeybindingCaptureInput,
+  NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+} from "../keybindings/NativeKeybindingCapture.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -1372,6 +1377,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ],
       });
     });
+    const forwardNativeKeybindingCapture = Effect.fn(
+      "PreviewManager.forwardNativeKeybindingCapture",
+    )(function* (input: NativeKeybindingCaptureInput) {
+      const mainWindow = yield* Ref.get(mainWindowRef);
+      if (Option.isNone(mainWindow) || mainWindow.value.isDestroyed()) {
+        return;
+      }
+      mainWindow.value.webContents.send(NATIVE_KEYBINDING_CAPTURE_CHANNEL, input);
+    });
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
@@ -1380,6 +1394,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.reload(),
           ).pipe(Effect.ignore),
         );
+        return;
+      }
+      const captureInput = nativeKeybindingCaptureInput(input, hostPlatform);
+      if (captureInput) {
+        event.preventDefault();
+        runFork(forwardNativeKeybindingCapture(captureInput));
         return;
       }
       runFork(forwardShortcut(event, input));

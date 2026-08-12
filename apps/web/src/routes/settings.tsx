@@ -14,6 +14,7 @@ import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { isElectron } from "../env";
+import { isEscapeDismissal } from "../keybindings";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
@@ -51,7 +52,7 @@ function SettingsContentLayout() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (event.key === "Escape") {
+      if (isEscapeDismissal(event)) {
         event.preventDefault();
 
         const activeElement = document.activeElement;

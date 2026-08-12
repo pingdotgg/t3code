@@ -44,7 +44,7 @@ import {
 } from "../../hooks/useSettings";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { isEscapeDismissal, shortcutLabelForCommand } from "../../keybindings";
 import { keybindingValueForCommand } from "../../lib/projectScriptKeybindings";
 import { readLocalApi } from "../../localApi";
 import {
@@ -159,7 +159,7 @@ export function ProjectSettingsPage({ projectKey }: { projectKey: string }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (event.key !== "Escape") return;
+      if (!isEscapeDismissal(event)) return;
       event.preventDefault();
       const activeElement = document.activeElement;
       if (activeElement instanceof HTMLElement) {

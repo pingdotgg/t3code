@@ -28,6 +28,7 @@ import { ModelEsque } from "./providerIconUtils";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
+  isEscapeDismissal,
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../../keybindings";
@@ -673,7 +674,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Escape") {
+                    if (isEscapeDismissal(e)) {
                       e.preventDefault();
                       e.stopPropagation();
                       props.onRequestClose?.();

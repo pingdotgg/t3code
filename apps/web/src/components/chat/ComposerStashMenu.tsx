@@ -1,6 +1,7 @@
 import { BookmarkIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 
+import { isEscapeDismissal } from "../../keybindings";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "~/lib/utils";
 import { type PromptStashEntry } from "../../promptStashStore";
@@ -49,7 +50,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (isEscapeDismissal(event)) {
         event.preventDefault();
         event.stopPropagation();
         onClose();

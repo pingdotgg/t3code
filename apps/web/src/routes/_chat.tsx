@@ -14,7 +14,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { resolveShortcutCommand } from "../keybindings";
+import { isEscapeDismissal, resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -71,7 +71,7 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (event.key === "Escape" && selectedThreadKeysSize > 0) {
+      if (isEscapeDismissal(event) && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
         return;

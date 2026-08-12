@@ -19,6 +19,11 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import {
+  type NativeKeybindingCaptureInput,
+  nativeKeybindingCaptureInput,
+  NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+} from "../keybindings/NativeKeybindingCapture.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -32,6 +37,43 @@ const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
+const MACOS_MOD_ESCAPE_SHORTCUTS: ReadonlyArray<{
+  readonly accelerator: string;
+  readonly input: NativeKeybindingCaptureInput;
+}> = [
+  {
+    accelerator: "Command+Escape",
+    input: { key: "Escape", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false },
+  },
+  {
+    accelerator: "Command+Control+Escape",
+    input: { key: "Escape", metaKey: true, ctrlKey: true, altKey: false, shiftKey: false },
+  },
+  {
+    accelerator: "Command+Alt+Escape",
+    input: { key: "Escape", metaKey: true, ctrlKey: false, altKey: true, shiftKey: false },
+  },
+  {
+    accelerator: "Command+Shift+Escape",
+    input: { key: "Escape", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
+  },
+  {
+    accelerator: "Command+Control+Alt+Escape",
+    input: { key: "Escape", metaKey: true, ctrlKey: true, altKey: true, shiftKey: false },
+  },
+  {
+    accelerator: "Command+Control+Shift+Escape",
+    input: { key: "Escape", metaKey: true, ctrlKey: true, altKey: false, shiftKey: true },
+  },
+  {
+    accelerator: "Command+Alt+Shift+Escape",
+    input: { key: "Escape", metaKey: true, ctrlKey: false, altKey: true, shiftKey: true },
+  },
+  {
+    accelerator: "Command+Control+Alt+Shift+Escape",
+    input: { key: "Escape", metaKey: true, ctrlKey: true, altKey: true, shiftKey: true },
+  },
+];
 const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([
   -2, // ERR_FAILED
   -7, // ERR_TIMED_OUT
@@ -357,6 +399,79 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
     }
+    let disposeNativeModEscape = () => {};
+    if (environment.platform === "darwin") {
+      const registeredAccelerators = new Set<string>();
+      let blurFiber: Fiber.Fiber<void, never> | undefined;
+      const cancelPendingBlur = () => {
+        if (blurFiber === undefined) return;
+        const fiber = blurFiber;
+        blurFiber = undefined;
+        runFork(Fiber.interrupt(fiber));
+      };
+      const registerNativeModEscape = () => {
+        cancelPendingBlur();
+        for (const shortcut of MACOS_MOD_ESCAPE_SHORTCUTS) {
+          if (
+            registeredAccelerators.has(shortcut.accelerator) ||
+            Electron.globalShortcut.isRegistered(shortcut.accelerator)
+          ) {
+            continue;
+          }
+          const registered = Electron.globalShortcut.register(shortcut.accelerator, () => {
+            if (!window.isDestroyed()) {
+              window.webContents.send(NATIVE_KEYBINDING_CAPTURE_CHANNEL, shortcut.input);
+            }
+          });
+          if (registered) {
+            registeredAccelerators.add(shortcut.accelerator);
+          } else {
+            void runPromise(
+              logWindowWarning("failed to register native Escape shortcut", {
+                accelerator: shortcut.accelerator,
+              }),
+            );
+          }
+        }
+      };
+      const unregisterNativeModEscape = () => {
+        for (const accelerator of registeredAccelerators) {
+          Electron.globalShortcut.unregister(accelerator);
+        }
+        registeredAccelerators.clear();
+      };
+      const handleBrowserWindowBlur = () => {
+        cancelPendingBlur();
+        blurFiber = runFork(
+          Effect.sleep(1).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                blurFiber = undefined;
+                if (Electron.BrowserWindow.getFocusedWindow() === null) {
+                  unregisterNativeModEscape();
+                }
+              }),
+            ),
+          ),
+        );
+      };
+      Electron.app.on("browser-window-focus", registerNativeModEscape);
+      Electron.app.on("browser-window-blur", handleBrowserWindowBlur);
+      disposeNativeModEscape = () => {
+        cancelPendingBlur();
+        Electron.app.off("browser-window-focus", registerNativeModEscape);
+        Electron.app.off("browser-window-blur", handleBrowserWindowBlur);
+        unregisterNativeModEscape();
+      };
+    } else {
+      window.webContents.on("before-input-event", (event, input) => {
+        const captureInput = nativeKeybindingCaptureInput(input, environment.platform);
+        if (captureInput) {
+          event.preventDefault();
+          window.webContents.send(NATIVE_KEYBINDING_CAPTURE_CHANNEL, captureInput);
+        }
+      });
+    }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
@@ -444,7 +559,9 @@ export const make = Effect.gen(function* () {
     );
     flushMainWindowBounds = flushBoundsPersist;
 
-    yield* previewManager.setMainWindow(window);
+    yield* previewManager
+      .setMainWindow(window)
+      .pipe(Effect.onError(() => Effect.sync(disposeNativeModEscape)));
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||
@@ -702,6 +819,7 @@ export const make = Effect.gen(function* () {
     }
 
     window.on("closed", () => {
+      disposeNativeModEscape();
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
       void runPromise(electronWindow.clearMain(Option.some(window)));

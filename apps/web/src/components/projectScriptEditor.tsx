@@ -315,6 +315,7 @@ export function ProjectScriptEditorDialog({
                 <Label htmlFor="script-keybinding">Keybinding</Label>
                 <Input
                   id="script-keybinding"
+                  data-keybinding-capture=""
                   placeholder="Press shortcut"
                   value={keybinding}
                   readOnly

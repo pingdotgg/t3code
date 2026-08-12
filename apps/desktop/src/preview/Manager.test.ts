@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { NATIVE_KEYBINDING_CAPTURE_CHANNEL } from "../keybindings/NativeKeybindingCapture.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewManager from "./Manager.ts";
 
@@ -371,6 +372,38 @@ describe("PreviewManager", () => {
 
         expect(loadURL).toHaveBeenCalledOnce();
         expect(loadURL).toHaveBeenCalledWith("http://localhost:3200/");
+
+        const mainWindowSend = vi.fn();
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { send: mainWindowSend },
+        } as never);
+        const beforeInputEvent = { preventDefault: vi.fn() };
+        listeners.get("before-input-event")?.(
+          beforeInputEvent as never,
+          {
+            type: "keyDown",
+            key: "Escape",
+            meta: true,
+            control: false,
+            alt: false,
+            shift: false,
+          } as never,
+        );
+        yield* Effect.yieldNow;
+        expect(mainWindowSend).toHaveBeenCalledWith(NATIVE_KEYBINDING_CAPTURE_CHANNEL, {
+          key: "Escape",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        });
+        expect(webviewSend).not.toHaveBeenCalledWith(
+          NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+          expect.anything(),
+        );
+        expect(beforeInputEvent.preventDefault).toHaveBeenCalledOnce();
       }),
     ),
   );

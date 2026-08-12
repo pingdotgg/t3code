@@ -14,8 +14,38 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Electron from "electron";
 import { vi } from "vite-plus/test";
 
+const {
+  appListeners,
+  browserWindowGetFocusedWindow,
+  globalShortcutIsRegistered,
+  globalShortcutRegister,
+  globalShortcutUnregister,
+} = vi.hoisted(() => ({
+  appListeners: new Map<string, (...args: readonly unknown[]) => void>(),
+  browserWindowGetFocusedWindow: vi.fn<() => Electron.BrowserWindow | null>(() => null),
+  globalShortcutIsRegistered: vi.fn<(accelerator: string) => boolean>(() => false),
+  globalShortcutRegister: vi.fn<(accelerator: string, callback: () => void) => boolean>(() => true),
+  globalShortcutUnregister: vi.fn<(accelerator: string) => void>(),
+}));
+
 vi.mock("electron", async (importOriginal) => ({
   ...(await importOriginal<typeof import("electron")>()),
+  app: {
+    on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
+      appListeners.set(eventName, listener);
+    }),
+    off: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
+      if (appListeners.get(eventName) === listener) appListeners.delete(eventName);
+    }),
+  },
+  BrowserWindow: {
+    getFocusedWindow: browserWindowGetFocusedWindow,
+  },
+  globalShortcut: {
+    isRegistered: globalShortcutIsRegistered,
+    register: globalShortcutRegister,
+    unregister: globalShortcutUnregister,
+  },
   session: {
     fromPartition: vi.fn(() => ({
       getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/1.2.3"),
@@ -42,6 +72,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import { NATIVE_KEYBINDING_CAPTURE_CHANNEL } from "../keybindings/NativeKeybindingCapture.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -185,6 +216,9 @@ function makeTestLayer(input: {
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
+  readonly setPreviewMainWindow?: (
+    window: Electron.BrowserWindow,
+  ) => Effect.Effect<void, PreviewManager.PreviewManagerError>;
   readonly openedExternalUrls?: unknown[];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
@@ -261,7 +295,7 @@ function makeTestLayer(input: {
         electronWindowLayer,
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
-          setMainWindow: () => Effect.void,
+          setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
         }),
@@ -434,6 +468,85 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+
+        const registrationStart = globalShortcutRegister.mock.calls.length;
+        appListeners.get("browser-window-focus")?.();
+        const registrations = globalShortcutRegister.mock.calls.slice(registrationStart);
+        assert.deepEqual(
+          registrations.map(([accelerator]) => accelerator),
+          [
+            "Command+Escape",
+            "Command+Control+Escape",
+            "Command+Alt+Escape",
+            "Command+Shift+Escape",
+            "Command+Control+Alt+Escape",
+            "Command+Control+Shift+Escape",
+            "Command+Alt+Shift+Escape",
+            "Command+Control+Alt+Shift+Escape",
+          ],
+        );
+        const registration = registrations.find(
+          ([accelerator]) => accelerator === "Command+Alt+Shift+Escape",
+        );
+        if (!registration) {
+          assert.fail("expected Command-Option-Shift-Escape to be registered");
+        }
+        registration[1]();
+        assert.deepEqual(fakeWindow.send.mock.calls, [
+          [
+            NATIVE_KEYBINDING_CAPTURE_CHANNEL,
+            {
+              key: "Escape",
+              metaKey: true,
+              ctrlKey: false,
+              altKey: true,
+              shiftKey: true,
+            },
+          ],
+        ]);
+        const unregisterStart = globalShortcutUnregister.mock.calls.length;
+        browserWindowGetFocusedWindow.mockReturnValue({} as Electron.BrowserWindow);
+        appListeners.get("browser-window-blur")?.();
+        yield* TestClock.adjust(1);
+        assert.equal(globalShortcutUnregister.mock.calls.length, unregisterStart);
+
+        browserWindowGetFocusedWindow.mockReturnValue(null);
+        appListeners.get("browser-window-blur")?.();
+        yield* TestClock.adjust(1);
+        assert.deepEqual(
+          globalShortcutUnregister.mock.calls
+            .slice(unregisterStart)
+            .map(([accelerator]) => accelerator),
+          registrations.map(([accelerator]) => accelerator),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("removes native Escape listeners when preview setup fails", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        setPreviewMainWindow: () =>
+          Effect.fail(
+            new PreviewManager.PreviewOperationError({
+              operation: "setMainWindow",
+              cause: new Error("preview setup failed"),
+            }),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* Effect.flip(desktopWindow.createMain);
+
+        assert.isFalse(appListeners.has("browser-window-focus"));
+        assert.isFalse(appListeners.has("browser-window-blur"));
       }).pipe(Effect.provide(layer));
     }),
   );

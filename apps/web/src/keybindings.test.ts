@@ -14,6 +14,7 @@ import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
+  isEscapeDismissal,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -42,6 +43,18 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
     ...overrides,
   };
 }
+
+describe("isEscapeDismissal", () => {
+  it("preserves ordinary Escape dismissal while reserving mod+Escape", () => {
+    assert.isTrue(isEscapeDismissal(event({ key: "Escape" }), "MacIntel"));
+    assert.isFalse(isEscapeDismissal(event({ key: "Escape", metaKey: true }), "MacIntel"));
+    assert.isTrue(isEscapeDismissal(event({ key: "Escape", ctrlKey: true }), "MacIntel"));
+    assert.isTrue(isEscapeDismissal(event({ key: "Escape", altKey: true }), "MacIntel"));
+    assert.isTrue(isEscapeDismissal(event({ key: "Escape", shiftKey: true }), "MacIntel"));
+    assert.isFalse(isEscapeDismissal(event({ key: "Escape", ctrlKey: true }), "Win32"));
+    assert.isTrue(isEscapeDismissal(event({ key: "Escape", metaKey: true }), "Win32"));
+  });
+});
 
 function modShortcut(
   key: string,

@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { isEscapeDismissal } from "../../keybindings";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 
@@ -21,7 +22,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (isEscapeDismissal(event)) {
         event.preventDefault();
         event.stopPropagation();
         onClose();

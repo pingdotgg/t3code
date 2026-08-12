@@ -127,7 +127,11 @@ import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import { resolveDefaultProviderModelSelection } from "../providerInstances";
-import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
+import {
+  isEscapeDismissal,
+  resolveShortcutCommand,
+  threadJumpIndexFromCommand,
+} from "../keybindings";
 import { CommandDialog, CommandDialogPopup } from "./ui/command";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -411,7 +415,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!state.open || state.mode === "command") return;
     const onEscapeKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.isComposing || event.key !== "Escape") return;
+      if (event.isComposing || !isEscapeDismissal(event)) return;
       event.preventDefault();
       event.stopPropagation();
       toggleMode("command");
