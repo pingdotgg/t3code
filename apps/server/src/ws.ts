@@ -95,6 +95,7 @@ import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as WorktreeStorage from "./vcs/WorktreeStorage.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -365,6 +366,7 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const worktreeStorage = yield* WorktreeStorage.make;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -1978,6 +1980,14 @@ const makeWsRpcLayer = (
             gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
+        [WS_METHODS.vcsWorktreeStoragePreview]: (_input) =>
+          observeRpcEffect(WS_METHODS.vcsWorktreeStoragePreview, worktreeStorage.preview(), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsCleanupWorktrees]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsCleanupWorktrees, worktreeStorage.cleanup(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsCreateRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateRef,

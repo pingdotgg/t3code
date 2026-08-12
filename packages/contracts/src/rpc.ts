@@ -38,6 +38,11 @@ import {
   GitPullRequestRefInput,
   VcsPullResult,
   VcsRemoveWorktreeInput,
+  WorktreeCleanupInput,
+  WorktreeCleanupResult,
+  WorktreeStorageError,
+  WorktreeStoragePreviewInput,
+  WorktreeStoragePreviewResult,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
   VcsStatusInput,
@@ -211,6 +216,8 @@ export const WS_METHODS = {
   vcsListRefs: "vcs.listRefs",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
+  vcsWorktreeStoragePreview: "vcs.worktreeStoragePreview",
+  vcsCleanupWorktrees: "vcs.cleanupWorktrees",
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
@@ -686,6 +693,18 @@ export const WsVcsRemoveWorktreeRpc = Rpc.make(WS_METHODS.vcsRemoveWorktree, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+export const WsVcsWorktreeStoragePreviewRpc = Rpc.make(WS_METHODS.vcsWorktreeStoragePreview, {
+  payload: WorktreeStoragePreviewInput,
+  success: WorktreeStoragePreviewResult,
+  error: Schema.Union([WorktreeStorageError, EnvironmentAuthorizationError]),
+});
+
+export const WsVcsCleanupWorktreesRpc = Rpc.make(WS_METHODS.vcsCleanupWorktrees, {
+  payload: WorktreeCleanupInput,
+  success: WorktreeCleanupResult,
+  error: Schema.Union([WorktreeStorageError, EnvironmentAuthorizationError]),
+});
+
 export const WsVcsCreateRefRpc = Rpc.make(WS_METHODS.vcsCreateRef, {
   payload: VcsCreateRefInput,
   success: VcsCreateRefResult,
@@ -1003,6 +1022,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
+  WsVcsWorktreeStoragePreviewRpc,
+  WsVcsCleanupWorktreesRpc,
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,

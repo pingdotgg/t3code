@@ -67,6 +67,10 @@ describe("searchSettings", () => {
 
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
+    expect(searchableSetting("worktree-storage")).toEqual({
+      id: "worktree-storage",
+      title: "Worktree storage",
+    });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
   });
 

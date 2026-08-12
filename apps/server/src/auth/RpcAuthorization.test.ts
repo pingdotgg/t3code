@@ -30,6 +30,15 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("separates worktree storage inspection from destructive cleanup", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.vcsWorktreeStoragePreview)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.vcsCleanupWorktrees)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("allows relay status reads without granting relay installation access", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.cloudGetRelayClientStatus)).toBe(
       AuthRelayReadScope,

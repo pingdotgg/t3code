@@ -7,6 +7,8 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  WorktreeCleanupInput,
+  WorktreeStoragePreviewResult,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +18,8 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeWorktreeCleanupInput = Schema.decodeUnknownSync(WorktreeCleanupInput);
+const decodeWorktreeStoragePreviewResult = Schema.decodeUnknownSync(WorktreeStoragePreviewResult);
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
@@ -124,5 +128,53 @@ describe("GitRunStackedActionResult", () => {
     if (parsed.toast.cta.kind === "run_action") {
       expect(parsed.toast.cta.action.kind).toBe("create_pr");
     }
+  });
+});
+
+describe("worktree storage contracts", () => {
+  it("decodes grouped worktree size and safety metadata", () => {
+    const parsed = decodeWorktreeStoragePreviewResult({
+      totalSizeBytes: 1_024,
+      reclaimableSizeBytes: 512,
+      projects: [
+        {
+          projectId: "project-1",
+          title: "T3 Code",
+          workspaceRoot: "/repo",
+          faviconPath: null,
+          sizeBytes: 1_024,
+          worktrees: [
+            {
+              path: "/worktrees/feature-a",
+              refName: "feature/a",
+              sizeBytes: 512,
+              status: "clean",
+            },
+            {
+              path: "/worktrees/feature-b",
+              refName: "feature/b",
+              sizeBytes: 512,
+              status: "dirty",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(parsed.projects[0]?.worktrees.map((worktree) => worktree.status)).toEqual([
+      "clean",
+      "dirty",
+    ]);
+  });
+
+  it("requires explicit cleanup targets and carries separately confirmed dirty paths", () => {
+    const parsed = decodeWorktreeCleanupInput({
+      targets: [{ projectId: "project-1", path: "/worktrees/feature-b" }],
+      confirmedDirtyPaths: ["/worktrees/feature-b"],
+    });
+
+    expect(parsed.targets).toHaveLength(1);
+    expect(parsed.confirmedDirtyPaths).toEqual(["/worktrees/feature-b"]);
+    expect(() => decodeWorktreeCleanupInput({ targets: [] })).toThrow();
   });
 });

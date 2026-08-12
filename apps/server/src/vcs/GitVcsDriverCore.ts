@@ -237,7 +237,7 @@ function paginateBranches(input: {
   };
 }
 
-function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
+export function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
   const worktreePaths = new Map<string, string>();
   let currentPath: string | null = null;
   let currentBranch: string | null = null;

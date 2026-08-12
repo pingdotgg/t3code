@@ -121,6 +121,14 @@ Control settings**.
 
 ---
 
+## Reclaim Worktree Storage Safely
+
+Open **Settings → Storage** to see the disk space used by T3-managed worktrees, grouped by project. Each worktree is marked **Active**, **Clean**, or **Uncommitted changes**.
+
+You can preview individual removals or choose **Clean all safe** to select every clean, inactive worktree. The preview shows what will be removed and approximately how much space will be recovered. Active worktrees cannot be selected. Worktrees with uncommitted changes are preserved unless you select them individually and confirm that their local changes will be deleted.
+
+Cleanup removes only the worktree checkout. Its branch and commits remain in the repository, and T3 Code never removes worktrees automatically.
+
 ## Requirements & Troubleshooting
 
 **Git is required** – T3 Code uses Git for all local operations. Ensure `git` is installed on your server.

@@ -79,6 +79,7 @@ import { isMacPlatform } from "../../lib/utils";
 import { primaryServerObservabilityAtom, primaryServerProvidersAtom } from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { refreshWorktreeStorageForEnvironment } from "../../lib/worktreeStorageState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -142,6 +143,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { WorktreeStorageSettings } from "./WorktreeStorageSettings";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -2383,6 +2385,7 @@ export function ArchivedThreadsPanel() {
         const result = await unarchiveThread(threadRef);
         if (result._tag === "Success") {
           refreshArchivedThreads();
+          refreshWorktreeStorageForEnvironment(threadRef.environmentId);
         } else if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           toastManager.add(
@@ -2400,6 +2403,7 @@ export function ArchivedThreadsPanel() {
         const result = await confirmAndDeleteThread(threadRef);
         if (result._tag === "Success") {
           refreshArchivedThreads();
+          refreshWorktreeStorageForEnvironment(threadRef.environmentId);
         } else if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           toastManager.add(
@@ -2417,6 +2421,8 @@ export function ArchivedThreadsPanel() {
 
   return (
     <SettingsPageContainer>
+      <WorktreeStorageSettings environmentIds={environmentIds} />
+
       {archivedGroups.length === 0 ? (
         <SettingsSection
           id={isLoadingArchive ? undefined : searchableSetting("archive").id}
@@ -2447,7 +2453,7 @@ export function ArchivedThreadsPanel() {
       ) : (
         archivedGroups.map(({ project, threads: projectThreads }, index) => (
           <SettingsSection
-            key={project.id}
+            key={`${project.environmentId}:${project.id}`}
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.name}
             icon={
@@ -2507,6 +2513,7 @@ export function ArchivedThreadsPanel() {
                         );
                         if (result._tag === "Success") {
                           refreshArchivedThreads();
+                          refreshWorktreeStorageForEnvironment(thread.environmentId);
                           return;
                         }
                         if (!isAtomCommandInterrupted(result)) {

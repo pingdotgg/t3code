@@ -25,7 +25,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
-  "/settings/archived": "Archive",
+  "/settings/archived": "Storage",
 };
 
 /**
@@ -188,6 +188,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",
+  },
+  {
+    id: "worktree-storage",
+    title: "Worktree storage",
+    to: "/settings/archived",
   },
   {
     id: "archive",
