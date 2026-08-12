@@ -14,6 +14,9 @@
  * @module provider/AetherMirrorGuards
  */
 import { AETHER_MIRROR_REFUSAL, GitCommandError, ProjectWriteFileError } from "@t3tools/contracts";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import * as Effect from "effect/Effect";
 
 export { AETHER_MIRROR_REFUSAL };
@@ -25,7 +28,10 @@ export interface AetherMirrorOwnership {
    * cannot register the checkout in between and turn an allowed write into a
    * write onto a live one-way mirror.
    */
-  readonly whileClaimsFrozen: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  readonly whileClaimsFrozen: <A, E, R>(
+    writes: ReadonlyArray<string>,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly ownsCwd: (cwd: string) => Effect.Effect<boolean>;
   readonly ownsTargetPath: (cwd: string, target: string) => Effect.Effect<boolean>;
   readonly ownsPathWithin: (cwd: string, target: string) => Effect.Effect<boolean>;
@@ -39,6 +45,7 @@ export const guardAetherVcsMutation = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | GitCommandError, R> =>
   registry.whileClaimsFrozen(
+    [cwd],
     Effect.gen(function* () {
       if (yield* registry.ownsCwd(cwd)) {
         return yield* new GitCommandError({
@@ -63,6 +70,8 @@ export const guardAetherRemoveWorktree = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | GitCommandError, R> =>
   registry.whileClaimsFrozen(
+    // Both: the repository the command runs in AND the worktree it deletes.
+    [input.cwd, input.path],
     Effect.gen(function* () {
       const ownsCwd = yield* registry.ownsCwd(input.cwd);
       const ownsTarget = yield* registry.ownsTargetPath(input.cwd, input.path);
@@ -96,6 +105,7 @@ export const guardAetherQueuedMutation = (
   run: Effect.Effect<void>,
 ): Effect.Effect<void> =>
   registry.whileClaimsFrozen(
+    [cwd],
     Effect.gen(function* () {
       if (yield* registry.ownsCwd(cwd)) {
         return yield* onRefused;
@@ -116,6 +126,9 @@ export const guardAetherWriteFile = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | ProjectWriteFileError, R> =>
   registry.whileClaimsFrozen(
+    // The resolved FILE, which may sit under a mirror this cwd merely
+    // descends into — that descendant is what the claim would cover.
+    [NodePath.resolve(input.cwd, input.relativePath)],
     Effect.gen(function* () {
       if (yield* registry.ownsPathWithin(input.cwd, input.relativePath)) {
         return yield* aetherMirrorWriteFileError(input);

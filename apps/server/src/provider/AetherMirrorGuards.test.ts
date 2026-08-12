@@ -229,6 +229,82 @@ describe("AetherMirrorGuards", () => {
     }),
   );
 
+  it.effect("a register on an UNRELATED checkout does not wait for an in-flight mutation", () =>
+    // The freeze is scoped to what a mutation writes, not process-global. A
+    // stacked action holds it across its network push, so a global freeze
+    // would let one slow (or hung) push on project A stall every Aether
+    // session start — including project B, which it can never touch.
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const registry = yield* make;
+      const pushStarted = yield* Deferred.make<void>();
+      const releasePush = yield* Deferred.make<void>();
+
+      const guarded = yield* Effect.forkChild(
+        guardAetherQueuedMutation(
+          registry,
+          "/repos/projectA",
+          Effect.sync(() => void order.push("refused")),
+          Effect.gen(function* () {
+            yield* Deferred.succeed(pushStarted, undefined);
+            yield* Deferred.await(releasePush);
+            order.push("projectA-push");
+          }),
+        ),
+      );
+      yield* Deferred.await(pushStarted);
+
+      // Project B's session starts WHILE project A's push is still running.
+      yield* registry.register("/repos/projectB", "aether:thread-b");
+      order.push("projectB-register");
+      expect(order).toEqual(["projectB-register"]);
+      // …and it really did claim B.
+      expect(yield* registry.ownsCwd("/repos/projectB")).toBe(true);
+
+      yield* Deferred.succeed(releasePush, undefined);
+      yield* Fiber.join(guarded);
+      expect(order).toEqual(["projectB-register", "projectA-push"]);
+    }),
+  );
+
+  it.effect("a register on a checkout the mutation writes INTO still waits", () =>
+    // The other half: scoping must not lose same-checkout serialization, nor
+    // the descend-into-a-mirror case a file write can reach.
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const registry = yield* make;
+      const writeStarted = yield* Deferred.make<void>();
+      const releaseWrite = yield* Deferred.make<void>();
+
+      const guarded = yield* Effect.forkChild(
+        guardAetherWriteFile(
+          registry,
+          { cwd: "/repos/parent", relativePath: ".worktrees/mirror/app.ts" },
+          Effect.gen(function* () {
+            yield* Deferred.succeed(writeStarted, undefined);
+            yield* Deferred.await(releaseWrite);
+            order.push("write");
+          }),
+        ),
+      );
+      yield* Deferred.await(writeStarted);
+
+      const registering = yield* Effect.forkChild(
+        registry
+          .register("/repos/parent/.worktrees/mirror", "aether:thread-1")
+          .pipe(Effect.tap(() => Effect.sync(() => order.push("register")))),
+      );
+      // @effect-diagnostics-next-line globalTimers:off
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 100)));
+      expect(order).toEqual([]);
+
+      yield* Deferred.succeed(releaseWrite, undefined);
+      yield* Fiber.join(guarded);
+      yield* Fiber.join(registering);
+      expect(order).toEqual(["write", "register"]);
+    }),
+  );
+
   it("aetherMirrorWriteFileError carries the refusal as its message", () => {
     const error = aetherMirrorWriteFileError({ cwd: "/repos/mirror", relativePath: "src/a.ts" });
     expect(error._tag).toBe("ProjectWriteFileError");

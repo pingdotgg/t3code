@@ -85,19 +85,29 @@ export class AetherMirrorRegistry extends Context.Service<
     /** Release one claim; the cwd unlocks when its last claim goes. */
     readonly deregister: (cwd: string, key: string) => Effect.Effect<void>;
     /**
-     * Run `effect` while the claim table is FROZEN: no register/deregister
-     * lands while it runs. The write guards need this because an ownership
-     * check and the mutation it authorises are two steps — a session
-     * registering in between would let a local write reach a checkout that is
-     * an active one-way mirror by the time it hits disk, silently corrupting
-     * the next reset-and-apply.
+     * Run `effect` while no claim can appear over the paths it WRITES. The
+     * write guards need this because an ownership check and the mutation it
+     * authorises are two steps — a session registering in between would let a
+     * local write reach a checkout that is an active one-way mirror by the
+     * time it hits disk, breaking the next reset-and-apply.
      *
-     * Frozen regions run CONCURRENTLY with one another (they only read the
-     * table), so guarded mutations keep their existing parallelism; only a
-     * register/deregister waits, and only for the mutations already in flight
-     * — which is the true precondition for claiming a checkout as a mirror.
+     * `writes` names every path the effect may write: the mutation's cwd, plus
+     * the specific descendant a guard can reach (a file write, a worktree
+     * removal). The freeze is SCOPED to those paths and their ancestors, so a
+     * mutation on one checkout never blocks a registration on an unrelated
+     * one — which matters because a guarded mutation holds this across slow
+     * network I/O (a stacked action's push, a pull), and a process-global
+     * freeze would let one hung push stall every Aether session start.
+     *
+     * A registration conflicts with exactly the mutations writing AT or UNDER
+     * it. A mutation in an ANCESTOR of the claim does not: git operations in a
+     * parent repository do not write its linked worktrees, and the two guards
+     * that CAN reach a descendant declare that descendant in `writes`.
      */
-    readonly whileClaimsFrozen: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+    readonly whileClaimsFrozen: <A, E, R>(
+      writes: ReadonlyArray<string>,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     /** Does any active Aether thread own this cwd? */
     readonly ownsCwd: (cwd: string) => Effect.Effect<boolean>;
     /**
@@ -117,24 +127,66 @@ export class AetherMirrorRegistry extends Context.Service<
 >()("t3/provider/AetherMirrorRegistry") {}
 
 /**
- * Permits on the claim lock: readers (frozen regions) take one, a
- * register/deregister takes them all. The count only bounds how many guarded
- * mutations may be in flight at once before they queue — far above anything a
- * user-driven RPC surface produces.
+ * Permits on a path's claim lock: a frozen region takes one, a
+ * register/deregister of that exact path takes them all. The count only bounds
+ * how many guarded mutations may touch one path at once before they queue —
+ * far above anything a user-driven RPC surface produces.
  */
 const CLAIM_LOCK_PERMITS = 1024;
 
+/** Every path from the filesystem root down to `path`, root first. */
+const ancestorChain = (path: string): ReadonlyArray<string> => {
+  const chain: Array<string> = [];
+  let current = path;
+  for (;;) {
+    chain.unshift(current);
+    const parent = NodePath.dirname(current);
+    if (parent === current) {
+      return chain;
+    }
+    current = parent;
+  }
+};
+
 export const make = Effect.sync(() => {
   const claims = new Map<string, Set<string>>();
-  const claimLock = Semaphore.makeUnsafe(CLAIM_LOCK_PERMITS);
-  const whileClaimsFrozen = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    claimLock.withPermits(1)(effect);
-  const withClaimsExclusive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    claimLock.withPermits(CLAIM_LOCK_PERMITS)(effect);
+  // One lock per canonical path. A frozen region holds a reader on every
+  // ancestor of what it writes; a registration takes its OWN path exclusively.
+  // So a claim conflicts with exactly the mutations writing at or under it,
+  // and unrelated checkouts share no key. `makeUnsafe` so handing a lock out
+  // cannot yield between the map's get and set.
+  const pathLocks = new Map<string, Semaphore.Semaphore>();
+  const lockFor = (path: string): Semaphore.Semaphore => {
+    const existing = pathLocks.get(path);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = Semaphore.makeUnsafe(CLAIM_LOCK_PERMITS);
+    pathLocks.set(path, created);
+    return created;
+  };
+
+  const whileClaimsFrozen = <A, E, R>(
+    writes: ReadonlyArray<string>,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.gen(function* () {
+      const canonical = yield* Effect.forEach(writes, canonicalize);
+      // Sorted and de-duplicated: a deterministic acquisition order is what
+      // keeps two overlapping mutations from deadlocking each other.
+      const keys = [...new Set(canonical.flatMap(ancestorChain))].sort();
+      return yield* keys.reduce((guarded, key) => lockFor(key).withPermits(1)(guarded), effect);
+    });
+
+  const withClaimsExclusive = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    canonicalize(cwd).pipe(
+      Effect.flatMap((path) => lockFor(path).withPermits(CLAIM_LOCK_PERMITS)(effect)),
+    );
   return AetherMirrorRegistry.of({
     whileClaimsFrozen,
     register: (cwd, key) =>
       withClaimsExclusive(
+        cwd,
         Effect.gen(function* () {
           const normalized = yield* canonicalize(cwd);
           const keys = claims.get(normalized) ?? new Set<string>();
@@ -144,6 +196,7 @@ export const make = Effect.sync(() => {
       ),
     deregister: (cwd, key) =>
       withClaimsExclusive(
+        cwd,
         Effect.gen(function* () {
           const normalized = yield* canonicalize(cwd);
           const keys = claims.get(normalized);
