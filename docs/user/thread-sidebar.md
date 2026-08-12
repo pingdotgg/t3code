@@ -13,7 +13,8 @@ environment. Older servers can still pin and unpin threads, but do not understan
 their pinned threads keep the default newest-first order below the ones you have arranged.
 
 On web and desktop, pause the pointer briefly at the left edge of the window to temporarily reveal
-a collapsed sidebar. Move away to hide it again, or use the sidebar control to keep it open.
+a collapsed sidebar. It stays open while you use a control or menu inside it. Move away to hide it
+again, or use the sidebar control to keep it open.
 
 ## Environment artwork
 

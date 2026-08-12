@@ -52,7 +52,16 @@ describe("sidebar interactive cursors", () => {
     expect(html).toContain('data-slot="sidebar-hover-edge"');
     expect(html).toContain("hidden w-1 md:block");
     expect(html).toContain("[@media(pointer:fine)]:pointer-events-auto");
+    expect(html).toContain("group-hover:w-(--sidebar-width)");
+    expect(html).toContain("group-focus-within:w-(--sidebar-width)");
+    expect(html).toContain("group-has-[[data-popup-open]]:w-(--sidebar-width)");
+    expect(html).toContain("group-data-[peek-held=true]:w-(--sidebar-width)");
     expect(html).toContain("group-data-[collapsible=offcanvas]:group-hover:left-0");
+    expect(html).toContain("group-data-[collapsible=offcanvas]:group-focus-within:left-0");
+    expect(html).toContain(
+      "group-data-[collapsible=offcanvas]:group-has-[[data-popup-open]]:left-0",
+    );
+    expect(html).toContain("group-data-[collapsible=offcanvas]:group-data-[peek-held=true]:left-0");
     expect(html).toContain("group-data-[collapsible=offcanvas]:group-hover:delay-100");
     expect(html).toContain("group-data-[collapsible=offcanvas]:group-hover:duration-100");
   });

@@ -28,6 +28,12 @@ const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing(3)))";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+const COLLAPSED_PEEK_HIT_AREA =
+  "group-hover:w-(--sidebar-width) group-focus-within:w-(--sidebar-width) group-has-[[data-popup-open]]:w-(--sidebar-width) group-data-[peek-held=true]:w-(--sidebar-width)";
+const COLLAPSED_PEEK_LEFT =
+  "group-data-[collapsible=offcanvas]:group-hover:left-0 group-data-[collapsible=offcanvas]:group-focus-within:left-0 group-data-[collapsible=offcanvas]:group-has-[[data-popup-open]]:left-0 group-data-[collapsible=offcanvas]:group-data-[peek-held=true]:left-0 group-data-[collapsible=offcanvas]:group-hover:delay-100 group-data-[collapsible=offcanvas]:group-hover:duration-100";
+const COLLAPSED_PEEK_RIGHT =
+  "group-data-[collapsible=offcanvas]:group-hover:right-0 group-data-[collapsible=offcanvas]:group-focus-within:right-0 group-data-[collapsible=offcanvas]:group-has-[[data-popup-open]]:right-0 group-data-[collapsible=offcanvas]:group-data-[peek-held=true]:right-0 group-data-[collapsible=offcanvas]:group-hover:delay-100 group-data-[collapsible=offcanvas]:group-hover:duration-100";
 
 type SidebarContextProps = {
   state: ResponsiveSidebarState;
@@ -212,6 +218,36 @@ function Sidebar({
     () => ({ side, resizable: resolvedResizable }),
     [resolvedResizable, side],
   );
+  const canPeek =
+    !isMobile && revealOnHover && collapsible === "offcanvas" && state === "collapsed";
+  const [peekHeld, setPeekHeld] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!canPeek) {
+      if (peekHeld) {
+        setPeekHeld(false);
+      }
+      return;
+    }
+    if (!peekHeld) {
+      return;
+    }
+
+    const release = () => setPeekHeld(false);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        release();
+      }
+    };
+    document.addEventListener("pointerdown", release, true);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("blur", release);
+    return () => {
+      document.removeEventListener("pointerdown", release, true);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", release);
+    };
+  }, [canPeek, peekHeld]);
 
   if (collapsible === "none") {
     return (
@@ -273,16 +309,27 @@ function Sidebar({
       <div
         className="group peer hidden text-sidebar-foreground md:block"
         data-collapsible={state === "collapsed" ? collapsible : ""}
+        data-peek-held={peekHeld ? "true" : undefined}
         data-side={side}
         data-slot="sidebar"
         data-state={state}
         data-variant={variant}
+        onContextMenu={
+          canPeek
+            ? () => {
+                setPeekHeld(true);
+              }
+            : undefined
+        }
       >
-        {revealOnHover && collapsible === "offcanvas" && state === "collapsed" ? (
+        {canPeek ? (
+          // Expand the edge hit target immediately so the pointer can travel
+          // toward the delayed slide-in without leaving the group hover target.
           <div
             aria-hidden="true"
             className={cn(
               "pointer-events-none fixed inset-y-0 z-10 hidden w-1 md:block [@media(pointer:fine)]:pointer-events-auto",
+              COLLAPSED_PEEK_HIT_AREA,
               side === "left" ? "left-0" : "right-0",
             )}
             data-slot="sidebar-hover-edge"
@@ -306,10 +353,7 @@ function Sidebar({
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
-            revealOnHover &&
-              (side === "left"
-                ? "group-data-[collapsible=offcanvas]:group-hover:left-0 group-data-[collapsible=offcanvas]:group-hover:delay-100 group-data-[collapsible=offcanvas]:group-hover:duration-100"
-                : "group-data-[collapsible=offcanvas]:group-hover:right-0 group-data-[collapsible=offcanvas]:group-hover:delay-100 group-data-[collapsible=offcanvas]:group-hover:duration-100"),
+            revealOnHover && (side === "left" ? COLLAPSED_PEEK_LEFT : COLLAPSED_PEEK_RIGHT),
             // Adjust the padding for floating and inset variants.
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
