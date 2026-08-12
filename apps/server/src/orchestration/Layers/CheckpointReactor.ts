@@ -317,6 +317,7 @@ const make = Effect.gen(function* () {
           Effect.map((diff) =>
             parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
               path: file.path,
+              ...(input.roots.length > 1 ? { repoRoot: root } : {}),
               kind: "modified" as const,
               additions: file.additions,
               deletions: file.deletions,

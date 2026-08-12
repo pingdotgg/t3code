@@ -113,7 +113,7 @@ describe("resolveAnchorRepoRoot", () => {
     );
   });
 
-  it("falls back to the first repo root when the anchor is not a repo", () => {
+  it("falls back to the first repo root for a legacy parent-folder record", () => {
     expect(
       resolveAnchorRepoRoot({
         workspaceRoot: "/repos",
@@ -122,7 +122,7 @@ describe("resolveAnchorRepoRoot", () => {
     ).toBe("/repos/api");
   });
 
-  it("prefers the anchor itself when the workspace file lists it", () => {
+  it("prefers the primary workspace root even when it is not first", () => {
     expect(
       resolveAnchorRepoRoot({
         workspaceRoot: "/repos/api",

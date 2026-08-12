@@ -109,6 +109,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { ProjectFaviconPickerDialog } from "./ProjectFaviconPickerDialog";
+import { ProjectFoldersDialog, type ProjectFoldersDialogTarget } from "../ProjectFoldersDialog";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -259,14 +260,15 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
 
-  // Remember the members of the last rendered group so a grouping-rule change
-  // (which changes the group key) can follow the project to its new group.
+  // Remember stable project ids from the last rendered group so changes that
+  // replace the group key (grouping rules or a new primary repository) can
+  // follow the project to its successor group.
   const lastSelectionRef = useRef<{ key: string; memberKeys: string[] } | null>(null);
   useEffect(() => {
     if (!selected) return;
     lastSelectionRef.current = {
       key: selected.projectKey,
-      memberKeys: selected.memberProjects.map((member) => member.physicalProjectKey),
+      memberKeys: selected.memberProjects.map((member) => `${member.environmentId}\0${member.id}`),
     };
   }, [selected]);
 
@@ -277,7 +279,9 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
     const last = lastSelectionRef.current;
     if (last?.key !== projectKey) return;
     const successor = groups.find((group) =>
-      group.memberProjects.some((member) => last.memberKeys.includes(member.physicalProjectKey)),
+      group.memberProjects.some((member) =>
+        last.memberKeys.includes(`${member.environmentId}\0${member.id}`),
+      ),
     );
     if (successor) {
       void navigate({
@@ -466,6 +470,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const selectedCheckout =
     group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
     representative;
+  const [projectFoldersTarget, setProjectFoldersTarget] =
+    useState<ProjectFoldersDialogTarget | null>(null);
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -961,6 +967,36 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             </div>
           </div>
           <SettingsRow
+            title="Repositories"
+            description={
+              (selectedCheckout.repoRoots?.length ?? 1) === 1
+                ? "One primary repository. Attach more repositories to share them across every thread in this project."
+                : `${selectedCheckout.repoRoots?.length ?? 1} repositories. The primary repository is the default working directory and Git target.`
+            }
+            control={
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  setProjectFoldersTarget({
+                    environmentId: selectedCheckout.environmentId,
+                    projectId: selectedCheckout.id,
+                    title: selectedCheckout.title,
+                    workspaceRoot: selectedCheckout.workspaceRoot,
+                    ...(selectedCheckout.repoRoots
+                      ? { repoRoots: selectedCheckout.repoRoots }
+                      : {}),
+                    ...(selectedCheckout.workspaceFile
+                      ? { workspaceFile: selectedCheckout.workspaceFile }
+                      : {}),
+                  })
+                }
+              >
+                Manage repositories
+              </Button>
+            }
+          />
+          <SettingsRow
             title="Project grouping"
             description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."
             control={
@@ -1179,6 +1215,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         onSelect={(path) => void setFaviconPath(path)}
         open={faviconPickerOpen}
         projectName={group.displayName}
+      />
+      <ProjectFoldersDialog
+        target={projectFoldersTarget}
+        onClose={() => setProjectFoldersTarget(null)}
       />
     </>
   );

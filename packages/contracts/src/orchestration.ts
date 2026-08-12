@@ -299,6 +299,9 @@ export type OrchestrationSession = typeof OrchestrationSession.Type;
 
 export const OrchestrationCheckpointFile = Schema.Struct({
   path: TrimmedNonEmptyString,
+  // Present for multi-repo checkpoints so identical relative paths remain
+  // distinguishable in summaries and can open the matching repo's diff.
+  repoRoot: Schema.optional(TrimmedNonEmptyString),
   kind: TrimmedNonEmptyString,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
@@ -367,10 +370,9 @@ export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 /**
  * One isolated-run worktree, keyed by the repo root it was created from.
  *
- * A multi-repo thread fans an isolated run out to one worktree per repo root
- * (decision D3 / Phase 4). The thread carries the full per-root map; the legacy
- * singular `worktreePath` is kept alongside as a single-root shim
- * (= `worktrees[0]?.worktreePath`) so pre-Phase-4 readers keep working.
+ * A multi-repo thread fans an isolated run out to one worktree per repo root.
+ * The thread carries the full per-root map; the legacy singular `worktreePath`
+ * is kept alongside as a single-root compatibility shim.
  */
 export const OrchestrationThreadWorktree = Schema.Struct({
   repoRoot: TrimmedNonEmptyString,

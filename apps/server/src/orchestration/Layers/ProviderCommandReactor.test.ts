@@ -213,6 +213,12 @@ describe("ProviderCommandReactor", () => {
         typeof input.cwd === "string"
           ? { cwd: input.cwd }
           : {}),
+        ...(typeof input === "object" &&
+        input !== null &&
+        "additionalRoots" in input &&
+        Array.isArray(input.additionalRoots)
+          ? { additionalRoots: input.additionalRoots as ReadonlyArray<string> }
+          : {}),
         ...((inputModelSelection?.model ?? modelSelection.model)
           ? { model: inputModelSelection?.model ?? modelSelection.model }
           : {}),
@@ -513,7 +519,7 @@ describe("ProviderCommandReactor", () => {
   }
 
   effectIt.effect(
-    "launches a multi-repo thread anchored at the workspace root with every repo root",
+    "launches a multi-repo thread in the primary repository with secondary roots",
     () =>
       Effect.gen(function* () {
         const harness = yield* Effect.promise(() => createHarness());
@@ -528,7 +534,7 @@ describe("ProviderCommandReactor", () => {
           commandId: CommandId.make("cmd-project-create-multi"),
           projectId: asProjectId("project-multi"),
           title: "Multi Repo Project",
-          workspaceRoot: "/tmp/multi-workspace",
+          workspaceRoot: "/tmp/multi-workspace/backend",
           repoRoots: ["/tmp/multi-workspace/backend", "/tmp/oss/frontend"],
           defaultModelSelection: multiModelSelection,
           createdAt: now,
@@ -573,8 +579,14 @@ describe("ProviderCommandReactor", () => {
           (call) => call[0] === ThreadId.make("thread-multi"),
         );
         expect(multiCall?.[1]).toMatchObject({
-          cwd: "/tmp/multi-workspace",
-          additionalRoots: ["/tmp/multi-workspace/backend", "/tmp/oss/frontend"],
+          cwd: "/tmp/multi-workspace/backend",
+          additionalRoots: ["/tmp/oss/frontend"],
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+          input: expect.stringContaining(
+            "Primary repository: /tmp/multi-workspace/backend\nAdditional repositories:\n- /tmp/oss/frontend",
+          ),
         });
       }),
   );

@@ -4095,9 +4095,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       // approval prompt. It is a leaf directory holding only attachment
       // files; siblings like secrets/ and state.sqlite stay ungranted.
       //
-      // Multi-repo workspaces (D1): the same `--add-dir` mechanism grants every
+      // Multi-repo workspaces use the same `--add-dir` mechanism to grant every
       // workspace root. The cwd is implicitly accessible; the extra roots are
-      // the cousin repos the agent can read and edit.
+      // the attached repositories the agent can read and edit.
       const additionalDirectories = [
         ...new Set([
           ...(input.cwd ? [input.cwd] : []),
@@ -4192,6 +4192,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         status: "ready",
         runtimeMode: input.runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(input.additionalRoots && input.additionalRoots.length > 0
+          ? { additionalRoots: input.additionalRoots }
+          : {}),
         ...(modelSelection?.model ? { model: modelSelection.model } : {}),
         ...(threadId ? { threadId } : {}),
         resumeCursor: {

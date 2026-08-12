@@ -1,8 +1,8 @@
 /**
  * WorktreeFanout - create/remove one worktree per repo root for isolated runs.
  *
- * A multi-repo thread's isolated run fans out across every repo root (decision
- * D3 / Phase 4): one worktree per root, grouped under a per-thread directory
+ * A multi-repo thread's isolated run fans out across every repo root: one
+ * worktree per root, grouped under a per-thread directory
  * `<worktreesDir>/<projectId>/<threadId>/<repoName>`. Creation is transactional
  * — if any root fails, the worktrees created so far are removed before the error
  * propagates, so a partial fan-out never leaks orphaned worktrees.

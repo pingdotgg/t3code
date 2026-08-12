@@ -19,7 +19,6 @@ release-mock/
 apps/web/.playwright
 apps/web/playwright-report
 apps/web/src/components/__screenshots__
-.playwright-mcp/
 .vitest-*
 __screenshots__/
 .tanstack

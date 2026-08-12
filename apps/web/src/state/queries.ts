@@ -236,6 +236,7 @@ export function usePaginatedBranches(target: VcsRefTarget) {
 }
 
 type ProjectPathSearchTarget = ComposerPathSearchTarget & {
+  readonly roots?: ReadonlyArray<string> | null | undefined;
   readonly kind?: ProjectEntryKind | undefined;
   readonly imageOnly?: boolean | undefined;
 };
@@ -247,6 +248,7 @@ export function areProjectPathSearchTargetsEqual(
   return (
     left.environmentId === right.environmentId &&
     left.cwd === right.cwd &&
+    (left.roots ?? []).join("\0") === (right.roots ?? []).join("\0") &&
     left.query === right.query &&
     left.kind === right.kind &&
     left.imageOnly === right.imageOnly
@@ -263,11 +265,12 @@ export function useProjectPathSearch(
     () => ({
       environmentId: target.environmentId,
       cwd: target.cwd,
+      roots: target.roots,
       query: target.query == null ? null : target.query.trim(),
       kind: target.kind,
       imageOnly: target.imageOnly,
     }),
-    [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
+    [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query, target.roots],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
@@ -279,6 +282,9 @@ export function useProjectPathSearch(
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
+            ...(debouncedTarget.roots && debouncedTarget.roots.length > 0
+              ? { roots: debouncedTarget.roots }
+              : {}),
             query: debouncedTarget.query,
             limit,
             ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
@@ -305,6 +311,7 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
 interface ProjectContentSearchTarget {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
+  readonly roots?: ReadonlyArray<string> | null;
   readonly query: string;
   readonly caseSensitive: boolean;
   readonly wholeWord: boolean;
@@ -326,6 +333,7 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
           environmentId: target.environmentId,
           input: {
             cwd: target.cwd,
+            ...(target.roots && target.roots.length > 0 ? { roots: target.roots } : {}),
             query: debouncedQuery,
             limit: PROJECT_CONTENT_SEARCH_LIMIT,
             caseSensitive: target.caseSensitive,

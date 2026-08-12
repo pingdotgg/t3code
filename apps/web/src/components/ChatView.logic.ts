@@ -41,6 +41,15 @@ export function hasEnvironmentReconnectWarningGraceElapsed(
   return activeEnvironmentId !== null && activeEnvironmentId === elapsedEnvironmentId;
 }
 
+export function resolveActiveRepoRoots(input: {
+  readonly worktrees: ReadonlyArray<{ readonly worktreePath: string }>;
+  readonly repoRoots: ReadonlyArray<string>;
+}): ReadonlyArray<string> {
+  return input.worktrees.length > 0
+    ? input.worktrees.map((entry) => entry.worktreePath)
+    : input.repoRoots;
+}
+
 export function startNewThreadForProject(
   projectRef: ScopedProjectRef | null,
   handleNewThread: (projectRef: ScopedProjectRef) => Promise<unknown>,

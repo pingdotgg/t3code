@@ -2,7 +2,7 @@ import { type FilesystemBrowseEntry, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
-import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   canNavigateUp,
@@ -86,10 +86,6 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     readWorkspaceFile: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:readWorkspaceFile",
       tag: WS_METHODS.filesystemReadWorkspaceFile,
-    }),
-    writeWorkspaceFile: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:filesystem:writeWorkspaceFile",
-      tag: WS_METHODS.filesystemWriteWorkspaceFile,
     }),
   };
 }

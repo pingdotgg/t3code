@@ -323,6 +323,26 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("does not let the primary root starve secondary-root results", () =>
+      Effect.gen(function* () {
+        const backend = yield* makeTempDir({ prefix: "t3code-ws-search-fair-backend-" });
+        const frontend = yield* makeTempDir({ prefix: "t3code-ws-search-fair-frontend-" });
+        yield* writeTextFile(backend, "src/widget-a.ts");
+        yield* writeTextFile(backend, "src/widget-b.ts");
+        yield* writeTextFile(frontend, "src/widget-ui.tsx");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd: backend,
+          roots: [backend, frontend],
+          query: "widget",
+          limit: 2,
+        });
+
+        expect(result.entries.map((entry) => entry.root)).toEqual([backend, frontend]);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
     it.effect("skips a missing root instead of failing the whole search", () =>
       Effect.gen(function* () {
         const backend = yield* makeTempDir({ prefix: "t3code-ws-search-skip-" });
@@ -458,6 +478,29 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         ]);
         expect(result.matches[0]?.matchRanges).toEqual([{ start: 13, end: 19 }]);
         expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("searches content across repositories and tags the owning root", () =>
+      Effect.gen(function* () {
+        const backend = yield* makeTempDir({ prefix: "t3code-content-backend-" });
+        const frontend = yield* makeTempDir({ prefix: "t3code-content-frontend-" });
+        yield* writeTextFile(backend, "src/server.ts", "sharedToken\nsharedToken\n");
+        yield* writeTextFile(frontend, "src/app.tsx", "sharedToken\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd: backend,
+          roots: [backend, frontend],
+          query: "sharedToken",
+          limit: 2,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+
+        expect(result.matches.map((match) => match.root)).toEqual([backend, frontend]);
+        expect(result.truncated).toBe(true);
       }),
     );
 

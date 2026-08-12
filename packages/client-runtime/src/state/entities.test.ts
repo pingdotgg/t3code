@@ -218,6 +218,10 @@ describe("environment entity projections", () => {
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
+      worktrees: [
+        { repoRoot: "/repo/api", worktreePath: "/repo/current-worktree/api" },
+        { repoRoot: "/repo/web", worktreePath: "/repo/current-worktree/web" },
+      ],
     };
 
     const merged = mergeEnvironmentThread(detail, shell);
@@ -226,6 +230,10 @@ describe("environment entity projections", () => {
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
+      worktrees: [
+        { repoRoot: "/repo/api", worktreePath: "/repo/current-worktree/api" },
+        { repoRoot: "/repo/web", worktreePath: "/repo/current-worktree/web" },
+      ],
     });
     expect(merged?.messages).toBe(messages);
   });

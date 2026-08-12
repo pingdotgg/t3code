@@ -757,6 +757,9 @@ export function makeCursorAdapter(
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
+            ...(input.additionalRoots && input.additionalRoots.length > 0
+              ? { additionalRoots: input.additionalRoots }
+              : {}),
             model: cursorModelSelection?.model,
             threadId: input.threadId,
             resumeCursor: {

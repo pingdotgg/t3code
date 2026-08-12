@@ -1,16 +1,12 @@
 /**
  * WorkspaceManifest - resolve a project's roots into a launch-ready manifest.
  *
- * A multi-repo project spans several git repositories ("cousins") defined by a
- * `.code-workspace` file. The agent is handed the full root set rather than a
- * single cwd (decision D1: per-root agent context). This module turns the
- * persisted project shape (`workspaceRoot` anchor + `repoRoots`) — or, in
+ * A multi-repo project spans several git repositories ("cousins"). The agent
+ * is handed the full root set rather than a single cwd. This module turns the persisted project shape
+ * (`workspaceRoot` primary repository + `repoRoots`) — or, in
  * isolated mode, the per-thread worktree — into a stable manifest:
  *
- *   - `anchor` is the directory the provider session runs in (cwd). For a
- *     workspace-file project this is the `.code-workspace` file's directory;
- *     for a single-root project it is the repo itself. It always exists, so
- *     providers that require a single cwd have something to launch in.
+ *   - `anchor` is the primary repository where the provider session runs.
  *   - `roots` is the authoritative list of folders the agent should be able to
  *     read and edit. Providers expose this natively (Claude `--add-dir` /
  *     `additionalDirectories`, Codex `skills/extraRoots/set`); providers that
@@ -29,7 +25,7 @@ export interface WorkspaceManifestRoot {
 }
 
 export interface WorkspaceManifest {
-  /** Stable launch directory (the `.code-workspace` file's dir, or the repo). */
+  /** Stable launch directory: the project's primary repository. */
   readonly anchor: string;
   /** Authoritative set of agent-visible roots, in order, deduped. */
   readonly roots: ReadonlyArray<WorkspaceManifestRoot>;
@@ -62,8 +58,8 @@ export interface WorkspaceManifestWorktree {
 /**
  * Build the resolved workspace manifest a provider session launches with.
  *
- * In isolated (worktree) mode the thread carries a per-root worktree map
- * (Phase 4 / D3): the manifest points the anchor and every root at the isolated
+ * In isolated (worktree) mode the thread carries a per-root worktree map: the
+ * manifest points the anchor and every root at the isolated
  * copies so the agent reads and edits the worktrees, not the originals. The
  * anchor prefers the worktree of the workspace root when one exists, otherwise
  * the first worktree. A legacy single `worktreePath` collapses to that copy.

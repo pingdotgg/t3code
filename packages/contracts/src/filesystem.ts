@@ -122,7 +122,7 @@ export type FilesystemReadWorkspaceFileFolder = typeof FilesystemReadWorkspaceFi
 export const FilesystemReadWorkspaceFileResult = Schema.Struct({
   /** Absolute, normalized path to the `.code-workspace` file. */
   workspaceFilePath: TrimmedNonEmptyString,
-  /** Directory containing the file — the project's `workspaceRoot` anchor. */
+  /** Directory containing the file. Importers choose the first Git folder as the project root. */
   anchorDir: TrimmedNonEmptyString,
   /** Every resolved folder entry, in file order. Missing/non-git folders are surfaced. */
   folders: Schema.Array(FilesystemReadWorkspaceFileFolder),
@@ -133,34 +133,6 @@ export type FilesystemReadWorkspaceFileResult = typeof FilesystemReadWorkspaceFi
 
 export class FilesystemReadWorkspaceFileError extends Schema.TaggedErrorClass<FilesystemReadWorkspaceFileError>()(
   "FilesystemReadWorkspaceFileError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-/** One desired `folders[]` entry to write back into a `.code-workspace`. */
-export const FilesystemWriteWorkspaceFileFolder = Schema.Struct({
-  /** Path to record, exactly as it should appear in the file (relative or absolute). */
-  path: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
-  /** Optional display name; omitted ⇒ VS Code derives it from the basename. */
-  name: Schema.optional(TrimmedNonEmptyString),
-});
-export type FilesystemWriteWorkspaceFileFolder = typeof FilesystemWriteWorkspaceFileFolder.Type;
-
-export const FilesystemWriteWorkspaceFileInput = Schema.Struct({
-  workspaceFilePath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
-  /** The full replacement folder list. Unknown top-level keys (e.g. `settings`) are preserved. */
-  folders: Schema.Array(FilesystemWriteWorkspaceFileFolder),
-});
-export type FilesystemWriteWorkspaceFileInput = typeof FilesystemWriteWorkspaceFileInput.Type;
-
-/** Result mirrors a fresh read: the file is re-resolved after the write. */
-export const FilesystemWriteWorkspaceFileResult = FilesystemReadWorkspaceFileResult;
-export type FilesystemWriteWorkspaceFileResult = typeof FilesystemWriteWorkspaceFileResult.Type;
-
-export class FilesystemWriteWorkspaceFileError extends Schema.TaggedErrorClass<FilesystemWriteWorkspaceFileError>()(
-  "FilesystemWriteWorkspaceFileError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

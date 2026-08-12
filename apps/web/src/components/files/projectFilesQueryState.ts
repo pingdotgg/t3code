@@ -160,12 +160,13 @@ export function useProjectFilePickerQuery(
   cwd: string,
   query: string,
   limit: number,
-  options?: { readonly imageOnly?: boolean },
+  options?: { readonly imageOnly?: boolean; readonly roots?: ReadonlyArray<string> },
 ) {
   const search = useProjectPathSearch(
     {
       environmentId,
       cwd,
+      ...(options?.roots ? { roots: options.roots } : {}),
       query,
       kind: "file",
       ...(options?.imageOnly ? { imageOnly: true } : {}),

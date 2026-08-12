@@ -311,6 +311,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveActiveRepoRoots,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -2610,30 +2611,29 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  // `workspaceRoot` is only the anchor directory for a workspace-file project,
-  // so opening it gives a plain folder. Hand the `.code-workspace` itself to
-  // editors that can open it as a multi-root workspace. Isolated runs are
+  // Preserve an imported `.code-workspace` as editor metadata so opening the
+  // project can restore the same multi-root editor layout. Isolated runs are
   // excluded: their fanned-out worktrees have no workspace file, and the
   // project's would point back at the original checkouts.
   const openInWorkspaceFile = activeThread?.worktreePath
     ? null
     : (activeProject?.workspaceFile ?? null);
-  // For a multi-repo `.code-workspace` project, fan git status out over every
-  // repo root. For a single-repo project keep the worktree-aware status cwd so
-  // isolated runs report on the worktree (Phase 4 will make multi-repo
-  // worktree-aware too).
-  const isMultiRepo = (activeProject?.repoRoots?.length ?? 0) > 1;
+  // Multi-repo isolated runs operate in one worktree per repository. Every
+  // file/status/link surface must use those copies rather than the original
+  // checkouts, or it can show stale files while the agent edits elsewhere.
+  const activeRepoRoots = useMemo(() => {
+    return resolveActiveRepoRoots({
+      worktrees: activeThread?.worktrees ?? [],
+      repoRoots: activeProject?.repoRoots ?? [],
+    });
+  }, [activeProject?.repoRoots, activeThread?.worktrees]);
+  const isMultiRepo = activeRepoRoots.length > 1;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusRoots = useMemo(
-    () => (isMultiRepo ? (activeProject?.repoRoots ?? null) : gitStatusCwd ? [gitStatusCwd] : null),
-    [isMultiRepo, activeProject?.repoRoots, gitStatusCwd],
+    () => (isMultiRepo ? activeRepoRoots : gitStatusCwd ? [gitStatusCwd] : null),
+    [activeRepoRoots, isMultiRepo, gitStatusCwd],
   );
-  // @-mention file search spans every repo root for a multi-repo workspace
-  // (#923); single-repo projects search the worktree-aware `gitCwd` alone.
-  const mentionRoots = useMemo(
-    () => (isMultiRepo ? (activeProject?.repoRoots ?? null) : null),
-    [isMultiRepo, activeProject?.repoRoots],
-  );
+  const mentionRoots = isMultiRepo ? activeRepoRoots : null;
   // Single-repo git query scoped to the anchor root, backing the branch-sync,
   // PR-checkout, and refresh flows; the multi-repo status/diff surfaces use
   // `vcsStatusGroups` below.
@@ -6044,9 +6044,9 @@ function ChatViewContent(props: ChatViewProps) {
     setExpandedImage(preview);
   }, []);
   const onOpenTurnDiff = useCallback(
-    (turnId: TurnId, filePath?: string) => {
+    (turnId: TurnId, filePath?: string, repoRoot?: string) => {
       if (!isServerThread || !activeThreadRef) return;
-      useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
+      useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath, repoRoot);
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
     },
@@ -6207,7 +6207,7 @@ function ChatViewContent(props: ChatViewProps) {
           composerDraftTarget={composerDraftTarget}
           keybindings={keybindings}
           availableEditors={availableEditors}
-          repoRoots={isMultiRepo ? activeProject.repoRoots : undefined}
+          repoRoots={isMultiRepo ? activeRepoRoots : undefined}
           relativePath={
             activeRightPanelSurface.kind === "file" ? activeRightPanelSurface.relativePath : null
           }
@@ -6329,7 +6329,7 @@ function ChatViewContent(props: ChatViewProps) {
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
                 markdownCwd={gitCwd ?? undefined}
-                markdownRepoRoots={isMultiRepo ? activeProject?.repoRoots : undefined}
+                markdownRepoRoots={isMultiRepo ? activeRepoRoots : undefined}
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}

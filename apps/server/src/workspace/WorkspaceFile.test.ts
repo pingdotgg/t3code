@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import { WorkspaceFile, WorkspaceFileLive } from "./WorkspaceFile.ts";
 
@@ -37,13 +36,6 @@ const writeFile = Effect.fn(function* (filePath: string, contents: string) {
   yield* fileSystem.writeFileString(filePath, contents);
   return filePath;
 });
-
-const readFile = Effect.fn(function* (filePath: string) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.readFileString(filePath);
-});
-
-const parseJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(TestLayer)("WorkspaceFileLive", (it) => {
   it.effect(
@@ -152,44 +144,6 @@ it.layer(TestLayer)("WorkspaceFileLive", (it) => {
 
       expect(resolved.folders).toHaveLength(0);
       expect([...resolved.repoRoots]).toEqual([]);
-    }),
-  );
-
-  it.effect("round-trips edits via withFolders + write, preserving unknown keys", () =>
-    Effect.gen(function* () {
-      const workspaceFile = yield* WorkspaceFile;
-      const path = yield* Path.Path;
-      const base = yield* Effect.scoped(makeTempDir("t3code-workspace-file-roundtrip-"));
-      yield* gitRepo(base, "backend");
-      yield* gitRepo(base, "added");
-
-      const wsPath = path.join(base, "rt.code-workspace");
-      yield* writeFile(
-        wsPath,
-        `{
-  // keep me
-  "folders": [ { "path": "backend" } ],
-  "settings": { "editor.tabSize": 4 },
-  "extensions": { "recommendations": ["dbaeumer.vscode-eslint"] }
-}`,
-      );
-
-      const original = yield* workspaceFile.read(wsPath);
-      const nextDocument = workspaceFile.withFolders(original.document, [
-        { path: "backend" },
-        { path: "added", name: "New Repo" },
-      ]);
-      yield* workspaceFile.write({ workspaceFilePath: wsPath, document: nextDocument });
-
-      // Unknown top-level keys survive the round-trip.
-      const rawAfter = parseJson(yield* readFile(wsPath)) as Record<string, unknown>;
-      expect(rawAfter.settings).toEqual({ "editor.tabSize": 4 });
-      expect(rawAfter.extensions).toEqual({ recommendations: ["dbaeumer.vscode-eslint"] });
-
-      // Re-reading reflects the new folder set.
-      const reread = yield* workspaceFile.read(wsPath);
-      expect(reread.folders.map((folder) => folder.name)).toEqual(["backend", "New Repo"]);
-      expect(reread.repoRoots).toHaveLength(2);
     }),
   );
 

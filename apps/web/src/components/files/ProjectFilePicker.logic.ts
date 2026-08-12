@@ -8,6 +8,7 @@ export interface ProjectFilePickerMatch {
   readonly nameMatchIndices: ReadonlyArray<number>;
   readonly path: string;
   readonly pathMatchIndices: ReadonlyArray<number>;
+  readonly root?: string;
 }
 
 function fileName(path: string): string {
@@ -65,6 +66,7 @@ export function getProjectFilePickerMatches(
       nameMatchIndices: nameMatchIndices ?? [],
       path: entry.path,
       pathMatchIndices: pathMatchIndices ?? [],
+      ...(entry.root ? { root: entry.root } : {}),
     });
     if (matches.length >= limit) break;
   }

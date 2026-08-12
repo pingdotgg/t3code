@@ -22,8 +22,11 @@ export function changedFileName(pathValue: string): string {
   return pathSegments(pathValue).at(-1) ?? pathValue;
 }
 
-function changedFileScope(pathValue: string): string {
-  const segments = pathSegments(pathValue);
+function changedFileScope(file: TurnDiffFileChange): string {
+  if (file.repoRoot) {
+    return pathSegments(file.repoRoot).at(-1) ?? file.repoRoot;
+  }
+  const segments = pathSegments(file.path);
   return segments.length > 1 ? (segments[0] ?? "root") : "root";
 }
 
@@ -44,7 +47,7 @@ export function summarizeChangedFileScopes(
 ): ChangedFilesScopeSummary[] {
   const scopes = new Map<string, { fileCount: number; firstIndex: number }>();
   files.forEach((file, index) => {
-    const label = changedFileScope(file.path);
+    const label = changedFileScope(file);
     const current = scopes.get(label);
     scopes.set(label, {
       fileCount: (current?.fileCount ?? 0) + 1,
@@ -76,12 +79,12 @@ export function selectChangedFilePreview(
   const selectedScopes = new Set<string>();
 
   for (const file of files) {
-    const scope = changedFileScope(file.path);
+    const scope = changedFileScope(file);
     if (selectedScopes.has(scope)) {
       continue;
     }
     selected.push(file);
-    selectedPaths.add(file.path);
+    selectedPaths.add(`${file.repoRoot ?? ""}\0${file.path}`);
     selectedScopes.add(scope);
     if (selected.length === limit) {
       return selected;
@@ -89,7 +92,7 @@ export function selectChangedFilePreview(
   }
 
   for (const file of files) {
-    if (selectedPaths.has(file.path)) {
+    if (selectedPaths.has(`${file.repoRoot ?? ""}\0${file.path}`)) {
       continue;
     }
     selected.push(file);

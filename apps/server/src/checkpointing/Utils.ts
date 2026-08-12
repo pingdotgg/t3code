@@ -26,8 +26,8 @@ export function resolveThreadWorkspaceCwd(input: {
     readonly repoRoots?: ReadonlyArray<string> | undefined;
   }>;
 }): string | undefined {
-  // In isolated mode prefer the per-root worktree copies (Phase 4 / D3): anchor
-  // on the worktree of the workspace root if present, otherwise the first.
+  // In isolated mode prefer the per-root worktree copies: anchor on the
+  // worktree of the workspace root if present, otherwise the first.
   const project = input.projects.find((candidate) => candidate.id === input.thread.projectId);
   const worktrees = input.thread.worktrees ?? [];
   if (worktrees.length > 0) {
@@ -56,8 +56,8 @@ export function resolveThreadWorkspaceCwd(input: {
  * operations (checkpoint capture, diff, status, restore) should fan out over.
  *
  * Multi-repo projects checkpoint/diff every repo root, not just the first.
- * In isolated (worktree) mode the thread carries a per-root worktree map
- * (Phase 4 / D3); git operations run against the isolated copies, one per root.
+ * In isolated (worktree) mode the thread carries a per-root worktree map; git
+ * operations run against the isolated copies, one per root.
  * Falls back to the legacy single `worktreePath`, then `repoRoots`, then
  * `[workspaceRoot]` when no repo roots are recorded (single-root projects and
  * pre-migration data), preserving today's single-root behavior.

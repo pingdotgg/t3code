@@ -7,14 +7,14 @@ import {
 } from "./WorkspaceManifest.ts";
 
 describe("buildWorkspaceManifest", () => {
-  it("spans every repo root for a multi-repo project, anchored at the workspace file dir", () => {
+  it("spans every repo root and anchors at the primary repository", () => {
     const manifest = buildWorkspaceManifest({
       worktreePath: null,
-      workspaceRoot: "/Users/me/work",
+      workspaceRoot: "/Users/me/work/backend",
       repoRoots: ["/Users/me/work/backend", "/Users/me/oss/frontend"],
     });
 
-    expect(manifest.anchor).toBe("/Users/me/work");
+    expect(manifest.anchor).toBe("/Users/me/work/backend");
     expect(manifest.roots).toEqual([
       { path: "/Users/me/work/backend", name: "backend" },
       { path: "/Users/me/oss/frontend", name: "frontend" },
@@ -35,7 +35,7 @@ describe("buildWorkspaceManifest", () => {
   it("collapses to the worktree path in isolated mode, ignoring repo roots", () => {
     const manifest = buildWorkspaceManifest({
       worktreePath: "/worktrees/p/t/backend",
-      workspaceRoot: "/work",
+      workspaceRoot: "/work/backend",
       repoRoots: ["/work/backend", "/work/frontend"],
     });
 
@@ -50,12 +50,10 @@ describe("buildWorkspaceManifest", () => {
         { repoRoot: "/work/backend", worktreePath: "/worktrees/p/t/backend" },
         { repoRoot: "/oss/frontend", worktreePath: "/worktrees/p/t/frontend" },
       ],
-      workspaceRoot: "/work",
+      workspaceRoot: "/work/backend",
       repoRoots: ["/work/backend", "/oss/frontend"],
     });
 
-    // Anchor falls to the first worktree (no worktree matches the workspace
-    // root, which is the non-git .code-workspace dir); both copies are roots.
     expect(manifest.anchor).toBe("/worktrees/p/t/backend");
     expect(manifest.roots).toEqual([
       { path: "/worktrees/p/t/backend", name: "backend" },
@@ -80,7 +78,7 @@ describe("buildWorkspaceManifest", () => {
   it("dedupes repeated root paths", () => {
     const manifest = buildWorkspaceManifest({
       worktreePath: null,
-      workspaceRoot: "/work",
+      workspaceRoot: "/work/backend",
       repoRoots: ["/work/backend", "/work/backend"],
     });
 
@@ -91,14 +89,14 @@ describe("buildWorkspaceManifest", () => {
 describe("manifestDirectories", () => {
   it("includes the anchor plus every root, deduped", () => {
     const directories = manifestDirectories({
-      anchor: "/work",
+      anchor: "/work/backend",
       roots: [
         { path: "/work/backend", name: "backend" },
         { path: "/oss/frontend", name: "frontend" },
       ],
     });
 
-    expect(directories).toEqual(["/work", "/work/backend", "/oss/frontend"]);
+    expect(directories).toEqual(["/work/backend", "/oss/frontend"]);
   });
 
   it("collapses to a single directory when the anchor is the only root", () => {
@@ -114,14 +112,14 @@ describe("manifestDirectories", () => {
 describe("manifestExtraRoots", () => {
   it("returns the roots excluding the anchor", () => {
     const extraRoots = manifestExtraRoots({
-      anchor: "/work",
+      anchor: "/work/backend",
       roots: [
         { path: "/work/backend", name: "backend" },
         { path: "/oss/frontend", name: "frontend" },
       ],
     });
 
-    expect(extraRoots).toEqual(["/work/backend", "/oss/frontend"]);
+    expect(extraRoots).toEqual(["/oss/frontend"]);
   });
 
   it("is empty for a single-root project anchored at the repo", () => {

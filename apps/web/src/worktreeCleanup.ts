@@ -35,7 +35,7 @@ function threadWorktrees(thread: WorktreeOwningThread): OrphanedWorktree[] {
 
 /**
  * The full set of worktrees a thread owns exclusively — every per-root isolated
- * copy (Phase 4 / D3) not shared by another surviving thread. A worktree shared
+ * copy not shared by another surviving thread. A worktree shared
  * with a sibling thread is left in place. Falls back to the legacy single
  * `worktreePath` for threads created before the per-root map.
  */

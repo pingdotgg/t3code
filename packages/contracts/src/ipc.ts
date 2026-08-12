@@ -31,8 +31,6 @@ import type {
   FilesystemScanGitReposResult,
   FilesystemReadWorkspaceFileInput,
   FilesystemReadWorkspaceFileResult,
-  FilesystemWriteWorkspaceFileInput,
-  FilesystemWriteWorkspaceFileResult,
 } from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
@@ -1224,9 +1222,6 @@ export interface EnvironmentApi {
     readWorkspaceFile: (
       input: FilesystemReadWorkspaceFileInput,
     ) => Promise<FilesystemReadWorkspaceFileResult>;
-    writeWorkspaceFile: (
-      input: FilesystemWriteWorkspaceFileInput,
-    ) => Promise<FilesystemWriteWorkspaceFileResult>;
   };
   assets: {
     createUrl: (input: AssetCreateUrlInput) => Promise<AssetCreateUrlResult>;

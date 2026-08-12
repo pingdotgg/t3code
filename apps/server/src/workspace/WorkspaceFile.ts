@@ -6,9 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
-
-import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
 
 export class WorkspaceFileError extends Schema.TaggedErrorClass<WorkspaceFileError>()(
   "WorkspaceFileError",
@@ -40,19 +38,12 @@ export interface ResolvedWorkspaceFolder {
 export interface ResolvedWorkspaceFile {
   /** Absolute, normalized path to the `.code-workspace` file. */
   readonly workspaceFilePath: string;
-  /** Directory containing the file — the project's `workspaceRoot` anchor. */
+  /** Directory containing the file. */
   readonly anchorDir: string;
   /** Every resolved folder entry, in file order. Missing/non-git folders are surfaced, not dropped. */
   readonly folders: ReadonlyArray<ResolvedWorkspaceFolder>;
   /** Absolute paths of folders that exist and are git repos — the project's `repoRoots`. */
   readonly repoRoots: ReadonlyArray<string>;
-  /** The parsed document, preserved verbatim so unknown keys round-trip on write. */
-  readonly document: unknown;
-}
-
-export interface WorkspaceFileFolderEdit {
-  readonly path: string;
-  readonly name?: string | undefined;
 }
 
 export interface WorkspaceFileShape {
@@ -64,21 +55,6 @@ export interface WorkspaceFileShape {
   readonly read: (
     workspaceFilePath: string,
   ) => Effect.Effect<ResolvedWorkspaceFile, WorkspaceFileError>;
-
-  /**
-   * Produce a new document with its `folders` array replaced, preserving all
-   * other (unknown) top-level keys such as `settings`. Pure; pair with `write`.
-   */
-  readonly withFolders: (
-    document: unknown,
-    folders: ReadonlyArray<WorkspaceFileFolderEdit>,
-  ) => unknown;
-
-  /** Serialize a document to pretty JSON and atomically write it to disk. */
-  readonly write: (input: {
-    readonly workspaceFilePath: string;
-    readonly document: unknown;
-  }) => Effect.Effect<void, WorkspaceFileError>;
 }
 
 export class WorkspaceFile extends Context.Service<WorkspaceFile, WorkspaceFileShape>()(
@@ -87,8 +63,7 @@ export class WorkspaceFile extends Context.Service<WorkspaceFile, WorkspaceFileS
 
 const FOLDER_RESOLVE_CONCURRENCY = 16;
 
-/** A single `folders[]` entry. Excess keys are ignored on decode but preserved
- * via the verbatim `document` round-trip. */
+/** A single `folders[]` entry. Excess keys are ignored on decode. */
 const CodeWorkspaceFolder = Schema.Struct({
   path: Schema.String,
   name: Schema.optional(Schema.String),
@@ -96,7 +71,6 @@ const CodeWorkspaceFolder = Schema.Struct({
 
 const decodeDocument = Schema.decodeUnknownEffect(fromLenientJson(Schema.Unknown));
 const decodeFolders = Schema.decodeUnknownEffect(Schema.Array(CodeWorkspaceFolder));
-const encodeDocument = Schema.encodeUnknownEffect(fromJsonStringPretty(Schema.Unknown));
 
 function expandHomePath(input: string, path: Path.Path): string {
   if (input === "~") return NodeOS.homedir();
@@ -197,60 +171,11 @@ export const makeWorkspaceFile = Effect.gen(function* () {
         anchorDir,
         folders,
         repoRoots,
-        document,
       };
     },
   );
 
-  const withFolders: WorkspaceFileShape["withFolders"] = (document, folders) => {
-    const base =
-      typeof document === "object" && document !== null
-        ? (document as Record<string, unknown>)
-        : {};
-    return {
-      ...base,
-      folders: folders.map((folder) =>
-        folder.name === undefined
-          ? { path: folder.path }
-          : { path: folder.path, name: folder.name },
-      ),
-    };
-  };
-
-  const write: WorkspaceFileShape["write"] = Effect.fn("WorkspaceFile.write")(function* (input) {
-    const absoluteFilePath = path.resolve(expandHomePath(input.workspaceFilePath.trim(), path));
-
-    const contents = yield* encodeDocument(input.document).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileError({
-            workspaceFilePath: input.workspaceFilePath,
-            operation: "WorkspaceFile.write:encode",
-            detail: cause.message,
-            cause,
-          }),
-      ),
-    );
-
-    yield* writeFileStringAtomically({
-      filePath: absoluteFilePath,
-      contents: `${contents}\n`,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileError({
-            workspaceFilePath: input.workspaceFilePath,
-            operation: "WorkspaceFile.write:write",
-            detail: cause.message,
-            cause,
-          }),
-      ),
-    );
-  });
-
-  return { read, withFolders, write } satisfies WorkspaceFileShape;
+  return { read } satisfies WorkspaceFileShape;
 });
 
 export const WorkspaceFileLive = Layer.effect(WorkspaceFile, makeWorkspaceFile);

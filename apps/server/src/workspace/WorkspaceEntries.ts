@@ -155,6 +155,22 @@ function withRoot(entry: ProjectEntry, root: string | undefined): ProjectEntry {
   };
 }
 
+function takeRoundRobin<A>(groups: ReadonlyArray<ReadonlyArray<A>>, limit: number): A[] {
+  const items: A[] = [];
+  for (let index = 0; items.length < limit; index += 1) {
+    let found = false;
+    for (const group of groups) {
+      const item = group[index];
+      if (item === undefined) continue;
+      found = true;
+      items.push(item);
+      if (items.length === limit) break;
+    }
+    if (!found) break;
+  }
+  return items;
+}
+
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   path: Path.Path,
@@ -344,7 +360,7 @@ export const make = Effect.gen(function* () {
         trimLeadingPattern: /^[@./]+/,
       });
       const limit = Math.max(0, Math.floor(input.limit));
-      const entries: ProjectEntry[] = [];
+      const entriesByRoot: ProjectEntry[][] = [];
       let truncated = false;
 
       for (const root of roots) {
@@ -359,36 +375,58 @@ export const make = Effect.gen(function* () {
           ),
         );
         truncated = truncated || result.truncated;
-        for (const entry of result.entries) {
-          if (isInIgnoredDirectory(entry.path)) {
-            continue;
-          }
-          entries.push(withRoot(entry, root.tag));
-        }
+        entriesByRoot.push(
+          result.entries.flatMap((entry) =>
+            isInIgnoredDirectory(entry.path) ? [] : [withRoot(entry, root.tag)],
+          ),
+        );
       }
 
-      // Unioning across roots can exceed the caller's limit; cap and flag it.
-      if (entries.length > limit) {
-        return { entries: entries.slice(0, limit), truncated: true };
-      }
-      return { entries, truncated };
+      const entries =
+        entriesByRoot.length > 1
+          ? takeRoundRobin(entriesByRoot, limit)
+          : (entriesByRoot[0]?.slice(0, limit) ?? []);
+      const totalEntries = entriesByRoot.reduce((total, group) => total + group.length, 0);
+      return { entries, truncated: truncated || totalEntries > entries.length };
     },
   );
 
   const searchContents: WorkspaceEntries["Service"]["searchContents"] = Effect.fn(
     "WorkspaceEntries.searchContents",
   )(function* (input) {
-    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-    return yield* Effect.gen(function* () {
-      const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-      return yield* searchIndex.searchContents(input);
-    }).pipe(
-      Effect.provide(
-        workspaceSearchIndexes.get(
-          WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "content"),
+    const roots = yield* resolveEffectiveRoots(input);
+    const matchesByRoot: ProjectSearchContentsResult["matches"][] = [];
+    let truncated = false;
+    let regexFallbackError: string | undefined;
+    for (const root of roots) {
+      const result = yield* Effect.gen(function* () {
+        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+        return yield* searchIndex.searchContents(input);
+      }).pipe(
+        Effect.provide(
+          workspaceSearchIndexes.get(
+            WorkspaceSearchIndex.workspaceSearchIndexKey(root.normalized, "content"),
+          ),
         ),
-      ),
-    );
+      );
+      truncated = truncated || result.truncated;
+      regexFallbackError ??= result.regexFallbackError;
+      matchesByRoot.push(
+        result.matches.map((match) =>
+          root.tag === undefined ? match : { ...match, root: root.normalized },
+        ),
+      );
+    }
+    const matches =
+      matchesByRoot.length > 1
+        ? takeRoundRobin(matchesByRoot, input.limit)
+        : (matchesByRoot[0]?.slice(0, input.limit) ?? []);
+    const totalMatches = matchesByRoot.reduce((total, group) => total + group.length, 0);
+    return {
+      matches,
+      truncated: truncated || totalMatches > matches.length,
+      ...(regexFallbackError ? { regexFallbackError } : {}),
+    };
   });
 
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(

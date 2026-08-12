@@ -311,6 +311,28 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
   return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
 }
 
+function samePaths(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
+  return left.length === right.length && left.every((path, index) => path === right[index]);
+}
+
+function withWorkspaceContext(
+  input: string | undefined,
+  session: ProviderSession | undefined,
+): string | undefined {
+  const additionalRoots = session?.additionalRoots ?? [];
+  if (!input || !session?.cwd || additionalRoots.length === 0) return input;
+  return [
+    "<t3_project_context>",
+    `Primary repository: ${session.cwd}`,
+    "Additional repositories:",
+    ...additionalRoots.map((root) => `- ${root}`),
+    "Treat these repositories as one project. Use the primary repository for default Git actions unless the task targets another repository.",
+    "</t3_project_context>",
+    "",
+    input,
+  ].join("\n");
+}
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
@@ -613,9 +635,8 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
-    // Multi-repo workspaces (D1): launch with a resolved manifest. The session
-    // anchors at the `.code-workspace` dir (or the single repo / worktree) and
-    // the agent is handed every repo root as an additional visible directory.
+    // Multi-repo workspaces launch in the primary repository and hand every
+    // secondary repository to the provider as an additional visible root.
     const manifest = project
       ? buildWorkspaceManifest({
           worktreePath: thread.worktreePath ?? null,
@@ -681,6 +702,10 @@ const make = Effect.gen(function* () {
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
+      const additionalRootsChanged = !samePaths(
+        activeSession?.additionalRoots ?? [],
+        additionalRoots,
+      );
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
       const modelChanged =
@@ -699,6 +724,7 @@ const make = Effect.gen(function* () {
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
+        !additionalRootsChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
@@ -722,6 +748,9 @@ const make = Effect.gen(function* () {
         previousCwd: activeSession?.cwd,
         desiredCwd: effectiveCwd,
         cwdChanged,
+        previousAdditionalRoots: activeSession?.additionalRoots ?? [],
+        desiredAdditionalRoots: additionalRoots,
+        additionalRootsChanged,
         modelChanged,
         instanceChanged,
         shouldRestartForModelChange,
@@ -798,10 +827,11 @@ const make = Effect.gen(function* () {
             }
           : requestedModelSelection
         : input.modelSelection;
+    const providerInput = withWorkspaceContext(normalizedInput, activeSession);
 
     return {
       threadId: input.threadId,
-      ...(normalizedInput ? { input: normalizedInput } : {}),
+      ...(providerInput ? { input: providerInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),

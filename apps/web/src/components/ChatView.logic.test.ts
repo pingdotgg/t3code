@@ -26,6 +26,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveActiveRepoRoots,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -38,6 +39,29 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("resolveActiveRepoRoots", () => {
+  it("uses every isolated worktree instead of the original repositories", () => {
+    expect(
+      resolveActiveRepoRoots({
+        repoRoots: ["/repos/app", "/repos/api"],
+        worktrees: [
+          { worktreePath: "/worktrees/thread/app" },
+          { worktreePath: "/worktrees/thread/api" },
+        ],
+      }),
+    ).toEqual(["/worktrees/thread/app", "/worktrees/thread/api"]);
+  });
+
+  it("uses project repositories for a local thread", () => {
+    expect(
+      resolveActiveRepoRoots({
+        repoRoots: ["/repos/app", "/repos/api"],
+        worktrees: [],
+      }),
+    ).toEqual(["/repos/app", "/repos/api"]);
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());

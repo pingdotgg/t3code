@@ -43,8 +43,6 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
-  EnvironmentId,
-  type FilesystemReadWorkspaceFileResult,
   ProjectId,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
@@ -60,7 +58,6 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
-  type AtomCommandResult,
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
@@ -196,8 +193,6 @@ import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { ProjectFoldersDialog, type ProjectFoldersDialogTarget } from "./ProjectFoldersDialog";
-import { filesystemEnvironment } from "../state/filesystem";
-import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -264,109 +259,6 @@ function projectExpansionPreferenceKeys(project: SidebarProjectSnapshot): string
     ...project.memberProjects.map((member) => member.physicalProjectKey),
     ...project.memberProjects.map((member) => legacyProjectCwdPreferenceKey(member.workspaceRoot)),
   ];
-}
-
-/**
- * Tracks which `.code-workspace`-backed projects have already been reconciled
- * this session, so the on-load re-read fires once per project rather than on
- * every sidebar re-render. Keyed by scoped project ref.
- */
-const reconciledWorkspaceProjectKeys = new Set<string>();
-
-function arraysEqualUnordered(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  const sortedLeft = [...left].sort();
-  const sortedRight = [...right].sort();
-  return sortedLeft.every((value, index) => value === sortedRight[index]);
-}
-
-/**
- * Re-read a project's `.code-workspace` from disk (Q4 = re-read on load, no
- * live watching) and reconcile its persisted `repoRoots`/identity with the
- * file. Surfaces missing/renamed folders rather than crashing. A no-op when the
- * resolved roots already match, so it never loops against the resulting
- * `project.meta-updated` event.
- */
-type ReadWorkspaceFileRunner = (target: {
-  environmentId: EnvironmentId;
-  input: { workspaceFilePath: string };
-}) => Promise<AtomCommandResult<FilesystemReadWorkspaceFileResult, unknown>>;
-
-type UpdateProjectRunner = (value: {
-  environmentId: EnvironmentId;
-  input: { projectId: ProjectId; workspaceFile: string; repoRoots: readonly string[] };
-}) => Promise<AtomCommandResult<unknown, unknown>>;
-
-async function reconcileWorkspaceProject(
-  member: SidebarProjectGroupMember,
-  readWorkspaceFile: ReadWorkspaceFileRunner,
-  updateProject: UpdateProjectRunner,
-): Promise<void> {
-  if (!member.workspaceFile) {
-    return;
-  }
-  const scopedKey = scopedProjectKey(scopeProjectRef(member.environmentId, member.id));
-  if (reconciledWorkspaceProjectKeys.has(scopedKey)) {
-    return;
-  }
-  reconciledWorkspaceProjectKeys.add(scopedKey);
-
-  const readResult = await readWorkspaceFile({
-    environmentId: member.environmentId,
-    input: { workspaceFilePath: member.workspaceFile },
-  });
-  if (readResult._tag === "Failure") {
-    reconciledWorkspaceProjectKeys.delete(scopedKey);
-    if (!isAtomCommandInterrupted(readResult)) {
-      const error = squashAtomCommandFailure(readResult);
-      toastManager.add({
-        type: "warning",
-        title: `Workspace file unavailable for "${member.title}"`,
-        description:
-          error instanceof Error ? error.message : "The .code-workspace could not be read.",
-      });
-    }
-    return;
-  }
-  const resolved = readResult.value;
-
-  const missing = resolved.folders.filter((folder) => !folder.exists);
-  if (missing.length > 0) {
-    toastManager.add({
-      type: "warning",
-      title: `Missing folders in "${member.title}"`,
-      description: `${missing.map((folder) => folder.name).join(", ")} could not be found on disk.`,
-    });
-  }
-
-  // `repoRoots` is optional on a project; an absent value means the workspace
-  // root is the only repo root (see types.ts notes on multi-repo workspaces).
-  const memberRepoRoots = member.repoRoots ?? [member.workspaceRoot];
-  if (
-    arraysEqualUnordered(resolved.repoRoots, memberRepoRoots) &&
-    resolved.workspaceFilePath === member.workspaceFile
-  ) {
-    return;
-  }
-
-  const updateResult = await updateProject({
-    environmentId: member.environmentId,
-    input: {
-      projectId: member.id,
-      workspaceFile: resolved.workspaceFilePath,
-      repoRoots: resolved.repoRoots,
-    },
-  });
-  if (updateResult._tag === "Failure" && !isAtomCommandInterrupted(updateResult)) {
-    const error = squashAtomCommandFailure(updateResult);
-    console.error("Failed to reconcile workspace folders", {
-      projectId: member.id,
-      environmentId: member.environmentId,
-      error,
-    });
-  }
 }
 
 function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): string {
@@ -1238,9 +1130,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const updateProject = useAtomCommand(projectEnvironment.update, {
     reportFailure: false,
   });
-  const readWorkspaceFile = useAtomQueryRunner(filesystemEnvironment.readWorkspaceFile, {
-    reportFailure: false,
-  });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -1371,17 +1260,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
-
-  // Re-read each `.code-workspace`-backed member on load and reconcile its
-  // persisted roots/identity with the file (Q4 — re-read on load). Runs once
-  // per project per session; missing/renamed folders surface as a toast.
-  useEffect(() => {
-    for (const member of project.memberProjects) {
-      if (member.workspaceFile) {
-        void reconcileWorkspaceProject(member, readWorkspaceFile, updateProject);
-      }
-    }
-  }, [project.memberProjects, readWorkspaceFile, updateProject]);
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
@@ -1562,14 +1440,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   }, []);
 
   const openProjectFoldersDialog = useCallback((member: SidebarProjectGroupMember) => {
-    if (!member.workspaceFile) {
-      return;
-    }
     setProjectFoldersTarget({
       environmentId: member.environmentId,
       projectId: member.id,
       title: member.title,
-      workspaceFile: member.workspaceFile,
+      workspaceRoot: member.workspaceRoot,
+      ...(member.repoRoots ? { repoRoots: member.repoRoots } : {}),
+      ...(member.workspaceFile ? { workspaceFile: member.workspaceFile } : {}),
     });
   }, []);
 
@@ -1822,13 +1699,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const clicked = await api.contextMenu.show(
           [
             buildTargetedItem("rename", "Rename"),
-            ...(project.memberProjects.some((member) => member.workspaceFile)
-              ? [
-                  buildTargetedItem("manage-folders", "Manage folders...", {
-                    isDisabled: (member) => !member.workspaceFile,
-                  }),
-                ]
-              : []),
+            buildTargetedItem("manage-folders", "Manage repositories..."),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
             buildTargetedItem("delete", "Remove", {

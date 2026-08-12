@@ -52,7 +52,6 @@ import {
   EnvironmentAuthorizationError,
   FilesystemScanGitReposError,
   FilesystemReadWorkspaceFileError,
-  FilesystemWriteWorkspaceFileError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -923,7 +922,7 @@ const makeWsRpcLayer = (
               const prepare = bootstrap.prepareWorktree;
 
               // Resolve the project so an isolated run fans out across every repo
-              // root (Phase 4 / D3). Multi-repo projects create one worktree per
+              // root. Multi-repo projects create one worktree per
               // `repoRoot`; single-root projects fall back to the anchor cwd,
               // preserving today's single-worktree behavior exactly.
               const worktreeProjectId =
@@ -942,12 +941,9 @@ const makeWsRpcLayer = (
                 projectShell?.repoRoots && projectShell.repoRoots.length > 0
                   ? projectShell.repoRoots
                   : [prepare.projectCwd];
-              // `projectCwd` is the client's anchor, which for a workspace-file
-              // project is the directory holding the `.code-workspace` and not a
-              // repo. The base ref the user picked belongs to the anchor *repo*;
-              // running git in the anchor directory itself would fail, and it
-              // would never match a `repoRoot` below, silently dropping the
-              // chosen base for every root.
+              // The primary repository owns the base ref selected by the user.
+              // `resolveAnchorRepoRoot` retains a fallback for older imported
+              // workspace-file records whose workspaceRoot was a parent folder.
               const anchorRepoRoot = resolveAnchorRepoRoot({
                 workspaceRoot: prepare.projectCwd,
                 repoRoots,
@@ -2066,50 +2062,6 @@ const makeWsRpcLayer = (
               Effect.mapError(
                 (cause) =>
                   new FilesystemReadWorkspaceFileError({
-                    message: cause.detail,
-                    cause,
-                  }),
-              ),
-            ),
-            { "rpc.aggregate": "workspace" },
-          ),
-        [WS_METHODS.filesystemWriteWorkspaceFile]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.filesystemWriteWorkspaceFile,
-            Effect.gen(function* () {
-              // Read first so we round-trip unknown top-level keys (e.g. `settings`)
-              // rather than clobbering them, then re-read so callers get the freshly
-              // resolved folders/repoRoots after the edit.
-              const current = yield* workspaceFile.read(input.workspaceFilePath);
-              const nextDocument = workspaceFile.withFolders(
-                current.document,
-                input.folders.map((folder) =>
-                  folder.name === undefined
-                    ? { path: folder.path }
-                    : { path: folder.path, name: folder.name },
-                ),
-              );
-              yield* workspaceFile.write({
-                workspaceFilePath: input.workspaceFilePath,
-                document: nextDocument,
-              });
-              const resolved = yield* workspaceFile.read(input.workspaceFilePath);
-              return {
-                workspaceFilePath: resolved.workspaceFilePath,
-                anchorDir: resolved.anchorDir,
-                folders: resolved.folders.map((folder) => ({
-                  rawPath: folder.rawPath,
-                  name: folder.name,
-                  absolutePath: folder.absolutePath,
-                  exists: folder.exists,
-                  isGit: folder.isGit,
-                })),
-                repoRoots: resolved.repoRoots,
-              };
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new FilesystemWriteWorkspaceFileError({
                     message: cause.detail,
                     cause,
                   }),

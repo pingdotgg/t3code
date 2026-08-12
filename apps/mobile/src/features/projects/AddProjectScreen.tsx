@@ -486,6 +486,28 @@ export function AddProjectSourceScreen() {
         <>
           <ListSection>
             <ListRow
+              title="Multiple repositories"
+              subtitle="Choose a primary repository, then attach more"
+              icon={
+                <SymbolView
+                  name="square.stack.3d.up"
+                  size={17}
+                  tintColor={iconColor}
+                  type="monochrome"
+                />
+              }
+              isFirst
+              onPress={() =>
+                navigation.navigate("NewTaskSheet", {
+                  screen: "AddProjectLocal",
+                  params: {
+                    environmentId: selectedEnvironment.environmentId,
+                    multiple: "true",
+                  },
+                })
+              }
+            />
+            <ListRow
               title="Local folder"
               subtitle="Browse a folder on disk"
               icon={
@@ -496,7 +518,7 @@ export function AddProjectSourceScreen() {
                   type="monochrome"
                 />
               }
-              isFirst
+              isFirst={false}
               onPress={() =>
                 navigation.navigate("NewTaskSheet", {
                   screen: "AddProjectLocal",
@@ -536,7 +558,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
   const projects = useProjects();
 
   return useCallback(
-    async (workspaceRoot: string) => {
+    async (workspaceRoot: string, repoRoots?: ReadonlyArray<string>) => {
       if (!environment || !canCreateProjectInEnvironment(environment.connectionState)) return;
 
       const existing = findExistingAddProject({
@@ -561,6 +583,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         commandId: CommandId.make(uuidv4()),
         projectId,
         workspaceRoot,
+        ...(repoRoots && repoRoots.length > 0 ? { repoRoots } : {}),
         createdAt: new Date().toISOString(),
       });
       const result = await createProject({
@@ -761,13 +784,21 @@ function FolderBrowser(props: {
   );
 }
 
-export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
+export function AddProjectLocalFolderScreen(props: {
+  readonly environmentId?: string | string[];
+  readonly multiple?: string | string[];
+}) {
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
+  const multiple = stringParam(props.multiple) === "true";
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
     useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repoRoots, setRepoRoots] = useState<ReadonlyArray<string>>([]);
+  const scanGitRepos = useAtomQueryRunner(filesystemEnvironment.scanGitRepos, {
+    reportFailure: false,
+  });
 
   const submitPath = useCallback(async () => {
     if (!environment || isBrowseNavigating || isSubmitting) return;
@@ -782,13 +813,53 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
       return;
     }
 
+    if (multiple) {
+      setIsSubmitting(true);
+      const scanResult = await scanGitRepos({
+        environmentId: environment.environmentId,
+        input: { parentPath: resolved.path },
+      });
+      setIsSubmitting(false);
+      if (scanResult._tag === "Failure" || !scanResult.value.parentHasGit) {
+        setError(
+          scanResult._tag === "Failure"
+            ? errorMessage(Cause.squash(scanResult.cause))
+            : "Choose a Git repository.",
+        );
+        return;
+      }
+      const root = scanResult.value.parentPath;
+      setRepoRoots((current) => (current.includes(root) ? current : [...current, root]));
+      setPathInput(getAddProjectInitialQuery(environment.baseDirectory));
+      return;
+    }
+
     setIsSubmitting(true);
     const result = await createProject(resolved.path);
     if (result && AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
     setIsSubmitting(false);
-  }, [createProject, environment, isBrowseNavigating, isSubmitting, pathInput]);
+  }, [
+    createProject,
+    environment,
+    isBrowseNavigating,
+    isSubmitting,
+    multiple,
+    pathInput,
+    scanGitRepos,
+    setPathInput,
+  ]);
+
+  const createMultipleRepositoriesProject = useCallback(async () => {
+    if (repoRoots.length < 2 || isSubmitting) return;
+    setIsSubmitting(true);
+    const result = await createProject(repoRoots[0]!, repoRoots);
+    if (result && AsyncResult.isFailure(result)) {
+      setError(errorMessage(Cause.squash(result.cause)));
+    }
+    setIsSubmitting(false);
+  }, [createProject, isSubmitting, repoRoots]);
 
   return (
     <AddProjectShell>
@@ -801,11 +872,49 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label="Add project"
+            label={
+              multiple
+                ? repoRoots.length === 0
+                  ? "Set primary repository"
+                  : "Attach repository"
+                : "Add project"
+            }
             disabled={isBrowseNavigating || isSubmitting}
             onPress={() => void submitPath()}
             loading={isSubmitting}
           />
+          {multiple && repoRoots.length > 0 ? (
+            <View className="gap-2 rounded-2xl bg-card px-4 py-3">
+              {repoRoots.map((root, index) => (
+                <View key={root} className="flex-row items-center gap-2">
+                  <Text className="flex-1 text-sm" numberOfLines={1}>
+                    {root}
+                  </Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {index === 0 ? "Primary" : "Attached"}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${root}`}
+                    onPress={() =>
+                      setRepoRoots((current) => current.filter((candidate) => candidate !== root))
+                    }
+                    className="rounded-full px-2 py-1 active:opacity-60"
+                  >
+                    <Text className="text-xs font-t3-bold text-primary">Remove</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {multiple ? (
+            <PrimaryActionButton
+              label="Create project"
+              disabled={repoRoots.length < 2 || isSubmitting}
+              onPress={() => void createMultipleRepositoriesProject()}
+              loading={isSubmitting}
+            />
+          ) : null}
           <FolderBrowser
             environment={environment}
             navigateToBrowsePath={navigateToBrowsePath}

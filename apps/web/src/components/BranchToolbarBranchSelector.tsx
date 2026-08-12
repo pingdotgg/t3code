@@ -137,9 +137,9 @@ export function BranchToolbarBranchSelector({
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
-  // Git commands need a repo, and a workspace-file project's `workspaceRoot` is
-  // just the directory holding the `.code-workspace` — usually not a repo, which
-  // left every ref query here reporting `isRepo: false` and an empty selector.
+  // Git commands use the primary repository. The fallback keeps older imported
+  // workspace-file projects, whose root could be the containing directory,
+  // working after the primary-root model was introduced.
   const activeProjectCwd = activeProject
     ? resolveAnchorRepoRoot({
         workspaceRoot: activeProject.workspaceRoot,
