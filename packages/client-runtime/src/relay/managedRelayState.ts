@@ -2,6 +2,7 @@ import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
@@ -216,6 +217,24 @@ export const waitForManagedRelayClerkToken = Effect.fn(
     readCurrentSession();
     return Effect.sync(() => unsubscribe?.());
   });
+});
+
+/** Removes an environment from the signed-in account without contacting that environment. */
+export const deregisterManagedRelayEnvironment = Effect.fn(
+  "clientRuntime.managedRelaySession.deregisterEnvironment",
+)(function* (
+  registry: AtomRegistry.AtomRegistry,
+  input: { readonly accountId: string; readonly environmentId: EnvironmentId },
+) {
+  const session = registry.get(managedRelaySessionAtom);
+  if (!session || session.accountId !== input.accountId) {
+    return yield* new ManagedRelaySessionError({
+      message: "Sign in to T3 Connect before deregistering an environment.",
+    });
+  }
+  const clerkToken = yield* readSessionClerkToken(session);
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
 });
 
 function requireClerkToken(
