@@ -367,8 +367,8 @@ describe("DesktopShellEnvironment", () => {
 
       fs.rmSync(tempDir, { recursive: true, force: true });
 
-      assert.equal(commands.length, 1);
-      assert.isTrue(commands[0]!._tag === "StandardCommand" && commands[0].args.includes("-NoProfile"));
+      assert.equal(commands.length, 2);
+      assert.isTrue(commands.some((c) => c._tag === "StandardCommand" && c.args.includes("-NoProfile")));
     }),
   );
 

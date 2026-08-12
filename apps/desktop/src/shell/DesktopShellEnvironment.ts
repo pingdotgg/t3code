@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -381,7 +382,12 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
   ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem> {
     const fileSystem = yield* FileSystem.FileSystem;
 
-    // Run the no-profile probe first as a fast baseline.
+    // Start the slow profile probe in the background immediately.
+    const profileFiber = yield* Effect.fork(
+      readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true })
+    );
+
+    // Concurrently run the no-profile probe as a fast baseline.
     const noProfile = yield* readWindowsEnvironment(["PATH"], { loadProfile: false });
 
     const fastMergedPath = mergePaths("win32", [
@@ -405,11 +411,14 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
       }
     }
 
-    // Only load the expensive PowerShell profile if the fast baseline is insufficient,
+    // Only wait for the expensive PowerShell profile if the fast baseline is insufficient,
     // or if the user actively uses fnm (which requires FNM_DIR from the profile).
-    const profile: EnvironmentPatch = (nodeFound && !fnmFound)
-      ? {}
-      : yield* readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true });
+    let profile: EnvironmentPatch = {};
+    if (nodeFound && !fnmFound) {
+      yield* Fiber.interrupt(profileFiber);
+    } else {
+      profile = yield* Fiber.join(profileFiber);
+    }
 
     const mergedPath = mergePaths("win32", [
       trimNonEmpty(profile.PATH),
