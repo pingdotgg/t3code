@@ -40,7 +40,7 @@ import { isElectron } from "../../env";
 import {
   useClientSettings,
   useUpdateClientSettings,
-  usePrimarySettings,
+  useGlobalSettings,
 } from "../../hooks/useSettings";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
@@ -68,7 +68,7 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
-import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
+import { settingsServerProvidersAtom, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -303,10 +303,10 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
 
 function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const navigate = useNavigate();
-  const settings = usePrimarySettings();
+  const settings = useGlobalSettings();
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const serverProviders = useAtomValue(settingsServerProvidersAtom);
   const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });

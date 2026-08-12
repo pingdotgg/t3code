@@ -5,9 +5,10 @@
  * `settings.json` on the server, fetched via `server.getConfig`) and
  * client-only settings (persisted in localStorage).
  *
- * Live server settings always require an environment id. Primary-environment
+ * Live server settings always require an environment id. Environment-scoped
  * access is intentionally named as such so environment-sensitive consumers
- * cannot silently read the wrong server's settings.
+ * cannot silently read the wrong server's settings; the global settings UI
+ * uses the `useGlobalSettings` pair, which resolves its own target.
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -34,8 +35,8 @@ import {
   themeAllowsSidebarArtwork,
 } from "~/themePalette";
 import * as Struct from "effect/Struct";
-import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
-import { usePrimaryEnvironment } from "~/state/environments";
+import { settingsServerSettingsAtom, serverEnvironment } from "~/state/server";
+import { useSettingsEnvironmentId } from "~/state/settingsEnvironment";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 
@@ -287,11 +288,11 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
-/** Primary-only settings access for the settings UI and other explicitly global surfaces. */
-export function usePrimarySettings<T = UnifiedSettings>(
+/** Settings access for the settings UI and other explicitly global surfaces. */
+export function useGlobalSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  return useMergedSettings(useAtomValue(primaryServerSettingsAtom), selector);
+  return useMergedSettings(useAtomValue(settingsServerSettingsAtom), selector);
 }
 
 /**
@@ -334,8 +335,8 @@ export function useUpdateEnvironmentSettings(environmentId: EnvironmentId) {
   return useUpdateSettingsTarget(environmentId);
 }
 
-export function useUpdatePrimarySettings() {
-  return useUpdateSettingsTarget(usePrimaryEnvironment()?.environmentId ?? null);
+export function useUpdateGlobalSettings() {
+  return useUpdateSettingsTarget(useSettingsEnvironmentId());
 }
 
 export function useUpdateClientSettings() {
