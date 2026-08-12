@@ -98,11 +98,6 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
   if [[ "${GIT_REPO_URL}" != https://github.com/* ]]; then
     GIT_REPO_URL=""
   fi
-  if [[ "${GIT_COMMIT}" == *-dirty ]] || ! git -C "${APP_DIR}" branch -r --contains HEAD \
-      --format='%(refname:short)' 2>/dev/null | grep -Eq "^${GIT_REPO_REMOTE}/"; then
-    GIT_REPO_URL=""
-  fi
-
   # Prefer an explicit comparison line, then the public repository's default.
   GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
   if [[ -n "${GIT_BASE_REF}" ]] && \
@@ -114,7 +109,11 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
       -c "core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=1" \
       -c http.lowSpeedLimit=1 \
       -c http.lowSpeedTime=15 \
-      fetch --quiet upstream 2>/dev/null || true
+      fetch --quiet "${GIT_REPO_REMOTE}" 2>/dev/null || true
+  fi
+  if [[ "${GIT_COMMIT}" == *-dirty ]] || ! git -C "${APP_DIR}" branch -r --contains HEAD \
+      --format='%(refname:short)' 2>/dev/null | grep -Eq "^${GIT_REPO_REMOTE}/"; then
+    GIT_REPO_URL=""
   fi
   if [[ -z "${GIT_BASE_REF}" ]]; then
     GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/upstream/HEAD 2>/dev/null || true)"
