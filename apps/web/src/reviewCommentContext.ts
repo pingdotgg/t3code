@@ -1,4 +1,5 @@
 import type { FileDiffMetadata, SelectedLineRange, SelectionSide } from "@pierre/diffs";
+import type { PullRequestReviewPosition } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 export const ReviewCommentContextSchema = Schema.Struct({
@@ -368,6 +369,33 @@ function findDiffReviewLineIndex(
   if (preferredIndex >= 0) return preferredIndex;
   const fallbackKey = preferredKey === "oldLineNumber" ? "newLineNumber" : "oldLineNumber";
   return lines.findIndex((line) => line[fallbackKey] === lineNumber);
+}
+
+/** Resolve the host-facing coordinates of a line selected in the diff viewer. */
+export function resolveDiffReviewPosition(
+  fileDiff: FileDiffMetadata,
+  lineNumber: number,
+  side: SelectionSide | undefined,
+): PullRequestReviewPosition | null {
+  const lines = buildDiffReviewLines(fileDiff);
+  const line = lines[findDiffReviewLineIndex(lines, lineNumber, side)];
+  if (line === undefined) return null;
+
+  switch (line.change) {
+    case "add":
+      return line.newLineNumber === null ? null : { kind: "added", newLine: line.newLineNumber };
+    case "delete":
+      return line.oldLineNumber === null ? null : { kind: "deleted", oldLine: line.oldLineNumber };
+    case "context":
+      return line.oldLineNumber === null || line.newLineNumber === null
+        ? null
+        : {
+            kind: "context",
+            oldLine: line.oldLineNumber,
+            newLine: line.newLineNumber,
+            side: side === "deletions" ? "left" : "right",
+          };
+  }
 }
 
 function getDiffRange(
