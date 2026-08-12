@@ -32,6 +32,7 @@ export interface CreatedThreadWorktree {
   readonly repoRoot: string;
   readonly worktreePath: string;
   readonly refName: string;
+  readonly createdBranch: string | null;
 }
 
 export interface CreateThreadWorktreesInput {
@@ -110,6 +111,31 @@ export const removeThreadWorktrees = (input: {
     if (firstFailure) return yield* firstFailure.failure;
   });
 
+/** Remove completed fan-out worktrees and branches after a later bootstrap failure. */
+export const rollbackThreadWorktrees = (
+  worktrees: ReadonlyArray<CreatedThreadWorktree>,
+): Effect.Effect<void, never, GitWorkflowService.GitWorkflowService> =>
+  Effect.gen(function* () {
+    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+    yield* removeThreadWorktrees({
+      worktrees: worktrees.map((worktree) => ({
+        repoRoot: worktree.repoRoot,
+        worktreePath: worktree.worktreePath,
+      })),
+      force: true,
+    }).pipe(Effect.ignore);
+    yield* Effect.forEach(
+      worktrees,
+      (worktree) =>
+        worktree.createdBranch === null
+          ? Effect.void
+          : gitWorkflow
+              .deleteBranch({ cwd: worktree.repoRoot, branch: worktree.createdBranch })
+              .pipe(Effect.ignore),
+      { concurrency: 1, discard: true },
+    );
+  });
+
 /**
  * Create one worktree per target, transactionally. On the first failure every
  * worktree created so far is force-removed before the original error
@@ -125,18 +151,9 @@ export const createThreadWorktrees = (
   Effect.gen(function* () {
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const created: CreatedThreadWorktree[] = [];
-    const createdBranches: Array<{ readonly repoRoot: string; readonly branch: string }> = [];
     const takenNames = new Set<string>();
 
-    const rollback = Effect.gen(function* () {
-      yield* removeThreadWorktrees({ worktrees: created, force: true }).pipe(Effect.ignore);
-      yield* Effect.forEach(
-        createdBranches,
-        ({ repoRoot, branch }) =>
-          gitWorkflow.deleteBranch({ cwd: repoRoot, branch }).pipe(Effect.ignore),
-        { concurrency: 1, discard: true },
-      );
-    });
+    const rollback = rollbackThreadWorktrees(created);
 
     yield* Effect.forEach(
       input.targets,
@@ -160,10 +177,8 @@ export const createThreadWorktrees = (
             repoRoot: target.repoRoot,
             worktreePath: result.worktree.path,
             refName: result.worktree.refName,
+            createdBranch: target.newBranch,
           });
-          if (target.newBranch) {
-            createdBranches.push({ repoRoot: target.repoRoot, branch: target.newBranch });
-          }
         }),
       { concurrency: 1, discard: true },
     ).pipe(

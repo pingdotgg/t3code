@@ -100,7 +100,12 @@ import * as WorkspaceGitScan from "./workspace/WorkspaceGitScan.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import { createThreadWorktrees, type WorktreeFanoutTarget } from "./vcs/WorktreeFanout.ts";
+import {
+  createThreadWorktrees,
+  rollbackThreadWorktrees,
+  type CreatedThreadWorktree,
+  type WorktreeFanoutTarget,
+} from "./vcs/WorktreeFanout.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -770,20 +775,29 @@ const makeWsRpcLayer = (
           let targetProjectId = bootstrap?.createThread?.projectId;
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
           let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
+          let createdWorktrees: ReadonlyArray<CreatedThreadWorktree> = [];
 
-          const cleanupCreatedThread = () =>
-            createdThread
-              ? serverCommandId("bootstrap-thread-delete").pipe(
-                  Effect.flatMap((commandId) =>
-                    orchestrationEngine.dispatch({
-                      type: "thread.delete",
-                      commandId,
-                      threadId: command.threadId,
-                    }),
-                  ),
-                  Effect.ignoreCause({ log: true }),
-                )
-              : Effect.void;
+          const cleanupCreatedThread = () => {
+            const worktrees = createdWorktrees;
+            createdWorktrees = [];
+            return rollbackThreadWorktrees(worktrees).pipe(
+              Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
+              Effect.andThen(
+                createdThread
+                  ? serverCommandId("bootstrap-thread-delete").pipe(
+                      Effect.flatMap((commandId) =>
+                        orchestrationEngine.dispatch({
+                          type: "thread.delete",
+                          commandId,
+                          threadId: command.threadId,
+                        }),
+                      ),
+                      Effect.ignoreCause({ log: true }),
+                    )
+                  : Effect.void,
+              ),
+            );
+          };
 
           const recordSetupScriptLaunchFailure = (input: {
             readonly error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError;
@@ -1007,6 +1021,7 @@ const makeWsRpcLayer = (
                 threadId: command.threadId,
                 targets,
               }).pipe(Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow));
+              createdWorktrees = created;
 
               const worktrees = created.map((entry) => ({
                 repoRoot: entry.repoRoot,
@@ -1038,10 +1053,9 @@ const makeWsRpcLayer = (
           return yield* bootstrapProgram.pipe(
             Effect.catchCause((cause) => {
               const dispatchError = toBootstrapDispatchCommandCauseError(cause);
-              if (Cause.hasInterruptsOnly(cause)) {
-                return Effect.fail(dispatchError);
-              }
-              return cleanupCreatedThread().pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
+              return Effect.uninterruptible(cleanupCreatedThread()).pipe(
+                Effect.flatMap(() => Effect.fail(dispatchError)),
+              );
             }),
           );
         });

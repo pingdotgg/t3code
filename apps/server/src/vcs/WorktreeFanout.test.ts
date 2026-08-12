@@ -118,11 +118,13 @@ describe("createThreadWorktrees", () => {
           repoRoot: "/Users/me/backend",
           worktreePath: "/t3/worktrees/project-1/thread-1/backend",
           refName: "t3/run",
+          createdBranch: "t3/run",
         },
         {
           repoRoot: "/Users/me/frontend",
           worktreePath: "/t3/worktrees/project-1/thread-1/frontend",
           refName: "t3/run",
+          createdBranch: "t3/run",
         },
       ]);
       expect(recorder.created).toHaveLength(2);
