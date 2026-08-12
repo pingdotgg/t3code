@@ -1,31 +1,49 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
-
 import type {
   GitHubWorkflow,
   GitHubWorkflowListInput,
   GitHubWorkflowRunInput,
   GitHubWorkflowRunResult,
 } from "@t3tools/contracts";
-import { GitHubWorkflowError } from "@t3tools/contracts";
+import { SourceControlProviderError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import { parseDispatchWorkflow } from "./githubWorkflowYaml.ts";
 
 const WORKFLOWS_DIRECTORY = ".github/workflows";
 
-function errorMessage(cause: unknown, fallback: string): GitHubWorkflowError {
-  return new GitHubWorkflowError({
-    message: cause instanceof Error && cause.message.trim().length > 0 ? cause.message : fallback,
-  });
-}
-
 export function extractRunUrl(output: string): string | null {
   return output.match(/https?:\/\/[^\s]+\/actions\/runs\/\d+/)?.[0] ?? null;
+}
+
+export function workflowRunListArguments(input: {
+  readonly filename: string;
+  readonly ref: string;
+  readonly createdAfter: string;
+}): ReadonlyArray<string> {
+  return [
+    "run",
+    "list",
+    "--workflow",
+    input.filename,
+    "--branch",
+    input.ref,
+    "--event",
+    "workflow_dispatch",
+    "--created",
+    `>=${input.createdAfter}`,
+    "--limit",
+    "1",
+    "--json",
+    "url",
+    "--jq",
+    ".[0].url",
+  ];
 }
 
 export function workflowRunArguments(input: {
@@ -45,103 +63,83 @@ export class GitHubWorkflowService extends Context.Service<
   {
     readonly list: (
       input: GitHubWorkflowListInput,
-    ) => Effect.Effect<{ readonly workflows: ReadonlyArray<GitHubWorkflow> }, GitHubWorkflowError>;
+    ) => Effect.Effect<{ readonly workflows: ReadonlyArray<GitHubWorkflow> }>;
     readonly run: (
       input: GitHubWorkflowRunInput,
-    ) => Effect.Effect<GitHubWorkflowRunResult, GitHubWorkflowError>;
+    ) => Effect.Effect<GitHubWorkflowRunResult, SourceControlProviderError>;
   }
 >()("t3/sourceControl/GitHubWorkflowService") {}
 
 export const make = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
   const github = yield* GitHubCli.GitHubCli;
+  const path = yield* Path.Path;
 
   const list = Effect.fn("GitHubWorkflowService.list")(function* (input: GitHubWorkflowListInput) {
-    const workflowsDirectory = NodePath.join(input.cwd, WORKFLOWS_DIRECTORY);
-    const entries = yield* Effect.tryPromise({
-      try: async () => {
-        try {
-          return await NodeFSP.readdir(workflowsDirectory, { withFileTypes: true });
-        } catch (cause) {
-          if ((cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return [];
-          throw cause;
-        }
-      },
-      catch: (cause) => errorMessage(cause, "Failed to read GitHub workflows."),
-    });
-
+    const workflowsDirectory = path.join(input.cwd, WORKFLOWS_DIRECTORY);
+    const entries = yield* fileSystem
+      .readDirectory(workflowsDirectory)
+      .pipe(Effect.orElseSucceed(() => []));
     const filenames = entries
-      .filter((entry) => entry.isFile() && /\.ya?ml$/.test(entry.name))
-      .map((entry) => entry.name)
+      .filter((filename) => /\.ya?ml$/.test(filename))
       .toSorted((left, right) => left.localeCompare(right));
 
     const workflows = yield* Effect.forEach(
       filenames,
       (filename) =>
-        Effect.tryPromise({
-          try: async () => {
-            const path = NodePath.join(workflowsDirectory, filename);
-            return parseDispatchWorkflow(await NodeFSP.readFile(path, "utf8"), filename);
-          },
-          catch: () => null,
-        }).pipe(Effect.orElseSucceed(() => null)),
+        fileSystem.readFileString(path.join(workflowsDirectory, filename)).pipe(
+          Effect.map((contents) => parseDispatchWorkflow(contents, filename)),
+          Effect.orElseSucceed(() => null),
+        ),
       { concurrency: 8 },
     );
     return { workflows: workflows.filter((workflow) => workflow !== null) };
   });
 
   const run = Effect.fn("GitHubWorkflowService.run")(function* (input: GitHubWorkflowRunInput) {
-    if (NodePath.basename(input.filename) !== input.filename) {
-      return yield* new GitHubWorkflowError({ message: "Invalid GitHub workflow filename." });
-    }
-    const discovered = yield* list({ cwd: input.cwd });
-    const workflow = discovered.workflows.find((item) => item.filename === input.filename);
-    if (!workflow) {
-      return yield* new GitHubWorkflowError({
-        message: "This workflow is unavailable or does not support manual dispatch.",
-      });
-    }
-    const allowedInputs = new Set(workflow.inputs.map((item) => item.name));
-    if (Object.keys(input.inputs).some((name) => !allowedInputs.has(name))) {
-      return yield* new GitHubWorkflowError({
-        message: "The workflow inputs are no longer valid.",
-      });
-    }
-    for (const workflowInput of workflow.inputs) {
-      const value = input.inputs[workflowInput.name];
-      if (workflowInput.required && (!value || !value.trim())) {
-        return yield* new GitHubWorkflowError({
-          message: `The required workflow input '${workflowInput.name}' is missing.`,
-        });
-      }
-      if (value !== undefined && workflowInput.options && !workflowInput.options.includes(value)) {
-        return yield* new GitHubWorkflowError({
-          message: `The workflow input '${workflowInput.name}' has an invalid option.`,
-        });
-      }
-      if (
-        value !== undefined &&
-        workflowInput.type === "boolean" &&
-        !/^(true|false)$/.test(value)
-      ) {
-        return yield* new GitHubWorkflowError({
-          message: `The workflow input '${workflowInput.name}' must be true or false.`,
-        });
-      }
-    }
-
+    const createdAfter = DateTime.formatIso(DateTime.subtract(yield* DateTime.now, { seconds: 5 }));
     const dispatchOutput = yield* github
       .execute({
         cwd: input.cwd,
         args: workflowRunArguments(input),
       })
-      .pipe(Effect.mapError((cause) => errorMessage(cause, "Failed to start GitHub workflow.")));
-    const runUrl = extractRunUrl(`${dispatchOutput.stdout}\n${dispatchOutput.stderr}`);
-    if (!runUrl) {
-      return yield* new GitHubWorkflowError({
-        message: "The GitHub CLI did not return the created workflow run URL.",
-      });
-    }
-    return { url: runUrl };
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "runWorkflow",
+              cwd: input.cwd,
+              command: cause.command,
+              reference: input.filename,
+              detail: cause.detail,
+              cause,
+            }),
+        ),
+      );
+    const dispatchRunUrl = extractRunUrl(`${dispatchOutput.stdout}\n${dispatchOutput.stderr}`);
+    if (dispatchRunUrl) return { url: dispatchRunUrl };
+
+    const resolvedRunUrl = yield* github
+      .execute({
+        cwd: input.cwd,
+        args: workflowRunListArguments({
+          filename: input.filename,
+          ref: input.ref,
+          createdAfter,
+        }),
+      })
+      .pipe(
+        Effect.map((output) => extractRunUrl(`${output.stdout}\n${output.stderr}`)),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to resolve dispatched GitHub workflow run URL.", {
+            cwd: input.cwd,
+            filename: input.filename,
+            cause,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+    return resolvedRunUrl ? { url: resolvedRunUrl } : {};
   });
 
   return GitHubWorkflowService.of({ list, run });

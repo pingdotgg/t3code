@@ -45,7 +45,6 @@ import {
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
-  GitHubWorkflowError,
   GitHubWorkflowListInput,
   GitHubWorkflowListResult,
   GitHubWorkflowRunInput,
@@ -188,6 +187,7 @@ import {
   SourceControlDiscoveryResult,
   SourceControlPublishRepositoryInput,
   SourceControlPublishRepositoryResult,
+  SourceControlProviderError,
   SourceControlRepositoryError,
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
@@ -628,13 +628,13 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
 export const WsGitHubWorkflowsListRpc = Rpc.make(WS_METHODS.githubWorkflowsList, {
   payload: GitHubWorkflowListInput,
   success: GitHubWorkflowListResult,
-  error: Schema.Union([GitHubWorkflowError, EnvironmentAuthorizationError]),
+  error: EnvironmentAuthorizationError,
 });
 
 export const WsGitHubWorkflowsRunRpc = Rpc.make(WS_METHODS.githubWorkflowsRun, {
   payload: GitHubWorkflowRunInput,
   success: GitHubWorkflowRunResult,
-  error: Schema.Union([GitHubWorkflowError, EnvironmentAuthorizationError]),
+  error: Schema.Union([SourceControlProviderError, EnvironmentAuthorizationError]),
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {

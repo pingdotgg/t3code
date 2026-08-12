@@ -41,11 +41,6 @@ export const GitHubWorkflowRunInput = Schema.Struct({
 export type GitHubWorkflowRunInput = typeof GitHubWorkflowRunInput.Type;
 
 export const GitHubWorkflowRunResult = Schema.Struct({
-  url: TrimmedNonEmptyString,
+  url: Schema.optional(TrimmedNonEmptyString),
 });
 export type GitHubWorkflowRunResult = typeof GitHubWorkflowRunResult.Type;
-
-export class GitHubWorkflowError extends Schema.TaggedErrorClass<GitHubWorkflowError>()(
-  "GitHubWorkflowError",
-  { message: TrimmedNonEmptyString },
-) {}

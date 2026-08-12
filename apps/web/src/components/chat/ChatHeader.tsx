@@ -213,15 +213,20 @@ export const ChatHeader = memo(function ChatHeader({
         });
         return false;
       }
+      const runUrl = result.value.url;
       toastManager.update(toastId, {
         type: "success",
         title: `${workflow.name} started`,
         description: `Dispatched on ${activeThreadBranch}.`,
         timeout: 0,
-        actionProps: {
-          children: "View run",
-          onClick: () => void readLocalApi()?.shell.openExternal(result.value.url),
-        },
+        ...(runUrl
+          ? {
+              actionProps: {
+                children: "View run",
+                onClick: () => void readLocalApi()?.shell.openExternal(runUrl),
+              },
+            }
+          : {}),
         data: { threadRef: activeThreadRef, dismissAfterVisibleMs: 10_000 },
       });
       return true;
