@@ -35,6 +35,10 @@ function messageFileName(messageId: MessageId): string {
   return `${encodeURIComponent(messageId)}.json`;
 }
 
+function temporaryMessageFileName(messageId: MessageId): string {
+  return `${encodeURIComponent(messageId)}.json.tmp`;
+}
+
 async function getOutboxDirectory() {
   const { Directory, Paths } = await import("expo-file-system");
   const directory = new Directory(Paths.document, THREAD_OUTBOX_DIRECTORY);
@@ -45,6 +49,11 @@ async function getOutboxDirectory() {
 async function getMessageFile(messageId: MessageId) {
   const { File } = await import("expo-file-system");
   return new File(await getOutboxDirectory(), messageFileName(messageId));
+}
+
+async function getTemporaryMessageFile(messageId: MessageId) {
+  const { File } = await import("expo-file-system");
+  return new File(await getOutboxDirectory(), temporaryMessageFileName(messageId));
 }
 
 export const expoThreadOutboxStorage: ThreadOutboxStorage = {
@@ -89,11 +98,14 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
   write: async (message) => {
     const fileName = messageFileName(message.messageId);
     try {
-      const file = await getMessageFile(message.messageId);
-      if (!file.exists) {
-        file.create({ intermediates: true, overwrite: true });
-      }
-      file.write(JSON.stringify(encodeQueuedThreadMessage(message)));
+      const { File } = await import("expo-file-system");
+      const directory = await getOutboxDirectory();
+      const file = new File(directory, fileName);
+      const temporaryFile = new File(directory, temporaryMessageFileName(message.messageId));
+
+      temporaryFile.create({ intermediates: true, overwrite: true });
+      temporaryFile.write(JSON.stringify(encodeQueuedThreadMessage(message)));
+      await temporaryFile.move(file, { overwrite: true });
     } catch (cause) {
       throw new ThreadOutboxStorageError({
         operation: "write",
@@ -111,6 +123,10 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
       const file = await getMessageFile(message.messageId);
       if (file.exists) {
         file.delete();
+      }
+      const temporaryFile = await getTemporaryMessageFile(message.messageId);
+      if (temporaryFile.exists) {
+        temporaryFile.delete();
       }
     } catch (cause) {
       throw new ThreadOutboxStorageError({

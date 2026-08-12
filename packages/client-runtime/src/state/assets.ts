@@ -1,13 +1,16 @@
 import { AssetResource, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { type EnvironmentRpcInput, request } from "../rpc/client.ts";
+import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
+const ASSET_URL_REQUEST_CONCURRENCY = 8;
 
 export class InvalidAssetCollectionKeyError extends Schema.TaggedErrorClass<InvalidAssetCollectionKeyError>()(
   "InvalidAssetCollectionKeyError",
@@ -46,12 +49,17 @@ export function resolveAssetUrl(httpBaseUrl: string, relativeUrl: string): strin
 export function createAssetEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
-  const createUrl = createEnvironmentRpcQueryAtomFamily(runtime, {
+  // A reconnect revalidates every mounted project favicon atom at once. Keep
+  // that fan-out below the server and browser request-pressure thresholds;
+  // queued effects remain interruptible if the connection generation changes.
+  const requestSemaphore = Semaphore.makeUnsafe(ASSET_URL_REQUEST_CONCURRENCY);
+  const createUrl = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:assets:create-url",
-    tag: WS_METHODS.assetsCreateUrl,
     staleTimeMs: ASSET_URL_STALE_TIME_MS,
     idleTtlMs: ASSET_URL_IDLE_TTL_MS,
     refreshIntervalMs: ASSET_URL_REFRESH_INTERVAL_MS,
+    execute: (input: EnvironmentRpcInput<typeof WS_METHODS.assetsCreateUrl>) =>
+      requestSemaphore.withPermits(1)(request(WS_METHODS.assetsCreateUrl, input)),
   });
   const createUrlsFamily = Atom.family((key: string) => {
     const [environmentId, resources] = parseAssetCollectionKey(key);

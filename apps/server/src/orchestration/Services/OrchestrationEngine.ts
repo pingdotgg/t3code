@@ -10,18 +10,65 @@
  *
  * @module OrchestrationEngineService
  */
-import type { OrchestrationCommand, OrchestrationEvent } from "@t3tools/contracts";
+import type {
+  CommandId,
+  OrchestrationCommand,
+  OrchestrationDispatchCommandError,
+  OrchestrationEvent,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
+import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import type { OrchestrationEventStoreError } from "../../persistence/Errors.ts";
 
+export type ProviderTurnIntentSelector =
+  | {
+      readonly kind: "exact";
+      readonly eventSequence: number;
+      readonly threadId: ThreadId;
+    }
+  | {
+      readonly kind: "oldest-for-thread";
+      readonly threadId: ThreadId;
+    };
+
+export interface CompleteProviderTurnIntentInput {
+  readonly selector: ProviderTurnIntentSelector;
+  readonly commandPolicy: "always" | "if-consumed" | "if-consumed-and-session-starting";
+  readonly commands: ReadonlyArray<OrchestrationCommand>;
+  /** Persist a correlated projection settlement with the consumed intent. */
+  readonly acknowledgement?: {
+    readonly turnId: TurnId;
+    readonly acknowledgedAt: string;
+  };
+}
+
 /**
  * OrchestrationEngineShape - Service API for orchestration command and event flow.
  */
 export interface OrchestrationEngineShape {
+  /** Persist process-local payload identity before any external side effect. */
+  readonly registerProcessLocalCommand?: (input: {
+    readonly commandId: CommandId;
+    readonly fingerprint: string;
+  }) => Effect.Effect<void, OrchestrationDispatchCommandError>;
+
+  /** Resolve an exact accepted outer receipt without replaying process-local work. */
+  readonly findAcceptedProcessLocalCommand?: (input: {
+    readonly commandId: CommandId;
+    readonly fingerprint: string;
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<
+    Option.Option<{ readonly sequence: number }>,
+    OrchestrationDispatchCommandError
+  >;
+
   /**
    * Replay persisted orchestration events from an exclusive sequence cursor.
    *
@@ -51,11 +98,34 @@ export interface OrchestrationEngineShape {
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
+   * Atomically consume a durable provider handoff and apply its correlated
+   * lifecycle commands on the same serialized engine queue/SQL transaction.
+   * This is an internal reactor API; public command dispatch is unchanged.
+   */
+  readonly completeProviderTurnIntent?: (
+    input: CompleteProviderTurnIntentInput,
+  ) => Effect.Effect<{ consumed: boolean }, OrchestrationDispatchError, never>;
+
+  /**
    * Stream persisted domain events in dispatch order.
    *
    * This is a hot runtime stream (new events only), not a historical replay.
    */
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
+
+  /**
+   * Acquire a hot domain-event subscription in the caller's scope.
+   *
+   * Unlike `streamDomainEvents`, acquisition registers the subscriber before
+   * the returned effect completes. Startup consumers use this to buffer live
+   * events before taking a durable replay cursor, closing the subscribe/replay
+   * race.
+   */
+  readonly subscribeDomainEvents: Effect.Effect<
+    Stream.Stream<OrchestrationEvent>,
+    never,
+    Scope.Scope
+  >;
 
   /**
    * The latest sequence reflected in the engine's authoritative command read

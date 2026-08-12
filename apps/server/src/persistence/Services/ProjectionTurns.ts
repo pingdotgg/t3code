@@ -70,6 +70,7 @@ export const ProjectionTurnById = Schema.Struct({
 export type ProjectionTurnById = typeof ProjectionTurnById.Type;
 
 export const ProjectionPendingTurnStart = Schema.Struct({
+  eventSequence: NonNegativeInt,
   threadId: ThreadId,
   messageId: MessageId,
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
@@ -94,6 +95,13 @@ export const GetProjectionPendingTurnStartInput = Schema.Struct({
 });
 export type GetProjectionPendingTurnStartInput = typeof GetProjectionPendingTurnStartInput.Type;
 
+export const DeleteProjectionPendingTurnStartExactInput = Schema.Struct({
+  threadId: ThreadId,
+  eventSequence: NonNegativeInt,
+});
+export type DeleteProjectionPendingTurnStartExactInput =
+  typeof DeleteProjectionPendingTurnStartExactInput.Type;
+
 export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -115,17 +123,22 @@ export interface ProjectionTurnRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
-   * Replaces any existing pending-start placeholder rows for a thread with exactly one latest pending-start row.
+   * Appends one durable-event-correlated pending-start placeholder.
    */
-  readonly replacePendingTurnStart: (
+  readonly appendPendingTurnStart: (
     row: ProjectionPendingTurnStart,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
-   * Returns the newest pending-start placeholder for a thread; this is expected to be at most one row after replacement writes.
+   * Returns the oldest event-correlated pending-start placeholder for a thread.
    */
   readonly getPendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
+  ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /** Returns one exact event-correlated pending-start placeholder. */
+  readonly getPendingTurnStartExact: (
+    input: DeleteProjectionPendingTurnStartExactInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
 
   /**
@@ -133,6 +146,11 @@ export interface ProjectionTurnRepositoryShape {
    */
   readonly deletePendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Delete a pending placeholder only when its originating event matches. */
+  readonly deletePendingTurnStartExact: (
+    input: DeleteProjectionPendingTurnStartExactInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**

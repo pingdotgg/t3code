@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyGitStatusStreamEvent,
   buildTemporaryWorktreeBranchName,
+  buildDeterministicTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
@@ -69,6 +70,18 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
     expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/DEADBEEF`)).toBe(true);
+  });
+
+  it("derives a stable temporary worktree ref from a retry identity", () => {
+    expect(
+      buildDeterministicTemporaryWorktreeBranchName("12345678-abcd-4000-8000-123456789abc"),
+    ).toBe("t3code/12345678");
+    expect(buildDeterministicTemporaryWorktreeBranchName("thread-alpha")).toBe(
+      buildDeterministicTemporaryWorktreeBranchName("thread-alpha"),
+    );
+    expect(
+      isTemporaryWorktreeBranch(buildDeterministicTemporaryWorktreeBranchName("thread-alpha")),
+    ).toBe(true);
   });
 
   it("normalizes a UUID-shaped random callback to the canonical 8-hex form", () => {

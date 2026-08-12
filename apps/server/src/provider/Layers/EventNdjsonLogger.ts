@@ -13,11 +13,13 @@ import { RotatingFileSink } from "@t3tools/shared/logging";
 import { errorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";
 import type { ResourceAttribution } from "../../resourceTelemetry/ResourceAttribution.ts";
@@ -30,8 +32,13 @@ const DEFAULT_BATCH_WINDOW_MS = 1_000;
 const DEFAULT_MAX_TOTAL_BYTES = 512 * MEBIBYTE;
 const DEFAULT_MAX_AGE_MS = 14 * DAY_MS;
 const DEFAULT_RETENTION_CHECK_INTERVAL_MS = 5 * 60 * 1_000;
-const DEFAULT_MAX_BUFFERED_BYTES = MEBIBYTE;
-const DEFAULT_MAX_BUFFERED_RECORDS = 512;
+// Leave room for ordinary provider bursts while keeping a hard ceiling during
+// a sustained filesystem/antivirus stall. The one-second batch window still
+// controls normal write latency; these values are backlog limits, not targets.
+const DEFAULT_MAX_BUFFERED_BYTES = 16 * MEBIBYTE;
+const DEFAULT_MAX_BUFFERED_RECORDS = 16_384;
+const MIN_RETRY_DELAY_MS = 1_000;
+const MAX_RETRY_DELAY_MS = 30_000;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -70,6 +77,8 @@ export interface EventNdjsonLogStoreOptions {
   readonly maxBufferedBytes?: number;
   readonly maxBufferedRecords?: number;
   readonly attribution?: ResourceAttribution["Service"];
+  readonly onDrain?: () => Effect.Effect<void>;
+  readonly writeAsync?: (filePath: string, chunk: string | Buffer) => Promise<void>;
 }
 
 export interface EventNdjsonLoggerOptions extends EventNdjsonLogStoreOptions {
@@ -116,6 +125,8 @@ interface ResolvedOptions {
   readonly maxBufferedBytes: number;
   readonly maxBufferedRecords: number;
   readonly attribution: ResourceAttribution["Service"] | undefined;
+  readonly onDrain: (() => Effect.Effect<void>) | undefined;
+  readonly writeAsync: ((filePath: string, chunk: string | Buffer) => Promise<void>) | undefined;
 }
 
 export interface PendingRecord {
@@ -128,10 +139,41 @@ export interface PendingRecord {
 interface StoreState {
   readonly pending: ReadonlyArray<PendingRecord>;
   readonly pendingBytes: number;
+  readonly bufferedRecords: number;
+  readonly bufferedBytes: number;
   readonly sinks: ReadonlyMap<string, RotatingFileSink>;
   readonly flushScheduled: boolean;
+  readonly workerRunning: boolean;
+  readonly overflowReported: boolean;
   readonly closed: boolean;
   readonly lastRetentionAt: number;
+}
+
+interface DrainSnapshot {
+  readonly records: ReadonlyArray<PendingRecord>;
+  readonly sinks: ReadonlyMap<string, RotatingFileSink>;
+  readonly lastRetentionAt: number;
+}
+
+interface DrainedState {
+  readonly sinks: ReadonlyMap<string, RotatingFileSink>;
+  readonly lastRetentionAt: number;
+}
+
+interface WorkerTake {
+  readonly snapshot: DrainSnapshot | undefined;
+  readonly closed: boolean;
+}
+
+interface CloseAction {
+  readonly first: boolean;
+  readonly startWorker: boolean;
+}
+
+interface WriteAction {
+  readonly reportOverflow: boolean;
+  readonly scheduleFlush: boolean;
+  readonly startWorker: boolean;
 }
 
 interface AttributionSummary {
@@ -152,6 +194,7 @@ interface RetentionResult {
 interface DrainResult {
   readonly attributions: ReadonlyArray<AttributionSummary>;
   readonly failures: ReadonlyArray<FileOperationFailure>;
+  readonly failedRecords: ReadonlyArray<PendingRecord>;
 }
 
 function logWarning(message: string, context: Record<string, unknown>): Effect.Effect<void> {
@@ -189,19 +232,19 @@ function shouldPersist(stream: EventNdjsonStream, event: unknown): boolean {
   }
 }
 
-export function writeBatchedMessages(
-  sink: Pick<RotatingFileSink, "write">,
+export async function writeBatchedMessages(
+  sink: Pick<RotatingFileSink, "writeAsync">,
   records: ReadonlyArray<PendingRecord>,
   maxBytes: number,
   onWritten: (records: ReadonlyArray<PendingRecord>) => void,
-): void {
+): Promise<void> {
   let pendingRecords: Array<PendingRecord> = [];
   let pendingBytes = 0;
 
-  const flush = () => {
+  const flush = async () => {
     if (pendingRecords.length === 0) return;
     const writtenRecords = pendingRecords;
-    sink.write(writtenRecords.map((record) => record.line).join(""));
+    await sink.writeAsync(writtenRecords.map((record) => record.line).join(""));
     onWritten(writtenRecords);
     pendingRecords = [];
     pendingBytes = 0;
@@ -209,15 +252,15 @@ export function writeBatchedMessages(
 
   for (const record of records) {
     if (pendingBytes > 0 && pendingBytes + record.bytes > maxBytes) {
-      flush();
+      await flush();
     }
     pendingRecords.push(record);
     pendingBytes += record.bytes;
     if (pendingBytes >= maxBytes) {
-      flush();
+      await flush();
     }
   }
-  flush();
+  await flush();
 }
 
 function isProviderLogFile(filePath: string, fileName: string, filePrefix: string): boolean {
@@ -317,6 +360,8 @@ function resolveOptions(
     maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
     maxBufferedRecords: options.maxBufferedRecords ?? DEFAULT_MAX_BUFFERED_RECORDS,
     attribution: options.attribution,
+    onDrain: options.onDrain,
+    writeAsync: options.writeAsync,
   } satisfies ResolvedOptions;
 
   const validations = [
@@ -337,28 +382,23 @@ function resolveOptions(
   return Effect.succeed(resolved);
 }
 
-function drainPending(input: {
+async function drainPending(input: {
   readonly directory: string;
   readonly options: ResolvedOptions;
-  readonly state: StoreState;
+  readonly snapshot: DrainSnapshot;
   readonly filePrefix: string;
   readonly now: number;
-  readonly timerFired: boolean;
-  readonly close: boolean;
-}): readonly [DrainResult, StoreState] {
-  if (input.state.closed) {
-    return [{ attributions: [], failures: [] }, input.state];
-  }
-
-  const sinks = new Map(input.state.sinks);
+}): Promise<readonly [DrainResult, DrainedState]> {
+  const sinks = new Map(input.snapshot.sinks);
   const failures: Array<FileOperationFailure> = [];
+  const failedRecordSet = new Set<PendingRecord>();
   const attributionByStream = new Map<
     EventNdjsonStream,
     { count: number; logicalWriteBytes: number }
   >();
   const recordsBySegment = new Map<string, Array<PendingRecord>>();
 
-  for (const record of input.state.pending) {
+  for (const record of input.snapshot.records) {
     const records = recordsBySegment.get(record.threadSegment) ?? [];
     records.push(record);
     recordsBySegment.set(record.threadSegment, records);
@@ -378,13 +418,22 @@ function drainPending(input: {
         sinks.set(threadSegment, sink);
       } catch (cause) {
         failures.push({ filePath, cause });
+        for (const record of records) failedRecordSet.add(record);
         continue;
       }
     }
 
+    const writtenRecordSet = new Set<PendingRecord>();
     try {
-      writeBatchedMessages(sink, records, input.options.maxBytes, (writtenRecords) => {
-        for (const record of writtenRecords) {
+      const writeSink = input.options.writeAsync
+        ? {
+            writeAsync: (chunk: string | Buffer) =>
+              input.options.writeAsync?.(filePath, chunk) ?? Promise.resolve(),
+          }
+        : sink;
+      await writeBatchedMessages(writeSink, records, input.options.maxBytes, (written) => {
+        for (const record of written) {
+          writtenRecordSet.add(record);
           const current = attributionByStream.get(record.stream) ?? {
             count: 0,
             logicalWriteBytes: 0,
@@ -398,18 +447,22 @@ function drainPending(input: {
     } catch (cause) {
       sinks.delete(threadSegment);
       failures.push({ filePath, cause });
+      for (const record of records) {
+        if (!writtenRecordSet.has(record)) failedRecordSet.add(record);
+      }
     }
   }
 
   const retentionDue =
-    input.now - input.state.lastRetentionAt >= input.options.retentionCheckIntervalMs;
+    input.now - input.snapshot.lastRetentionAt >= input.options.retentionCheckIntervalMs;
+  const activeThreadSegments = new Set([...input.snapshot.sinks.keys(), ...sinks.keys()]);
   const retention = retentionDue
     ? enforceRetention({
         directory: input.directory,
         maxTotalBytes: input.options.maxTotalBytes,
         maxAgeMs: input.options.maxAgeMs,
         activeFilePaths: new Set(
-          Array.from(sinks.keys(), (threadSegment) =>
+          Array.from(activeThreadSegments, (threadSegment) =>
             providerLogPath(input.directory, input.filePrefix, threadSegment),
           ),
         ),
@@ -425,14 +478,11 @@ function drainPending(input: {
         ...value,
       })),
       failures: [...failures, ...retention.failures],
+      failedRecords: input.snapshot.records.filter((record) => failedRecordSet.has(record)),
     },
     {
-      pending: [],
-      pendingBytes: 0,
       sinks,
-      flushScheduled: input.timerFired ? false : input.state.flushScheduled,
-      closed: input.close,
-      lastRetentionAt: retentionDue ? input.now : input.state.lastRetentionAt,
+      lastRetentionAt: retentionDue ? input.now : input.snapshot.lastRetentionAt,
     },
   ];
 }
@@ -478,32 +528,23 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     });
   }
 
-  const stateRef = yield* SynchronizedRef.make<StoreState>({
+  const stateRef = yield* Ref.make<StoreState>({
     pending: [],
     pendingBytes: 0,
+    bufferedRecords: 0,
+    bufferedBytes: 0,
     sinks: new Map(),
     flushScheduled: false,
+    workerRunning: false,
+    overflowReported: false,
     closed: false,
     lastRetentionAt: initializedAt,
   });
   const timerScope = yield* Scope.make();
+  const drainCompleted = yield* Deferred.make<void>();
+  const closeCompleted = yield* Deferred.make<void>();
 
-  const flush = Effect.fnUntraced(function* (timerFired: boolean, close: boolean) {
-    const startedAt = yield* Clock.currentTimeMillis;
-    const result = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
-      Effect.sync(() =>
-        drainPending({
-          directory,
-          options: resolved,
-          state,
-          filePrefix,
-          now: startedAt,
-          timerFired,
-          close,
-        }),
-      ),
-    );
-
+  const reportDrain = Effect.fnUntraced(function* (result: DrainResult, startedAt: number) {
     for (const failure of result.failures) {
       yield* logWarning("provider event log write or retention failed", {
         filePath: failure.filePath,
@@ -534,19 +575,179 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
         { discard: true },
       );
     }
+    if (resolved.onDrain && (result.attributions.length > 0 || result.failures.length > 0)) {
+      yield* resolved.onDrain();
+    }
   });
 
-  const scheduleFlush = Effect.fnUntraced(function* () {
-    yield* Effect.forkIn(
-      Effect.sleep(resolved.batchWindowMs).pipe(Effect.andThen(flush(true, false))),
-      timerScope,
-      { startImmediately: true },
-    );
-  });
+  const worker = Effect.gen(function* () {
+    let retryDelayMs = MIN_RETRY_DELAY_MS;
+    while (true) {
+      const next = yield* Ref.modify(stateRef, (state): readonly [WorkerTake, StoreState] => {
+        if (state.pending.length === 0) {
+          return [
+            { snapshot: undefined, closed: state.closed },
+            { ...state, workerRunning: false },
+          ] as const;
+        }
+
+        return [
+          {
+            snapshot: {
+              records: state.pending,
+              sinks: state.sinks,
+              lastRetentionAt: state.lastRetentionAt,
+            },
+            closed: false,
+          },
+          {
+            ...state,
+            pending: [],
+            pendingBytes: 0,
+          },
+        ] as const;
+      });
+
+      if (next.snapshot === undefined) {
+        if (next.closed) {
+          yield* Deferred.succeed(drainCompleted, undefined);
+        }
+        return;
+      }
+
+      const snapshot = next.snapshot;
+      const startedAt = yield* Clock.currentTimeMillis;
+      const drainExit = yield* Effect.promise(() =>
+        drainPending({
+          directory,
+          options: resolved,
+          snapshot,
+          filePrefix,
+          now: startedAt,
+        }),
+      ).pipe(Effect.exit);
+      const [result, drainedState] = Exit.isSuccess(drainExit)
+        ? drainExit.value
+        : [
+            {
+              attributions: [],
+              failures: [],
+              failedRecords: snapshot.records,
+            },
+            {
+              sinks: snapshot.sinks,
+              lastRetentionAt: snapshot.lastRetentionAt,
+            },
+          ];
+
+      if (!Exit.isSuccess(drainExit)) {
+        yield* logWarning("provider event log drain failed", {
+          errorTag: errorTag(drainExit.cause),
+        });
+      }
+
+      const retry = yield* Ref.modify(stateRef, (state) => {
+        const retryRecords = state.closed ? [] : result.failedRecords;
+        const retryBytes = retryRecords.reduce((total, record) => total + record.bytes, 0);
+        const completedRecords = snapshot.records.length - retryRecords.length;
+        const completedBytes =
+          snapshot.records.reduce((total, record) => total + record.bytes, 0) - retryBytes;
+        return [
+          retryRecords.length > 0,
+          {
+            ...state,
+            ...drainedState,
+            pending: [...retryRecords, ...state.pending],
+            pendingBytes: state.pendingBytes + retryBytes,
+            bufferedRecords: Math.max(0, state.bufferedRecords - completedRecords),
+            bufferedBytes: Math.max(0, state.bufferedBytes - completedBytes),
+            overflowReported:
+              completedRecords === 0 && completedBytes === 0 ? state.overflowReported : false,
+          },
+        ] as const;
+      });
+      yield* reportDrain(result, startedAt).pipe(
+        Effect.catchCause((cause) =>
+          logWarning("provider event log drain reporting failed", {
+            errorTag: errorTag(cause),
+          }),
+        ),
+      );
+      if (retry) {
+        yield* Effect.sleep(retryDelayMs);
+        retryDelayMs = Math.min(MAX_RETRY_DELAY_MS, retryDelayMs * 2);
+      } else {
+        retryDelayMs = MIN_RETRY_DELAY_MS;
+      }
+    }
+  }).pipe(Effect.uninterruptible);
+
+  const startWorker = Effect.forkIn(worker, timerScope, { startImmediately: true }).pipe(
+    Effect.asVoid,
+  );
+
+  const scheduleFlush = Effect.forkIn(
+    Effect.sleep(resolved.batchWindowMs).pipe(
+      Effect.andThen(
+        Ref.modify(stateRef, (state) => {
+          const nextState = { ...state, flushScheduled: false };
+          if (state.closed || state.workerRunning || state.pending.length === 0) {
+            return [false, nextState] as const;
+          }
+          return [true, { ...nextState, workerRunning: true }] as const;
+        }),
+      ),
+      Effect.flatMap((start) => (start ? startWorker : Effect.void)),
+    ),
+    timerScope,
+    { startImmediately: true },
+  ).pipe(Effect.asVoid);
+
+  const superviseClose = Deferred.await(drainCompleted).pipe(
+    Effect.timeoutOption("2 seconds"),
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          // Release callers at the deadline, but keep the detached best-effort
+          // worker alive so a late filesystem completion can clean up its scope.
+          Deferred.succeed(closeCompleted, undefined).pipe(
+            Effect.andThen(Deferred.await(drainCompleted)),
+            Effect.andThen(Scope.close(timerScope, Exit.void)),
+          ),
+        onSome: () =>
+          Scope.close(timerScope, Exit.void).pipe(
+            Effect.andThen(Deferred.succeed(closeCompleted, undefined)),
+          ),
+      }),
+    ),
+  );
 
   const close = Effect.fnUntraced(function* () {
-    yield* flush(false, true);
-    yield* Scope.close(timerScope, Exit.void);
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const action = yield* Ref.modify(stateRef, (state): readonly [CloseAction, StoreState] => {
+          if (state.closed) {
+            return [{ first: false, startWorker: false }, state] as const;
+          }
+          const start = !state.workerRunning;
+          return [
+            { first: true, startWorker: start },
+            {
+              ...state,
+              closed: true,
+              workerRunning: state.workerRunning || start,
+            },
+          ] as const;
+        });
+        if (action.startWorker) {
+          yield* startWorker;
+        }
+        if (action.first) {
+          yield* superviseClose.pipe(Effect.forkDetach);
+        }
+        yield* restore(Deferred.await(closeCompleted));
+      }),
+    );
   });
 
   const loggerViews = new Map<EventNdjsonStream, EventNdjsonLogger>();
@@ -562,33 +763,68 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       const line = `[${observedAt}] ${resolveStreamLabel(stream)}: ${payload}\n`;
       const bytes = Buffer.byteLength(line);
-      const action = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-        if (state.closed) {
-          return Effect.succeed([{ flush: false }, state] as const);
-        }
-        const pending = [
-          ...state.pending,
-          { stream, threadSegment: resolveThreadSegment(threadId), line, bytes },
-        ];
-        const pendingBytes = state.pendingBytes + bytes;
-        const flush =
-          resolved.batchWindowMs === 0 ||
-          pending.length >= resolved.maxBufferedRecords ||
-          pendingBytes >= resolved.maxBufferedBytes;
-        const schedule = !flush && !state.flushScheduled;
-        const nextState = {
-          ...state,
-          pending,
-          pendingBytes,
-          flushScheduled: state.flushScheduled || schedule,
-        };
-        return (schedule ? scheduleFlush() : Effect.void).pipe(
-          Effect.as([{ flush }, nextState] as const),
-        );
-      }).pipe(Effect.uninterruptible);
-
-      if (action.flush) {
-        yield* flush(false, false);
+      const action = yield* Effect.uninterruptible(
+        Ref.modify(stateRef, (state): readonly [WriteAction, StoreState] => {
+          if (state.closed) {
+            return [
+              { reportOverflow: false, scheduleFlush: false, startWorker: false },
+              state,
+            ] as const;
+          }
+          if (
+            state.bufferedRecords >= resolved.maxBufferedRecords ||
+            state.bufferedBytes + bytes > resolved.maxBufferedBytes
+          ) {
+            const start = !state.workerRunning && state.pending.length > 0;
+            return [
+              {
+                reportOverflow: !state.overflowReported,
+                scheduleFlush: false,
+                startWorker: start,
+              },
+              {
+                ...state,
+                workerRunning: state.workerRunning || start,
+                overflowReported: true,
+              },
+            ] as const;
+          }
+          // The Ref owns this array until the worker atomically detaches it.
+          // Appending in place is safe here and avoids O(n^2) array copying
+          // during a provider burst; detached snapshots are never mutated.
+          const pending = state.pending as Array<PendingRecord>;
+          pending.push({ stream, threadSegment: resolveThreadSegment(threadId), line, bytes });
+          const pendingBytes = state.pendingBytes + bytes;
+          const flush =
+            resolved.batchWindowMs === 0 ||
+            pending.length >= resolved.maxBufferedRecords ||
+            pendingBytes >= resolved.maxBufferedBytes;
+          const start = flush && !state.workerRunning;
+          const schedule = !flush && !state.workerRunning && !state.flushScheduled;
+          return [
+            { reportOverflow: false, scheduleFlush: schedule, startWorker: start },
+            {
+              ...state,
+              pending,
+              pendingBytes,
+              bufferedRecords: state.bufferedRecords + 1,
+              bufferedBytes: state.bufferedBytes + bytes,
+              workerRunning: state.workerRunning || start,
+              flushScheduled: state.flushScheduled || schedule,
+            },
+          ] as const;
+        }).pipe(
+          Effect.tap((action) =>
+            action.startWorker ? startWorker : action.scheduleFlush ? scheduleFlush : Effect.void,
+          ),
+        ),
+      );
+      if (action.reportOverflow) {
+        yield* logWarning("provider event log buffer is full; dropping records", {
+          filePath,
+          maxBufferedBytes: resolved.maxBufferedBytes,
+          maxBufferedRecords: resolved.maxBufferedRecords,
+        });
       }
     });
 

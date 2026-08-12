@@ -4,13 +4,16 @@ import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Order from "effect/Order";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
+import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import {
@@ -200,6 +203,426 @@ describe("observability", () => {
           assert.equal(lines.length, 2);
           assert.equal(lines[0]?.name, "alpha");
           assert.equal(lines[1]?.name, "beta");
+        }),
+      ),
+    );
+
+    it.effect("keeps trace backlog bounded while an asynchronous write is stalled", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const writeStarted = Promise.withResolvers<void>();
+          const releaseWrite = Promise.withResolvers<void>();
+          const writtenChunks: Array<string> = [];
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 10 * 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            writeAsync: async (chunk) => {
+              writeStarted.resolve();
+              await releaseWrite.promise;
+              writtenChunks.push(chunk.toString());
+            },
+          });
+
+          for (let index = 0; index < 256; index += 1) {
+            sink.push(makeRecord("first", String(index)));
+          }
+          yield* Effect.promise(() => writeStarted.promise);
+          for (let index = 0; index < 10_000; index += 1) {
+            sink.push(makeRecord("queued", String(index)));
+          }
+
+          releaseWrite.resolve();
+          yield* sink.close();
+
+          const lines = writtenChunks
+            .join("")
+            .trimEnd()
+            .split("\n")
+            .map((line) => decodeTraceRecordLine(line));
+          assert.equal(lines.length, 256 + 8_192);
+          assert.equal(lines[256]?.name, "queued");
+          assert.include(lines[256]?.spanId ?? "", "1808");
+          assert.include(lines.at(-1)?.spanId ?? "", "9999");
+        }),
+      ),
+    );
+
+    it.effect("automatically drains a threshold reached during an in-flight write", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const firstWriteStarted = Promise.withResolvers<void>();
+          const releaseFirstWrite = Promise.withResolvers<void>();
+          const secondWriteStarted = Promise.withResolvers<void>();
+          const writtenChunks: Array<string> = [];
+          let writeCount = 0;
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 10 * 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            writeAsync: async (chunk) => {
+              writeCount += 1;
+              if (writeCount === 1) {
+                firstWriteStarted.resolve();
+                await releaseFirstWrite.promise;
+              } else if (writeCount === 2) {
+                secondWriteStarted.resolve();
+              }
+              writtenChunks.push(chunk.toString());
+            },
+          });
+
+          for (let index = 0; index < 256; index += 1) {
+            sink.push(makeRecord("first", String(index)));
+          }
+          yield* Effect.promise(() => firstWriteStarted.promise);
+
+          for (let index = 0; index < 256; index += 1) {
+            sink.push(makeRecord("second", String(index)));
+          }
+          releaseFirstWrite.resolve();
+
+          // The second write must begin without an explicit flush, close, or
+          // batch-window tick.
+          yield* Effect.promise(() => secondWriteStarted.promise);
+          yield* sink.close();
+
+          const lines = writtenChunks
+            .join("")
+            .trimEnd()
+            .split("\n")
+            .map((line) => decodeTraceRecordLine(line));
+          assert.equal(writeCount, 2);
+          assert.equal(lines.length, 512);
+          assert.equal(lines[0]?.name, "first");
+          assert.equal(lines[255]?.name, "first");
+          assert.equal(lines[256]?.name, "second");
+          assert.equal(lines[511]?.name, "second");
+        }),
+      ),
+    );
+
+    it.effect("ignores records pushed after close starts while preserving earlier records", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const writeStarted = Promise.withResolvers<void>();
+          const releaseWrite = Promise.withResolvers<void>();
+          const writtenChunks: Array<string> = [];
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 10 * 1024 * 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            writeAsync: async (chunk) => {
+              writeStarted.resolve();
+              await releaseWrite.promise;
+              writtenChunks.push(chunk.toString());
+            },
+          });
+
+          sink.push(makeRecord("before-close"));
+          const closeFiber = yield* sink.close().pipe(Effect.forkChild);
+          yield* Effect.promise(() => writeStarted.promise);
+          sink.push(makeRecord("after-close"));
+          releaseWrite.resolve();
+          yield* Fiber.join(closeFiber);
+          yield* sink.close();
+
+          const lines = writtenChunks
+            .join("")
+            .trimEnd()
+            .split("\n")
+            .map((line) => decodeTraceRecordLine(line));
+          assert.deepEqual(
+            lines.map((line) => line.name),
+            ["before-close"],
+          );
+        }),
+      ),
+    );
+
+    it.effect("reports a completed close only once", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const reported = yield* Ref.make(0);
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            onFlush: () => Ref.update(reported, (count) => count + 1),
+          });
+
+          sink.push(makeRecord("close-once"));
+          yield* sink.close();
+          yield* sink.close();
+
+          assert.equal(yield* Ref.get(reported), 1);
+        }),
+      ),
+    );
+
+    it.effect("retries a failed close write without losing accepted trace records", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const writtenChunks: Array<string> = [];
+          const firstWriteStarted = Promise.withResolvers<void>();
+          let writeCount = 0;
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            writeAsync: async (chunk) => {
+              writeCount += 1;
+              if (writeCount === 1) {
+                firstWriteStarted.resolve();
+                throw new Error("transient trace write failure");
+              }
+              writtenChunks.push(chunk.toString());
+            },
+          });
+
+          sink.push(makeRecord("retry-on-close"));
+          const closeFiber = yield* sink.close().pipe(Effect.forkChild);
+          yield* Effect.promise(() => firstWriteStarted.promise);
+          yield* TestClock.adjust("25 millis");
+          yield* Fiber.join(closeFiber);
+
+          const records = writtenChunks
+            .join("")
+            .trimEnd()
+            .split("\n")
+            .map((line) => decodeTraceRecordLine(line));
+          assert.equal(writeCount, 2);
+          assert.deepEqual(
+            records.map((record) => record.name),
+            ["retry-on-close"],
+          );
+        }),
+      ),
+    );
+
+    it.effect("waits for threshold follow-up records before close completes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const firstWriteStarted = Promise.withResolvers<void>();
+          const releaseFirstWrite = Promise.withResolvers<void>();
+          const secondWriteStarted = Promise.withResolvers<void>();
+          const releaseSecondWrite = Promise.withResolvers<void>();
+          const writtenChunks: Array<string> = [];
+          let writeCount = 0;
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1_048_576,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            writeAsync: async (chunk) => {
+              writeCount += 1;
+              if (writeCount === 1) {
+                firstWriteStarted.resolve();
+                await releaseFirstWrite.promise;
+              } else {
+                secondWriteStarted.resolve();
+                await releaseSecondWrite.promise;
+              }
+              writtenChunks.push(chunk.toString());
+            },
+          });
+
+          for (let index = 0; index < 256; index += 1) {
+            sink.push(makeRecord("before-close", String(index)));
+          }
+          yield* Effect.promise(() => firstWriteStarted.promise);
+          for (let index = 0; index < 256; index += 1) {
+            sink.push(makeRecord("during-write", String(index)));
+          }
+
+          const closeFiber = yield* sink.close().pipe(Effect.forkChild);
+          releaseFirstWrite.resolve();
+          yield* Effect.promise(() => secondWriteStarted.promise);
+          assert.isUndefined(closeFiber.pollUnsafe());
+          releaseSecondWrite.resolve();
+          yield* Fiber.join(closeFiber);
+
+          const records = writtenChunks
+            .join("")
+            .trimEnd()
+            .split("\n")
+            .map((line) => decodeTraceRecordLine(line));
+          assert.equal(writeCount, 2);
+          assert.equal(records.length, 512);
+          assert.deepEqual(
+            records.slice(0, 256).map((record) => record.name),
+            Array.from({ length: 256 }, () => "before-close"),
+          );
+          assert.deepEqual(
+            records.slice(256).map((record) => record.name),
+            Array.from({ length: 256 }, () => "during-write"),
+          );
+        }),
+      ),
+    );
+
+    it.effect("bounds close when an asynchronous write never completes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const writeStarted = Promise.withResolvers<void>();
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            writeAsync: () => {
+              writeStarted.resolve();
+              return new Promise(() => undefined);
+            },
+          });
+
+          sink.push(makeRecord("stalled-close"));
+          const closeFiber = yield* sink.close().pipe(Effect.forkChild);
+          yield* Effect.promise(() => writeStarted.promise);
+          yield* TestClock.adjust("2 seconds");
+          yield* Fiber.join(closeFiber);
+
+          sink.push(makeRecord("ignored-after-timeout"));
+          assert.equal(yield* fileSystem.exists(tracePath), false);
+        }),
+      ),
+    );
+
+    it.effect("bounds close when every asynchronous write rejects", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const firstWriteStarted = Promise.withResolvers<void>();
+          let writeCount = 0;
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            writeAsync: () => {
+              writeCount += 1;
+              firstWriteStarted.resolve();
+              return Promise.reject(new Error("permanent trace write failure"));
+            },
+          });
+
+          sink.push(makeRecord("rejected-close"));
+          const closeFiber = yield* sink.close().pipe(Effect.forkChild);
+          yield* Effect.promise(() => firstWriteStarted.promise);
+          yield* TestClock.adjust("2 seconds");
+          yield* Fiber.join(closeFiber);
+
+          assert.isAtLeast(writeCount, 2);
+          const attemptsAfterClose = writeCount;
+          yield* TestClock.adjust("1 second");
+          assert.equal(writeCount, attemptsAfterClose);
+          assert.equal(yield* fileSystem.exists(tracePath), false);
+        }),
+      ),
+    );
+
+    it.effect("does not run a pre-admitted flush after close completes", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
+          const tracePath = path.join(tempDir, "shared.trace.ndjson");
+          const firstWriteStarted = Promise.withResolvers<void>();
+          let writeCount = 0;
+
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1024,
+            maxFiles: 2,
+            batchWindowMs: 10_000,
+            writeAsync: () => {
+              writeCount += 1;
+              firstWriteStarted.resolve();
+              return Promise.reject(new Error("permanent trace write failure"));
+            },
+          });
+
+          const scheduled: Array<() => void> = [];
+          let schedulerChecks = 0;
+          const scheduler: Scheduler.Scheduler = {
+            executionMode: "async",
+            shouldYield: () => {
+              schedulerChecks += 1;
+              return schedulerChecks === 2;
+            },
+            makeDispatcher: () => ({
+              scheduleTask: (task) => {
+                scheduled.push(task);
+              },
+              flush: () => {
+                while (scheduled.length > 0) scheduled.shift()?.();
+              },
+            }),
+          };
+
+          sink.push(makeRecord("close-before-stale-flush"));
+          const staleFlush = yield* sink.flush.pipe(
+            Effect.provideService(Scheduler.Scheduler, scheduler),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          assert.isUndefined(staleFlush.pollUnsafe());
+          assert.equal(scheduled.length, 1);
+
+          const closeFiber = yield* sink.close().pipe(Effect.forkChild);
+          yield* Effect.promise(() => firstWriteStarted.promise);
+          yield* TestClock.adjust("2 seconds");
+          yield* Fiber.join(closeFiber);
+          const writesAtClose = writeCount;
+
+          scheduled.shift()?.();
+          yield* Fiber.join(staleFlush);
+
+          assert.equal(writeCount, writesAtClose);
         }),
       ),
     );

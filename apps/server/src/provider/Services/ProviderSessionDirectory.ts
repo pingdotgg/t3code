@@ -1,4 +1,5 @@
 import type {
+  EventId,
   ProviderInstanceId,
   ProviderDriverKind,
   ProviderSessionRuntimeStatus,
@@ -60,6 +61,31 @@ export interface ProviderSessionDirectoryShape {
 
   readonly listBindings: () => Effect.Effect<
     ReadonlyArray<ProviderRuntimeBindingWithMetadata>,
+    ProviderSessionDirectoryPersistenceError
+  >;
+
+  /** Acknowledge one persisted terminal event without clearing a newer one. */
+  readonly clearPendingTerminalEvent: (input: {
+    readonly threadId: ThreadId;
+    readonly eventId: EventId;
+  }) => Effect.Effect<void, ProviderSessionDirectoryPersistenceError>;
+
+  /** Append a canonical terminal event before runtime fan-out. */
+  readonly appendPendingTerminalEvent: (input: {
+    readonly eventId: EventId;
+    readonly threadId: ThreadId;
+    readonly event: unknown;
+    readonly createdAt: string;
+  }) => Effect.Effect<void, ProviderSessionDirectoryPersistenceError>;
+
+  /** List every pending canonical terminal event in emission order. */
+  readonly listPendingTerminalEvents: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly eventId: EventId;
+      readonly threadId: ThreadId;
+      readonly event: unknown;
+      readonly createdAt: string;
+    }>,
     ProviderSessionDirectoryPersistenceError
   >;
 }

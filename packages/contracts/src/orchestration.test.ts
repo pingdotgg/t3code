@@ -1,12 +1,15 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { ProjectId } from "./baseSchemas.ts";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
+  OrchestrationCommandDeduplicationWindowChangedError,
   OrchestrationCommand,
+  OrchestrationTurnStartPendingError,
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
@@ -23,6 +26,7 @@ import {
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
+  threadTurnBootstrapRequiresSameServerProcess,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -41,7 +45,103 @@ const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(Orchestration
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+const decodeCommandDeduplicationWindowChangedError = Schema.decodeUnknownSync(
+  OrchestrationCommandDeduplicationWindowChangedError,
+);
+const decodeTurnStartPendingError = Schema.decodeUnknownSync(OrchestrationTurnStartPendingError);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
+
+it("decodes a dedicated deduplication window error with its stable message", () => {
+  const error = decodeCommandDeduplicationWindowChangedError({
+    _tag: "OrchestrationCommandDeduplicationWindowChangedError",
+  });
+
+  assert.strictEqual(error._tag, "OrchestrationCommandDeduplicationWindowChangedError");
+  assert.strictEqual(
+    error.message,
+    "The server deduplication window changed before this command could replay.",
+  );
+});
+
+it("decodes a dedicated transient turn-start pending error", () => {
+  const error = decodeTurnStartPendingError({
+    _tag: "OrchestrationTurnStartPendingError",
+    threadId: "thread-pending",
+  });
+
+  assert.strictEqual(error._tag, "OrchestrationTurnStartPendingError");
+  assert.strictEqual(error.threadId, "thread-pending");
+  assert.strictEqual(
+    error.message,
+    "Thread thread-pending already has a turn start awaiting provider adoption",
+  );
+});
+
+it("keeps only external bootstrap side effects bound to one server process", () => {
+  assert.isFalse(threadTurnBootstrapRequiresSameServerProcess(undefined));
+  assert.isFalse(
+    threadTurnBootstrapRequiresSameServerProcess({
+      createThread: {
+        projectId: ProjectId.make("project-1"),
+        title: "New thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-sol",
+          options: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-08-12T00:00:00.000Z",
+      },
+      runSetupScript: true,
+    }),
+  );
+  assert.isTrue(
+    threadTurnBootstrapRequiresSameServerProcess({
+      prepareWorktree: { projectCwd: "/repo", baseBranch: "main" },
+    }),
+  );
+  assert.isTrue(
+    threadTurnBootstrapRequiresSameServerProcess({
+      createThread: {
+        projectId: ProjectId.make("project-1"),
+        title: "New thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-sol",
+          options: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature/restart",
+        worktreePath: "/worktree",
+        createdAt: "2026-08-12T00:00:00.000Z",
+      },
+      runSetupScript: true,
+    }),
+  );
+  assert.isFalse(
+    threadTurnBootstrapRequiresSameServerProcess({
+      createThread: {
+        projectId: ProjectId.make("project-1"),
+        title: "New thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-sol",
+          options: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature/restart",
+        worktreePath: "/worktree",
+        createdAt: "2026-08-12T00:00:00.000Z",
+      },
+      runSetupScript: false,
+    }),
+  );
+});
 
 function getOptionValue(
   options: ReadonlyArray<{ id: string; value: unknown }> | undefined,

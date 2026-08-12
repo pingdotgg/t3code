@@ -9,6 +9,8 @@ import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
+const portablePath = (value: string) => value.replaceAll("\\", "/");
+
 const environmentLayer = DesktopEnvironment.layer({
   dirname: "/repo/apps/desktop/dist-electron",
   homeDirectory: "/Users/alice",
@@ -34,7 +36,8 @@ describe("DesktopAssets", () => {
         description: "private filesystem diagnostic",
       });
       const fileSystemLayer = FileSystem.layerNoop({
-        exists: (path) => (path === candidatePath ? Effect.fail(cause) : Effect.succeed(false)),
+        exists: (path) =>
+          portablePath(path) === candidatePath ? Effect.fail(cause) : Effect.succeed(false),
       });
       const assetsLayer = DesktopAssets.layer.pipe(
         Layer.provide(Layer.merge(fileSystemLayer, environmentLayer)),
@@ -45,11 +48,11 @@ describe("DesktopAssets", () => {
 
       assert.instanceOf(error, DesktopAssets.DesktopAssetProbeError);
       assert.equal(error.fileName, fileName);
-      assert.equal(error.candidatePath, candidatePath);
+      assert.equal(portablePath(error.candidatePath), candidatePath);
       assert.strictEqual(error.cause, cause);
       assert.equal(
         error.message,
-        `Failed to probe desktop asset "${fileName}" at ${candidatePath}.`,
+        `Failed to probe desktop asset "${fileName}" at ${error.candidatePath}.`,
       );
       assert.notInclude(error.message, "private filesystem diagnostic");
     }),

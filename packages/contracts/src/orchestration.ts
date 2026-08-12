@@ -808,6 +808,19 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+/**
+ * Whether replaying bootstrap work requires the original server process.
+ * Thread creation is receipt-backed and restart-safe. Worktree creation and
+ * setup-script launch cross external side-effect boundaries, so those retain
+ * the server-run guard until their progress is durably resumable.
+ */
+export function threadTurnBootstrapRequiresSameServerProcess(
+  bootstrap: ThreadTurnStartBootstrap | undefined,
+): boolean {
+  if (bootstrap?.prepareWorktree !== undefined) return true;
+  return bootstrap?.runSetupScript === true && bootstrap.createThread?.worktreePath != null;
+}
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -837,13 +850,17 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     messageId: MessageId,
     role: Schema.Literal("user"),
     text: Schema.String,
-    attachments: Schema.Array(UploadChatAttachment),
+    attachments: Schema.Array(UploadChatAttachment).check(
+      Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+    ),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
+  /** Deduplication epoch observed before replaying process-local bootstrap work. */
+  expectedServerRunId: Schema.optional(TrimmedNonEmptyString),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
 });
@@ -954,6 +971,7 @@ const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
   commandId: CommandId,
   threadId: ThreadId,
+  turnStartEventSequence: Schema.optional(NonNegativeInt),
   session: OrchestrationSession,
   createdAt: IsoDateTime,
 });
@@ -1061,6 +1079,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-start-requested",
+  "thread.turn-start-acknowledged",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
@@ -1243,6 +1262,14 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadTurnStartAcknowledgedPayload = Schema.Struct({
+  threadId: ThreadId,
+  eventSequence: NonNegativeInt,
+  messageId: MessageId,
+  turnId: TurnId,
+  acknowledgedAt: IsoDateTime,
+});
+
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
@@ -1281,6 +1308,7 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
 
 export const ThreadSessionSetPayload = Schema.Struct({
   threadId: ThreadId,
+  turnStartEventSequence: Schema.optional(NonNegativeInt),
   session: OrchestrationSession,
 });
 
@@ -1421,6 +1449,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-start-requested"),
     payload: ThreadTurnStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-start-acknowledged"),
+    payload: ThreadTurnStartAcknowledgedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -1699,6 +1732,26 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+export class OrchestrationCommandDeduplicationWindowChangedError extends Schema.TaggedErrorClass<OrchestrationCommandDeduplicationWindowChangedError>()(
+  "OrchestrationCommandDeduplicationWindowChangedError",
+  {},
+) {
+  override get message(): string {
+    return "The server deduplication window changed before this command could replay.";
+  }
+}
+
+export class OrchestrationTurnStartPendingError extends Schema.TaggedErrorClass<OrchestrationTurnStartPendingError>()(
+  "OrchestrationTurnStartPendingError",
+  {
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} already has a turn start awaiting provider adoption`;
+  }
+}
 
 export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<OrchestrationGetTurnDiffError>()(
   "OrchestrationGetTurnDiffError",

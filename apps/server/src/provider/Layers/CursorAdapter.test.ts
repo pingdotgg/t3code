@@ -10,11 +10,13 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { createModelSelection } from "@t3tools/shared/model";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   ApprovalRequestId,
@@ -58,6 +60,31 @@ exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.strin
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
   await NodeFSP.chmod(wrapperPath, 0o755);
   return wrapperPath;
+}
+
+async function makePortableMockAgent(platform: NodeJS.Platform, extraEnv?: Record<string, string>) {
+  if (platform !== "win32") {
+    return {
+      binaryPath: await makeMockAgentWrapper(extraEnv),
+      cwd: process.cwd(),
+    };
+  }
+
+  // Cursor always appends the `acp` argument. On Windows a POSIX shell
+  // wrapper is not directly executable, so run Node itself and place an
+  // extensionless `acp` launcher in the session cwd. Dynamic import lets the
+  // launcher stay plain JavaScript while Node loads the typed mock agent.
+  const cwd = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-mock-win-"));
+  const launcherPath = NodePath.join(cwd, "acp");
+  const mockAgentUrl = NodeURL.pathToFileURL(mockAgentPath).href;
+  const script = `Object.assign(process.env, ${JSON.stringify(extraEnv ?? {})});
+import(${JSON.stringify(mockAgentUrl)}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+`;
+  await NodeFSP.writeFile(launcherPath, script, "utf8");
+  return { binaryPath: process.execPath, cwd };
 }
 
 async function makeProbeWrapper(
@@ -174,8 +201,11 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const settings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-mock-thread");
 
-      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const platform = yield* HostProcessPlatform;
+      const mockAgent = yield* Effect.promise(() => makePortableMockAgent(platform));
+      yield* settings.updateSettings({
+        providers: { cursor: { binaryPath: mockAgent.binaryPath } },
+      });
 
       const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
         Stream.runCollect,
@@ -185,7 +215,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const session = yield* adapter.startSession({
         threadId,
         provider: ProviderDriverKind.make("cursor"),
-        cwd: process.cwd(),
+        cwd: mockAgent.cwd,
         runtimeMode: "full-access",
         modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
       });
@@ -250,6 +280,321 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("does not publish a turn before attachment preparation succeeds", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-attachment-preparation-failure");
+
+      const platform = yield* HostProcessPlatform;
+      const mockAgent = yield* Effect.promise(() => makePortableMockAgent(platform));
+      yield* settings.updateSettings({
+        providers: { cursor: { binaryPath: mockAgent.binaryPath } },
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: mockAgent.cwd,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const lifecycleEvents: Array<ProviderRuntimeEvent> = [];
+      const lifecycleEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "turn.completed"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            lifecycleEvents.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      const failure = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "inspect this",
+          attachments: [
+            {
+              type: "image",
+              id: "missing-cursor-attachment",
+              name: "missing.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "ProviderAdapterRequestError");
+
+      const sessionAfterFailure = (yield* adapter.listSessions()).find(
+        (session) => session.threadId === threadId,
+      );
+      assert.equal(sessionAfterFailure?.status, "ready");
+      assert.equal(sessionAfterFailure?.activeTurnId, undefined);
+
+      const delivered = yield* adapter.sendTurn({
+        threadId,
+        input: "continue without the attachment",
+        attachments: [],
+      });
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(lifecycleEventsFiber);
+      assert.deepEqual(
+        lifecycleEvents.map((event) => event.type),
+        ["turn.started", "turn.completed"],
+      );
+      assert.isTrue(
+        lifecycleEvents.every((event) => String(event.turnId) === String(delivered.turnId)),
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("does not start a Cursor turn when session shutdown wins prompt preparation", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const preparationStarted = yield* Deferred.make<void>();
+      const preparationRelease = yield* Deferred.make<void>();
+      const attachmentId = "cursor-shutdown-preparation-00000000-0000-4000-8000-000000000001";
+      const gatedFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        readFile: (filePath) =>
+          filePath.endsWith(`${attachmentId}.png`)
+            ? Effect.gen(function* () {
+                yield* Deferred.succeed(preparationStarted, undefined);
+                yield* Deferred.await(preparationRelease);
+                return new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+              })
+            : fileSystem.readFile(filePath),
+      });
+      const cursorConfig = decodeCursorSettings({});
+      const resolveSettings = yield* makeResolveCursorSettings;
+      const adapter = yield* makeCursorAdapter(cursorConfig, { resolveSettings }).pipe(
+        Effect.provideService(FileSystem.FileSystem, gatedFileSystem),
+      );
+      const threadId = ThreadId.make("cursor-shutdown-during-preparation");
+
+      const platform = yield* HostProcessPlatform;
+      const mockAgent = yield* Effect.promise(() => makePortableMockAgent(platform));
+      yield* settings.updateSettings({
+        providers: { cursor: { binaryPath: mockAgent.binaryPath } },
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: mockAgent.cwd,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const lifecycleEvents: Array<ProviderRuntimeEvent> = [];
+      const lifecycleEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "turn.completed"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            lifecycleEvents.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      const sendFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "race shutdown with attachment preparation",
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "preparation.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        })
+        .pipe(Effect.result, Effect.forkChild);
+
+      yield* Deferred.await(preparationStarted);
+      yield* adapter.stopSession(threadId);
+      yield* Deferred.succeed(preparationRelease, undefined);
+
+      const result = yield* Fiber.join(sendFiber);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterSessionClosedError");
+      }
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(lifecycleEventsFiber);
+      assert.deepEqual(lifecycleEvents, []);
+      assert.deepEqual(yield* adapter.listSessions(), []);
+    }),
+  );
+
+  it.effect("accepts a terminalized handoff when ACP rejects a started prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-prompt-handoff-failure");
+
+      const platform = yield* HostProcessPlatform;
+      const mockAgent = yield* Effect.promise(() =>
+        makePortableMockAgent(platform, { T3_ACP_FAIL_PROMPT: "1" }),
+      );
+      yield* settings.updateSettings({
+        providers: { cursor: { binaryPath: mockAgent.binaryPath } },
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: mockAgent.cwd,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const lifecycleEvents: Array<ProviderRuntimeEvent> = [];
+      const lifecycleEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "turn.completed"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            lifecycleEvents.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      const accepted = yield* adapter.sendTurn({
+        threadId,
+        turnStartEventSequence: 41,
+        input: "fail after handoff",
+        attachments: [],
+      });
+      assert.isTrue("terminalEventId" in accepted);
+      assert.isTrue("terminalEvent" in accepted);
+
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(lifecycleEventsFiber);
+      assert.deepEqual(
+        lifecycleEvents.map((event) => event.type),
+        ["turn.started", "turn.completed"],
+      );
+      assert.equal(String(lifecycleEvents[0]?.turnId), String(lifecycleEvents[1]?.turnId));
+      assert.equal(String(accepted.turnId), String(lifecycleEvents[0]?.turnId));
+      assert.equal(String(accepted.terminalEventId), String(lifecycleEvents[1]?.eventId));
+      assert.strictEqual(accepted.terminalEvent, lifecycleEvents[1]);
+      assert.deepEqual(
+        lifecycleEvents.map((event) => event.turnStartEventSequence),
+        [41, 41],
+      );
+      const completed = lifecycleEvents[1];
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+        assert.include(completed.payload.errorMessage ?? "", "Mock prompt failure");
+      }
+
+      const sessionAfterFailure = (yield* adapter.listSessions()).find(
+        (session) => session.threadId === threadId,
+      );
+      assert.equal(sessionAfterFailure?.status, "ready");
+      assert.equal(sessionAfterFailure?.activeTurnId, undefined);
+      assert.include(sessionAfterFailure?.lastError ?? "", "Mock prompt failure");
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("publishes a terminal when session shutdown interrupts a started Cursor prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-prompt-shutdown");
+
+      const platform = yield* HostProcessPlatform;
+      const mockAgent = yield* Effect.promise(() =>
+        makePortableMockAgent(platform, { T3_ACP_HANG_PROMPT_FOREVER: "1" }),
+      );
+      yield* settings.updateSettings({
+        providers: { cursor: { binaryPath: mockAgent.binaryPath } },
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: mockAgent.cwd,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const lifecycleEvents: Array<ProviderRuntimeEvent> = [];
+      const turnStarted = yield* Deferred.make<void>();
+      const lifecycleEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "turn.completed"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            lifecycleEvents.push(event);
+          }).pipe(
+            Effect.andThen(
+              event.type === "turn.started"
+                ? Deferred.succeed(turnStarted, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+
+      const sendFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "wait until shutdown",
+          attachments: [],
+        })
+        .pipe(Effect.result, Effect.forkChild);
+
+      yield* Deferred.await(turnStarted);
+      yield* adapter.stopSession(threadId);
+      yield* Fiber.join(sendFiber);
+
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(lifecycleEventsFiber);
+      assert.deepEqual(
+        lifecycleEvents.map((event) => event.type),
+        ["turn.started", "turn.completed"],
+      );
+      const completed = lifecycleEvents[1];
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "cancelled");
+      }
+      assert.deepEqual(yield* adapter.listSessions(), []);
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -257,10 +602,13 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const threadId = ThreadId.make("cursor-steer-thread");
 
       // Keep the first prompt in flight long enough for the steer to land.
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockAgentWrapper({ T3_ACP_PROMPT_DELAY_MS: "1500" }),
+      const platform = yield* HostProcessPlatform;
+      const mockAgent = yield* Effect.promise(() =>
+        makePortableMockAgent(platform, { T3_ACP_PROMPT_DELAY_MS: "1500" }),
       );
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings({
+        providers: { cursor: { binaryPath: mockAgent.binaryPath } },
+      });
 
       const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.threadId === threadId),
@@ -272,7 +620,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       yield* adapter.startSession({
         threadId,
         provider: ProviderDriverKind.make("cursor"),
-        cwd: process.cwd(),
+        cwd: mockAgent.cwd,
         runtimeMode: "full-access",
         modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
       });

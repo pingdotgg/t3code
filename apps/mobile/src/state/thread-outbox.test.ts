@@ -8,14 +8,21 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 import {
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
+  flattenQueuedThreadMessages,
   groupQueuedThreadMessages,
+  hasSameThreadOutboxUserPayload,
+  isOutcomeUnknownThreadOutboxHold,
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
+  queuedWorktreeBranchName,
+  resolveQueuedWorktreeBranchName,
   resolveThreadOutboxDeliveryAction,
+  shouldQueueThreadCreationForDurableDelivery,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
@@ -43,6 +50,19 @@ function queuedMessage(input: {
 }
 
 describe("thread outbox", () => {
+  it("derives a stable worktree branch from the queued command", () => {
+    const commandId = CommandId.make("12345678-abcd-4000-8000-123456789abc");
+
+    expect(queuedWorktreeBranchName(commandId)).toBe("t3code/12345678");
+    expect(queuedWorktreeBranchName(commandId)).toBe(queuedWorktreeBranchName(commandId));
+    expect(isTemporaryWorktreeBranch(queuedWorktreeBranchName(commandId))).toBe(true);
+    expect(resolveQueuedWorktreeBranchName(commandId, undefined)).toBe("t3code/12345678");
+    expect(resolveQueuedWorktreeBranchName(commandId, "t3code/abcdef12")).toBe("t3code/abcdef12");
+    expect(
+      isTemporaryWorktreeBranch(queuedWorktreeBranchName(CommandId.make("command-alpha"))),
+    ).toBe(true);
+  });
+
   it("groups messages by scoped thread and preserves creation order", () => {
     const later = queuedMessage({
       messageId: "message-2",
@@ -110,6 +130,96 @@ describe("thread outbox", () => {
     });
   });
 
+  it("round-trips a durable manual delivery hold", () => {
+    const heldMessage = {
+      ...queuedMessage({
+        messageId: "message-1",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      deliveryHoldReason: "deduplication-window-changed",
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(heldMessage))).toEqual(heldMessage);
+  });
+
+  it("round-trips the process-local pre-dispatch marker", () => {
+    const markedMessage = {
+      ...queuedMessage({
+        messageId: "message-1",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      deliveryHoldReason: "process-local-dispatch-started",
+    } satisfies QueuedThreadMessage;
+
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(markedMessage))).toEqual(
+      markedMessage,
+    );
+    expect(isOutcomeUnknownThreadOutboxHold(markedMessage)).toBe(true);
+    expect(
+      isOutcomeUnknownThreadOutboxHold({
+        ...markedMessage,
+        deliveryHoldReason: "process-local-definite-failure",
+      }),
+    ).toBe(true);
+  });
+
+  it("routes connected worktree creation through the durable outbox", () => {
+    expect(
+      shouldQueueThreadCreationForDurableDelivery({
+        environmentConnected: true,
+        workspaceMode: "worktree",
+        exactHeldReplay: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldQueueThreadCreationForDurableDelivery({
+        environmentConnected: true,
+        workspaceMode: "local",
+        exactHeldReplay: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldQueueThreadCreationForDurableDelivery({
+        environmentConnected: true,
+        workspaceMode: "worktree",
+        exactHeldReplay: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("detects edits that cannot reuse an outcome-unknown command receipt", () => {
+    const original = {
+      ...queuedMessage({
+        messageId: "message-1",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        projectCwd: "/old/project",
+        workspaceMode: "worktree",
+        branch: "main",
+        worktreePath: null,
+        worktreeBranchName: "t3code/12345678",
+      },
+    } satisfies QueuedThreadMessage;
+
+    // Process-local resolution metadata is replayed from the immutable row,
+    // but is not a user edit.
+    expect(
+      hasSameThreadOutboxUserPayload(original, {
+        ...original,
+        creation: { ...original.creation, projectCwd: "/new/project" },
+      }),
+    ).toBe(true);
+    expect(hasSameThreadOutboxUserPayload(original, { ...original, text: "edited" })).toBe(false);
+    expect(
+      hasSameThreadOutboxUserPayload(original, {
+        ...original,
+        creation: { ...original.creation, branch: "feature" },
+      }),
+    ).toBe(false);
+  });
+
   it("compares model options as part of the queued settings change", () => {
     const base = {
       instanceId: ProviderInstanceId.make("codex"),
@@ -130,6 +240,15 @@ describe("thread outbox", () => {
     expect([1, 2, 3, 4, 5, 6].map(threadOutboxRetryDelayMs)).toEqual([
       1_000, 2_000, 4_000, 8_000, 16_000, 16_000,
     ]);
+  });
+
+  it("retries while an earlier durable turn is awaiting provider adoption", () => {
+    expect(
+      shouldRetryThreadOutboxDelivery({
+        _tag: "OrchestrationTurnStartPendingError",
+        threadId: "thread-1",
+      }),
+    ).toBe(true);
   });
 
   it("serializes mutations even when an earlier mutation is slower", async () => {
@@ -457,9 +576,240 @@ describe("thread outbox", () => {
     registry.dispose();
   });
 
+  it("persists the process-local marker before the side effect and holds it after recreation", async () => {
+    const stored = new Map<MessageId, QueuedThreadMessage>();
+    let writeCount = 0;
+    let markerWriteStarted!: () => void;
+    const markerWriting = new Promise<void>((resolve) => {
+      markerWriteStarted = resolve;
+    });
+    let releaseMarkerWrite!: () => void;
+    const markerWriteBlocked = new Promise<void>((resolve) => {
+      releaseMarkerWrite = resolve;
+    });
+    const storage: ThreadOutboxStorage = {
+      load: async () => [...stored.values()],
+      write: async (message) => {
+        writeCount += 1;
+        if (writeCount === 2) {
+          markerWriteStarted();
+          await markerWriteBlocked;
+        }
+        stored.set(message.messageId, message);
+      },
+      remove: async (message) => {
+        stored.delete(message.messageId);
+      },
+    };
+    const registry = AtomRegistry.make();
+    const manager = createThreadOutboxManager({ registry, storage });
+    const message = {
+      ...queuedMessage({
+        messageId: "message-1",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "worktree" as const,
+        branch: "main",
+        worktreePath: null,
+        worktreeBranchName: "t3code/12345678",
+      },
+    };
+    await manager.enqueue(message);
+    const resolvedMessage = {
+      ...message,
+      creation: {
+        ...message.creation,
+        projectCwd: "/resolved/project",
+      },
+    };
+    let sideEffectCalls = 0;
+
+    const deliveryAtBoundary = manager
+      .beginProcessLocalDelivery(resolvedMessage)
+      .then((started) => {
+        if (started) {
+          sideEffectCalls += 1;
+        }
+      });
+    await markerWriting;
+
+    expect(sideEffectCalls).toBe(0);
+    expect(stored.get(message.messageId)).toEqual(message);
+
+    releaseMarkerWrite();
+    await deliveryAtBoundary;
+    expect(sideEffectCalls).toBe(1);
+    expect(stored.get(message.messageId)?.deliveryHoldReason).toBe(
+      "process-local-dispatch-started",
+    );
+    expect(stored.get(message.messageId)?.creation).toEqual(resolvedMessage.creation);
+
+    // Model a process death exactly after the external side effect starts,
+    // before any RPC outcome is observed.
+    registry.dispose();
+    const recreatedRegistry = AtomRegistry.make();
+    const recreatedManager = createThreadOutboxManager({ registry: recreatedRegistry, storage });
+    await recreatedManager.load();
+    const [recreatedMessage] = flattenQueuedThreadMessages(
+      recreatedRegistry.get(recreatedManager.queuedMessagesByThreadKeyAtom),
+    );
+    expect(recreatedMessage?.deliveryHoldReason).toBe("process-local-dispatch-started");
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        held: recreatedMessage?.deliveryHoldReason !== undefined,
+        isCreation: true,
+        threadExists: true,
+        shellStatus: "live",
+        environmentConnected: true,
+        threadBusy: false,
+      }),
+    ).toBe("wait");
+    recreatedRegistry.dispose();
+  });
+
+  it("never dispatches a stale edit or lets a trailing edit clear a process-local hold", async () => {
+    const registry = AtomRegistry.make();
+    const stored = new Map<MessageId, QueuedThreadMessage>();
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [...stored.values()],
+        write: async (message) => {
+          stored.set(message.messageId, message);
+        },
+        remove: async (message) => {
+          stored.delete(message.messageId);
+        },
+      },
+    });
+    const original = {
+      ...queuedMessage({
+        messageId: "message-stale-marker",
+        createdAt: "2026-06-08T10:00:01.000Z",
+      }),
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "worktree" as const,
+        branch: "main",
+        worktreePath: null,
+        worktreeBranchName: "t3code/12345678",
+      },
+    };
+    const edited = { ...original, text: "newer edit" };
+    const resolvedOriginal = {
+      ...original,
+      creation: { ...original.creation, projectCwd: "/resolved/project" },
+    };
+
+    await manager.enqueue(original);
+    await manager.update(edited);
+    await expect(manager.beginProcessLocalDelivery(resolvedOriginal)).resolves.toBe(false);
+    expect(stored.get(original.messageId)).toEqual(edited);
+
+    const resolvedEdit = {
+      ...edited,
+      creation: { ...edited.creation, projectCwd: "/resolved/project" },
+    };
+    await expect(manager.beginProcessLocalDelivery(resolvedEdit)).resolves.toBe(true);
+    await expect(manager.update({ ...edited, text: "late flush" })).resolves.toBe(false);
+    expect(stored.get(original.messageId)).toMatchObject({
+      text: "newer edit",
+      deliveryHoldReason: "process-local-dispatch-started",
+      creation: { projectCwd: "/resolved/project" },
+    });
+    registry.dispose();
+  });
+
+  it("does not cross the process-local side-effect boundary when marker persistence fails", async () => {
+    const registry = AtomRegistry.make();
+    const writeCause = new Error("disk full");
+    let failWrites = false;
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [],
+        write: async () => {
+          if (failWrites) {
+            throw writeCause;
+          }
+        },
+        remove: async () => undefined,
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    await manager.enqueue(message);
+    failWrites = true;
+    let sideEffectCalls = 0;
+
+    await expect(
+      manager.beginProcessLocalDelivery(message).then(() => {
+        sideEffectCalls += 1;
+      }),
+    ).rejects.toEqual(
+      new ThreadOutboxManagerError({
+        operation: "begin-process-local-delivery",
+        environmentId: message.environmentId,
+        threadId: message.threadId,
+        messageId: message.messageId,
+        cause: writeCause,
+      }),
+    );
+
+    expect(sideEffectCalls).toBe(0);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [message],
+    });
+    registry.dispose();
+  });
+
+  it("keeps the current process held when persisting the safety marker fails", async () => {
+    const registry = AtomRegistry.make();
+    const writeCause = new Error("disk full");
+    let failWrites = false;
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [],
+        write: async () => {
+          if (failWrites) {
+            throw writeCause;
+          }
+        },
+        remove: async () => undefined,
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+
+    await manager.enqueue(message);
+    failWrites = true;
+    await expect(manager.hold(message, "deduplication-window-changed")).rejects.toEqual(
+      new ThreadOutboxManagerError({
+        operation: "hold",
+        environmentId: message.environmentId,
+        threadId: message.threadId,
+        messageId: message.messageId,
+        cause: writeCause,
+      }),
+    );
+    const [heldMessage] = flattenQueuedThreadMessages(
+      registry.get(manager.queuedMessagesByThreadKeyAtom),
+    );
+    expect(heldMessage?.deliveryHoldReason).toBe("deduplication-window-changed");
+    registry.dispose();
+  });
+
   it("only removes a missing-thread message after shell synchronization is live", () => {
     expect(
       resolveThreadOutboxDeliveryAction({
+        held: false,
         isCreation: false,
         threadExists: false,
         shellStatus: "synchronizing",
@@ -469,6 +819,7 @@ describe("thread outbox", () => {
     ).toBe("wait");
     expect(
       resolveThreadOutboxDeliveryAction({
+        held: false,
         isCreation: false,
         threadExists: false,
         shellStatus: "live",
@@ -478,6 +829,7 @@ describe("thread outbox", () => {
     ).toBe("remove");
     expect(
       resolveThreadOutboxDeliveryAction({
+        held: false,
         isCreation: false,
         threadExists: true,
         shellStatus: "live",
@@ -487,9 +839,10 @@ describe("thread outbox", () => {
     ).toBe("send");
   });
 
-  it("sends queued creations once connected and live, removing already-created ones", () => {
+  it("sends queued creations once connected and removes delivered local creations", () => {
     expect(
       resolveThreadOutboxDeliveryAction({
+        held: false,
         isCreation: true,
         threadExists: false,
         shellStatus: "cached",
@@ -501,6 +854,7 @@ describe("thread outbox", () => {
     // simply not be visible yet — sending now could duplicate the thread.
     expect(
       resolveThreadOutboxDeliveryAction({
+        held: false,
         isCreation: true,
         threadExists: false,
         shellStatus: "synchronizing",
@@ -510,6 +864,7 @@ describe("thread outbox", () => {
     ).toBe("wait");
     expect(
       resolveThreadOutboxDeliveryAction({
+        held: false,
         isCreation: true,
         threadExists: false,
         shellStatus: "live",
@@ -519,11 +874,22 @@ describe("thread outbox", () => {
     ).toBe("send");
     expect(
       resolveThreadOutboxDeliveryAction({
+        held: false,
         isCreation: true,
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
         threadBusy: true,
+      }),
+    ).toBe("remove");
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        held: false,
+        isCreation: true,
+        threadExists: true,
+        shellStatus: "live",
+        environmentConnected: true,
+        threadBusy: false,
       }),
     ).toBe("remove");
   });
@@ -544,6 +910,7 @@ describe("thread outbox", () => {
         workspaceMode: "worktree",
         branch: "main",
         worktreePath: null,
+        worktreeBranchName: "t3/abc12345",
         startFromOrigin: true,
       },
     } satisfies QueuedThreadMessage;
@@ -578,11 +945,43 @@ describe("thread outbox", () => {
         message: "temporarily unavailable",
       }),
     ).toBe(true);
+    expect(
+      shouldRetryThreadOutboxDelivery({
+        _tag: "EnvironmentRpcUnavailableError",
+        message: "The environment is not connected.",
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryThreadOutboxDelivery({
+        _tag: "EnvironmentRpcUnavailableError",
+        message: "The backend restarted before the request completed.",
+        cause: {
+          _tag: "OrchestrationCommandDeduplicationWindowChangedError",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryThreadOutboxDelivery({
+        _tag: "EnvironmentRpcUnavailableError",
+        message: "The backend restarted before the request completed.",
+        cause: {
+          _tag: "OrchestrationDispatchCommandError",
+          reason: "deduplication-window-changed",
+        },
+      }),
+    ).toBe(false);
     expect(shouldRetryThreadOutboxDelivery(new Error("Thread no longer exists"))).toBe(false);
   });
 
   it("retains queued messages when settings synchronization fails before startTurn", () => {
     const deterministicFailure = new Error("Thread no longer exists");
+    const processLocalRestartFailure = {
+      _tag: "EnvironmentRpcUnavailableError",
+      message: "The backend restarted before the request completed.",
+      cause: {
+        _tag: "OrchestrationCommandDeduplicationWindowChangedError",
+      },
+    };
 
     expect(
       resolveThreadOutboxFailureAction({
@@ -598,5 +997,12 @@ describe("thread outbox", () => {
         interrupted: false,
       }),
     ).toBe("discard");
+    expect(
+      resolveThreadOutboxFailureAction({
+        stage: "start-turn",
+        error: processLocalRestartFailure,
+        interrupted: false,
+      }),
+    ).toBe("hold");
   });
 });

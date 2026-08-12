@@ -2,7 +2,8 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 
-import type { ChatAttachment } from "@t3tools/contracts";
+import type { ChatAttachment, CommandId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 
 import {
   normalizeAttachmentRelativePath,
@@ -18,6 +19,7 @@ const ATTACHMENT_ID_PATTERN = new RegExp(
   `^(${ATTACHMENT_ID_THREAD_SEGMENT_PATTERN})-(${ATTACHMENT_ID_UUID_PATTERN})$`,
   "i",
 );
+const COMMAND_ATTACHMENT_HASH_CHUNK_BYTES = 256 * 1024;
 
 export function toSafeThreadAttachmentSegment(threadId: string): string | null {
   const segment = threadId
@@ -41,6 +43,51 @@ export function createAttachmentId(threadId: string): string | null {
   }
   return `${threadSegment}-${NodeCrypto.randomUUID()}`;
 }
+
+export const createCommandAttachmentId = Effect.fn("AttachmentStore.createCommandAttachmentId")(
+  function* (
+    threadId: string,
+    commandId: CommandId,
+    attachmentIndex: number,
+    mimeType: string,
+    contents: Uint8Array,
+  ) {
+    const threadSegment = toSafeThreadAttachmentSegment(threadId);
+    if (!threadSegment || !Number.isSafeInteger(attachmentIndex) || attachmentIndex < 0) {
+      return null;
+    }
+    const hash = NodeCrypto.createHash("sha256");
+    const updateField = (value: string) => {
+      // UTF-16LE keeps distinct JavaScript strings distinct, including lone surrogates.
+      const bytes = Buffer.from(value, "utf16le");
+      const length = Buffer.allocUnsafe(8);
+      length.writeBigUInt64BE(BigInt(bytes.byteLength));
+      hash.update(length).update(bytes);
+    };
+    updateField("t3-command-attachment-v1");
+    updateField(threadId);
+    updateField(commandId);
+    updateField(String(attachmentIndex));
+    updateField(mimeType);
+
+    const contentsLength = Buffer.allocUnsafe(8);
+    contentsLength.writeBigUInt64BE(BigInt(contents.byteLength));
+    hash.update(contentsLength);
+    for (
+      let offset = 0;
+      offset < contents.byteLength;
+      offset += COMMAND_ATTACHMENT_HASH_CHUNK_BYTES
+    ) {
+      hash.update(contents.subarray(offset, offset + COMMAND_ATTACHMENT_HASH_CHUNK_BYTES));
+      if (offset + COMMAND_ATTACHMENT_HASH_CHUNK_BYTES < contents.byteLength) {
+        yield* Effect.yieldNow;
+      }
+    }
+
+    const uuid = hash.digest("hex").slice(0, 32);
+    return `${threadSegment}-${uuid.slice(0, 8)}-${uuid.slice(8, 12)}-${uuid.slice(12, 16)}-${uuid.slice(16, 20)}-${uuid.slice(20)}`;
+  },
+);
 
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
   const normalizedId = normalizeAttachmentRelativePath(attachmentId);

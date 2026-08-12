@@ -47,6 +47,7 @@ export class RotatingFileSink {
   private readonly maxFiles: number;
   private readonly throwOnError: boolean;
   private currentSize = 0;
+  private asyncWriteQueue: Promise<void> = Promise.resolve();
 
   constructor(options: RotatingFileSinkOptions) {
     if (options.maxBytes < 1) {
@@ -108,6 +109,23 @@ export class RotatingFileSink {
     }
   }
 
+  /**
+   * Appends without blocking the Node.js event loop. Calls are serialized so
+   * rotation and size accounting remain deterministic under concurrent load.
+   *
+   * A sink instance should use either `write` or `writeAsync`, not both.
+   */
+  writeAsync(chunk: string | Buffer): Promise<void> {
+    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    if (buffer.length === 0) return this.asyncWriteQueue;
+
+    const write = this.asyncWriteQueue.then(() => this.writeBufferAsync(buffer));
+    // Keep the queue usable after a surfaced write failure. The returned
+    // promise still rejects for callers configured with throwOnError.
+    this.asyncWriteQueue = write.catch(() => undefined);
+    return write;
+  }
+
   private rotate(): void {
     try {
       const oldest = this.withSuffix(this.maxFiles);
@@ -137,6 +155,63 @@ export class RotatingFileSink {
         });
       }
       this.currentSize = this.readCurrentSize();
+    }
+  }
+
+  private async writeBufferAsync(buffer: Buffer): Promise<void> {
+    try {
+      if (this.currentSize > 0 && this.currentSize + buffer.length > this.maxBytes) {
+        await this.rotateAsync();
+      }
+
+      await NodeFS.promises.appendFile(this.filePath, buffer);
+      this.currentSize += buffer.length;
+    } catch (cause) {
+      if (isRotatingFileSinkError(cause)) {
+        throw cause;
+      }
+      if (this.throwOnError) {
+        throw new RotatingFileSinkError({
+          operation: "write",
+          filePath: this.filePath,
+          cause,
+        });
+      }
+      await this.recoverCurrentSizeAsync();
+    }
+  }
+
+  private async rotateAsync(): Promise<void> {
+    try {
+      const oldest = this.withSuffix(this.maxFiles);
+      await NodeFS.promises.rm(oldest, { force: true });
+
+      for (let index = this.maxFiles - 1; index >= 1; index -= 1) {
+        const source = this.withSuffix(index);
+        const target = this.withSuffix(index + 1);
+        try {
+          await NodeFS.promises.rename(source, target);
+        } catch (cause) {
+          if (!isFileNotFoundError(cause)) throw cause;
+        }
+      }
+
+      try {
+        await NodeFS.promises.rename(this.filePath, this.withSuffix(1));
+      } catch (cause) {
+        if (!isFileNotFoundError(cause)) throw cause;
+      }
+
+      this.currentSize = 0;
+    } catch (cause) {
+      if (this.throwOnError) {
+        throw new RotatingFileSinkError({
+          operation: "rotate",
+          filePath: this.filePath,
+          cause,
+        });
+      }
+      await this.recoverCurrentSizeAsync();
     }
   }
 
@@ -173,6 +248,30 @@ export class RotatingFileSink {
         filePath: this.filePath,
         cause,
       });
+    }
+  }
+
+  private async readCurrentSizeAsync(): Promise<number> {
+    try {
+      return (await NodeFS.promises.stat(this.filePath)).size;
+    } catch (cause) {
+      if (isFileNotFoundError(cause)) {
+        return 0;
+      }
+      throw new RotatingFileSinkError({
+        operation: "read",
+        filePath: this.filePath,
+        cause,
+      });
+    }
+  }
+
+  /** Refreshes the size after a best-effort failure without surfacing a failed stat. */
+  private async recoverCurrentSizeAsync(): Promise<void> {
+    try {
+      this.currentSize = await this.readCurrentSizeAsync();
+    } catch {
+      // Retain the last known size when the exact on-disk size cannot be read.
     }
   }
 

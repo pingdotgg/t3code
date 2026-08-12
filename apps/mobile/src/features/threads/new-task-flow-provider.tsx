@@ -57,6 +57,8 @@ import {
   updateThreadOutboxMessage,
   type QueuedThreadMessage,
 } from "../../state/thread-outbox";
+import { resolveQueuedWorktreeBranchName } from "../../state/thread-outbox-model";
+import { isOutcomeUnknownThreadOutboxHold } from "../../state/thread-outbox-model";
 import {
   holdEditingQueuedMessage,
   releaseEditingQueuedMessage,
@@ -758,16 +760,22 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const projectCwd = usingPendingSnapshot
         ? editingPendingTask?.creation?.projectCwd
         : selectedProject.workspaceRoot;
+      const commandId = CommandId.make(metadata.commandId);
+      const resumesHeldAttempt =
+        editingPendingTask !== null && metadata.commandId === editingPendingTask.commandId;
       return {
         environmentId: selectedProject.environmentId,
         threadId: ThreadId.make(metadata.threadId),
         messageId: MessageId.make(metadata.messageId),
-        commandId: CommandId.make(metadata.commandId),
+        commandId,
         text,
         attachments: draft.attachments,
         modelSelection: draftModelSelection,
         runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         interactionMode: draft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+        ...(resumesHeldAttempt && editingPendingTask.deliveryHoldReason !== undefined
+          ? { deliveryHoldReason: editingPendingTask.deliveryHoldReason }
+          : {}),
         creation: {
           projectId: selectedProject.id,
           ...(projectTitle !== undefined ? { projectTitle } : {}),
@@ -775,6 +783,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           workspaceMode: mode,
           branch: workspaceSelection?.branch ?? null,
           worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
+          ...(mode === "worktree"
+            ? {
+                worktreeBranchName: resolveQueuedWorktreeBranchName(
+                  commandId,
+                  resumesHeldAttempt ? editingPendingTask.creation?.worktreeBranchName : undefined,
+                ),
+              }
+            : {}),
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
           // drain with the same origin mode the composer displayed.
@@ -841,6 +857,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setEditingPendingTask(null);
       if (activeEditingMessageId === editing.messageId) {
         activeEditingMessageId = null;
+      }
+
+      if (isOutcomeUnknownThreadOutboxHold(editing)) {
+        // This row is the only durable copy of a command whose process-local
+        // outcome is unknown. Keep it immutable: edits stay in the separate
+        // composer draft until the user restores the original or deletes the
+        // held task, but must never replace the receipt-replay payload.
+        releaseEditingQueuedMessage(editing.messageId);
+        return;
       }
 
       const message = buildPendingTaskMessage({

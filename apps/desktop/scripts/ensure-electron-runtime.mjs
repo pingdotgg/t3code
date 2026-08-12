@@ -3,6 +3,7 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeURL from "node:url";
 
 const require = NodeModule.createRequire(import.meta.url);
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone repair script has no Effect runtime.
@@ -126,14 +127,18 @@ function installElectronRuntime(electronDir, version) {
       "-o",
       zipPath,
     ]);
+    const distPath = NodePath.join(electronDir, "dist");
     if (hostPlatform === "darwin") {
-      runChecked("ditto", ["-x", "-k", zipPath, NodePath.join(electronDir, "dist")]);
+      runChecked("ditto", ["-x", "-k", zipPath, distPath]);
+    } else if (hostPlatform === "win32") {
+      NodeFS.mkdirSync(distPath, { recursive: true });
+      runChecked("tar", ["-xf", zipPath, "-C", distPath]);
     } else {
       runChecked("python3", [
         "-c",
         "import os, sys, zipfile; os.makedirs(sys.argv[2], exist_ok=True); zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])",
         zipPath,
-        NodePath.join(electronDir, "dist"),
+        distPath,
       ]);
     }
   } finally {
@@ -176,7 +181,7 @@ export function ensureElectronRuntime() {
   return electronPath;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
   const electronPath = ensureElectronRuntime();
   process.stdout.write(`${electronPath}\n`);
 }

@@ -5,6 +5,8 @@ import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
 import {
   flattenQueuedThreadMessages,
   groupQueuedThreadMessages,
+  hasSameThreadOutboxUserPayload,
+  type ThreadOutboxDeliveryHoldReason,
   type QueuedThreadMessage,
 } from "./thread-outbox-model";
 import type { ThreadOutboxStorage } from "./thread-outbox-storage";
@@ -16,6 +18,8 @@ export class ThreadOutboxManagerError extends Schema.TaggedErrorClass<ThreadOutb
       "load",
       "enqueue",
       "update",
+      "begin-process-local-delivery",
+      "hold",
       "remove",
       "clear-environment-load",
       "clear-environment-remove",
@@ -128,10 +132,12 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
   // flush can never resurrect it. Returns whether the message was updated.
   const update = (message: QueuedThreadMessage): Promise<boolean> =>
     serialize(async () => {
-      const exists = currentMessages().some(
+      const current = currentMessages().find(
         (candidate) => candidate.messageId === message.messageId,
       );
-      if (!exists) {
+      if (!current || current.deliveryHoldReason !== undefined) {
+        // A process-local marker is safety state. A composer flush that was
+        // queued before the marker must never clear it after the RPC starts.
         return false;
       }
       try {
@@ -149,6 +155,90 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
         ...currentMessages().filter((candidate) => candidate.messageId !== message.messageId),
         message,
       ]);
+      return true;
+    });
+
+  // Persist this marker before invoking any process-local RPC. Publishing it
+  // only after the durable write means a transient storage failure is safely
+  // retryable without either crossing the side-effect boundary or stranding
+  // the task in the current process.
+  const beginProcessLocalDelivery = (message: QueuedThreadMessage): Promise<boolean> =>
+    serialize(async () => {
+      const current = currentMessages().find(
+        (candidate) => candidate.messageId === message.messageId,
+      );
+      if (
+        !current ||
+        current.deliveryHoldReason !== undefined ||
+        current.environmentId !== message.environmentId ||
+        current.threadId !== message.threadId ||
+        current.commandId !== message.commandId ||
+        current.createdAt !== message.createdAt ||
+        !hasSameThreadOutboxUserPayload(current, message)
+      ) {
+        // A serialized editor update may have replaced the drain's snapshot
+        // while it resolved cwd/branch metadata. Let the next drain pass mark
+        // that newer payload instead of dispatching stale work.
+        return false;
+      }
+      const marked = {
+        // The caller supplies the fully resolved payload (including cwd and
+        // deterministic branch) that will cross the process-local boundary.
+        // Persist it together with the marker so an app restart can replay the
+        // exact command rather than recomputing from newer shell state.
+        ...current,
+        ...(message.creation !== undefined ? { creation: message.creation } : {}),
+        deliveryHoldReason: "process-local-dispatch-started",
+      } satisfies QueuedThreadMessage;
+      try {
+        await options.storage.write(marked);
+      } catch (cause) {
+        throw new ThreadOutboxManagerError({
+          operation: "begin-process-local-delivery",
+          environmentId: message.environmentId,
+          threadId: message.threadId,
+          messageId: message.messageId,
+          cause,
+        });
+      }
+      setMessages([
+        ...currentMessages().filter((candidate) => candidate.messageId !== message.messageId),
+        marked,
+      ]);
+      return true;
+    });
+
+  // A hold is safety state, not an ordinary content edit. Publish it before
+  // the durable write so even a storage failure cannot let this process replay
+  // an outcome-unknown process-local bootstrap. The write error is still
+  // surfaced; a later manual recovery remains available from the held item.
+  const hold = (
+    message: QueuedThreadMessage,
+    reason: ThreadOutboxDeliveryHoldReason,
+  ): Promise<boolean> =>
+    serialize(async () => {
+      const current = currentMessages().find(
+        (candidate) => candidate.messageId === message.messageId,
+      );
+      if (!current) {
+        return false;
+      }
+      const held = { ...current, deliveryHoldReason: reason } satisfies QueuedThreadMessage;
+      setMessages([
+        ...currentMessages().filter((candidate) => candidate.messageId !== message.messageId),
+        held,
+      ]);
+      try {
+        await options.storage.write(held);
+      } catch (cause) {
+        throw new ThreadOutboxManagerError({
+          operation: "hold",
+          environmentId: message.environmentId,
+          threadId: message.threadId,
+          messageId: message.messageId,
+          cause,
+        });
+      }
       return true;
     });
 
@@ -222,6 +312,8 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     enqueue,
     confirmQueued,
     update,
+    beginProcessLocalDelivery,
+    hold,
     remove,
     clearEnvironment,
   };

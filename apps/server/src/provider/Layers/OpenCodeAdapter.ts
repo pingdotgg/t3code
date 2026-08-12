@@ -38,6 +38,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import type { ProviderAdapterTerminalEvent } from "../Services/ProviderAdapter.ts";
 import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
@@ -218,6 +219,15 @@ interface OpenCodeSessionContext {
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
+  activeTurnStartEventSequence: number | undefined;
+  pendingTurnStart:
+    | {
+        readonly turnId: TurnId;
+        readonly model: string | undefined;
+        readonly effort: string | undefined;
+        readonly turnStartEventSequence: number | undefined;
+      }
+    | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
@@ -651,6 +661,31 @@ export function makeOpenCodeAdapter(
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
+    const ensurePendingTurnStarted = Effect.fn("ensurePendingTurnStarted")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      const pending = context.pendingTurnStart;
+      if (pending === undefined || context.activeTurnId !== pending.turnId) {
+        return;
+      }
+      // Clear synchronously before the first Effect boundary so the event
+      // pump and sendTurn response cannot publish duplicate starts.
+      context.pendingTurnStart = undefined;
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId: pending.turnId,
+        })),
+        type: "turn.started",
+        ...(pending.turnStartEventSequence !== undefined
+          ? { turnStartEventSequence: pending.turnStartEventSequence }
+          : {}),
+        payload: {
+          ...(pending.model ? { model: pending.model } : {}),
+          ...(pending.effort ? { effort: pending.effort } : {}),
+        },
+      });
+    });
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -678,6 +713,10 @@ export function makeOpenCodeAdapter(
         return;
       }
       const turnId = context.activeTurnId;
+      const turnStartEventSequence = context.activeTurnStartEventSequence;
+      context.activeTurnId = undefined;
+      context.activeTurnStartEventSequence = undefined;
+      context.pendingTurnStart = undefined;
       sessions.delete(context.session.threadId);
       // Emit lifecycle events BEFORE tearing down the scope. Both call sites
       // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
@@ -689,6 +728,7 @@ export function makeOpenCodeAdapter(
           turnId,
         })),
         type: "runtime.error",
+        ...(turnStartEventSequence !== undefined ? { turnStartEventSequence } : {}),
         payload: {
           message,
           class: "transport_error",
@@ -789,6 +829,16 @@ export function makeOpenCodeAdapter(
       const payloadSessionId = openCodeEventSessionId(event);
       if (payloadSessionId !== context.openCodeSessionId) {
         return;
+      }
+
+      if (
+        event.type !== "session.updated" &&
+        event.type !== "message.removed" &&
+        event.type !== "permission.replied" &&
+        event.type !== "question.replied" &&
+        event.type !== "question.rejected"
+      ) {
+        yield* ensurePendingTurnStarted(context);
       }
 
       const turnId = context.activeTurnId;
@@ -1057,7 +1107,10 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "idle" && turnId) {
+            const activeTurnStartEventSequence = context.activeTurnStartEventSequence;
             context.activeTurnId = undefined;
+            context.activeTurnStartEventSequence = undefined;
+            context.pendingTurnStart = undefined;
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -1066,6 +1119,9 @@ export function makeOpenCodeAdapter(
                 raw: event,
               })),
               type: "turn.completed",
+              ...(activeTurnStartEventSequence !== undefined
+                ? { turnStartEventSequence: activeTurnStartEventSequence }
+                : {}),
               payload: {
                 state: "completed",
               },
@@ -1077,7 +1133,10 @@ export function makeOpenCodeAdapter(
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          const activeTurnStartEventSequence = context.activeTurnStartEventSequence;
           context.activeTurnId = undefined;
+          context.activeTurnStartEventSequence = undefined;
+          context.pendingTurnStart = undefined;
           yield* updateProviderSession(
             context,
             {
@@ -1094,24 +1153,32 @@ export function makeOpenCodeAdapter(
                 raw: event,
               })),
               type: "turn.completed",
+              ...(activeTurnStartEventSequence !== undefined
+                ? { turnStartEventSequence: activeTurnStartEventSequence }
+                : {}),
               payload: {
                 state: "failed",
                 errorMessage: message,
               },
             });
+          } else {
+            // A targeted failed completion is the authoritative active-turn
+            // terminal. Emitting runtime.error beside it would apply a second
+            // session-set and resurrect that failed turn as active. Keep the
+            // session-level diagnostic only when there is no turn to target.
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                raw: event,
+              })),
+              type: "runtime.error",
+              payload: {
+                message,
+                class: "provider_error",
+                detail: event.properties.error,
+              },
+            });
           }
-          yield* emit({
-            ...(yield* buildEventBase({
-              threadId: context.session.threadId,
-              raw: event,
-            })),
-            type: "runtime.error",
-            payload: {
-              message,
-              class: "provider_error",
-              detail: event.properties.error,
-            },
-          });
           break;
         }
 
@@ -1382,6 +1449,8 @@ export function makeOpenCodeAdapter(
           completedAssistantPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,
+          activeTurnStartEventSequence: undefined,
+          pendingTurnStart: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
           stopped: yield* Ref.make(false),
@@ -1458,6 +1527,15 @@ export function makeOpenCodeAdapter(
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
       context.activeTurnId = turnId;
+      if (steeringTurnId === undefined) {
+        context.activeTurnStartEventSequence = input.turnStartEventSequence;
+        context.pendingTurnStart = {
+          turnId,
+          model: modelSelection?.model ?? context.session.model,
+          effort: variant,
+          turnStartEventSequence: input.turnStartEventSequence,
+        };
+      }
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
       yield* updateProviderSession(
@@ -1470,18 +1548,7 @@ export function makeOpenCodeAdapter(
         { clearLastError: true },
       );
 
-      if (steeringTurnId === undefined) {
-        yield* emit({
-          ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
-          type: "turn.started",
-          payload: {
-            model: modelSelection?.model ?? context.session.model,
-            ...(variant ? { effort: variant } : {}),
-          },
-        });
-      }
-
-      yield* runOpenCodeSdk("session.promptAsync", () =>
+      const terminalEvent = yield* runOpenCodeSdk("session.promptAsync", () =>
         context.client.session.promptAsync({
           sessionID: context.openCodeSessionId,
           model: parsedModel,
@@ -1491,16 +1558,19 @@ export function makeOpenCodeAdapter(
         }),
       ).pipe(
         Effect.mapError(toRequestError),
-        // On failure of a fresh turn: clear active-turn state, flip the
-        // session back to ready with lastError set, emit turn.aborted, then
-        // let the typed error propagate. We don't need to rebuild the error
-        // here — `toRequestError` already produced the right shape. A failed
-        // steer leaves the still-running original turn untouched.
-        Effect.tapError((requestError) =>
+        Effect.as(undefined as ProviderAdapterTerminalEvent | undefined),
+        // A fresh turn has crossed the lifecycle boundary before promptAsync
+        // can reject. Close it authoritatively and convert that rejection into
+        // an accepted handoff so ProviderService retains the exact command
+        // until this terminal event is ingested. A failed steer opened no
+        // lifecycle and still rejects normally.
+        Effect.catch((requestError) =>
           steeringTurnId !== undefined
-            ? Effect.void
+            ? Effect.fail(requestError)
             : Effect.gen(function* () {
+                context.pendingTurnStart = undefined;
                 context.activeTurnId = undefined;
+                context.activeTurnStartEventSequence = undefined;
                 context.activeAgent = undefined;
                 context.activeVariant = undefined;
                 yield* updateProviderSession(
@@ -1512,19 +1582,30 @@ export function makeOpenCodeAdapter(
                   },
                   { clearActiveTurnId: true },
                 );
-                yield* emit({
-                  ...(yield* buildEventBase({
-                    threadId: input.threadId,
-                    turnId,
-                  })),
-                  type: "turn.aborted",
-                  payload: {
-                    reason: requestError.detail,
-                  },
+                const terminalBase = yield* buildEventBase({
+                  threadId: input.threadId,
+                  turnId,
                 });
+                const failedTerminalEvent = {
+                  ...terminalBase,
+                  type: "turn.completed",
+                  ...(input.turnStartEventSequence !== undefined
+                    ? { turnStartEventSequence: input.turnStartEventSequence }
+                    : {}),
+                  payload: {
+                    state: "failed",
+                    errorMessage: requestError.detail,
+                  },
+                } satisfies ProviderRuntimeEvent;
+                yield* emit(failedTerminalEvent);
+                return failedTerminalEvent;
               }),
         ),
       );
+
+      if (terminalEvent === undefined && steeringTurnId === undefined) {
+        yield* ensurePendingTurnStarted(context);
+      }
 
       return {
         threadId: input.threadId,
@@ -1533,6 +1614,9 @@ export function makeOpenCodeAdapter(
         // is refreshed alongside last-seen/runtime state (mirrors Grok/Codex).
         ...(context.session.resumeCursor !== undefined
           ? { resumeCursor: context.session.resumeCursor }
+          : {}),
+        ...(terminalEvent !== undefined
+          ? { terminalEvent, terminalEventId: terminalEvent.eventId }
           : {}),
       };
     });
@@ -1550,6 +1634,9 @@ export function makeOpenCodeAdapter(
               turnId: turnId ?? context.activeTurnId,
             })),
             type: "turn.aborted",
+            ...(context.activeTurnStartEventSequence !== undefined
+              ? { turnStartEventSequence: context.activeTurnStartEventSequence }
+              : {}),
             payload: {
               reason: "Interrupted by user.",
             },

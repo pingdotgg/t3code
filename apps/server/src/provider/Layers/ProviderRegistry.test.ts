@@ -1,10 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1053,18 +1055,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
               ...initialProvider.models,
             ]);
+            const providerChanges = yield* registry.streamChanges.pipe(
+              Stream.filter((providers) =>
+                providers.some((provider) => provider.checkedAt === refreshedProvider.checkedAt),
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
             yield* PubSub.publish(changes, refreshedProvider);
+            yield* Fiber.join(providerChanges);
 
-            let cachedProvider = yield* readProviderStatusCache(filePath);
-            for (
-              let attempt = 0;
-              attempt < 50 && cachedProvider?.checkedAt !== refreshedProvider.checkedAt;
-              attempt += 1
-            ) {
-              yield* TestClock.adjust("10 millis");
-              yield* Effect.yieldNow;
-              cachedProvider = yield* readProviderStatusCache(filePath);
-            }
+            const cachedProvider = yield* readProviderStatusCache(filePath);
 
             assert.deepStrictEqual(cachedProvider, {
               ...refreshedProvider,
@@ -1178,31 +1179,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 instanceId: openCodeInstanceId,
               });
 
+              const authoritativeChange = yield* registry.streamChanges.pipe(
+                Stream.filter((providers) =>
+                  providers.some(
+                    (provider) => provider.checkedAt === authoritativeProvider.checkedAt,
+                  ),
+                ),
+                Stream.runHead,
+                Effect.forkChild,
+              );
               yield* PubSub.publish(changes, authoritativeProvider);
+              yield* Fiber.join(authoritativeChange);
 
               let cachedProvider = yield* readProviderStatusCache(filePath);
-              for (
-                let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== authoritativeProvider.checkedAt;
-                attempt += 1
-              ) {
-                yield* TestClock.adjust("10 millis");
-                yield* Effect.yieldNow;
-                cachedProvider = yield* readProviderStatusCache(filePath);
-              }
 
               assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
 
+              const failedChange = yield* registry.streamChanges.pipe(
+                Stream.filter((providers) =>
+                  providers.some((provider) => provider.checkedAt === failedProvider.checkedAt),
+                ),
+                Stream.runHead,
+                Effect.forkChild,
+              );
               yield* PubSub.publish(changes, failedProvider);
-              for (
-                let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== failedProvider.checkedAt;
-                attempt += 1
-              ) {
-                yield* TestClock.adjust("10 millis");
-                yield* Effect.yieldNow;
-                cachedProvider = yield* readProviderStatusCache(filePath);
-              }
+              yield* Fiber.join(failedChange);
+              cachedProvider = yield* readProviderStatusCache(filePath);
 
               assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
               assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
@@ -1534,6 +1536,90 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("observes an immediate settings update after hydration", () =>
+        Effect.gen(function* () {
+          const firstMissing = "t3code_codex_hydration_first_";
+          const secondMissing = "t3code_codex_hydration_second_";
+          const initialSettings = decodeServerSettings(
+            deepMerge(encodedDefaultServerSettings, {
+              providers: {
+                codex: { enabled: false, binaryPath: firstMissing },
+                claudeAgent: { enabled: false },
+                cursor: { enabled: false },
+                grok: { enabled: false },
+                opencode: { enabled: false },
+              },
+            }),
+          );
+          const settingsRef = yield* Ref.make(initialSettings);
+          const pendingChange = yield* Deferred.make<ContractServerSettings>();
+          const subscriptionAcquired = yield* Ref.make(false);
+          const serverSettings = {
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Ref.get(settingsRef),
+            updateSettings: (patch) =>
+              Effect.gen(function* () {
+                const current = yield* Ref.get(settingsRef);
+                const next = applyServerSettingsPatch(current, patch);
+                encodeServerSettings(next);
+                yield* Ref.set(settingsRef, next);
+                yield* Deferred.succeed(pendingChange, next);
+                return next;
+              }),
+            // Keep the lazy stream empty so this regression proves hydration
+            // acquired the synchronous subscription seam during layer build.
+            streamChanges: Stream.empty,
+            get subscribeChanges() {
+              return Ref.set(subscriptionAcquired, true).pipe(
+                Effect.as(Stream.fromEffect(Deferred.await(pendingChange))),
+              );
+            },
+          } satisfies ServerSettingsModule.ServerSettingsService["Service"];
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const hydrationLayer = ProviderInstanceRegistryHydrationLive.pipe(
+            Layer.provideMerge(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-hydration-",
+              }),
+            ),
+            Layer.provideMerge(TestHttpClientLive),
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+          );
+          const runtimeServices = yield* Layer.build(hydrationLayer).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+            const codexId = ProviderInstanceId.make("codex");
+            const initialInstance = yield* registry.getInstance(codexId);
+            const registryChanges = yield* registry.subscribeChanges;
+
+            assert.strictEqual(yield* Ref.get(subscriptionAcquired), true);
+            yield* serverSettings.updateSettings({
+              providers: {
+                codex: { enabled: false, binaryPath: secondMissing },
+              },
+            });
+            yield* PubSub.take(registryChanges);
+
+            const replacementInstance = yield* registry.getInstance(codexId);
+            assert.notStrictEqual(replacementInstance, undefined);
+            assert.notStrictEqual(replacementInstance, initialInstance);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       // Guards the second half of the reported bug: changing
       // `providers.codex.binaryPath` in settings must tear down the live
       // instance and rebuild it so a fresh probe runs with the new binary.
@@ -1616,8 +1702,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.strictEqual(initialCodex?.installed, false);
             assert.deepStrictEqual(spawnedCommands, [firstMissing]);
 
+            const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+            const instanceChanges = yield* instanceRegistry.subscribeChanges;
+
             // Drive a settings change. The Hydration layer's
-            // `SettingsWatcherLive` consumes this via `streamChanges`,
+            // `SettingsWatcherLive` consumes this via `subscribeChanges`,
             // calls `reconcile`, which rebuilds the codex instance (the
             // envelope changed because `binaryPath` differs → `entryEqual`
             // is false). The registry's `Stream.runForEach(
@@ -1629,6 +1718,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 codex: { enabled: true, binaryPath: secondMissing },
               },
             });
+            yield* PubSub.take(instanceChanges);
 
             // Poll until the injected process boundary observes the new
             // executable. This verifies the public settings-to-probe behavior
@@ -2169,35 +2259,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
-      it.effect("runs Claude status probes with the configured CLAUDE_CONFIG_DIR", () => {
-        const claudeConfigDir = "/tmp/t3code-claude-home";
-        const recorded = recordingMockSpawnerLayer((args) => {
-          const joined = args.join(" ");
-          if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-          if (joined === "auth status")
-            return {
-              stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-              stderr: "",
-              code: 0,
-            };
-          throw new Error(`Unexpected args: ${joined}`);
-        });
-
-        return Effect.gen(function* () {
+      it.effect("runs Claude status probes with the configured CLAUDE_CONFIG_DIR", () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const claudeConfigDir = path.resolve("/tmp/t3code-claude-home");
+          const recorded = recordingMockSpawnerLayer((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            if (joined === "auth status")
+              return {
+                stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                stderr: "",
+                code: 0,
+              };
+            throw new Error(`Unexpected args: ${joined}`);
+          });
           const status = yield* checkClaudeProviderStatus(
             {
               ...defaultClaudeSettings,
               homePath: claudeConfigDir,
             },
             claudeCapabilities(),
-          );
+          ).pipe(Effect.provide(recorded.layer));
           assert.strictEqual(status.status, "ready");
           assert.deepStrictEqual(
             recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
             [claudeConfigDir],
           );
-        }).pipe(Effect.provide(recorded.layer));
-      });
+        }).pipe(Effect.provide(NodeServices.layer)),
+      );
 
       it.effect("includes probed claude slash commands in the provider snapshot", () =>
         Effect.gen(function* () {

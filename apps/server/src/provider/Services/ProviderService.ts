@@ -22,14 +22,17 @@ import type {
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ThreadId,
-  ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type {
+  ProviderAdapterCapabilities,
+  ProviderAdapterTurnStartResult,
+} from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -49,7 +52,18 @@ export interface ProviderServiceShape {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
-  ) => Effect.Effect<ProviderTurnStartResult, ProviderServiceError>;
+  ) => Effect.Effect<ProviderAdapterTurnStartResult, ProviderServiceError>;
+
+  /**
+   * Send a provider turn and durably acknowledge the irreversible adapter
+   * handoff before the service becomes interruptible again. Internal runtime
+   * reactors use this to prevent graceful shutdown from resending a prompt
+   * that the provider already accepted.
+   */
+  readonly sendTurnWithAcknowledgement?: (
+    input: ProviderSendTurnInput,
+    acknowledge: (result: ProviderAdapterTurnStartResult) => Effect.Effect<void, never>,
+  ) => Effect.Effect<ProviderAdapterTurnStartResult, ProviderServiceError>;
 
   /**
    * Interrupt a running provider turn.
@@ -111,6 +125,15 @@ export interface ProviderServiceShape {
    * Fan-out is owned by ProviderService (not by a standalone event-bus service).
    */
   readonly streamEvents: Stream.Stream<ProviderRuntimeEvent>;
+
+  /**
+   * Acquire a runtime-event subscription in the caller's scope.
+   *
+   * Startup reactors use this form to register before the server activation
+   * barrier opens, so an immediately recovered provider turn cannot publish
+   * lifecycle events before ingestion and checkpoint consumers are listening.
+   */
+  readonly subscribeEvents: Effect.Effect<Stream.Stream<ProviderRuntimeEvent>, never, Scope.Scope>;
 }
 
 /**

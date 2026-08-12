@@ -350,7 +350,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const sql = yield* SqlClient.SqlClient;
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-  const repositoryIdentityResolutionConcurrency = 4;
+  const repositoryIdentityResolutionConcurrency = 8;
   const resolveRepositoryIdentitiesForProjects = Effect.fn(
     "ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects",
   )(function* (

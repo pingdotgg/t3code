@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import type { PreparedHttpAuthorization } from "../connection/model.ts";
@@ -46,6 +47,9 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
       readonly httpBaseUrl: string;
       readonly wsBaseUrl: string;
       readonly bearerToken: string;
+      readonly requestTimeoutMs?: number;
+      readonly transportRetries?: number;
+      readonly requireFreshDescriptor?: boolean;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
     readonly authorizeDpop: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
@@ -99,52 +103,84 @@ export const make = Effect.gen(function* () {
       readonly httpBaseUrl: string;
       readonly wsBaseUrl: string;
       readonly bearerToken: string;
+      readonly requestTimeoutMs?: number;
+      readonly transportRetries?: number;
+      readonly requireFreshDescriptor?: boolean;
     }) {
-      const now = yield* Clock.currentTimeMillis;
-      const cachedDescriptor = (yield* Ref.get(bearerDescriptors)).get(input.expectedEnvironmentId);
-      const canReuseDescriptor =
-        cachedDescriptor?.httpBaseUrl === input.httpBaseUrl &&
-        cachedDescriptor.validatedAtEpochMs + BEARER_DESCRIPTOR_CACHE_TTL_MS > now;
-      const descriptor = canReuseDescriptor
-        ? cachedDescriptor.descriptor
-        : yield* fetchDescriptor(input.httpBaseUrl).pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-          );
-      if (descriptor.environmentId !== input.expectedEnvironmentId) {
-        return yield* environmentMismatchError({
-          expected: input.expectedEnvironmentId,
-          actual: descriptor.environmentId,
-        });
-      }
-      if (!canReuseDescriptor) {
-        yield* Ref.update(bearerDescriptors, (current) => {
-          const next = new Map(current);
-          next.set(input.expectedEnvironmentId, {
-            httpBaseUrl: input.httpBaseUrl,
-            descriptor,
-            validatedAtEpochMs: now,
+      const authorizeAttempt = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const cachedDescriptor = (yield* Ref.get(bearerDescriptors)).get(
+          input.expectedEnvironmentId,
+        );
+        const canReuseDescriptor =
+          input.requireFreshDescriptor !== true &&
+          cachedDescriptor?.httpBaseUrl === input.httpBaseUrl &&
+          cachedDescriptor.validatedAtEpochMs + BEARER_DESCRIPTOR_CACHE_TTL_MS > now;
+        const descriptor = canReuseDescriptor
+          ? cachedDescriptor.descriptor
+          : yield* fetchRemoteEnvironmentDescriptor({
+              httpBaseUrl: input.httpBaseUrl,
+              ...(input.requestTimeoutMs === undefined
+                ? {}
+                : { timeoutMs: input.requestTimeoutMs }),
+            }).pipe(
+              Effect.mapError(mapRemoteEnvironmentError),
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+            );
+        if (descriptor.environmentId !== input.expectedEnvironmentId) {
+          return yield* environmentMismatchError({
+            expected: input.expectedEnvironmentId,
+            actual: descriptor.environmentId,
           });
-          return next;
-        });
+        }
+        if (!canReuseDescriptor) {
+          yield* Ref.update(bearerDescriptors, (current) => {
+            const next = new Map(current);
+            next.set(input.expectedEnvironmentId, {
+              httpBaseUrl: input.httpBaseUrl,
+              descriptor,
+              validatedAtEpochMs: now,
+            });
+            return next;
+          });
+        }
+        const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
+          wsBaseUrl: input.wsBaseUrl,
+          httpBaseUrl: input.httpBaseUrl,
+          bearerToken: input.bearerToken,
+          ...(input.requestTimeoutMs === undefined ? {} : { timeoutMs: input.requestTimeoutMs }),
+        }).pipe(
+          Effect.mapError(mapRemoteEnvironmentError),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        );
+        return {
+          environmentId: descriptor.environmentId,
+          label: descriptor.label,
+          httpBaseUrl: input.httpBaseUrl,
+          socketUrl,
+          httpAuthorization: {
+            _tag: "Bearer" as const,
+            token: input.bearerToken,
+          },
+        };
+      });
+
+      const transportRetries = input.transportRetries ?? 0;
+      if (transportRetries === 0) {
+        return yield* authorizeAttempt;
       }
-      const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
-        wsBaseUrl: input.wsBaseUrl,
-        httpBaseUrl: input.httpBaseUrl,
-        bearerToken: input.bearerToken,
-      }).pipe(
-        Effect.mapError(mapRemoteEnvironmentError),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
+      return yield* authorizeAttempt.pipe(
+        Effect.retry(
+          Schedule.max([Schedule.spaced("250 millis"), Schedule.recurs(transportRetries)]).pipe(
+            Schedule.setInputType<ConnectionAttemptError>(),
+            Schedule.while(
+              ({ input: error }) =>
+                error._tag === "ConnectionTransientError" &&
+                (error.reason === "network" || error.reason === "timeout"),
+            ),
+          ),
+        ),
       );
-      return {
-        environmentId: descriptor.environmentId,
-        label: descriptor.label,
-        httpBaseUrl: input.httpBaseUrl,
-        socketUrl,
-        httpAuthorization: {
-          _tag: "Bearer" as const,
-          token: input.bearerToken,
-        },
-      };
     },
   );
 

@@ -10,6 +10,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import {
+  EventId,
   IsoDateTime,
   ProviderInstanceId,
   ProviderSessionRuntimeStatus,
@@ -58,6 +59,25 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export const ClearPendingProviderTerminalEventInput = Schema.Struct({
+  threadId: ThreadId,
+  eventId: EventId,
+});
+export type ClearPendingProviderTerminalEventInput =
+  typeof ClearPendingProviderTerminalEventInput.Type;
+
+export const PendingProviderTerminalEvent = Schema.Struct({
+  eventId: EventId,
+  threadId: ThreadId,
+  event: Schema.Unknown,
+  createdAt: IsoDateTime,
+});
+export type PendingProviderTerminalEvent = typeof PendingProviderTerminalEvent.Type;
+
+export const AppendPendingProviderTerminalEventInput = PendingProviderTerminalEvent;
+export type AppendPendingProviderTerminalEventInput =
+  typeof AppendPendingProviderTerminalEventInput.Type;
+
 /**
  * ProviderSessionRuntimeRepository - Service tag for provider runtime persistence.
  */
@@ -99,6 +119,22 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     readonly deleteByThreadId: (
       input: DeleteProviderSessionRuntimeInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    /** Remove a durable terminal event only when its stored identity matches. */
+    readonly clearPendingTerminalEvent: (
+      input: ClearPendingProviderTerminalEventInput,
+    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    /** Append an exact durable canonical terminal event before hot fan-out. */
+    readonly appendPendingTerminalEvent: (
+      input: AppendPendingProviderTerminalEventInput,
+    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    /** List pending terminal events in provider emission order. */
+    readonly listPendingTerminalEvents: () => Effect.Effect<
+      ReadonlyArray<PendingProviderTerminalEvent>,
+      ProviderSessionRuntimeRepositoryError
+    >;
   }
 >()("t3/persistence/ProviderSessionRuntime/ProviderSessionRuntimeRepository") {}
 
@@ -235,6 +271,55 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const clearPendingTerminalEventRow = SqlSchema.void({
+    Request: ClearPendingProviderTerminalEventInput,
+    execute: ({ threadId, eventId }) =>
+      sql`
+        DELETE FROM provider_runtime_terminal_events
+        WHERE thread_id = ${threadId}
+          AND event_id = ${eventId}
+      `,
+  });
+
+  const appendPendingTerminalEventRow = SqlSchema.void({
+    Request: PendingProviderTerminalEvent.mapFields(
+      Struct.assign({ event: Schema.fromJsonString(Schema.Unknown) }),
+    ),
+    execute: (input) =>
+      sql`
+        INSERT INTO provider_runtime_terminal_events (
+          event_id,
+          thread_id,
+          event_json,
+          created_at
+        )
+        VALUES (
+          ${input.eventId},
+          ${input.threadId},
+          ${input.event},
+          ${input.createdAt}
+        )
+        ON CONFLICT (event_id) DO NOTHING
+      `,
+  });
+
+  const listPendingTerminalEventRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: PendingProviderTerminalEvent.mapFields(
+      Struct.assign({ event: Schema.fromJsonString(Schema.Unknown) }),
+    ),
+    execute: () =>
+      sql`
+        SELECT
+          event_id AS "eventId",
+          thread_id AS "threadId",
+          event_json AS "event",
+          created_at AS "createdAt"
+        FROM provider_runtime_terminal_events
+        ORDER BY id ASC
+      `,
+  });
+
   const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime) =>
     upsertRuntimeRow(runtime).pipe(
       Effect.mapError(
@@ -322,11 +407,49 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const clearPendingTerminalEvent: ProviderSessionRuntimeRepository["Service"]["clearPendingTerminalEvent"] =
+    (input) =>
+      clearPendingTerminalEventRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.clearPendingTerminalEvent:query",
+            "ProviderSessionRuntimeRepository.clearPendingTerminalEvent:encodeRequest",
+            { threadId: input.threadId },
+          ),
+        ),
+      );
+
+  const appendPendingTerminalEvent: ProviderSessionRuntimeRepository["Service"]["appendPendingTerminalEvent"] =
+    (input) =>
+      appendPendingTerminalEventRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.appendPendingTerminalEvent:query",
+            "ProviderSessionRuntimeRepository.appendPendingTerminalEvent:encodeRequest",
+            { threadId: input.threadId },
+          ),
+        ),
+      );
+
+  const listPendingTerminalEvents: ProviderSessionRuntimeRepository["Service"]["listPendingTerminalEvents"] =
+    () =>
+      listPendingTerminalEventRows(undefined).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.listPendingTerminalEvents:query",
+            "ProviderSessionRuntimeRepository.listPendingTerminalEvents:decodeRows",
+          ),
+        ),
+      );
+
   return {
     upsert,
     getByThreadId,
     list,
     deleteByThreadId,
+    clearPendingTerminalEvent,
+    appendPendingTerminalEvent,
+    listPendingTerminalEvents,
   } satisfies ProviderSessionRuntimeRepository["Service"];
 });
 

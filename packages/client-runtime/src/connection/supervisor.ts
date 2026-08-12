@@ -789,12 +789,24 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.withSpan("EnvironmentSupervisor.disconnect"),
   );
 
-  const retryNow = Ref.set(resetRetryState, true).pipe(
-    Effect.andThen(signal({ _tag: "RetryRequested" })),
+  const retryNow = Ref.getAndSet(resetRetryState, true).pipe(
+    Effect.flatMap((alreadyPending) =>
+      alreadyPending ? Effect.void : signal({ _tag: "RetryRequested" }),
+    ),
+    Effect.uninterruptible,
     Effect.withSpan("EnvironmentSupervisor.retryNow"),
   );
 
-  yield* Effect.addFinalizer(() => Queue.shutdown(signals).pipe(Effect.andThen(clearLease)));
+  yield* Effect.addFinalizer(() =>
+    Ref.get(intent).pipe(
+      Effect.flatMap((current) =>
+        clearLease.pipe(
+          Effect.andThen(Queue.shutdown(signals)),
+          Effect.andThen(setState(availableState({ ...current, desired: false }, 0))),
+        ),
+      ),
+    ),
+  );
 
   return EnvironmentSupervisor.of({
     target,

@@ -48,6 +48,7 @@ describe("OrchestrationReactor", () => {
         ),
         Layer.provideMerge(
           Layer.succeed(CheckpointReactor, {
+            finalizeTurnCompletion: () => Effect.void,
             start: () => {
               started.push("checkpoint-reactor");
               return Effect.void;

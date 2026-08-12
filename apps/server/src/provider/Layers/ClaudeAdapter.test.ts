@@ -60,6 +60,11 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
+  private readonly beforeSetPermissionMode: ((mode: PermissionMode) => Promise<void>) | undefined;
+
+  constructor(beforeSetPermissionMode?: (mode: PermissionMode) => Promise<void>) {
+    this.beforeSetPermissionMode = beforeSetPermissionMode;
+  }
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -109,6 +114,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly setPermissionMode = async (mode: PermissionMode): Promise<void> => {
     this.setPermissionModeCalls.push(mode);
+    await this.beforeSetPermissionMode?.(mode);
   };
 
   readonly setMaxThinkingTokens = async (maxThinkingTokens: number | null): Promise<void> => {
@@ -161,8 +167,10 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly beforeSetPermissionMode?: (mode: PermissionMode) => Promise<void>;
+  readonly rejectPromptOffer?: boolean;
 }) {
-  const query = new FakeClaudeQuery();
+  const query = new FakeClaudeQuery(config?.beforeSetPermissionMode);
   let createInput:
     | {
         readonly prompt: AsyncIterable<SDKUserMessage>;
@@ -176,6 +184,11 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.rejectPromptOffer
+      ? {
+          offerPrompt: () => Effect.succeed(false),
+        }
+      : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -795,6 +808,243 @@ describe("ClaudeAdapterLive", () => {
           },
         },
       ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not start a Claude turn when attachment preparation fails", () => {
+    const baseDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "claude-missing-attachment-"),
+    );
+    const harness = makeHarness({
+      cwd: "/tmp/project-claude-missing-attachment",
+      baseDir,
+    });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(baseDir, { recursive: true, force: true })),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const failure = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "Inspect this image",
+          attachments: [
+            {
+              type: "image",
+              id: "missing-claude-attachment",
+              name: "missing.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "ProviderAdapterRequestError");
+
+      const sessionAfterFailure = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === session.threadId,
+      );
+      assert.equal(sessionAfterFailure?.status, "ready");
+      assert.equal(sessionAfterFailure?.activeTurnId, undefined);
+
+      const turnStartedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.threadId === session.threadId && event.type === "turn.started",
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      const delivered = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Continue without the attachment",
+        attachments: [],
+      });
+      const started = yield* Fiber.join(turnStartedFiber);
+      assert.equal(started._tag, "Some");
+      if (started._tag === "Some") {
+        assert.equal(String(started.value.turnId), String(delivered.turnId));
+      }
+
+      yield* adapter.stopSession(session.threadId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not start a Claude turn when session shutdown wins prompt preparation", () => {
+    let signalPermissionPreparation!: () => void;
+    let releasePermissionPreparation!: () => void;
+    const permissionPreparationStarted = new Promise<void>((resolve) => {
+      signalPermissionPreparation = resolve;
+    });
+    const permissionPreparationRelease = new Promise<void>((resolve) => {
+      releasePermissionPreparation = resolve;
+    });
+    const harness = makeHarness({
+      beforeSetPermissionMode: async () => {
+        signalPermissionPreparation();
+        await permissionPreparationRelease;
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const lifecycleEvents: Array<ProviderRuntimeEvent> = [];
+      const lifecycleFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === session.threadId &&
+            (event.type === "turn.started" || event.type === "turn.completed"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            lifecycleEvents.push(event);
+          }),
+        ),
+        Effect.forkChild,
+      );
+
+      const sendFiber = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "race shutdown with prompt preparation",
+          attachments: [],
+          interactionMode: "plan",
+        })
+        .pipe(Effect.result, Effect.forkChild);
+
+      yield* Effect.promise(() => permissionPreparationStarted);
+      yield* adapter.stopSession(session.threadId);
+      releasePermissionPreparation();
+
+      const result = yield* Fiber.join(sendFiber);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterSessionClosedError");
+      }
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(lifecycleFiber);
+      assert.deepEqual(lifecycleEvents, []);
+      assert.deepEqual(yield* adapter.listSessions(), []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("terminalizes a rejected Claude handoff without publishing turn.started", () => {
+    const harness = makeHarness({ rejectPromptOffer: true });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const lifecycleEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === session.threadId &&
+            (event.type === "turn.started" || event.type === "turn.completed"),
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const accepted = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        turnStartEventSequence: 42,
+        input: "fail after lifecycle start",
+        attachments: [],
+      });
+      const lifecycleEvents = Array.from(yield* Fiber.join(lifecycleEventsFiber));
+
+      assert.isTrue("terminalEventId" in accepted);
+      assert.isTrue("terminalEvent" in accepted);
+      assert.deepEqual(
+        lifecycleEvents.map((event) => event.type),
+        ["turn.completed"],
+      );
+      assert.equal(String(accepted.turnId), String(lifecycleEvents[0]?.turnId));
+      assert.equal(String(accepted.terminalEventId), String(lifecycleEvents[0]?.eventId));
+      assert.strictEqual(accepted.terminalEvent, lifecycleEvents[0]);
+      assert.deepEqual(
+        lifecycleEvents.map((event) => event.turnStartEventSequence),
+        [42],
+      );
+      const terminal = lifecycleEvents[0];
+      assert.equal(terminal?.type, "turn.completed");
+      if (terminal?.type === "turn.completed") {
+        assert.equal(terminal.payload.state, "failed");
+        assert.include(terminal.payload.errorMessage ?? "", "thread is closed");
+      }
+
+      const sessionAfterFailure = (yield* adapter.listSessions()).find(
+        (entry) => entry.threadId === session.threadId,
+      );
+      assert.equal(sessionAfterFailure?.status, "ready");
+      assert.equal(sessionAfterFailure?.activeTurnId, undefined);
+
+      yield* adapter.stopSession(session.threadId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("publishes a causally linked start after Claude accepts the prompt", () => {
+    const harness = makeHarness();
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.threadId === session.threadId && event.type === "turn.started",
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      const accepted = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        turnStartEventSequence: 44,
+        input: "accepted by Claude",
+        attachments: [],
+      });
+      const started = yield* Fiber.join(startedFiber);
+
+      assert.equal(started._tag, "Some");
+      if (started._tag === "Some") {
+        assert.equal(String(started.value.turnId), String(accepted.turnId));
+        assert.equal(started.value.turnStartEventSequence, 44);
+      }
+
+      yield* adapter.stopSession(session.threadId);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

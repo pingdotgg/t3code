@@ -21,6 +21,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -46,6 +47,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
+  ProviderAdapterSessionClosedError,
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
@@ -65,6 +67,7 @@ import {
   parsePermissionRequest,
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
+import type { ProviderAdapterTerminalEvent } from "../Services/ProviderAdapter.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
 import {
   CursorAskQuestionRequest,
@@ -78,6 +81,7 @@ import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
@@ -910,101 +914,146 @@ export function makeCursorAdapter(
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(input.threadId);
-        // A sendTurn while a prompt is in flight is a steer: the agent folds
-        // the new prompt into the ongoing work, so the active turn id is
-        // reused instead of opening a new turn.
-        const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
-        const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
-        // Count this prompt immediately so a superseded in-flight prompt
-        // resolving from here on does not settle the turn; the matching
-        // decrement is the `ensuring` below.
-        ctx.promptsInFlight += 1;
+        const turnModelSelection =
+          input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+        const model = turnModelSelection?.model ?? ctx.session.model;
+        const resolvedModel = resolveCursorAcpBaseModelId(model);
 
-        return yield* Effect.gen(function* () {
-          const turnModelSelection =
-            input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-          const model = turnModelSelection?.model ?? ctx.session.model;
-          const resolvedModel = resolveCursorAcpBaseModelId(model);
-          yield* applyRequestedSessionConfiguration({
-            runtime: ctx.acp,
-            runtimeMode: ctx.session.runtimeMode,
-            interactionMode: input.interactionMode,
-            modelSelection:
-              model === undefined
-                ? undefined
-                : {
-                    model,
-                    options: turnModelSelection?.options,
-                  },
-            mapError: ({ cause, method }) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
-          });
-          ctx.activeTurnId = turnId;
-          if (steeringTurnId === undefined) {
-            ctx.lastPlanFingerprint = undefined;
-          }
-          ctx.session = {
-            ...ctx.session,
-            activeTurnId: turnId,
-            updatedAt: yield* nowIso,
-          };
+        yield* applyRequestedSessionConfiguration({
+          runtime: ctx.acp,
+          runtimeMode: ctx.session.runtimeMode,
+          interactionMode: input.interactionMode,
+          modelSelection:
+            model === undefined
+              ? undefined
+              : {
+                  model,
+                  options: turnModelSelection?.options,
+                },
+          mapError: ({ cause, method }) =>
+            mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+        });
 
-          if (steeringTurnId === undefined) {
-            yield* offerRuntimeEvent({
-              type: "turn.started",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: { model: resolvedModel },
+        // Finish all local prompt preparation before publishing a turn
+        // boundary. Attachment I/O and validation can fail without the ACP
+        // runtime ever seeing a prompt; emitting turn.started before them
+        // would leave downstream lifecycle state running for work that was
+        // never handed off.
+        const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
+        if (input.input?.trim()) {
+          promptParts.push({ type: "text", text: input.input.trim() });
+        }
+        if (input.attachments && input.attachments.length > 0) {
+          for (const attachment of input.attachments) {
+            const attachmentPath = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment,
             });
-          }
-
-          const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-          if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
-          }
-          if (input.attachments && input.attachments.length > 0) {
-            for (const attachment of input.attachments) {
-              const attachmentPath = resolveAttachmentPath({
-                attachmentsDir: serverConfig.attachmentsDir,
-                attachment,
-              });
-              if (!attachmentPath) {
-                return yield* new ProviderAdapterRequestError({
-                  provider: PROVIDER,
-                  method: "session/prompt",
-                  detail: `Invalid attachment id '${attachment.id}'.`,
-                });
-              }
-              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapterRequestError({
-                      provider: PROVIDER,
-                      method: "session/prompt",
-                      detail: cause.message,
-                      cause,
-                    }),
-                ),
-              );
-              promptParts.push({
-                type: "image",
-                data: Buffer.from(bytes).toString("base64"),
-                mimeType: attachment.mimeType,
+            if (!attachmentPath) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session/prompt",
+                detail: `Invalid attachment id '${attachment.id}'.`,
               });
             }
-          }
-
-          if (promptParts.length === 0) {
-            return yield* new ProviderAdapterValidationError({
-              provider: PROVIDER,
-              operation: "sendTurn",
-              issue: "Turn requires non-empty text or attachments.",
+            const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session/prompt",
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+            promptParts.push({
+              type: "image",
+              data: Buffer.from(bytes).toString("base64"),
+              mimeType: attachment.mimeType,
             });
           }
+        }
 
-          const result = yield* ctx.acp
+        if (promptParts.length === 0) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "sendTurn",
+            issue: "Turn requires non-empty text or attachments.",
+          });
+        }
+
+        // Generate the candidate id before taking the thread lock so the
+        // fresh/steer decision and lifecycle publication are serialized with
+        // shutdown without keeping the lock around local preparation.
+        const candidateTurnId = TurnId.make(yield* randomUUIDv4);
+        const prepared = yield* withThreadLock(
+          input.threadId,
+          Effect.gen(function* () {
+            // Session shutdown can win any asynchronous configuration or
+            // attachment work above. Revalidate the captured context while
+            // holding the same lock as stopSession, immediately before the
+            // first lifecycle mutation.
+            if (
+              ctx.stopped ||
+              ctx.session.status === "closed" ||
+              sessions.get(input.threadId) !== ctx
+            ) {
+              return yield* new ProviderAdapterSessionClosedError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+              });
+            }
+
+            // A sendTurn while a prompt is in flight is a steer: the agent
+            // folds the new prompt into the ongoing work, so the active turn
+            // id is reused instead of opening a new turn.
+            const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+            const turnId = steeringTurnId ?? candidateTurnId;
+            // Count this prompt immediately so a superseded in-flight prompt
+            // resolving from here on does not settle the turn; the matching
+            // decrement is the `ensuring` below.
+            ctx.promptsInFlight += 1;
+            ctx.activeTurnId = turnId;
+            if (steeringTurnId === undefined) {
+              ctx.lastPlanFingerprint = undefined;
+            }
+            ctx.session = {
+              ...ctx.session,
+              activeTurnId: turnId,
+              updatedAt: yield* nowIso,
+            };
+
+            if (steeringTurnId === undefined) {
+              yield* offerRuntimeEvent({
+                type: "turn.started",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                ...(input.turnStartEventSequence !== undefined
+                  ? { turnStartEventSequence: input.turnStartEventSequence }
+                  : {}),
+                payload: { model: resolvedModel },
+              });
+            }
+
+            return {
+              turnId,
+              openedTurn: steeringTurnId === undefined,
+            };
+          }),
+        );
+
+        return yield* Effect.gen(function* () {
+          const { turnId } = prepared;
+          const turnStartResult = () => ({
+            threadId: input.threadId,
+            turnId,
+            resumeCursor: ctx.session.resumeCursor,
+          });
+
+          const promptExit = yield* ctx.acp
             .prompt({
               prompt: promptParts,
             })
@@ -1012,7 +1061,78 @@ export function makeCursorAdapter(
               Effect.mapError((error) =>
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
+              Effect.exit,
             );
+
+          if (Exit.isFailure(promptExit)) {
+            // Whichever prompt settles the last slot owns the merged turn
+            // terminal, including a failed steer whose predecessor already
+            // returned. Once that lifecycle is authoritative, report an
+            // accepted terminalized handoff so ProviderService retains this
+            // exact command until runtime ingestion consumes the terminal;
+            // rethrowing here would misclassify it as a pre-start failure.
+            const closesTurn = ctx.promptsInFlight === 1 && ctx.activeTurnId === turnId;
+            let terminalEvent: ProviderAdapterTerminalEvent | undefined;
+            if (closesTurn) {
+              yield* Effect.gen(function* () {
+                const requestError = Cause.squash(promptExit.cause);
+                const errorMessage = isProviderAdapterRequestError(requestError)
+                  ? requestError.detail
+                  : requestError instanceof Error && requestError.message.trim().length > 0
+                    ? requestError.message
+                    : "Cursor prompt request failed.";
+                const updatedAt = yield* nowIso;
+                ctx.activeTurnId = undefined;
+                if (!ctx.stopped) {
+                  const { activeTurnId: _activeTurnId, ...readySession } = ctx.session;
+                  ctx.session = {
+                    ...readySession,
+                    status: "ready",
+                    updatedAt,
+                    lastError: errorMessage,
+                  };
+                }
+                const terminalStamp = yield* makeEventStamp();
+                const failedTerminalEvent = {
+                  type: "turn.completed",
+                  ...terminalStamp,
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId,
+                  ...(input.turnStartEventSequence !== undefined
+                    ? { turnStartEventSequence: input.turnStartEventSequence }
+                    : {}),
+                  payload: {
+                    state: "failed",
+                    errorMessage,
+                  },
+                } satisfies ProviderRuntimeEvent;
+                yield* offerRuntimeEvent(failedTerminalEvent);
+                terminalEvent = failedTerminalEvent;
+              }).pipe(
+                Effect.uninterruptible,
+                Effect.tapCause((terminalCause) =>
+                  Effect.logError("Failed to close rejected Cursor turn handoff.", {
+                    threadId: input.threadId,
+                    turnId,
+                    cause: terminalCause,
+                  }),
+                ),
+              );
+            }
+
+            if (prepared.openedTurn || closesTurn) {
+              return {
+                ...turnStartResult(),
+                ...(terminalEvent !== undefined
+                  ? { terminalEvent, terminalEventId: terminalEvent.eventId }
+                  : {}),
+              };
+            }
+            return yield* Effect.failCause(promptExit.cause);
+          }
+
+          const result = promptExit.value;
 
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {
@@ -1037,6 +1157,9 @@ export function makeCursorAdapter(
               provider: PROVIDER,
               threadId: input.threadId,
               turnId,
+              ...(input.turnStartEventSequence !== undefined
+                ? { turnStartEventSequence: input.turnStartEventSequence }
+                : {}),
               payload: {
                 state: result.stopReason === "cancelled" ? "cancelled" : "completed",
                 stopReason: result.stopReason ?? null,
@@ -1044,11 +1167,7 @@ export function makeCursorAdapter(
             });
           }
 
-          return {
-            threadId: input.threadId,
-            turnId,
-            resumeCursor: ctx.session.resumeCursor,
-          };
+          return turnStartResult();
         }).pipe(
           Effect.ensuring(
             Effect.sync(() => {

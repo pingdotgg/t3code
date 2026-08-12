@@ -10,6 +10,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import type { ConnectionTargetKind } from "@t3tools/client-runtime/connection";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -26,11 +27,24 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+export const DESKTOP_PRIMARY_RECONNECT_WARNING_GRACE_MS = 15_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
-export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
-  const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
+export function resolveEnvironmentReconnectWarningGraceMs(input: {
+  readonly isElectron: boolean;
+  readonly targetKind: ConnectionTargetKind | null;
+}): number {
+  return input.isElectron && input.targetKind === "PrimaryConnectionTarget"
+    ? DESKTOP_PRIMARY_RECONNECT_WARNING_GRACE_MS
+    : ENVIRONMENT_RECONNECT_WARNING_GRACE_MS;
+}
+
+export function scheduleEnvironmentReconnectWarning(
+  showWarning: () => void,
+  graceMs = ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
+): () => void {
+  const timeoutId = globalThis.setTimeout(showWarning, graceMs);
   return () => globalThis.clearTimeout(timeoutId);
 }
 

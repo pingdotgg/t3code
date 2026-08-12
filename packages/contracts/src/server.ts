@@ -418,6 +418,9 @@ export const ServerSignalProcessResult = Schema.Struct({
 export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
 export const ServerConfig = Schema.Struct({
+  /** Opaque process-local deduplication epoch. Clients use it to avoid
+      replaying process-local work after a backend restart or receipt eviction. */
+  serverRunId: Schema.optionalKey(TrimmedNonEmptyString),
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,

@@ -119,7 +119,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { buildDeterministicTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
@@ -165,7 +165,7 @@ import {
   GitBranchIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { cn, randomHex } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -308,6 +308,7 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveEnvironmentReconnectWarningGraceMs,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -1798,13 +1799,18 @@ function ChatViewContent(props: ChatViewProps) {
     activeReconnectingEnvironmentId,
     reconnectWarningGraceElapsedEnvironmentId,
   );
+  const reconnectWarningGraceMs = resolveEnvironmentReconnectWarningGraceMs({
+    isElectron,
+    targetKind: activeEnvironment?.entry.target._tag ?? null,
+  });
   useEffect(() => {
     setReconnectWarningGraceElapsedEnvironmentId(null);
     if (activeReconnectingEnvironmentId === null) return;
-    return scheduleEnvironmentReconnectWarning(() =>
-      setReconnectWarningGraceElapsedEnvironmentId(activeReconnectingEnvironmentId),
+    return scheduleEnvironmentReconnectWarning(
+      () => setReconnectWarningGraceElapsedEnvironmentId(activeReconnectingEnvironmentId),
+      reconnectWarningGraceMs,
     );
-  }, [activeReconnectingEnvironmentId]);
+  }, [activeReconnectingEnvironmentId, reconnectWarningGraceMs]);
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
   const activeEnvironmentUnavailableState = useMemo<EnvironmentUnavailableState | null>(() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
@@ -5231,7 +5237,11 @@ function ChatViewContent(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      // The draft thread id survives a failed/restarted send,
+                      // so this branch does too. The server can then adopt an
+                      // already-created worktree instead of colliding with it
+                      // or leaking a second random branch on manual retry.
+                      branch: buildDeterministicTemporaryWorktreeBranchName(threadIdForSend),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,

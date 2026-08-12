@@ -26,11 +26,14 @@ import {
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
@@ -48,7 +51,10 @@ import {
   withMetrics,
 } from "../../observability/Metrics.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterShape,
+  ProviderAdapterTurnStartResult,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -58,6 +64,7 @@ import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 const isModelSelection = Schema.is(ModelSelection);
+const SEND_TURN_DIRECTORY_UPSERT_RETRIES = 2;
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -230,8 +237,54 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
 
+  const persistRuntimeLifecycleEvent = (event: ProviderRuntimeEvent) => {
+    if (
+      event.type !== "session.started" &&
+      event.type !== "session.state.changed" &&
+      event.type !== "session.exited" &&
+      event.type !== "thread.started" &&
+      event.type !== "turn.started" &&
+      event.type !== "turn.completed" &&
+      event.type !== "turn.aborted" &&
+      event.type !== "runtime.error"
+    ) {
+      return Effect.void;
+    }
+    return directory
+      .appendPendingTerminalEvent({
+        eventId: event.eventId,
+        threadId: event.threadId,
+        event,
+        createdAt: event.createdAt,
+      })
+      .pipe(
+        Effect.tapError((error) =>
+          Effect.logWarning("provider terminal event persistence failed; retrying", {
+            threadId: event.threadId,
+            eventId: event.eventId,
+            eventType: event.type,
+            error,
+          }),
+        ),
+        Effect.retry(
+          Schedule.exponential("100 millis").pipe(
+            Schedule.modifyDelay(({ duration }) =>
+              Effect.succeed(Duration.min(duration, Duration.seconds(5))),
+            ),
+          ),
+        ),
+        Effect.orDie,
+      );
+  };
+
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
+      // Runtime lifecycle is an irreversible provider observation. Persist it
+      // before hot fan-out so a server exit or a delayed prior event cannot
+      // lose or reorder a later same-thread event.
+      Effect.tap((canonicalEvent) =>
+        persistRuntimeLifecycleEvent(canonicalEvent).pipe(Effect.uninterruptible),
+      ),
       Effect.tap((canonicalEvent) =>
         canonicalEventLogger
           ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
@@ -661,7 +714,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
+  const sendTurnInternal = Effect.fn("sendTurn")(function* (
+    rawInput: Parameters<ProviderServiceMethod<"sendTurn">>[0],
+    acknowledge?: (result: ProviderAdapterTurnStartResult) => Effect.Effect<void, never>,
+  ) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
       schema: ProviderSendTurnInput,
@@ -732,32 +788,91 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       // rather than issuing a new one: sessions that go a long time between
       // browser tool calls used to lose the toolkit outright.
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-      const turn = yield* routed.adapter.sendTurn(input);
-      yield* directory.upsert({
-        threadId: input.threadId,
-        provider: routed.adapter.provider,
-        providerInstanceId: routed.instanceId,
-        status: "running",
-        ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-        runtimePayload: {
-          ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
-          lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: yield* nowIso,
-        },
-      });
-      yield* analytics.record("provider.turn.sent", {
-        provider: routed.adapter.provider,
-        model: input.modelSelection?.model,
-        interactionMode: input.interactionMode,
-        // Session-start events alone skew runtime mode toward users who toggle
-        // often, since every toggle restarts the session. Recording it per turn
-        // gives a usage-weighted view and lets it cross with interactionMode.
-        runtimeMode: routed.runtimeMode,
-        attachmentCount: input.attachments.length,
-        hasInput: typeof input.input === "string" && input.input.trim().length > 0,
-      });
-      return turn;
+      return yield* Effect.uninterruptibleMask((restore) =>
+        restore(routed.adapter.sendTurn(input)).pipe(
+          Effect.onExit((exit) =>
+            acknowledge &&
+            Exit.isSuccess(exit) &&
+            exit.value.terminalEvent === undefined &&
+            exit.value.terminalEventId === undefined
+              ? Effect.uninterruptible(acknowledge(exit.value))
+              : Effect.void,
+          ),
+          Effect.flatMap((turn) =>
+            Effect.gen(function* () {
+              // Adapter success is the provider handoff boundary. Directory
+              // persistence is bookkeeping after the prompt may already be
+              // running, so it must never turn acceptance into a send failure
+              // (which would make the durable reactor terminalize or resend).
+              // A terminalized acceptance is durably owned by runtime
+              // ingestion. Keep the prior directory state until that exact
+              // terminal event settles the handoff instead of briefly lying
+              // that the rejected prompt is running.
+              if (turn.terminalEvent !== undefined || turn.terminalEventId !== undefined) {
+                // The adapter has already crossed the provider boundary and
+                // emitted this terminal event. Persist the exact canonical
+                // event here before returning; its separate stream delivery
+                // can lag or be interrupted during shutdown. The append is
+                // idempotent when the stream fiber won the race.
+                if (turn.terminalEvent !== undefined) {
+                  yield* persistRuntimeLifecycleEvent(
+                    correlateRuntimeEventWithInstance(
+                      {
+                        instanceId: routed.instanceId,
+                        provider: routed.adapter.provider,
+                      },
+                      turn.terminalEvent,
+                    ),
+                  );
+                }
+              } else {
+                yield* directory
+                  .upsert({
+                    threadId: input.threadId,
+                    provider: routed.adapter.provider,
+                    providerInstanceId: routed.instanceId,
+                    status: "running",
+                    ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
+                    runtimePayload: {
+                      ...(input.modelSelection !== undefined
+                        ? { modelSelection: input.modelSelection }
+                        : {}),
+                      activeTurnId: turn.turnId,
+                      lastRuntimeEvent: "provider.sendTurn",
+                      lastRuntimeEventAt: yield* nowIso,
+                    },
+                  })
+                  .pipe(
+                    Effect.retry(Schedule.recurs(SEND_TURN_DIRECTORY_UPSERT_RETRIES)),
+                    Effect.catch((error) =>
+                      Effect.logWarning(
+                        "provider turn accepted but session directory update failed",
+                        {
+                          threadId: input.threadId,
+                          turnId: turn.turnId,
+                          provider: routed.adapter.provider,
+                          error,
+                        },
+                      ),
+                    ),
+                  );
+              }
+              yield* analytics.record("provider.turn.sent", {
+                provider: routed.adapter.provider,
+                model: input.modelSelection?.model,
+                interactionMode: input.interactionMode,
+                // Session-start events alone skew runtime mode toward users who toggle
+                // often, since every toggle restarts the session. Recording it per turn
+                // gives a usage-weighted view and lets it cross with interactionMode.
+                runtimeMode: routed.runtimeMode,
+                attachmentCount: input.attachments.length,
+                hasInput: typeof input.input === "string" && input.input.trim().length > 0,
+              });
+              return turn;
+            }),
+          ),
+        ),
+      );
     }).pipe(
       withMetrics({
         counter: providerTurnsTotal,
@@ -773,6 +888,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       }),
     );
   });
+
+  const sendTurn: ProviderServiceMethod<"sendTurn"> = (input) => sendTurnInternal(input);
+  const sendTurnWithAcknowledgement: NonNullable<
+    ProviderService.ProviderService["Service"]["sendTurnWithAcknowledgement"]
+  > = (input, acknowledge) => sendTurnInternal(input, acknowledge);
 
   const interruptTurn: ProviderServiceMethod<"interruptTurn"> = Effect.fn("interruptTurn")(
     function* (rawInput) {
@@ -1128,6 +1248,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   return {
     startSession,
     sendTurn,
+    sendTurnWithAcknowledgement,
     interruptTurn,
     respondToRequest,
     respondToUserInput,
@@ -1142,6 +1263,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     get streamEvents(): ProviderServiceMethod<"streamEvents"> {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
+    subscribeEvents: PubSub.subscribe(runtimeEventPubSub).pipe(Effect.map(Stream.fromSubscription)),
   } satisfies ProviderService.ProviderService["Service"];
 });
 

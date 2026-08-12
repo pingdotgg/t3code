@@ -256,6 +256,8 @@ const ProviderRuntimeEventBase = Schema.Struct({
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
   createdAt: IsoDateTime,
+  /** Durable turn-start event that caused this provider lifecycle event. */
+  turnStartEventSequence: Schema.optional(NonNegativeInt),
   turnId: Schema.optional(TurnId),
   itemId: Schema.optional(RuntimeItemId),
   requestId: Schema.optional(RuntimeRequestId),

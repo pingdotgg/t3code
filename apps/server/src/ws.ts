@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -22,6 +23,7 @@ import {
   type GitActionProgressEvent,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
+  OrchestrationTurnStartPendingError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
@@ -55,6 +57,7 @@ import {
   type TerminalError,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
+  threadTurnBootstrapRequiresSameServerProcess,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -71,6 +74,7 @@ import {
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import * as ClientCommandExecution from "./orchestration/ClientCommandExecution.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -124,6 +128,7 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationTurnStartPendingError = Schema.is(OrchestrationTurnStartPendingError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const EDITOR_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -277,6 +282,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.message-sent"
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
+      | "thread.turn-start-acknowledged"
       | "thread.turn-diff-completed"
       | "thread.reverted"
       | "thread.session-set";
@@ -286,6 +292,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     event.type === "thread.message-sent" ||
     event.type === "thread.proposed-plan-upserted" ||
     event.type === "thread.activity-appended" ||
+    event.type === "thread.turn-start-acknowledged" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
     event.type === "thread.session-set"
@@ -351,6 +358,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  clientCommandExecution: ClientCommandExecution.ClientCommandExecution["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -471,7 +479,7 @@ const makeWsRpcLayer = (
           traceAttributes,
         );
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
-        isOrchestrationDispatchCommandError(cause)
+        isOrchestrationDispatchCommandError(cause) || isOrchestrationTurnStartPendingError(cause)
           ? cause
           : new OrchestrationDispatchCommandError({
               message: cause instanceof Error ? cause.message : fallbackMessage,
@@ -506,10 +514,16 @@ const makeWsRpcLayer = (
         readonly createdAt: string;
         readonly payload: Record<string, unknown>;
         readonly tone: "info" | "error";
+        readonly commandId?: CommandId;
+        readonly activityId?: EventId;
       }) =>
         Effect.all({
-          commandId: serverCommandId("setup-script-activity"),
-          activityId: serverEventId,
+          commandId:
+            input.commandId === undefined
+              ? serverCommandId("setup-script-activity")
+              : Effect.succeed(input.commandId),
+          activityId:
+            input.activityId === undefined ? serverEventId : Effect.succeed(input.activityId),
         }).pipe(
           Effect.flatMap(({ commandId, activityId }) =>
             orchestrationEngine.dispatch({
@@ -532,7 +546,8 @@ const makeWsRpcLayer = (
 
       const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
         const error = Cause.squash(cause);
-        return isOrchestrationDispatchCommandError(error)
+        return isOrchestrationDispatchCommandError(error) ||
+          isOrchestrationTurnStartPendingError(error)
           ? error
           : new OrchestrationDispatchCommandError({
               message:
@@ -754,7 +769,10 @@ const makeWsRpcLayer = (
 
       const dispatchBootstrapTurnStart = (
         command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>,
-      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
+      ): Effect.Effect<
+        { readonly sequence: number },
+        OrchestrationDispatchCommandError | OrchestrationTurnStartPendingError
+      > =>
         Effect.gen(function* () {
           const bootstrap = command.bootstrap;
           const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
@@ -762,21 +780,24 @@ const makeWsRpcLayer = (
           let targetProjectId = bootstrap?.createThread?.projectId;
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
           let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
+          const processLocalBootstrap = threadTurnBootstrapRequiresSameServerProcess(bootstrap);
+          let existingBootstrapActivities: ReadonlyArray<{
+            readonly kind: string;
+            readonly payload: unknown;
+          }> = [];
 
+          const bootstrapCommandId = (tag: string) =>
+            CommandId.make(`server:${tag}:${command.commandId}`);
           const cleanupCreatedThread = () =>
             createdThread
-              ? serverCommandId("bootstrap-thread-delete").pipe(
-                  Effect.flatMap((commandId) =>
-                    orchestrationEngine.dispatch({
-                      type: "thread.delete",
-                      commandId,
-                      threadId: command.threadId,
-                    }),
-                  ),
-                  Effect.ignoreCause({ log: true }),
-                )
+              ? orchestrationEngine
+                  .dispatch({
+                    type: "thread.delete",
+                    commandId: bootstrapCommandId("bootstrap-thread-delete"),
+                    threadId: command.threadId,
+                  })
+                  .pipe(Effect.ignoreCause({ log: true }))
               : Effect.void;
-
           const recordSetupScriptLaunchFailure = (input: {
             readonly error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError;
             readonly requestedAt: string;
@@ -820,24 +841,14 @@ const makeWsRpcLayer = (
                 terminalId: input.terminalId,
                 worktreePath: input.worktreePath,
               };
-              yield* Effect.all([
-                appendSetupScriptActivity({
-                  threadId: command.threadId,
-                  kind: "setup-script.requested",
-                  summary: "Starting setup script",
-                  createdAt: input.requestedAt,
-                  payload,
-                  tone: "info",
-                }),
-                appendSetupScriptActivity({
-                  threadId: command.threadId,
-                  kind: "setup-script.started",
-                  summary: "Setup script started",
-                  createdAt: startedAt,
-                  payload,
-                  tone: "info",
-                }),
-              ]).pipe(
+              yield* appendSetupScriptActivity({
+                threadId: command.threadId,
+                kind: "setup-script.started",
+                summary: "Setup script started",
+                createdAt: startedAt,
+                payload,
+                tone: "info",
+              }).pipe(
                 Effect.asVoid,
                 Effect.catch((error) =>
                   Effect.logWarning(
@@ -860,7 +871,33 @@ const makeWsRpcLayer = (
                 return;
               }
               const worktreePath = targetWorktreePath;
+              const setupAlreadyRequested = existingBootstrapActivities.some(
+                (activity) =>
+                  activity.kind === "setup-script.requested" &&
+                  typeof activity.payload === "object" &&
+                  activity.payload !== null &&
+                  "worktreePath" in activity.payload &&
+                  activity.payload.worktreePath === worktreePath,
+              );
+              if (setupAlreadyRequested) {
+                return;
+              }
               const requestedAt = yield* nowIso;
+              // This durable phase marker precedes the external terminal write.
+              // A replacement server can therefore adopt the same worktree
+              // without launching the setup script a second time.
+              yield* appendSetupScriptActivity({
+                threadId: command.threadId,
+                kind: "setup-script.requested",
+                summary: "Starting setup script",
+                createdAt: requestedAt,
+                payload: { worktreePath },
+                tone: "info",
+                commandId: bootstrapCommandId("bootstrap-setup-script-requested"),
+                activityId: EventId.make(
+                  `server:bootstrap-setup-script-requested:${command.threadId}`,
+                ),
+              });
               yield* projectSetupScriptRunner
                 .runForThread({
                   threadId: command.threadId,
@@ -893,54 +930,165 @@ const makeWsRpcLayer = (
             });
 
           const bootstrapProgram = Effect.gen(function* () {
+            const existingThreadDetail = yield* projectionSnapshotQuery.getThreadDetailById(
+              command.threadId,
+            );
+            existingBootstrapActivities = Option.match(existingThreadDetail, {
+              onNone: () => [],
+              onSome: (thread) => thread.activities,
+            });
+            if (
+              Option.exists(existingThreadDetail, (thread) =>
+                thread.messages.some((message) => message.id === command.message.messageId),
+              )
+            ) {
+              // The final durable command already landed but its RPC result
+              // may have been lost. Replay its receipt before touching any
+              // process-local work, especially setup-script launch.
+              return yield* orchestrationEngine.dispatch(finalTurnStartCommand);
+            }
+
             if (bootstrap?.createThread) {
-              yield* orchestrationEngine.dispatch({
-                type: "thread.create",
-                commandId: yield* serverCommandId("bootstrap-thread-create"),
-                threadId: command.threadId,
-                projectId: bootstrap.createThread.projectId,
-                title: bootstrap.createThread.title,
-                modelSelection: bootstrap.createThread.modelSelection,
-                runtimeMode: bootstrap.createThread.runtimeMode,
-                interactionMode: bootstrap.createThread.interactionMode,
-                branch: bootstrap.createThread.branch,
-                worktreePath: bootstrap.createThread.worktreePath,
-                createdAt: bootstrap.createThread.createdAt,
-              });
-              createdThread = true;
+              const createThread = bootstrap.createThread;
+              const resumesMatchingPartial = Option.exists(
+                existingThreadDetail,
+                (thread) =>
+                  thread.projectId === createThread.projectId &&
+                  thread.latestTurn === null &&
+                  thread.messages.length === 0 &&
+                  thread.session === null &&
+                  thread.archivedAt === null &&
+                  thread.deletedAt === null,
+              );
+              if (!resumesMatchingPartial) {
+                yield* orchestrationEngine.dispatch({
+                  type: "thread.create",
+                  commandId: bootstrapCommandId("bootstrap-thread-create"),
+                  threadId: command.threadId,
+                  projectId: createThread.projectId,
+                  title: createThread.title,
+                  modelSelection: createThread.modelSelection,
+                  runtimeMode: createThread.runtimeMode,
+                  interactionMode: createThread.interactionMode,
+                  branch: createThread.branch,
+                  worktreePath: createThread.worktreePath,
+                  createdAt: createThread.createdAt,
+                });
+                createdThread = Option.isNone(existingThreadDetail);
+              } else {
+                const partialThread = Option.getOrThrow(existingThreadDetail);
+                const modelSelectionChanged =
+                  partialThread.modelSelection.instanceId !==
+                    createThread.modelSelection.instanceId ||
+                  partialThread.modelSelection.model !== createThread.modelSelection.model ||
+                  !Equal.equals(
+                    partialThread.modelSelection.options ?? [],
+                    createThread.modelSelection.options ?? [],
+                  );
+                if (partialThread.title !== createThread.title || modelSelectionChanged) {
+                  // An interrupted browser/desktop draft keeps its thread id
+                  // but remains editable. The empty shell is authoritative
+                  // proof no turn landed, so safely adopt it and align its
+                  // metadata with the retried payload instead of colliding on
+                  // a second thread.create.
+                  yield* orchestrationEngine.dispatch({
+                    type: "thread.meta.update",
+                    commandId: bootstrapCommandId("bootstrap-thread-resume-title"),
+                    threadId: command.threadId,
+                    ...(partialThread.title !== createThread.title
+                      ? { title: createThread.title }
+                      : {}),
+                    ...(modelSelectionChanged
+                      ? { modelSelection: createThread.modelSelection }
+                      : {}),
+                  });
+                }
+                if (partialThread.runtimeMode !== createThread.runtimeMode) {
+                  yield* orchestrationEngine.dispatch({
+                    type: "thread.runtime-mode.set",
+                    commandId: bootstrapCommandId("bootstrap-thread-resume-runtime-mode"),
+                    threadId: command.threadId,
+                    runtimeMode: createThread.runtimeMode,
+                    createdAt: command.createdAt,
+                  });
+                }
+                if (partialThread.interactionMode !== createThread.interactionMode) {
+                  yield* orchestrationEngine.dispatch({
+                    type: "thread.interaction-mode.set",
+                    commandId: bootstrapCommandId("bootstrap-thread-resume-interaction-mode"),
+                    threadId: command.threadId,
+                    interactionMode: createThread.interactionMode,
+                    createdAt: command.createdAt,
+                  });
+                }
+              }
             }
 
             if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
-              const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
+              const prepareWorktree = bootstrap.prepareWorktree;
+              const matchingPreparedRef = prepareWorktree.branch
+                ? (yield* gitWorkflow.listRefs({
+                    cwd: prepareWorktree.projectCwd,
+                    query: prepareWorktree.branch,
+                    refKind: "local",
+                    refresh: true,
+                  })).refs.find(
+                    (ref) => ref.isRemote !== true && ref.name === prepareWorktree.branch,
+                  )
+                : undefined;
+              const worktree = matchingPreparedRef?.worktreePath
+                ? {
+                    worktree: {
+                      refName: matchingPreparedRef.name,
+                      path: matchingPreparedRef.worktreePath,
+                    },
+                  }
+                : matchingPreparedRef
+                  ? yield* gitWorkflow.createWorktree({
+                      cwd: prepareWorktree.projectCwd,
+                      // `git worktree add -b` can leave the branch behind if it
+                      // fails after ref creation. Reuse that deterministic ref
+                      // without `-b` so exact recovery cannot collide forever.
+                      refName: matchingPreparedRef.name,
+                      path: null,
+                    })
+                  : yield* Effect.gen(function* () {
+                      let worktreeBaseRef = prepareWorktree.baseBranch;
+                      // "Start from origin" is a stored default; repos without
+                      // an origin remote fall back to the local base branch.
+                      const startFromOrigin =
+                        prepareWorktree.startFromOrigin === true &&
+                        (yield* gitWorkflow.remoteExists({
+                          cwd: prepareWorktree.projectCwd,
+                          remoteName: "origin",
+                        }));
+                      if (startFromOrigin) {
+                        yield* gitWorkflow.fetchRemote({
+                          cwd: prepareWorktree.projectCwd,
+                          remoteName: "origin",
+                        });
+                        const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                          cwd: prepareWorktree.projectCwd,
+                          refName: prepareWorktree.baseBranch,
+                          fallbackRemoteName: "origin",
+                        });
+                        worktreeBaseRef = resolvedRemoteBase.commitSha;
+                      }
+                      return yield* gitWorkflow.createWorktree({
+                        cwd: prepareWorktree.projectCwd,
+                        refName: worktreeBaseRef,
+                        newRefName: prepareWorktree.branch,
+                        baseRefName: prepareWorktree.baseBranch,
+                        path: null,
+                      });
+                    });
+              const preparedWorktreePath = worktree.worktree.path;
+              if (preparedWorktreePath === null) {
+                return yield* new OrchestrationDispatchCommandError({
+                  message: `Prepared worktree '${worktree.worktree.refName}' has no local path`,
                 });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  fallbackRemoteName: "origin",
-                });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
               }
-              const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
-                refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
-                path: null,
-              });
-              targetWorktreePath = worktree.worktree.path;
+              targetWorktreePath = preparedWorktreePath;
               yield* orchestrationEngine.dispatch({
                 type: "thread.meta.update",
                 commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
@@ -948,7 +1096,7 @@ const makeWsRpcLayer = (
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
               });
-              yield* refreshGitStatus(targetWorktreePath);
+              yield* refreshGitStatus(preparedWorktreePath);
             }
 
             yield* runSetupProgram();
@@ -959,9 +1107,15 @@ const makeWsRpcLayer = (
           return yield* bootstrapProgram.pipe(
             Effect.catchCause((cause) => {
               const dispatchError = toBootstrapDispatchCommandCauseError(cause);
-              if (Cause.hasInterruptsOnly(cause)) {
+              if (processLocalBootstrap || Cause.hasInterrupts(cause)) {
+                // A process-local bootstrap can fail after worktree/setup
+                // side effects even when the RPC returns a typed failure. Keep
+                // its empty deterministic shell for same-ID recovery; deleting
+                // is a tombstone and cannot safely be recreated in place.
                 return Effect.fail(dispatchError);
               }
+              // Purely durable/local atomic bootstraps have no external side
+              // effect to resume, so their newly created shell can be cleaned.
               return cleanupCreatedThread().pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
             }),
           );
@@ -969,9 +1123,14 @@ const makeWsRpcLayer = (
 
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
-      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
+      ): Effect.Effect<
+        { readonly sequence: number },
+        OrchestrationDispatchCommandError | OrchestrationTurnStartPendingError
+      > => {
         const dispatchEffect =
-          normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
+          normalizedCommand.type === "thread.turn.start" &&
+          normalizedCommand.bootstrap &&
+          threadTurnBootstrapRequiresSameServerProcess(normalizedCommand.bootstrap)
             ? dispatchBootstrapTurnStart(normalizedCommand)
             : orchestrationEngine
                 .dispatch(normalizedCommand)
@@ -998,8 +1157,10 @@ const makeWsRpcLayer = (
         );
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
+        const serverRunId = yield* clientCommandExecution.runId;
 
         return {
+          serverRunId,
           environment,
           auth,
           cwd: config.cwd,
@@ -1036,96 +1197,165 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
-            Effect.gen(function* () {
-              const normalizedCommand = yield* normalizeDispatchCommand(command);
-              // Archive and settle both mean "done with this thread", so a
-              // live provider session must not keep running background work
-              // (PR monitors, dev servers, subagent fleets) after either
-              // lands. The decider rejects settling a starting/running
-              // session, so for settle this only ever stops an idle one; a
-              // stopped session-set does not count as activity, so the stop
-              // cannot un-settle the thread it follows.
-              const parkingCommand =
-                normalizedCommand.type === "thread.archive" ||
-                normalizedCommand.type === "thread.settle"
-                  ? normalizedCommand
-                  : undefined;
-              // Best-effort on purpose: the user's archive/settle must not
-              // fail because this cleanup read blipped, so a failed read
-              // logs and skips the stop instead of propagating.
-              const shouldStopSessionAfterCommand = parkingCommand
-                ? yield* projectionSnapshotQuery.getThreadShellById(parkingCommand.threadId).pipe(
-                    Effect.map(
-                      Option.match({
-                        onNone: () => false,
-                        onSome: (thread) =>
-                          thread.session !== null && thread.session.status !== "stopped",
-                      }),
-                    ),
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning(
-                        "failed to read thread session state before session-stop check",
-                        { threadId: parkingCommand.threadId, cause },
-                      ).pipe(Effect.as(false)),
-                    ),
-                  )
-                : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand);
-              if (parkingCommand) {
-                const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
-                if (shouldStopSessionAfterCommand) {
-                  yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-${parkingKind}:${parkingCommand.commandId}`,
-                      ),
-                      threadId: parkingCommand.threadId,
-                      createdAt: yield* nowIso,
-                      // A settled thread can be re-engaged before this stop is
-                      // decided; the decider then drops the stop instead of
-                      // killing the new session. Archive stops stay
-                      // unconditional: turn starts on archived threads are
-                      // rejected, so there is no new session to protect.
-                      ...(parkingKind === "settle" ? { onlyIfSettled: true } : {}),
-                    });
+            ClientCommandExecution.fingerprintClientCommand(command).pipe(
+              Effect.flatMap((fingerprint) => {
+                const requiresSameServerProcess =
+                  command.type === "thread.turn.start" &&
+                  threadTurnBootstrapRequiresSameServerProcess(command.bootstrap);
+                const dispatchEffect = Effect.gen(function* () {
+                  const normalizedCommand = yield* normalizeDispatchCommand(command);
+                  // Archive and settle both mean "done with this thread", so a
+                  // live provider session must not keep running background work
+                  // (PR monitors, dev servers, subagent fleets) after either
+                  // lands. The decider rejects settling a starting/running
+                  // session, so for settle this only ever stops an idle one; a
+                  // stopped session-set does not count as activity, so the stop
+                  // cannot un-settle the thread it follows.
+                  const parkingCommand =
+                    normalizedCommand.type === "thread.archive" ||
+                    normalizedCommand.type === "thread.settle"
+                      ? normalizedCommand
+                      : undefined;
+                  // Best-effort on purpose: the user's archive/settle must not
+                  // fail because this cleanup read blipped, so a failed read
+                  // logs and skips the stop instead of propagating.
+                  const shouldStopSessionAfterCommand = parkingCommand
+                    ? yield* projectionSnapshotQuery
+                        .getThreadShellById(parkingCommand.threadId)
+                        .pipe(
+                          Effect.map(
+                            Option.match({
+                              onNone: () => false,
+                              onSome: (thread) =>
+                                thread.session !== null && thread.session.status !== "stopped",
+                            }),
+                          ),
+                          Effect.catchCause((cause) =>
+                            Effect.logWarning(
+                              "failed to read thread session state before session-stop check",
+                              { threadId: parkingCommand.threadId, cause },
+                            ).pipe(Effect.as(false)),
+                          ),
+                        )
+                    : false;
+                  const result = yield* dispatchNormalizedCommand(normalizedCommand);
+                  if (parkingCommand) {
+                    const parkingKind =
+                      parkingCommand.type === "thread.archive" ? "archive" : "settle";
+                    if (shouldStopSessionAfterCommand) {
+                      yield* Effect.gen(function* () {
+                        const stopCommand = yield* normalizeDispatchCommand({
+                          type: "thread.session.stop",
+                          commandId: CommandId.make(
+                            `session-stop-for-${parkingKind}:${parkingCommand.commandId}`,
+                          ),
+                          threadId: parkingCommand.threadId,
+                          createdAt: yield* nowIso,
+                          // A settled thread can be re-engaged before this stop is
+                          // decided; the decider then drops the stop instead of
+                          // killing the new session. Archive stops stay
+                          // unconditional: turn starts on archived threads are
+                          // rejected, so there is no new session to protect.
+                          ...(parkingKind === "settle" ? { onlyIfSettled: true } : {}),
+                        });
 
-                    yield* dispatchNormalizedCommand(stopCommand);
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning(`failed to stop provider session during ${parkingKind}`, {
-                        threadId: parkingCommand.threadId,
-                        cause,
-                      }),
-                    ),
-                  );
-                }
+                        yield* dispatchNormalizedCommand(stopCommand);
+                      }).pipe(
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning(
+                            `failed to stop provider session during ${parkingKind}`,
+                            {
+                              threadId: parkingCommand.threadId,
+                              cause,
+                            },
+                          ),
+                        ),
+                      );
+                    }
 
-                // Terminals are user-opened panes, not thread background
-                // work: archive removes the thread from view so they close
-                // with it, but a settled thread stays reachable and may be
-                // un-settled, so its terminals stay up.
-                if (parkingCommand.type === "thread.archive") {
-                  yield* terminalManager.close({ threadId: parkingCommand.threadId }).pipe(
-                    Effect.catch((error) =>
-                      Effect.logWarning("failed to close thread terminals after archive", {
-                        threadId: parkingCommand.threadId,
-                        error: error.message,
-                      }),
-                    ),
-                  );
-                }
-              }
-              return result;
-            }).pipe(
-              Effect.mapError((cause) =>
-                isOrchestrationDispatchCommandError(cause)
-                  ? cause
-                  : new OrchestrationDispatchCommandError({
-                      message: "Failed to dispatch orchestration command",
-                      cause,
+                    // Terminals are user-opened panes, not thread background
+                    // work: archive removes the thread from view so they close
+                    // with it, but a settled thread stays reachable and may be
+                    // un-settled, so its terminals stay up.
+                    if (parkingCommand.type === "thread.archive") {
+                      yield* terminalManager.close({ threadId: parkingCommand.threadId }).pipe(
+                        Effect.catch((error) =>
+                          Effect.logWarning("failed to close thread terminals after archive", {
+                            threadId: parkingCommand.threadId,
+                            error: error.message,
+                          }),
+                        ),
+                      );
+                    }
+                  }
+                  return result;
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    isOrchestrationDispatchCommandError(cause) ||
+                    isOrchestrationTurnStartPendingError(cause)
+                      ? cause
+                      : new OrchestrationDispatchCommandError({
+                          message: "Failed to dispatch orchestration command",
+                          cause,
+                        }),
+                  ),
+                );
+                const ensureProcessLocalFingerprint = requiresSameServerProcess
+                  ? (orchestrationEngine.registerProcessLocalCommand?.({
+                      commandId: command.commandId,
+                      fingerprint,
+                    }) ?? Effect.void)
+                  : Effect.void;
+                const executeGuarded = Effect.gen(function* () {
+                  yield* ensureProcessLocalFingerprint;
+                  return yield* dispatchEffect.pipe(
+                    clientCommandExecution.run(command.commandId, {
+                      fingerprint,
+                      processLocal: requiresSameServerProcess,
+                      ...(requiresSameServerProcess && command.expectedServerRunId !== undefined
+                        ? { expectedRunId: command.expectedServerRunId }
+                        : {}),
                     }),
-              ),
+                  );
+                });
+                if (
+                  !requiresSameServerProcess ||
+                  command.type !== "thread.turn.start" ||
+                  command.expectedServerRunId === undefined
+                ) {
+                  return executeGuarded;
+                }
+                return Effect.gen(function* () {
+                  const currentRunId = yield* clientCommandExecution.runId;
+                  if (currentRunId === command.expectedServerRunId) {
+                    return yield* executeGuarded;
+                  }
+                  const accepted = yield* (
+                    orchestrationEngine.findAcceptedProcessLocalCommand?.({
+                      commandId: command.commandId,
+                      fingerprint,
+                      threadId: command.threadId,
+                    }) ?? Effect.succeed(Option.none())
+                  );
+                  if (Option.isNone(accepted)) {
+                    return yield* executeGuarded;
+                  }
+                  // The old process durably recorded this exact payload identity
+                  // and accepted outer command. Return its receipt directly:
+                  // normalization, worktree, setup, and dispatch must not rerun.
+                  return accepted.value;
+                }).pipe(
+                  Effect.mapError((cause) =>
+                    isOrchestrationDispatchCommandError(cause) ||
+                    isOrchestrationTurnStartPendingError(cause)
+                      ? cause
+                      : new OrchestrationDispatchCommandError({
+                          message: "Failed to replay committed bootstrap command",
+                          cause,
+                        }),
+                  ),
+                );
+              }),
             ),
             { "rpc.aggregate": "orchestration" },
           ),
@@ -1192,9 +1422,10 @@ const makeWsRpcLayer = (
               // sequence but the live subscription is not attached yet). Every
               // path below emits from this same buffered live tail. Overlapping
               // events are deduped by sequence on the client.
+              const subscribedDomainEvents = yield* orchestrationEngine.subscribeDomainEvents;
               const liveBuffer = yield* Queue.unbounded<ShellLiveInput>();
               yield* Effect.forkScoped(
-                orchestrationEngine.streamDomainEvents.pipe(
+                subscribedDomainEvents.pipe(
                   Stream.runForEach((event) =>
                     Queue.offer(liveBuffer, { kind: "event" as const, event }),
                   ),
@@ -1310,7 +1541,8 @@ const makeWsRpcLayer = (
                 event.aggregateId === input.threadId &&
                 isThreadDetailEvent(event);
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+              const subscribedDomainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+              const liveStream = subscribedDomainEvents.pipe(
                 Stream.filter(isThisThreadDetailEvent),
                 Stream.map((event) => ({
                   kind: "event" as const,
@@ -2278,6 +2510,7 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const clientCommandExecution = yield* ClientCommandExecution.ClientCommandExecution;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     return HttpRouter.add(
@@ -2299,7 +2532,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, clientCommandExecution).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
