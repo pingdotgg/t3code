@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -35,6 +36,7 @@ import * as Stream from "effect/Stream";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -358,6 +360,45 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         serviceTier: "priority",
       });
     }),
+  );
+
+  it.effect("gives T3 MCP tools enough time for complete Operator child turns", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("sess-operator-mcp");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId,
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:4567/mcp",
+        authorizationHeader: "Bearer test-token",
+      });
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.deepStrictEqual(runtime.options.appServerArgs, [
+        "-c",
+        "mcp_servers.t3-code.url=http://127.0.0.1:4567/mcp",
+        "-c",
+        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        "-c",
+        `mcp_servers.t3-code.tool_timeout_sec=${McpProviderSession.T3_MCP_TOOL_TIMEOUT_SECONDS}`,
+      ]);
+      NodeAssert.equal(runtime.options.environment?.T3_MCP_BEARER_TOKEN, "test-token");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() =>
+          McpProviderSession.clearMcpProviderSession(asThreadId("sess-operator-mcp")),
+        ),
+      ),
+    ),
   );
 
   it.effect("passes configured launch args into the session runtime", () => {

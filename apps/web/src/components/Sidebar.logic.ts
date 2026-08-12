@@ -120,6 +120,7 @@ export function buildBulkTitleRegenerationContextMenuItem(input: {
 export interface ThreadStatusPill {
   label:
     | "Working"
+    | "Waiting"
     | "Monitoring"
     | "Connecting"
     | "Completed"
@@ -135,8 +136,9 @@ export interface ThreadStatusPill {
 // then active work, then the actionable plan prompt, then passive
 // monitoring. A Monitoring sibling must never hide a Plan Ready thread.
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
-  "Pending Approval": 6,
-  "Awaiting Input": 5,
+  "Pending Approval": 7,
+  "Awaiting Input": 6,
+  Waiting: 5,
   Working: 4,
   Connecting: 4,
   "Plan Ready": 3,
@@ -153,6 +155,7 @@ type ThreadStatusInput = Pick<
   | "latestTurn"
   | "session"
   | "backgroundLiveness"
+  | "operatorWaitStartedAt"
 > & {
   lastVisitedAt?: string | undefined;
 };
@@ -424,8 +427,8 @@ export function resolveThreadRowClassName(input: {
 }
 
 // ── Sidebar thread status model ─────────────────────────────────────
-// Five visual states, three colors: color is reserved for "act now"
-// (approval), "in motion" (working), and "broken" (failed). Ready is the
+// Color is reserved for "act now" (approval), "in motion" (working),
+// "blocked on tasks" (waiting), and "broken" (failed). Ready is the
 // unlabeled resting state — the agent stopped and is waiting on the user,
 // whether it finished, asked a question, or proposed a plan.
 // Unread completion is tracked separately: it describes whether a ready
@@ -433,6 +436,7 @@ export function resolveThreadRowClassName(input: {
 export type SidebarThreadStatus =
   | "approval"
   | "input"
+  | "waiting"
   | "working"
   | "monitoring"
   | "failed"
@@ -440,7 +444,11 @@ export type SidebarThreadStatus =
 
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "session"
+  | "backgroundLiveness"
+  | "operatorWaitStartedAt"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
@@ -449,6 +457,12 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   }
   if (thread.hasPendingUserInput) {
     return "input";
+  }
+  if (
+    (thread.session?.status === "running" || thread.session?.status === "starting") &&
+    thread.operatorWaitStartedAt != null
+  ) {
+    return "waiting";
   }
   if (thread.session?.status === "running" || thread.session?.status === "starting") {
     return "working";
@@ -625,6 +639,18 @@ export function resolveThreadStatusPill(input: {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+      pulse: false,
+    };
+  }
+
+  if (
+    (thread.session?.status === "running" || thread.session?.status === "starting") &&
+    thread.operatorWaitStartedAt != null
+  ) {
+    return {
+      label: "Waiting",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,
     };
   }

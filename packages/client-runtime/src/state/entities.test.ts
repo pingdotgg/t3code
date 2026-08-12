@@ -302,6 +302,48 @@ describe("environment entity projections", () => {
     expect(harness.registry.get(threadsAtom)).toBe(threads);
   });
 
+  it("preserves Operator child collections across unrelated thread updates", () => {
+    const harness = makeHarness();
+    const childId = ThreadId.make("operator-child");
+    const child = {
+      ...THREAD_SHELL,
+      id: childId,
+      title: "Operator child",
+      operatorParentThreadId: THREAD_ID,
+    };
+    const childrenAtom = harness.threadShells.operatorThreadShellsAtom({
+      environmentId: ENVIRONMENT_ID,
+      threadId: THREAD_ID,
+    });
+    harness.registry.set(
+      harness.shellStateAtom,
+      AsyncResult.success(
+        shellState({
+          ...SNAPSHOT,
+          snapshotSequence: 2,
+          threads: [...SNAPSHOT.threads, child],
+        }),
+      ),
+    );
+    const children = harness.registry.get(childrenAtom);
+
+    expect(children).toHaveLength(1);
+    expect(children[0]?.id).toBe(childId);
+
+    harness.registry.set(
+      harness.shellStateAtom,
+      AsyncResult.success(
+        shellState({
+          ...SNAPSHOT,
+          snapshotSequence: 3,
+          threads: [THREAD_SHELL, { ...SNAPSHOT.threads[1]!, title: "Updated elsewhere" }, child],
+        }),
+      ),
+    );
+
+    expect(harness.registry.get(childrenAtom)).toBe(children);
+  });
+
   it("updates only the requested thread detail and preserves untouched field identities", () => {
     const harness = makeHarness();
     const threadRef = {

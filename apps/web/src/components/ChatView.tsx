@@ -149,6 +149,11 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
+import { OperatorPanel } from "./OperatorPanel";
+import {
+  foldOperatorThreads,
+  isLiveOperatorTask,
+} from "@t3tools/client-runtime/state/operatorRuntime";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -236,6 +241,7 @@ import {
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
+  useOperatorThreadShells,
   useProject,
   useProjects,
   useThread,
@@ -1223,6 +1229,9 @@ function ChatViewContent(props: ChatViewProps) {
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
+  const operatorThreadShells = useOperatorThreadShells(
+    routeKind === "server" ? routeThreadRef : null,
+  );
   const primaryEnvironment = usePrimaryEnvironment();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const environmentById = useMemo(
@@ -1960,6 +1969,7 @@ function ChatViewContent(props: ChatViewProps) {
     : (primaryEnvironment?.serverConfig ?? null);
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const supportsAgenticOperator = serverConfig?.environment.capabilities.agenticOperator === true;
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -2166,6 +2176,12 @@ function ChatViewContent(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
+  const operatorTasks = useMemo(
+    () =>
+      activeServerThread ? foldOperatorThreads(operatorThreadShells, activeServerThread.id) : [],
+    [activeServerThread, operatorThreadShells],
+  );
+  const liveOperatorCount = operatorTasks.filter(isLiveOperatorTask).length;
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -3236,6 +3252,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const addOperatorSurface = useCallback(() => {
+    if (!activeThreadRef || !isServerThread || !supportsAgenticOperator) return;
+    useRightPanelStore.getState().open(activeThreadRef, "operator");
+  }, [activeThreadRef, isServerThread, supportsAgenticOperator]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -6063,6 +6083,13 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
+    ) : activeRightPanelSurface?.kind === "operator" ? (
+      <OperatorPanel
+        tasks={operatorTasks}
+        enabled={serverConfig?.settings.agenticOperatorEnabled === true}
+        available={isServerThread && supportsAgenticOperator}
+        onOpenSettings={() => void navigate({ to: "/settings/agentic-operator" })}
+      />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
@@ -6502,14 +6529,17 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddAgents={addAgentsSurface}
+          onAddOperator={addOperatorSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           agentsAvailable
+          operatorAvailable={isServerThread && supportsAgenticOperator}
           pullRequestStatuses={pullRequestTabStatuses}
           liveAgentCount={agentPanelModel.liveCount}
+          liveOperatorCount={liveOperatorCount}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6536,14 +6566,17 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddAgents={addAgentsSurface}
+            onAddOperator={addOperatorSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             agentsAvailable
+            operatorAvailable={isServerThread && supportsAgenticOperator}
             pullRequestStatuses={pullRequestTabStatuses}
             liveAgentCount={agentPanelModel.liveCount}
+            liveOperatorCount={liveOperatorCount}
           >
             {rightPanelContent}
           </RightPanelTabs>
