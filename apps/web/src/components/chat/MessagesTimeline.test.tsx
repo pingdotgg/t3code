@@ -686,6 +686,49 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Tool call failed"');
   });
 
+  it("renders compact blue progress for turn plans", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:27.000Z"
+        latestTurn={{
+          turnId: TurnId.make("turn-1"),
+          state: "running",
+          startedAt: "2026-03-17T19:12:27.000Z",
+          completedAt: null,
+        }}
+        timelineEntries={[
+          {
+            id: "turn-plan-entry",
+            kind: "turn-plan",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            turnPlan: {
+              id: "turn-plan:turn-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              turnId: TurnId.make("turn-1"),
+              plan: {
+                createdAt: "2026-03-17T19:12:28.000Z",
+                turnId: TurnId.make("turn-1"),
+                steps: [
+                  { step: "Inspect the UI", status: "completed" },
+                  { step: "Refine the task row", status: "inProgress" },
+                  { step: "Verify the result", status: "pending" },
+                ],
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="1 of 3 steps completed"');
+    expect(markup).toContain("bg-info");
+    expect(markup).toContain("1/3");
+    expect(markup).not.toContain("lucide-list-checks");
+  });
+
   it("uses the executable as the label for a long live command", () => {
     const command =
       'rg -n "steer|intervene|followup|follow-up|mid-turn|same turn|turn-fold" apps/web/src/components/chat/MessagesTimeline.logic.ts';

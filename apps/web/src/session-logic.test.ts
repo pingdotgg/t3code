@@ -1852,7 +1852,7 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     expect(entries).toHaveLength(0);
   });
 
-  it("drops task.updated and tool.progress from the work log (fold input only)", () => {
+  it("drops status-only activities that have dedicated timeline UI", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({
         kind: "task.updated",
@@ -1865,6 +1865,12 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
         summary: "Read",
         tone: "info",
         payload: { taskId: "task-1", toolName: "Read" },
+      }),
+      makeActivity({
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        payload: { plan: [{ step: "Inspect code", status: "inProgress" }] },
       }),
     ]);
     expect(entries).toHaveLength(0);

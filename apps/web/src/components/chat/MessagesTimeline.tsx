@@ -1182,9 +1182,8 @@ function ProposedPlanTimelineRow({
 }
 
 /**
- * Inline folded plan chip: one row per turn that produced plan/todo steps.
- * Collapsed by default — a segment bar plus the in-progress step label —
- * and expands in place to the full step list. Replaces the old plan sidebar.
+ * Inline plan row: one compact activity-style row per turn. It expands in
+ * place to the full step list without introducing a separate visual language.
  */
 const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
   row,
@@ -1202,73 +1201,78 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
     steps.find((step) => step.status === "pending")?.step ??
     steps.at(-1)?.step ??
     "Plan";
-  const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
 
   return (
-    <div className="min-w-0 px-1 py-0.5">
+    <div className="min-w-0">
       <button
         type="button"
-        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex min-h-6 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
-        <Chevron className="size-3.5 shrink-0 text-muted-foreground/65" />
-        {steps.length > 1 ? (
-          <span aria-hidden className="flex shrink-0 items-center gap-0.5">
-            {steps.map((step) => (
-              <span
-                key={step.step}
-                className={cn(
-                  "h-[3px] w-2.5 rounded-full",
-                  step.status === "completed"
-                    ? "bg-success"
-                    : step.status === "inProgress"
-                      ? "bg-primary"
-                      : "bg-muted-foreground/25",
-                )}
-              />
-            ))}
-          </span>
-        ) : null}
         <span
           className={cn(
-            "min-w-0 truncate",
-            allDone ? "text-muted-foreground/65" : "font-medium text-foreground/85",
+            "flex h-4 shrink-0 items-center gap-0.5",
+            steps.length === 1 ? "w-3" : "w-12",
+          )}
+          aria-label={`${completedCount} of ${steps.length} steps completed`}
+        >
+          {steps.map((step) => (
+            <span
+              key={step.step}
+              className={cn(
+                "h-1 min-w-0 flex-1 rounded-full",
+                step.status === "completed"
+                  ? "bg-info"
+                  : step.status === "inProgress"
+                    ? "bg-info/65"
+                    : "bg-muted-foreground/20",
+              )}
+              aria-hidden
+            />
+          ))}
+        </span>
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            allDone ? "text-secondary-label/65" : "text-foreground/85",
           )}
         >
           {label}
         </span>
         {steps.length > 1 ? (
-          <span className="shrink-0 text-muted-foreground/50 tabular-nums">
+          <span className="shrink-0 text-info-foreground/80 tabular-nums">
             {completedCount}/{steps.length}
           </span>
         ) : null}
       </button>
       {expanded ? (
-        <div className="mt-0.5 space-y-px pl-6">
+        <div className="mt-1 ms-5 space-y-px border-s border-border/45 ps-3">
           {steps.map((step) => (
-            <div key={step.step} className="flex items-baseline gap-2 text-[12px] leading-5">
-              <span
-                className={cn(
-                  "w-3 shrink-0 text-center font-mono text-[10px]",
-                  step.status === "completed"
-                    ? "text-success"
-                    : step.status === "inProgress"
-                      ? "text-primary"
-                      : "text-muted-foreground/40",
+            <div
+              key={step.step}
+              className="flex min-h-6 items-center gap-1.5 text-sm leading-relaxed"
+            >
+              <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+                {step.status === "completed" ? (
+                  <CheckIcon className="size-3.5 text-info-foreground" />
+                ) : (
+                  <span
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      step.status === "inProgress" ? "bg-info" : "bg-muted-foreground/30",
+                    )}
+                  />
                 )}
-                aria-hidden
-              >
-                {step.status === "completed" ? "✓" : step.status === "inProgress" ? "●" : "○"}
               </span>
               <span
                 className={cn(
-                  "min-w-0",
+                  "min-w-0 flex-1",
                   step.status === "completed"
-                    ? "text-muted-foreground/55"
+                    ? "text-secondary-label/55"
                     : step.status === "inProgress"
-                      ? "text-foreground/90"
-                      : "text-muted-foreground/70",
+                      ? "text-foreground/85"
+                      : "text-secondary-label/65",
                 )}
               >
                 {step.step}

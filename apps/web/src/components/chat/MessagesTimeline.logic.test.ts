@@ -639,7 +639,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(foldRow?.label).toBe("Worked for 12s");
   });
 
-  it("reanchors a reused turn below an intervening user message", () => {
+  it("keeps a reused turn fold in chronological order around an intervening message", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -723,12 +723,12 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(rows.map((row) => row.id)).toEqual([
       "user-entry-1",
-      "user-entry-2",
       "turn-fold:turn-1",
+      "user-entry-2",
       "assistant-final-entry",
     ]);
     expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
-      label: "Worked for 10s",
+      label: "Worked for 20s",
     });
   });
 
@@ -889,7 +889,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows[1]).toMatchObject({ kind: "message", showAssistantMeta: false });
   });
 
-  it("moves a still-running turn below an intervening user message", () => {
+  it("keeps a still-running turn in chronological order around an intervening message", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -934,6 +934,24 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
         {
+          id: "turn-plan-entry",
+          kind: "turn-plan",
+          createdAt: "2026-01-01T00:00:03.500Z",
+          turnPlan: {
+            id: "turn-plan:turn-1",
+            createdAt: "2026-01-01T00:00:03.500Z",
+            turnId: "turn-1" as never,
+            plan: {
+              createdAt: "2026-01-01T00:00:03.500Z",
+              turnId: "turn-1" as never,
+              steps: [
+                { step: "Inspect the current UI", status: "inProgress" },
+                { step: "Apply the fix", status: "pending" },
+              ],
+            },
+          },
+        },
+        {
           id: "user-steer-entry",
           kind: "message",
           createdAt: "2026-01-01T00:00:04Z",
@@ -975,14 +993,92 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(rows.map((row) => row.id)).toEqual([
       "user-start-entry",
-      "user-steer-entry",
       "working-indicator-row",
       "assistant-progress-entry",
       "work-live:work-before-entry",
+      "turn-plan-entry",
+      "user-steer-entry",
+      "work-live:work-after-entry",
     ]);
-    expect(rows.findIndex((row) => row.id === "user-steer-entry")).toBeLessThan(
-      rows.findIndex((row) => row.id === "assistant-progress-entry"),
+    expect(rows.findIndex((row) => row.id === "assistant-progress-entry")).toBeLessThan(
+      rows.findIndex((row) => row.id === "user-steer-entry"),
     );
+    expect(rows.findIndex((row) => row.id === "turn-plan-entry")).toBeLessThan(
+      rows.findIndex((row) => row.id === "user-steer-entry"),
+    );
+    expect(rows.find((row) => row.id === "work-live:work-before-entry")).toMatchObject({
+      active: false,
+    });
+    expect(rows.find((row) => row.id === "work-live:work-after-entry")).toMatchObject({
+      active: true,
+    });
+  });
+
+  it("keeps the active task plan above a later interruption", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-start-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-start" as never,
+            role: "user",
+            text: "Start",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "turn-plan-entry",
+          kind: "turn-plan",
+          createdAt: "2026-01-01T00:00:02Z",
+          turnPlan: {
+            id: "turn-plan:turn-1",
+            createdAt: "2026-01-01T00:00:02Z",
+            turnId: "turn-1" as never,
+            plan: {
+              createdAt: "2026-01-01T00:00:02Z",
+              turnId: "turn-1" as never,
+              steps: [{ step: "Inspect the current UI", status: "inProgress" }],
+            },
+          },
+        },
+        {
+          id: "user-steer-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:03Z",
+          message: {
+            id: "user-steer" as never,
+            role: "user",
+            text: "Adjust it",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03Z",
+            updatedAt: "2026-01-01T00:00:03Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:01Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:01Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-start-entry",
+      "working-indicator-row",
+      "turn-plan-entry",
+      "user-steer-entry",
+    ]);
   });
 
   it("does not fold the session's running turn when latestTurn regresses", () => {

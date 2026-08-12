@@ -381,6 +381,9 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   if (entry.kind === "message") {
     return entry.message.role === "assistant" ? (entry.message.turnId ?? null) : null;
   }
+  if (entry.kind === "turn-plan") {
+    return entry.turnPlan.turnId;
+  }
   return entry.kind === "work" ? (entry.entry.turnId ?? null) : null;
 }
 
@@ -400,7 +403,6 @@ function deriveTurnFolds(input: {
     anchorEntry: TimelineEntry | null;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
     hasStreamingMessage: boolean;
-    reanchoredAfterUserMessage: boolean;
     /**
      * The user message that kicked the turn off. Entry timestamps alone
      * undercount the duration (the first entry appears only once the
@@ -417,12 +419,7 @@ function deriveTurnFolds(input: {
       pendingUserBoundary = entry.message.createdAt;
       continue;
     }
-    const turnId =
-      entry.kind === "message" && entry.message.role === "assistant"
-        ? (entry.message.turnId ?? null)
-        : entry.kind === "work"
-          ? (entry.entry.turnId ?? null)
-          : null;
+    const turnId = timelineEntryTurnId(entry);
     if (!turnId) {
       continue;
     }
@@ -433,7 +430,6 @@ function deriveTurnFolds(input: {
         anchorEntry: entry,
         terminalEntry: null,
         hasStreamingMessage: false,
-        reanchoredAfterUserMessage: false,
         // Each user boundary starts at most one turn; a second turn after the
         // same user message (e.g. a steer-superseded continuation) falls back
         // to its own first entry.
@@ -442,12 +438,9 @@ function deriveTurnFolds(input: {
       pendingUserBoundary = null;
       groupsByTurnId.set(turnId, group);
     } else if (pendingUserBoundary !== null) {
-      // Steering can keep the provider's turn id alive. Move the eventual
-      // fold below the newer user message instead of letting it wrap across
-      // that prompt from the turn's original activity anchor.
-      group.anchorEntry = entry;
-      group.startBoundary = pendingUserBoundary;
-      group.reanchoredAfterUserMessage = true;
+      // The provider can keep the same turn id after a steering message. The
+      // fold stays anchored where that turn originally began so the user
+      // message keeps its chronological position in the timeline.
       pendingUserBoundary = null;
     }
     group.entries.push(entry);
@@ -499,7 +492,6 @@ function deriveTurnFolds(input: {
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
     const elapsedMs =
-      !group.reanchoredAfterUserMessage &&
       input.latestTurn?.turnId === turnId &&
       input.latestTurn.startedAt &&
       input.latestTurn.completedAt
@@ -566,38 +558,31 @@ export function deriveMessagesTimelineRows(input: {
 
   let activeTurnHeaderIndex = input.timelineEntries.length;
   if (input.isWorking) {
-    const lastUserMessageIndex = input.timelineEntries.findLastIndex(
-      (entry) => entry.kind === "message" && entry.message.role === "user",
-    );
-    const keyedAnchorIndex =
+    const firstOwnedEntryIndex =
       unsettledTurnId === null
         ? -1
         : input.timelineEntries.findIndex(
-            (entry, index) =>
-              index > lastUserMessageIndex && timelineEntryTurnId(entry) === unsettledTurnId,
+            (entry) => timelineEntryTurnId(entry) === unsettledTurnId,
           );
-    if (keyedAnchorIndex >= 0) {
-      activeTurnHeaderIndex = keyedAnchorIndex;
+    if (firstOwnedEntryIndex >= 0) {
+      activeTurnHeaderIndex = firstOwnedEntryIndex;
     } else {
+      const lastUserMessageIndex = input.timelineEntries.findLastIndex(
+        (entry) => entry.kind === "message" && entry.message.role === "user",
+      );
       activeTurnHeaderIndex = lastUserMessageIndex + 1;
     }
   }
+  const entryBelongsToActiveTurn = (entry: TimelineEntry, index: number) =>
+    input.isWorking &&
+    (unsettledTurnId !== null
+      ? timelineEntryTurnId(entry) === unsettledTurnId
+      : index >= activeTurnHeaderIndex);
   const activeEntries = input.isWorking
     ? unsettledTurnId !== null
       ? input.timelineEntries.filter((entry) => timelineEntryTurnId(entry) === unsettledTurnId)
       : input.timelineEntries.slice(activeTurnHeaderIndex)
     : [];
-  const activeWindowEntryIds = new Set(
-    activeEntries.flatMap((entry) => {
-      if (entry.kind === "message" && entry.message.role === "assistant") {
-        return [entry.id];
-      }
-      if (entry.kind === "work" && entry.entry.agentSpawn === undefined) {
-        return [entry.id];
-      }
-      return [];
-    }),
-  );
   const activeTurnHasVisibleContent =
     activeEntries.some((entry) => {
       if (entry.kind === "message") {
@@ -608,61 +593,97 @@ export function deriveMessagesTimelineRows(input: {
           entry.entry.agentSpawn === undefined && !workEntryIndicatesToolNeutralStatus(entry.entry)
         );
       }
+      if (entry.kind === "turn-plan") return true;
       return false;
     }) ||
     input.timelineEntries
       .slice(activeTurnHeaderIndex)
       .some((entry) => entry.kind === "proposed-plan" || entry.kind === "turn-plan");
 
-  const appendActiveRows = () => {
-    let activeToolBatchAnchor: Extract<TimelineEntry, { kind: "work" }> | null = null;
-    let latestActiveToolEntry: Extract<TimelineEntry, { kind: "work" }> | null = null;
-    const flushActiveToolBatch = (active: boolean) => {
-      if (activeToolBatchAnchor === null || latestActiveToolEntry === null) return;
-      nextRows.push({
-        kind: "work-live",
-        id: `work-live:${activeToolBatchAnchor.id}`,
-        createdAt: activeToolBatchAnchor.createdAt,
-        entry: latestActiveToolEntry.entry,
-        active,
-      });
-      activeToolBatchAnchor = null;
-      latestActiveToolEntry = null;
-    };
+  const activeAssistantEntryIds = new Set(
+    input.timelineEntries.flatMap((entry, index) =>
+      entryBelongsToActiveTurn(entry, index) &&
+      entry.kind === "message" &&
+      entry.message.role === "assistant"
+        ? [entry.id]
+        : [],
+    ),
+  );
+  const activeWorkEntryIds = new Set<string>();
+  const activeWorkRowsByAnchorId = new Map<
+    string,
+    Extract<MessagesTimelineRow, { kind: "work-live" }>
+  >();
 
-    for (const activeEntry of activeEntries) {
-      if (activeEntry.kind === "work") {
-        if (
-          activeEntry.entry.agentSpawn !== undefined ||
-          workEntryIndicatesToolNeutralStatus(activeEntry.entry) ||
-          !workLogEntryIsToolLike(activeEntry.entry)
-        ) {
-          continue;
-        }
-        activeToolBatchAnchor ??= activeEntry;
-        latestActiveToolEntry = activeEntry;
-        continue;
-      }
-      if (activeEntry.kind !== "message" || activeEntry.message.role !== "assistant") {
-        continue;
-      }
-      flushActiveToolBatch(false);
-      nextRows.push({
-        kind: "message",
-        id: activeEntry.id,
-        createdAt: activeEntry.createdAt,
-        message: activeEntry.message,
-        durationStart:
-          durationStartByMessageId.get(activeEntry.message.id) ?? activeEntry.message.createdAt,
-        showAssistantMeta: false,
-        showAssistantCopyButton: false,
-        assistantCopyStreaming: true,
-        assistantTurnDiffSummary: undefined,
-        revertTurnCount: undefined,
-      });
+  for (let index = 0; index < input.timelineEntries.length; index += 1) {
+    const entry = input.timelineEntries[index];
+    if (
+      !entry ||
+      entry.kind !== "work" ||
+      entry.entry.agentSpawn !== undefined ||
+      !entryBelongsToActiveTurn(entry, index)
+    ) {
+      continue;
     }
-    flushActiveToolBatch(true);
-  };
+    activeWorkEntryIds.add(entry.id);
+    if (workEntryIndicatesToolNeutralStatus(entry.entry) || !workLogEntryIsToolLike(entry.entry)) {
+      continue;
+    }
+
+    const anchorEntry = entry;
+    let latestToolEntry = entry;
+    let cursor = index + 1;
+    while (cursor < input.timelineEntries.length) {
+      const nextEntry = input.timelineEntries[cursor];
+      if (
+        !nextEntry ||
+        nextEntry.kind !== "work" ||
+        nextEntry.entry.agentSpawn !== undefined ||
+        !entryBelongsToActiveTurn(nextEntry, cursor)
+      ) {
+        break;
+      }
+      activeWorkEntryIds.add(nextEntry.id);
+      if (
+        !workEntryIndicatesToolNeutralStatus(nextEntry.entry) &&
+        workLogEntryIsToolLike(nextEntry.entry)
+      ) {
+        latestToolEntry = nextEntry;
+      }
+      cursor += 1;
+    }
+
+    const hasNewerTurnContent = input.timelineEntries.slice(cursor).some((laterEntry, offset) => {
+      const laterIndex = cursor + offset;
+      if (laterEntry.kind === "message" && laterEntry.message.role === "user") {
+        return true;
+      }
+      if (!entryBelongsToActiveTurn(laterEntry, laterIndex)) {
+        return false;
+      }
+      if (laterEntry.kind === "message") {
+        return laterEntry.message.role === "assistant";
+      }
+      if (laterEntry.kind === "turn-plan") {
+        return true;
+      }
+      return (
+        laterEntry.kind === "work" &&
+        laterEntry.entry.agentSpawn === undefined &&
+        !workEntryIndicatesToolNeutralStatus(laterEntry.entry) &&
+        workLogEntryIsToolLike(laterEntry.entry)
+      );
+    });
+
+    activeWorkRowsByAnchorId.set(anchorEntry.id, {
+      kind: "work-live",
+      id: `work-live:${anchorEntry.id}`,
+      createdAt: anchorEntry.createdAt,
+      entry: latestToolEntry.entry,
+      active: !hasNewerTurnContent,
+    });
+    index = cursor - 1;
+  }
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
@@ -677,7 +698,6 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: input.activeTurnStartedAt,
         showThinking: !activeTurnHasVisibleContent,
       });
-      appendActiveRows();
     }
 
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
@@ -696,7 +716,28 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    if (activeWindowEntryIds.has(timelineEntry.id)) {
+    if (activeAssistantEntryIds.has(timelineEntry.id) && timelineEntry.kind === "message") {
+      nextRows.push({
+        kind: "message",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        message: timelineEntry.message,
+        durationStart:
+          durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
+        showAssistantMeta: false,
+        showAssistantCopyButton: false,
+        assistantCopyStreaming: true,
+        assistantTurnDiffSummary: undefined,
+        revertTurnCount: undefined,
+      });
+      continue;
+    }
+
+    if (activeWorkEntryIds.has(timelineEntry.id)) {
+      const activeWorkRow = activeWorkRowsByAnchorId.get(timelineEntry.id);
+      if (activeWorkRow) {
+        nextRows.push(activeWorkRow);
+      }
       continue;
     }
 
@@ -708,7 +749,7 @@ export function deriveMessagesTimelineRows(input: {
         if (
           !nextEntry ||
           nextEntry.kind !== "work" ||
-          activeWindowEntryIds.has(nextEntry.id) ||
+          activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id)
         ) {
@@ -869,7 +910,6 @@ export function deriveMessagesTimelineRows(input: {
       createdAt: input.activeTurnStartedAt,
       showThinking: !activeTurnHasVisibleContent,
     });
-    appendActiveRows();
   }
 
   return nextRows;
