@@ -378,24 +378,37 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
 const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWindowsEnvironment")(
   function* (
     config: ShellEnvironmentConfig,
-  ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
-    // Concurrent, not sequential: these two probes are independent (only their
-    // results are combined below) and each spawns its own PowerShell. Run in
-    // series they sit at offset 0 of desktop.startup, before anything else, and
-    // launch traces measured them at 2718ms then 2066ms — the entire 4.8s
-    // startup span, of which desktop.bootstrap is ~30ms.
-    const [noProfile, profile] = yield* Effect.all(
-      [
-        readWindowsEnvironment(["PATH"], { loadProfile: false }),
-        readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
-      ],
-      { concurrency: 2 },
-    );
-    const mergedPath = mergePaths("win32", [
-      trimNonEmpty(profile.PATH),
+  ): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem> {
+    const fileSystem = yield* FileSystem.FileSystem;
+
+    // Run the no-profile probe first as a fast baseline.
+    const noProfile = yield* readWindowsEnvironment(["PATH"], { loadProfile: false });
+
+    const fastMergedPath = mergePaths("win32", [
       trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
       trimNonEmpty(noProfile.PATH),
       readEnvPath(config.env),
+    ]);
+
+    let nodeFound = false;
+    if (Option.isSome(fastMergedPath)) {
+      for (const dir of fastMergedPath.value.split(";")) {
+        const nodePath = `${dir}\\node.exe`;
+        if (yield* Effect.orElseSucceed(fileSystem.exists(nodePath), () => false)) {
+          nodeFound = true;
+          break;
+        }
+      }
+    }
+
+    // Only load the expensive PowerShell profile if the fast baseline is insufficient.
+    const profile = nodeFound
+      ? {}
+      : yield* readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true });
+
+    const mergedPath = mergePaths("win32", [
+      trimNonEmpty(profile.PATH),
+      fastMergedPath,
     ]);
 
     if (Option.isSome(mergedPath)) {
