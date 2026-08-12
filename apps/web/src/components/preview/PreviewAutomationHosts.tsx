@@ -65,7 +65,10 @@ import {
 } from "./previewNavigationReadiness";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
-import { reconcilePreviewRightPanelSurfaces } from "./reconcilePreviewRightPanelSurfaces";
+import {
+  openPreviewRightPanelSurface,
+  reconcilePreviewRightPanelSurfaces,
+} from "./reconcilePreviewRightPanelSurfaces";
 import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
@@ -433,7 +436,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             }
             const shouldPresentPreview = shouldOpenPreviewMiniPlayer(input);
             if (shouldPresentPreview) {
-              usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
+              usePreviewMiniPlayerStore.getState().close(threadRef);
+              openPreviewRightPanelSurface(threadRef, activeTabId);
+            } else {
+              reconcilePreviewRightPanelSurfaces(threadRef);
             }
             if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
               await waitForDesktopOverlay(

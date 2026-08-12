@@ -8,3 +8,9 @@ export function reconcilePreviewRightPanelSurfaces(threadRef: ScopedThreadRef): 
   const tabIds = Object.keys(readThreadPreviewState(threadRef).sessions);
   useRightPanelStore.getState().reconcileBrowserSurfaces(threadRef, tabIds);
 }
+
+/** Reveal an automation-owned tab in the thread's Browser panel. */
+export function openPreviewRightPanelSurface(threadRef: ScopedThreadRef, tabId: string): void {
+  reconcilePreviewRightPanelSurfaces(threadRef);
+  useRightPanelStore.getState().openBrowser(threadRef, tabId);
+}

@@ -9,7 +9,10 @@ import {
 } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
-import { reconcilePreviewRightPanelSurfaces } from "./reconcilePreviewRightPanelSurfaces";
+import {
+  openPreviewRightPanelSurface,
+  reconcilePreviewRightPanelSurfaces,
+} from "./reconcilePreviewRightPanelSurfaces";
 
 const threadRef = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-1"));
 const serverEpoch = "server-epoch";
@@ -62,5 +65,23 @@ describe("reconcilePreviewRightPanelSurfaces", () => {
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces,
     ).toEqual([{ id: "browser:tab-3", kind: "preview", resourceId: "tab-3" }]);
+  });
+
+  it("opens and activates the requested automation tab for the user", () => {
+    applyPreviewServerSnapshot(threadRef, snapshot("tab-2"));
+    applyPreviewServerSnapshot(threadRef, snapshot("tab-3"));
+
+    openPreviewRightPanelSurface(threadRef, "tab-3");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef),
+    ).toEqual({
+      isOpen: true,
+      activeSurfaceId: "browser:tab-3",
+      surfaces: [
+        { id: "browser:tab-2", kind: "preview", resourceId: "tab-2" },
+        { id: "browser:tab-3", kind: "preview", resourceId: "tab-3" },
+      ],
+    });
   });
 });
