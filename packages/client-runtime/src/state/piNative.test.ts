@@ -41,6 +41,35 @@ describe("external pi catalog reducer", () => {
     expect(merged?.externalOmittedThreadCount).toBe(0);
   });
 
+  it("ignores catalog project shells sent by servers built before scoping", () => {
+    const merged = mergeExternalCatalogShells(
+      {
+        snapshotSequence: 2,
+        projects: [],
+        threads: [],
+        updatedAt: "2026-07-30T00:00:00.000Z",
+      },
+      {
+        snapshotSequence: 1,
+        threads: [
+          {
+            id: ThreadId.make("external:pi:path:one"),
+            projectId: ProjectId.make("external:pi-project:abc"),
+          } as never,
+        ],
+        projects: [
+          { id: ProjectId.make("external:pi-project:abc"), workspaceRoot: "/tmp" } as never,
+        ],
+        omittedProjectCount: 0,
+        omittedThreadCount: 0,
+        updatedAt: "2026-07-30T00:00:01.000Z",
+      },
+    );
+
+    expect(merged?.projects).toEqual([]);
+    expect(merged?.threads).toEqual([]);
+  });
+
   it("keeps external threads whose project the user added", () => {
     const projectId = ProjectId.make("internal-project");
     const merged = mergeExternalCatalogShells(

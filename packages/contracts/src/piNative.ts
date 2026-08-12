@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { CommandId, IsoDateTime, NonNegativeInt, ThreadId } from "./baseSchemas.ts";
-import { OrchestrationThreadShell } from "./orchestration.ts";
+import { OrchestrationProjectShell, OrchestrationThreadShell } from "./orchestration.ts";
 
 export const PiNativeSessionKey = Schema.String.pipe(Schema.brand("PiNativeSessionKey"));
 export type PiNativeSessionKey = typeof PiNativeSessionKey.Type;
@@ -149,6 +149,14 @@ export const PiExternalCatalogSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationThreadShell),
   omittedThreadCount: NonNegativeInt,
+  /**
+   * Pi sessions only reach clients under a project the user added, so the
+   * catalog no longer carries project shells of its own. Clients built before
+   * that change decode both fields as required, so the server keeps emitting
+   * empty values; drop them once no such client can reach a current server.
+   */
+  projects: Schema.optional(Schema.Array(OrchestrationProjectShell)),
+  omittedProjectCount: Schema.optional(NonNegativeInt),
   updatedAt: Schema.String,
 });
 export type PiExternalCatalogSnapshot = typeof PiExternalCatalogSnapshot.Type;

@@ -69,6 +69,12 @@ const EXTERNAL_THREAD_PREFIX = "external:pi:";
 const CATALOG_MAX_THREADS = 5_000;
 const CATALOG_MAX_SERIALIZED_BYTES = 8 * 1024 * 1024;
 const CATALOG_ENVELOPE_RESERVE_BYTES = 1_024;
+/**
+ * Clients built before catalog-only project shells were removed decode
+ * `projects` and `omittedProjectCount` as required fields. Keep emitting empty
+ * values until no such client can reach a current server, then delete.
+ */
+const LEGACY_CATALOG_PROJECT_FIELDS = { projects: [], omittedProjectCount: 0 } as const;
 export function validExternalLifecycleOverride(
   record: PiSessionCatalogRecord,
   override: PiExternalLifecycleOverride | undefined,
@@ -527,6 +533,7 @@ export class PiExternalThreadSource extends Context.Service<
           snapshotSequence: catalogSequence,
           threads,
           omittedThreadCount,
+          ...LEGACY_CATALOG_PROJECT_FIELDS,
           updatedAt: yield* DateTime.now.pipe(Effect.map(DateTime.formatIso)),
         } satisfies PiExternalCatalogSnapshot;
       });
@@ -1117,6 +1124,7 @@ export class PiExternalThreadSource extends Context.Service<
                   snapshotSequence: 0,
                   threads: [],
                   omittedThreadCount: 0,
+                  ...LEGACY_CATALOG_PROJECT_FIELDS,
                   updatedAt: DateTime.formatIso(now),
                 }) satisfies PiExternalCatalogSnapshot,
             ),
