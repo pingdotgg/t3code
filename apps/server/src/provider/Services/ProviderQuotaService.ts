@@ -219,20 +219,26 @@ export const make = Effect.gen(function* () {
                   errorProviderQuotaSnapshot(instance, readAt, error, selection.previous),
                 ),
               ),
-              Effect.catchCause(() =>
-                Effect.succeed(
-                  errorProviderQuotaSnapshot(
-                    instance,
-                    readAt,
-                    new ProviderQuotaAdapterError({
-                      reason: "providerFailed",
-                      detail: "The provider quota read failed.",
-                    }),
-                    selection.previous,
-                  ),
-                ),
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.succeed(null)
+                  : Effect.succeed(
+                      errorProviderQuotaSnapshot(
+                        instance,
+                        readAt,
+                        new ProviderQuotaAdapterError({
+                          reason: "providerFailed",
+                          detail: "The provider quota read failed.",
+                        }),
+                        selection.previous,
+                      ),
+                    ),
               ),
             );
+      if (refreshed === null) {
+        yield* retireOwnedGeneration;
+        return obsoleteCacheRead;
+      }
 
       const currentInstance = yield* registry
         .getInstance(instance.instanceId)

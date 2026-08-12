@@ -9,7 +9,9 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -547,6 +549,41 @@ it.effect("caches full reads until a sparse update invalidates and bumps the rev
     NodeAssert.equal(yield* quota.revision, 1);
     const refreshed = yield* quota.read;
     NodeAssert.equal(refreshed.metrics[0]?.usedPercent, 20);
+    NodeAssert.equal(reads, 2);
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
+);
+
+it.effect("evicts an interrupted Codex read instead of caching it", () =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let reads = 0;
+    const request = ((method: string) => {
+      if (method === "account/read") {
+        return Effect.succeed({
+          account: { type: "chatgpt", email: null, planType: "plus" },
+          requiresOpenaiAuth: false,
+        });
+      }
+      NodeAssert.equal(method, "account/rateLimits/read");
+      reads += 1;
+      return reads === 1
+        ? Effect.failCause(Cause.interrupt(42))
+        : Effect.succeed({ rateLimits: { primary: { usedPercent: 20 } } });
+    }) as CodexClient.CodexAppServerClient["Service"]["request"];
+    const quota = yield* makeCodexProviderQuota(decodeCodexSettings({}), {}, instanceId, spawner, {
+      openClient: Effect.succeed({ request }),
+    });
+
+    const interrupted = yield* quota.read.pipe(Effect.exit);
+
+    NodeAssert.equal(Exit.isFailure(interrupted), true);
+    if (Exit.isFailure(interrupted)) {
+      NodeAssert.equal(Cause.hasInterruptsOnly(interrupted.cause), true);
+    }
+
+    const recovered = yield* quota.read;
+
+    NodeAssert.equal(recovered.metrics[0]?.remainingPercent, 80);
     NodeAssert.equal(reads, 2);
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer))),
 );

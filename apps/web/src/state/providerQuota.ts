@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentId,
+  ProviderDriverKind,
   type ProviderQuotaConsumeResetInput,
   type ProviderQuotaConsumeResetOutcome,
   type ProviderQuotaSummary,
@@ -24,6 +25,10 @@ const EMPTY_PROVIDER_QUOTA_ATOM = Atom.make(
 const EMPTY_SETTINGS_PROJECTION_ATOM = Atom.make(
   AsyncResult.initial<ServerConfigProjection, never>(false),
 ).pipe(Atom.withLabel("web-provider-quota:settings-projection-empty"));
+const PROVIDER_QUOTA_REFRESH_INTERVAL_MS = 30_000;
+const PROVIDER_QUOTA_REFRESH_MINIMUM_INTERVAL_MS = 10_000;
+const PROVIDER_QUOTA_RECOVERY_INTERVAL_MS = 5_000;
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
 
 export interface ProviderQuotaView {
   readonly summary: ProviderQuotaSummary | null;
@@ -137,21 +142,39 @@ export function usePrimaryProviderQuota(): PrimaryProviderQuotaState {
     [consume, environmentId],
   );
 
-  const latestConfigEvent = Option.getOrNull(AsyncResult.value(settingsProjection))?.latestEvent;
+  const configProjection = Option.getOrNull(AsyncResult.value(settingsProjection));
+  const latestConfigEvent = configProjection?.latestEvent;
   useEffect(() => {
     if (latestConfigEvent?.type === "providerStatuses") {
       refresh();
     }
   }, [latestConfigEvent, refresh]);
+  const view = resolveProviderQuotaView(result, environmentId !== null);
+  const isOlderServerWithoutQuota = result._tag === "Failure" && view.error === null;
+  const isMissingEnabledProvider =
+    view.summary?.instances.length === 0 &&
+    configProjection?.config.providers.some((provider) => provider.enabled) === true;
+  const hasUnknownCodexQuota =
+    view.summary?.instances.some(
+      (instance) => instance.driver === CODEX_DRIVER && instance.status === "unknown",
+    ) === true;
+  const needsRecovery =
+    environmentId !== null &&
+    !isOlderServerWithoutQuota &&
+    (view.summary === null || isMissingEnabledProvider || hasUnknownCodexQuota);
   useLiveRefresh(refresh, {
     enabled: environmentId !== null,
     ...(environmentId === null ? {} : { key: environmentId }),
-    intervalMs: 30_000,
-    minimumIntervalMs: 10_000,
+    intervalMs: needsRecovery
+      ? PROVIDER_QUOTA_RECOVERY_INTERVAL_MS
+      : PROVIDER_QUOTA_REFRESH_INTERVAL_MS,
+    minimumIntervalMs: needsRecovery
+      ? PROVIDER_QUOTA_RECOVERY_INTERVAL_MS
+      : PROVIDER_QUOTA_REFRESH_MINIMUM_INTERVAL_MS,
   });
 
   return {
-    ...resolveProviderQuotaView(result, environmentId !== null),
+    ...view,
     refresh,
     consumeReset,
   };

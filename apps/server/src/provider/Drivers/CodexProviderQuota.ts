@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -436,7 +437,10 @@ export const makeCodexProviderQuota = Effect.fn("makeCodexProviderQuota")(functi
     }),
     Effect.mapError(quotaRequestError),
   );
-  const [read, invalidate] = yield* Effect.cachedInvalidateWithTTL(readUncached, CACHE_TTL);
+  const [cachedRead, invalidate] = yield* Effect.cachedInvalidateWithTTL(readUncached, CACHE_TTL);
+  const read = cachedRead.pipe(
+    Effect.onExit((exit) => (Exit.isFailure(exit) ? invalidate : Effect.void)),
+  );
   const revisionRef = yield* Ref.make(0);
 
   const consumeBankedReset: NonNullable<ProviderQuotaCapability["consumeBankedReset"]> = Effect.fn(

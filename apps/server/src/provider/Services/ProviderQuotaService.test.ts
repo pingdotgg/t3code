@@ -7,6 +7,7 @@ import {
   type ProviderQuotaConsumeResetOutcome,
   type ProviderQuotaSnapshot,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -275,6 +276,39 @@ describe("ProviderQuotaService", () => {
         status: "current",
       });
       expect(attempts).toBe(2);
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("does not publish an interrupt-only provider read as a stale failure", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      let reads = 0;
+      const instance = makeInstance({
+        id: "codex-interrupt-cause",
+        quota: {
+          read: Effect.suspend(() => {
+            reads += 1;
+            if (reads === 2) return Effect.failCause(Cause.interrupt(42));
+            return Effect.succeed({
+              ...snapshot("codex-interrupt-cause"),
+              detail: { generation: reads === 1 ? "initial" : "recovered" },
+            });
+          }),
+          revision: Effect.succeed(0),
+        },
+      });
+      instances = [instance];
+      const service = yield* ProviderQuotaService;
+
+      yield* service.readSummary;
+      yield* service.invalidate(instance.instanceId);
+      const recovered = yield* service.readSummary;
+
+      expect(recovered.instances[0]).toMatchObject({
+        status: "current",
+        detail: { generation: "recovered" },
+      });
+      expect(reads).toBe(3);
     }).pipe(provideService(() => instances));
   });
 
