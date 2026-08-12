@@ -19,7 +19,7 @@
     "ghcr.io/devcontainers-extra/features/bun"
   ],
   "postCreateCommand": {
-    "bun-install": "bun install --backend=copyfile --frozen-lockfile"
+    "pnpm-install": "corepack enable && pnpm install --frozen-lockfile"
   },
   "customizations": {
     "vscode": {

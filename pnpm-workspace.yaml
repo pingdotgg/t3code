@@ -47,8 +47,8 @@ catalog:
   effect: 4.0.0-beta.102
   jose: 6.2.2
   typescript: ~6.0.3
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.2
-  vite-plus: 0.2.2
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.8
+  vite-plus: 0.2.8
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
@@ -98,12 +98,29 @@ overrides:
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
   "@expo/metro-config": 56.0.14
+  "@modelcontextprotocol/sdk": 1.30.0
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   "@types/node": "catalog:"
+  "brace-expansion@<1.1.18": 1.1.18
+  "brace-expansion@>=2.0.0 <2.1.4": 2.1.4
+  "brace-expansion@>=4.0.0 <5.0.9": 5.0.9
   effect: "catalog:"
   expo-modules-jsi: 56.0.10
   "expo-sharing>@expo/config-plugins": 56.0.9
   "expo-sharing>@expo/config-types": 56.0.6
+  "fast-uri@>=3.0.0 <3.1.5": 3.1.5
+  "form-data@>=4.0.0 <4.0.6": 4.0.6
+  "ip-address@>=10.0.0 <10.3.1": 10.3.1
+  "js-yaml@>=4.0.0 <4.3.1": 4.3.1
+  "nanoid@>=3.0.0 <3.3.17": 3.3.17
+  "path-to-regexp@>=6.0.0 <6.3.0": 6.3.0
+  "postcss@>=8.0.0 <8.5.23": 8.5.23
+  "sharp@<0.35.0": 0.35.3
+  "shell-quote@<=1.8.4": 1.10.0
+  "svgo@>=4.0.0 <4.0.2": 4.0.2
+  "tar@>=7.0.0 <7.5.21": 7.5.21
+  "undici@>=6.0.0 <6.28.0": 6.28.0
+  "undici@>=7.0.0 <7.29.0": 7.29.0
   vite: "catalog:"
   yaml: "catalog:"
 
@@ -134,6 +151,7 @@ patchedDependencies:
   beautiful-mermaid@1.1.3: patches/beautiful-mermaid@1.1.3.patch
   effect@4.0.0-beta.102: patches/effect@4.0.0-beta.102.patch
   expo-modules-jsi@56.0.10: patches/expo-modules-jsi@56.0.10.patch
+  image-size@1.2.1: patches/image-size@1.2.1.patch
   react-native-gesture-handler@2.31.2: patches/react-native-gesture-handler@2.31.2.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch

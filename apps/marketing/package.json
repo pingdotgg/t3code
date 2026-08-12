@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@t3tools/shared": "workspace:*",
-    "astro": "^7.0.3"
+    "astro": "^7.1.1"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.7",

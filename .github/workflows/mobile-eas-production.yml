@@ -4,7 +4,7 @@ name: Mobile EAS Production
 # Under the fingerprint runtime-version policy the fingerprint must be computed
 # in the same OS/pnpm as the EAS build; a macOS `eas build` computes a different
 # fingerprint (platform-specific deps + pnpm version) and errors. On this Linux
-# runner, with corepack pinning pnpm 10.24 in eas.json, local == build.
+# runner, with Corepack selecting package.json's pnpm version, local == build.
 on:
   workflow_dispatch:
     inputs:
