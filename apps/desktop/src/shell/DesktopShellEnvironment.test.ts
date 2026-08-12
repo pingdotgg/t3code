@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "@effect/platform/FileSystem";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,6 +13,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
+import * as FileSystem from "@effect/platform/FileSystem";
 
 const textEncoder = new TextEncoder();
 
