@@ -1,6 +1,7 @@
 import type { PreviewSessionSnapshot } from "@t3tools/contracts";
 import {
   ClipboardList,
+  Activity,
   FileDiff,
   Files,
   Globe2,
@@ -34,6 +35,7 @@ type Props = {
   readonly onAddTerminal: () => void;
   readonly onAddFiles: () => void;
   readonly onAddDiff: () => void;
+  readonly onAddInsights: () => void;
   readonly maximized?: boolean;
   readonly onToggleMaximize?: () => void;
   readonly children: ReactNode;
@@ -51,6 +53,8 @@ function titleFor(
       return "Diff";
     case "files":
       return "Files";
+    case "insights":
+      return "Insights";
     case "file":
       return surface.relativePath.split("/").at(-1) ?? surface.relativePath;
     case "terminal":
@@ -101,6 +105,8 @@ function Icon({
     case "files":
     case "file":
       return <Files className="size-3.5" />;
+    case "insights":
+      return <Activity className="size-3.5" />;
     case "terminal":
       return <TerminalSquare className="size-3.5" />;
     case "preview": {
@@ -127,6 +133,7 @@ export function RightPanelTabs({
   onAddTerminal,
   onAddFiles,
   onAddDiff,
+  onAddInsights,
   maximized = false,
   onToggleMaximize,
   children,
@@ -237,6 +244,7 @@ export function RightPanelTabs({
               <MenuItem onClick={onAddTerminal}>Terminal</MenuItem>
               <MenuItem onClick={onAddFiles}>Files</MenuItem>
               <MenuItem onClick={onAddDiff}>Diff</MenuItem>
+              <MenuItem onClick={onAddInsights}>Insights</MenuItem>
             </MenuPopup>
           </Menu>
         </div>

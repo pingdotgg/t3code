@@ -13,6 +13,7 @@ const surfaces: readonly RightPanelSurface[] = [
   { id: "file:src/index.ts", kind: "file", relativePath: "src/index.ts", revealLine: null },
   { id: "terminal:terminal-a", kind: "terminal", resourceId: "terminal-a" },
   { id: "browser:preview-a", kind: "preview", resourceId: "preview-a" },
+  { id: "insights", kind: "insights" },
 ];
 
 const previewSessions: Readonly<Record<string, PreviewSessionSnapshot>> = {
@@ -46,6 +47,7 @@ async function mountTabs(mounted: readonly RightPanelSurface[] = surfaces) {
     onAddTerminal: vi.fn(),
     onAddFiles: vi.fn(),
     onAddDiff: vi.fn(),
+    onAddInsights: vi.fn(),
     onToggleMaximize: vi.fn(),
   };
   const screen = await render(
@@ -74,6 +76,7 @@ describe("RightPanelTabs", () => {
     const { screen } = await mountTabs();
     try {
       await expect.element(page.getByTitle("Files")).toBeInTheDocument();
+      await expect.element(page.getByTitle("Insights")).toBeInTheDocument();
       await expect.element(page.getByTitle("index.ts")).toBeInTheDocument();
       await expect.element(page.getByTitle("Terminal 2")).toBeInTheDocument();
       const browserTab = page.getByTitle("Local dashboard");
@@ -107,6 +110,10 @@ describe("RightPanelTabs", () => {
       await page.getByLabelText("Add surface").click();
       await page.getByRole("menuitem", { name: "Terminal" }).click();
       expect(callbacks.onAddTerminal).toHaveBeenCalledOnce();
+
+      await page.getByLabelText("Add surface").click();
+      await page.getByRole("menuitem", { name: "Insights" }).click();
+      expect(callbacks.onAddInsights).toHaveBeenCalledOnce();
 
       await page.getByLabelText("Maximize panel").click();
       expect(callbacks.onToggleMaximize).toHaveBeenCalledOnce();

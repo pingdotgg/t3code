@@ -138,6 +138,7 @@ export const InsightsPanel = memo(function InsightsPanel({
 
   return (
     <div
+      data-right-panel-insights
       className={cn(
         "flex min-h-0 flex-col bg-card/50",
         mode === "sidebar"

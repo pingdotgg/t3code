@@ -128,8 +128,6 @@ function ChatPaneActions(props: ChatPaneActionsProps) {
 interface ChatSplitAreaProps {
   routeTarget: ThreadRouteTarget;
   routeDiffSearch?: DiffRouteSearch;
-  onDiffPanelOpen?: () => void;
-  reserveTitleBarControlInset?: boolean;
 }
 
 export function resolveChatPaneRenderMode(params: {
@@ -228,7 +226,7 @@ function resolveDropOverlayClassName(placement: ChatSplitDropPlacement): string 
  *     to route search state independently.
  */
 export function ChatSplitArea(props: ChatSplitAreaProps) {
-  const { routeTarget, routeDiffSearch, onDiffPanelOpen, reserveTitleBarControlInset } = props;
+  const { routeTarget, routeDiffSearch } = props;
   const navigate = useNavigate();
   const syncRouteTarget = useChatSplitLayoutStore((state) => state.syncRouteTarget);
 
@@ -317,8 +315,6 @@ export function ChatSplitArea(props: ChatSplitAreaProps) {
         routeTarget={routeTarget}
         routeDiffSearch={routeDiffSearch}
         leafCount={layoutFrame.leafCount}
-        onDiffPanelOpen={onDiffPanelOpen}
-        reserveTitleBarControlInset={reserveTitleBarControlInset}
       />
     );
   }
@@ -329,8 +325,6 @@ export function ChatSplitArea(props: ChatSplitAreaProps) {
       routeTarget={routeTarget}
       routeDiffSearch={routeDiffSearch}
       leafCount={layoutFrame.leafCount}
-      onDiffPanelOpen={onDiffPanelOpen}
-      reserveTitleBarControlInset={reserveTitleBarControlInset}
     />
   );
 }
@@ -340,8 +334,6 @@ interface NodeRendererProps {
   routeTarget: ThreadRouteTarget;
   routeDiffSearch?: DiffRouteSearch | undefined;
   leafCount: number;
-  onDiffPanelOpen?: (() => void) | undefined;
-  reserveTitleBarControlInset?: boolean | undefined;
 }
 
 const ChatSplitNodeRenderer = memo(function ChatSplitNodeRenderer(props: NodeRendererProps) {
@@ -373,8 +365,6 @@ const ChatSplitNodeRenderer = memo(function ChatSplitNodeRenderer(props: NodeRen
         routeTarget={props.routeTarget}
         routeDiffSearch={props.routeDiffSearch}
         leafCount={props.leafCount}
-        onDiffPanelOpen={props.onDiffPanelOpen}
-        reserveTitleBarControlInset={props.reserveTitleBarControlInset}
       />
     );
   }
@@ -388,8 +378,6 @@ const ChatSplitNodeRenderer = memo(function ChatSplitNodeRenderer(props: NodeRen
       firstId={nodeShape.first}
       secondId={nodeShape.second}
       leafCount={props.leafCount}
-      onDiffPanelOpen={props.onDiffPanelOpen}
-      reserveTitleBarControlInset={props.reserveTitleBarControlInset}
     />
   );
 });
@@ -402,8 +390,6 @@ interface SplitContainerProps {
   firstId: ChatSplitNodeId;
   secondId: ChatSplitNodeId;
   leafCount: number;
-  onDiffPanelOpen?: (() => void) | undefined;
-  reserveTitleBarControlInset?: boolean | undefined;
 }
 
 function ChatSplitContainer(props: SplitContainerProps) {
@@ -522,8 +508,6 @@ function ChatSplitContainer(props: SplitContainerProps) {
           routeTarget={props.routeTarget}
           routeDiffSearch={props.routeDiffSearch}
           leafCount={props.leafCount}
-          onDiffPanelOpen={props.onDiffPanelOpen}
-          reserveTitleBarControlInset={props.reserveTitleBarControlInset}
         />
       </div>
       <div
@@ -542,8 +526,6 @@ function ChatSplitContainer(props: SplitContainerProps) {
           routeTarget={props.routeTarget}
           routeDiffSearch={props.routeDiffSearch}
           leafCount={props.leafCount}
-          onDiffPanelOpen={props.onDiffPanelOpen}
-          reserveTitleBarControlInset={props.reserveTitleBarControlInset}
         />
       </div>
     </div>
@@ -555,8 +537,6 @@ interface ChatPaneLeafProps {
   routeTarget: ThreadRouteTarget;
   routeDiffSearch?: DiffRouteSearch | undefined;
   leafCount: number;
-  onDiffPanelOpen?: (() => void) | undefined;
-  reserveTitleBarControlInset?: boolean | undefined;
 }
 
 function ChatPaneLeaf(props: ChatPaneLeafProps) {
@@ -769,7 +749,7 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
           className={cn(
             "drag-region flex shrink-0 items-center justify-end border-b border-border px-3 sm:px-5",
             TITLEBAR_ROW_CLASS,
-            props.reserveTitleBarControlInset && TITLEBAR_CONTROL_INSET_CLASS,
+            TITLEBAR_CONTROL_INSET_CLASS,
           )}
         >
           <div className="no-drag">{paneActions}</div>
@@ -815,10 +795,6 @@ function ChatPaneLeaf(props: ChatPaneLeafProps) {
         threadId={serverTarget.threadRef.threadId}
         isPaneFocused={isFocused}
         routeKind="server"
-        {...(props.onDiffPanelOpen ? { onDiffPanelOpen: props.onDiffPanelOpen } : {})}
-        {...(props.reserveTitleBarControlInset !== undefined
-          ? { reserveTitleBarControlInset: props.reserveTitleBarControlInset }
-          : {})}
         diffSearch={displayDiff}
         onDiffSearchChange={handleDiffSearchChange}
         paneActions={paneActions}

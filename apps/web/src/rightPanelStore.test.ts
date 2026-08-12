@@ -25,6 +25,8 @@ describe("rightPanelStore", () => {
   it("orders, activates, reconciles, and bulk closes surfaces", () => {
     const store = useRightPanelStore.getState();
     store.open(ref, "files");
+    store.open(ref, "insights");
+    store.open(ref, "insights");
     store.openFile(ref, "src/index.ts", 12);
     store.openBrowser(ref, "preview-a");
     store.openBrowser(ref, "preview-b");
@@ -33,6 +35,7 @@ describe("rightPanelStore", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces,
     ).toMatchObject([
       { id: "files" },
+      { id: "insights" },
       { id: "file:src/index.ts" },
       { id: "browser:preview-a" },
       { id: "browser:preview-b" },
@@ -42,7 +45,7 @@ describe("rightPanelStore", () => {
     store.closeSurfacesToRight(ref, "file:src/index.ts");
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces,
-    ).toHaveLength(2);
+    ).toHaveLength(3);
 
     store.openBrowser(ref, "preview-a");
     store.openBrowser(ref, "preview-b");
@@ -91,6 +94,10 @@ describe("rightPanelStore", () => {
     store.openBrowser(ref, "preview-a");
     expect(selectThreadBrowserOpen(useRightPanelStore.getState().byThreadKey, ref)).toBe(true);
 
+    store.open(ref, "insights");
+    expect(selectThreadBrowserOpen(useRightPanelStore.getState().byThreadKey, ref)).toBe(false);
+
+    store.activateSurface(ref, "browser:preview-a");
     store.close(ref);
     expect(selectThreadBrowserOpen(useRightPanelStore.getState().byThreadKey, ref)).toBe(false);
   });

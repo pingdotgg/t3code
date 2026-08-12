@@ -2,13 +2,21 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
-export type RightPanelKind = "plan" | "diff" | "files" | "file" | "preview" | "terminal";
+export type RightPanelKind =
+  | "plan"
+  | "diff"
+  | "files"
+  | "file"
+  | "insights"
+  | "preview"
+  | "terminal";
 
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "diff"; kind: "diff" }
   | { id: "files"; kind: "files" }
+  | { id: "insights"; kind: "insights" }
   | { id: "plan"; kind: "plan" }
   | { id: `file:${string}`; kind: "file"; relativePath: string; revealLine: number | null }
   | { id: `terminal:${string}`; kind: "terminal"; resourceId: string };
@@ -257,7 +265,10 @@ export function selectThreadBrowserOpen(
   ref: ScopedThreadRef | null,
 ): boolean {
   const state = selectThreadRightPanelState(byThreadKey, ref);
-  return state.isOpen && state.surfaces.some((surface) => surface.kind === "preview");
+  return (
+    state.isOpen &&
+    state.surfaces.find((surface) => surface.id === state.activeSurfaceId)?.kind === "preview"
+  );
 }
 
 /**

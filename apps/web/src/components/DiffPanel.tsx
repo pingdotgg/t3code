@@ -2,12 +2,12 @@ import { parsePatchFiles, type DiffLineAnnotation } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime";
 import type {
   DiffFile,
   DiffSnapshot,
   ReviewFinding,
   ReviewSnapshotScope,
+  ScopedThreadRef,
   TurnId,
 } from "@t3tools/contracts";
 import {
@@ -36,7 +36,11 @@ import { diffStateQueryOptions, providerQueryKeys } from "~/lib/providerReactQue
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  type DiffRouteSearch,
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+} from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
@@ -321,11 +325,19 @@ function diffFileSafetyLabel(diffFile: DiffFile | undefined): string | null {
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
+  threadRef?: ScopedThreadRef;
+  diffSearch?: DiffRouteSearch;
+  onDiffSearchChange?: (nextSearch: DiffRouteSearch) => void;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+export default function DiffPanel({
+  mode = "inline",
+  threadRef: controlledThreadRef,
+  diffSearch: controlledDiffSearch,
+  onDiffSearchChange,
+}: DiffPanelProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
@@ -345,12 +357,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
-  const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
+  const routeDiffSearch = useSearch({
+    strict: false,
+    select: (search) => parseDiffRouteSearch(search),
+  });
+  const threadRef = controlledThreadRef ?? routeThreadRef;
+  const diffSearch = controlledDiffSearch ?? routeDiffSearch;
   const diffOpen = diffSearch.diff === "1";
-  const activeThreadId = routeThreadRef?.threadId ?? null;
-  const activeThread = useStore(
-    useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
-  );
+  const activeThreadId = threadRef?.threadId ?? null;
+  const activeThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useStore((store) =>
     activeThread && activeProjectId
@@ -796,39 +811,35 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     setCollapsedDiffFileKeys((current) => toggleAllDiffFiles(diffFileKeys, current));
   }, [diffFileKeys]);
 
+  const updateDiffSelection = useCallback(
+    (nextSearch: DiffRouteSearch) => {
+      if (onDiffSearchChange) {
+        onDiffSearchChange(nextSearch);
+        return;
+      }
+      if (!activeThread || !threadRef) return;
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+        search: (previous) => ({
+          ...stripDiffSearchParams(previous),
+          ...nextSearch,
+        }),
+      });
+    },
+    [activeThread, navigate, onDiffSearchChange, threadRef],
+  );
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1", diffTurnId: turnId };
-      },
-    });
+    updateDiffSelection({ diff: "1", diffTurnId: turnId });
   };
   const selectWholeConversation = () => {
     if (!activeThread) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1", diffView: "chat" };
-      },
-    });
+    updateDiffSelection({ diff: "1", diffView: "chat" });
   };
   const selectUncommittedChanges = () => {
     if (!activeThread || !reviewSnapshot) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => ({
-        ...stripDiffSearchParams(previous),
-        diff: "1",
-        diffView: "uncommitted",
-      }),
-    });
+    updateDiffSelection({ diff: "1", diffView: "uncommitted" });
   };
   const updateTurnStripScrollState = useCallback(() => {
     const element = turnStripRef.current;
