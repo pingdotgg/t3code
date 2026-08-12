@@ -1164,7 +1164,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
-            <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
+            <span
+              className={cn(
+                "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+                isWoke && "gap-1.5",
+              )}
+            >
               <span
                 className={cn(
                   "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
@@ -1187,7 +1192,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     onClick={handleAcknowledgeWokeClick}
                     className="inline-flex cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-amber-700 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring dark:text-amber-300"
                   >
-                    <AlarmClockIcon aria-hidden className="size-3" />
+                    <AlarmClockIcon aria-hidden className="mb-px size-3 shrink-0" />
                     <span role="status">Woke</span>
                   </button>
                 ) : (
@@ -1326,7 +1331,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   actions on hover/keyboard focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
                   space without either state overlapping it. */}
-              <span className="group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
+              <span
+                className={cn(
+                  "group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs",
+                  // Woke stays visible beside snooze/settle; gap keeps the
+                  // alarm from crowding the set-to clock.
+                  isWokeStatus && "gap-1.5",
+                )}
+              >
                 {/* Read-only status labels yield to the hover actions. Woke is
                     itself an action, so it stays pointer-enabled and visible
                     while the other controls appear beside it. */}
@@ -1351,7 +1363,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           topStatus.className,
                         )}
                       >
-                        <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                        <AlarmClockIcon aria-hidden className="mb-px size-3.5 shrink-0" />
                         <span role="status">{topStatus.label}</span>
                       </button>
                     ) : (
