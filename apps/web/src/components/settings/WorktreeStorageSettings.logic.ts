@@ -81,6 +81,16 @@ export function worktreeStorageSelectionKey(
   return JSON.stringify([entry.environmentId, entry.path]);
 }
 
+export function worktreeStorageDirtyConfirmationKey(
+  worktrees: ReadonlyArray<Pick<ScopedWorktreeStorageEntry, "environmentId" | "path" | "status">>,
+): string {
+  return worktrees
+    .filter((worktree) => worktree.status === "dirty")
+    .map(worktreeStorageSelectionKey)
+    .toSorted()
+    .join("\0");
+}
+
 export function formatStorageByteCount(sizeBytes: number): string {
   if (sizeBytes < 1_024) return `${sizeBytes} B`;
   const units = ["KB", "MB", "GB", "TB"] as const;

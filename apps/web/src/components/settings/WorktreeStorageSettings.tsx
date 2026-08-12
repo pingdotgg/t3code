@@ -38,6 +38,7 @@ import {
   type ScopedWorktreeStorageEntry,
   sumWorktreeStorageBytes,
   worktreeStorageActivityRevision,
+  worktreeStorageDirtyConfirmationKey,
   worktreeStorageProjectGroups,
   worktreeStorageSelectionKey,
 } from "./WorktreeStorageSettings.logic";
@@ -95,6 +96,10 @@ export function WorktreeStorageSettings({
     () => selectedWorktrees.filter((worktree) => worktree.status === "dirty"),
     [selectedWorktrees],
   );
+  const dirtyConfirmationKey = useMemo(
+    () => worktreeStorageDirtyConfirmationKey(selectedWorktrees),
+    [selectedWorktrees],
+  );
   const selectedSizeBytes = sumWorktreeStorageBytes(selectedWorktrees);
   const totalSizeBytes = previews.reduce((total, entry) => total + entry.preview.totalSizeBytes, 0);
   const safeSizeBytes = sumWorktreeStorageBytes(cleanWorktrees);
@@ -108,6 +113,10 @@ export function WorktreeStorageSettings({
       return next.size === current.size ? current : next;
     });
   }, [worktrees]);
+
+  useEffect(() => {
+    setDirtyRemovalConfirmed(false);
+  }, [dirtyConfirmationKey]);
 
   const setWorktreeSelected = useCallback(
     (worktree: ScopedWorktreeStorageEntry, selected: boolean) => {

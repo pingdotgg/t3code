@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatStorageByteCount,
   worktreeStorageActivityRevision,
+  worktreeStorageDirtyConfirmationKey,
   worktreeStorageProjectGroups,
   worktreeStorageSelectionKey,
 } from "./WorktreeStorageSettings.logic";
@@ -129,6 +130,28 @@ describe("worktree storage settings", () => {
     expect(threadKeepsWorktreeActive(archivedIdleThread)).toBe(false);
     expect(worktreeStorageActivityRevision([archivedLiveThread], [environmentId])).not.toBe(
       worktreeStorageActivityRevision([archivedIdleThread], [environmentId]),
+    );
+  });
+
+  it("changes the dirty confirmation key when a selected worktree becomes dirty", () => {
+    const environmentId = EnvironmentId.make("local");
+    const clean = {
+      environmentId,
+      path: "/worktrees/feature",
+      status: "clean" as const,
+    };
+    const dirty = { ...clean, status: "dirty" as const };
+    const alreadyDirty = {
+      environmentId,
+      path: "/worktrees/notes",
+      status: "dirty" as const,
+    };
+
+    expect(worktreeStorageDirtyConfirmationKey([clean, alreadyDirty])).not.toBe(
+      worktreeStorageDirtyConfirmationKey([dirty, alreadyDirty]),
+    );
+    expect(worktreeStorageDirtyConfirmationKey([dirty, alreadyDirty])).toBe(
+      worktreeStorageDirtyConfirmationKey([alreadyDirty, dirty]),
     );
   });
 });
