@@ -217,6 +217,16 @@ export type InstalledTerminalShell = typeof InstalledTerminalShell.Type;
 export const TerminalShell = Schema.Literals(["system", ...INSTALLED_TERMINAL_SHELLS]);
 export type TerminalShell = typeof TerminalShell.Type;
 export const DEFAULT_TERMINAL_SHELL: TerminalShell = "system";
+const isTerminalShell = Schema.is(TerminalShell);
+const ForwardCompatibleTerminalShell = Schema.String.pipe(
+  Schema.decodeTo(
+    TerminalShell,
+    SchemaTransformation.transform({
+      decode: (value) => (isTerminalShell(value) ? value : DEFAULT_TERMINAL_SHELL),
+      encode: (value) => value,
+    }),
+  ),
+);
 
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
@@ -571,7 +581,7 @@ export const ServerSettings = Schema.Struct({
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
-  terminalShell: TerminalShell.pipe(
+  terminalShell: ForwardCompatibleTerminalShell.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_SHELL)),
   ),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(

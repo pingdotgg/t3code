@@ -136,8 +136,6 @@ export const resolveAvailableCapabilitiesForConfig = <A, E, R>(
     Effect.map(Option.getOrElse(() => [])),
   );
 
-export const resolveAvailableEditorsForConfig = resolveAvailableCapabilitiesForConfig;
-
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }

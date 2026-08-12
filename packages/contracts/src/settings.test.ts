@@ -191,6 +191,10 @@ describe("ServerSettings terminal shell", () => {
     },
   );
 
+  it("falls back to the system shell when decoding a future server value", () => {
+    expect(decodeServerSettings({ terminalShell: "nu" }).terminalShell).toBe("system");
+  });
+
   it("rejects unsupported terminal shells", () => {
     expect(() => decodeServerSettingsPatch({ terminalShell: "nu" })).toThrow();
   });

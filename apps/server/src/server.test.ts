@@ -102,7 +102,7 @@ const collectQueueUntil = Effect.fn("TransferBudget.collectQueueUntil")(function
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
-import { isThreadDetailEvent, resolveAvailableEditorsForConfig } from "./ws.ts";
+import { isThreadDetailEvent, resolveAvailableCapabilitiesForConfig } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -4019,10 +4019,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("does not block server config when editor discovery never resolves", () =>
+  it.effect("does not block server config when capability discovery never resolves", () =>
     Effect.gen(function* () {
       const discoveryInterrupted = yield* Deferred.make<void>();
-      const responseFiber = yield* resolveAvailableEditorsForConfig(
+      const responseFiber = yield* resolveAvailableCapabilitiesForConfig(
         Effect.never.pipe(
           Effect.onInterrupt(() => Deferred.succeed(discoveryInterrupted, undefined)),
         ),
