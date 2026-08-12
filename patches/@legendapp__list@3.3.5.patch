@@ -1,8 +1,8 @@
 diff --git a/keyboard.d.ts b/keyboard.d.ts
-index 7bc3bb8..75ec120 100644
+index 367945cdfa8a8c260b7a127657a75c016c9ab46f..95263268a47d3f1f57bbc5d528bcc77674f9121f 100644
 --- a/keyboard.d.ts
 +++ b/keyboard.d.ts
-@@ -277,7 +277,7 @@ type KeyboardChatComposerInsetListRef = {
+@@ -279,7 +279,7 @@ type KeyboardChatComposerInsetListRef = {
  type KeyboardChatComposerRef = {
      current: Pick<View, "measure"> | null;
  };
@@ -11,7 +11,7 @@ index 7bc3bb8..75ec120 100644
      contentInsetEndAdjustment: SharedValue<number>;
      onComposerLayout: (event: LayoutChangeEvent) => void;
  };
-@@ -286,8 +286,10 @@ declare function useKeyboardScrollToEnd({ freeze: freezeProp, listRef }: UseKeyb
+@@ -288,8 +288,10 @@ declare function useKeyboardScrollToEnd({ freeze: freezeProp, listRef }: UseKeyb
      scrollMessageToEnd: ({ animated, closeKeyboard }: ScrollMessageToEndOptions) => Promise<void>;
  };
  declare const KeyboardAwareLegendList: <ItemT>(props: Omit<AnimatedLegendListProps<ItemT>, "anchoredEndSpace" | "contentInsetEndAdjustment" | "renderScrollComponent"> & KeyboardChatScrollViewPropsUnique & {
@@ -23,7 +23,7 @@ index 7bc3bb8..75ec120 100644
  } & React.RefAttributes<LegendListRef>) => React.ReactElement | null;
  
 diff --git a/keyboard.js b/keyboard.js
-index 736286a..8218172 100644
+index 6645bcbb1f77c36c432035eaf8b2d6d924fc8bda..74c1f568c485d0f907a0d3ea4ad600ccb8d3be62 100644
 --- a/keyboard.js
 +++ b/keyboard.js
 @@ -33,19 +33,19 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !reactNativeKeyboardController.
@@ -62,8 +62,8 @@ index 736286a..8218172 100644
      freeze,
      keyboardLiftBehavior,
      keyboardOffset,
-@@ -109,11 +111,15 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
-       includeInEndInset: true,
+@@ -108,11 +110,15 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+       ...anchoredEndSpace,
        onSizeChanged: (size) => {
          var _a;
 -        blankSpace.value = size;
@@ -80,7 +80,7 @@ index 736286a..8218172 100644
    const onContentInsetChange = React.useCallback((insets) => {
      var _a;
      (_a = refLegendList.current) == null ? void 0 : _a.reportContentInset(insets);
-@@ -124,6 +130,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+@@ -123,6 +129,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
          reactNativeKeyboardController.KeyboardChatScrollView,
          {
            ...scrollProps,
@@ -88,7 +88,7 @@ index 736286a..8218172 100644
            applyWorkaroundForContentInsetHitTestBug,
            blankSpace,
            extraContentPadding: contentInsetEndAdjustment,
-@@ -135,6 +142,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+@@ -134,6 +141,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
        );
      },
      [
@@ -97,15 +97,15 @@ index 736286a..8218172 100644
        blankSpace,
        contentInsetEndAdjustment,
 @@ -149,6 +157,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
-     AnimatedLegendListInternal,
      {
        anchoredEndSpace: anchoredEndSpaceWithBlankSpace,
+       anchoredEndSpaceOwnerInternal: "scroll",
 +      contentInsetEndAdjustment: contentInsetEndStaticAdjustment,
        ref: combinedRef,
        renderScrollComponent: memoList,
        ...rest
 diff --git a/keyboard.mjs b/keyboard.mjs
-index c1dd270..cb0d142 100644
+index 87b38b9607c2eba6b407c2acfd520633bdb0e7c2..62206d657d5616893985fd2c228e57af7eba744b 100644
 --- a/keyboard.mjs
 +++ b/keyboard.mjs
 @@ -12,19 +12,19 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !KeyboardChatScrollView) {
@@ -144,8 +144,8 @@ index c1dd270..cb0d142 100644
      freeze,
      keyboardLiftBehavior,
      keyboardOffset,
-@@ -88,11 +90,15 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
-       includeInEndInset: true,
+@@ -87,11 +89,15 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+       ...anchoredEndSpace,
        onSizeChanged: (size) => {
          var _a;
 -        blankSpace.value = size;
@@ -162,7 +162,7 @@ index c1dd270..cb0d142 100644
    const onContentInsetChange = useCallback((insets) => {
      var _a;
      (_a = refLegendList.current) == null ? void 0 : _a.reportContentInset(insets);
-@@ -103,6 +109,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+@@ -102,6 +108,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
          KeyboardChatScrollView,
          {
            ...scrollProps,
@@ -170,7 +170,7 @@ index c1dd270..cb0d142 100644
            applyWorkaroundForContentInsetHitTestBug,
            blankSpace,
            extraContentPadding: contentInsetEndAdjustment,
-@@ -114,6 +121,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
+@@ -113,6 +120,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
        );
      },
      [
@@ -179,15 +179,15 @@ index c1dd270..cb0d142 100644
        blankSpace,
        contentInsetEndAdjustment,
 @@ -128,6 +136,7 @@ var KeyboardAwareLegendList = typedForwardRef(function KeyboardAwareLegendList2(
-     AnimatedLegendListInternal,
      {
        anchoredEndSpace: anchoredEndSpaceWithBlankSpace,
+       anchoredEndSpaceOwnerInternal: "scroll",
 +      contentInsetEndAdjustment: contentInsetEndStaticAdjustment,
        ref: combinedRef,
        renderScrollComponent: memoList,
        ...rest
 diff --git a/react-native.d.ts b/react-native.d.ts
-index 8204015..cdeaab7 100644
+index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6aba6636e5 100644
 --- a/react-native.d.ts
 +++ b/react-native.d.ts
 @@ -293,6 +293,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -204,10 +204,10 @@ index 8204015..cdeaab7 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index 229f09a..2a1ceb6 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..89077be4d6833cfaabf9d6d6205d9551505e32b4 100644
 --- a/react-native.js
 +++ b/react-native.js
-@@ -930,7 +930,7 @@ function setInitialRenderState(ctx, {
+@@ -954,7 +954,7 @@ function setInitialRenderState(ctx, {
    if (didInitialScroll) {
      state.didFinishInitialScroll = true;
    }
@@ -216,7 +216,7 @@ index 229f09a..2a1ceb6 100644
    if (isReadyToRender && !peek$(ctx, "readyToRender")) {
      set$(ctx, "readyToRender", true);
      setAdaptiveRender(ctx, "normal", "ready");
-@@ -1259,18 +1259,23 @@ function calculateOffsetWithOffsetPosition(ctx, offsetParam, params) {
+@@ -1304,18 +1304,23 @@ function calculateOffsetWithOffsetPosition(ctx, offsetParam, params) {
  }
  
  // src/core/clampScrollOffset.ts
@@ -242,7 +242,7 @@ index 229f09a..2a1ceb6 100644
    return clampedOffset;
  }
  
-@@ -1406,10 +1411,10 @@ function checkFinishedScrollFrame(ctx) {
+@@ -1451,10 +1456,10 @@ function checkFinishedScrollFrame(ctx) {
      finishScrollTo(ctx);
    }
  }
@@ -255,19 +255,19 @@ index 229f09a..2a1ceb6 100644
      x: ctx.state.props.horizontal ? offset : 0,
      y: ctx.state.props.horizontal ? 0 : offset
    });
-@@ -1456,7 +1461,10 @@ function checkFinishedScrollFallback(ctx) {
-           });
-           scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
-         } else if (shouldRetryUnalignedEndScroll) {
--          scrollToFallbackOffset(ctx, completionState.clampedTargetOffset);
-+          const isActivelyAnimatingToEnd = !!isStillScrollingTo.animated && Date.now() - state.scrollTime < 100;
-+          if (!isActivelyAnimatingToEnd) {
-+            scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
-+          }
-           scheduleFallbackCheck(100);
-         } else if (shouldFinishZeroTarget || shouldFinishAfterObservedScroll || canFinishInitialScrollWithoutNativeProgress || canFinishAfterSilentNativeDispatch || numChecks > maxChecks) {
-           finishScrollTo(ctx);
-@@ -1517,9 +1525,18 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1503,7 +1508,10 @@ function checkFinishedScrollFallback(ctx) {
+         );
+         scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
+       } else if (shouldRetryUnalignedEndScroll) {
+-        scrollToFallbackOffset(ctx, completionState.clampedTargetOffset);
++        const isActivelyAnimatingToEnd = !!isStillScrollingTo.animated && Date.now() - state.scrollTime < 100;
++        if (!isActivelyAnimatingToEnd) {
++          scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
++        }
+         scheduleFallbackCheck(100);
+       } else if (shouldFinishZeroTarget || shouldFinishAfterObservedScroll || canFinishInitialScrollWithoutNativeProgress || canFinishAfterSilentNativeDispatch || numChecks > maxChecks) {
+         finishScrollTo(ctx);
+@@ -1566,9 +1574,18 @@ function doMaintainScrollAtEnd(ctx) {
    }
    if (shouldMaintainScrollAtEnd) {
      state.pendingMaintainScrollAtEnd = false;
@@ -287,7 +287,7 @@ index 229f09a..2a1ceb6 100644
      }
      if (!state.maintainingScrollAtEnd) {
        const pendingState = maintainScrollAtEnd.animated ? "pending-animated" : "pending-instant";
-@@ -1539,9 +1556,18 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1591,9 +1608,18 @@ function doMaintainScrollAtEnd(ctx) {
                y: 0
              });
            } else {
@@ -309,7 +309,7 @@ index 229f09a..2a1ceb6 100644
            }
            setTimeout(
              () => {
-@@ -1571,6 +1597,10 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1624,6 +1650,10 @@ function doMaintainScrollAtEnd(ctx) {
  function requestAdjust(ctx, positionDiff, dataChanged) {
    const state = ctx.state;
    if (Math.abs(positionDiff) > 0.1) {
@@ -320,7 +320,7 @@ index 229f09a..2a1ceb6 100644
      const needsScrollWorkaround = Platform.OS === "android" && !IsNewArchitecture && dataChanged && state.scroll <= positionDiff;
      const doit = () => {
        if (needsScrollWorkaround) {
-@@ -1674,7 +1704,9 @@ function getPredictedNativeClamp(state, unresolvedAmount, totalSize) {
+@@ -1728,7 +1758,9 @@ function getPredictedNativeClamp(state, unresolvedAmount, totalSize) {
    if (Math.abs(unresolvedAmount) <= MVCP_POSITION_EPSILON) {
      return 0;
    }
@@ -331,7 +331,7 @@ index 229f09a..2a1ceb6 100644
    const clampDelta = maxScroll - state.scroll;
    if (unresolvedAmount < 0) {
      return Math.max(unresolvedAmount, Math.min(0, clampDelta));
-@@ -1736,7 +1768,7 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
+@@ -1790,7 +1822,7 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
      settlePendingNativeMVCPAdjust(ctx, remainingAfterManual, nativeDelta);
      return true;
    }
@@ -340,7 +340,7 @@ index 229f09a..2a1ceb6 100644
    const distanceToClamp = Math.abs(newScroll - expectedNativeClampScroll);
    const isAtExpectedNativeClamp = distanceToClamp <= NATIVE_END_CLAMP_EPSILON;
    if (isAtExpectedNativeClamp) {
-@@ -1869,7 +1901,7 @@ function prepareMVCP(ctx, dataChanged) {
+@@ -1923,7 +1955,7 @@ function prepareMVCP(ctx, dataChanged) {
              if (diff > 0) {
                diff = Math.max(0, totalSize - state.scroll - state.scrollLength);
              } else {
@@ -349,7 +349,7 @@ index 229f09a..2a1ceb6 100644
                state.scroll = maxScroll;
                state.scrollPending = maxScroll;
                diff = 0;
-@@ -2274,8 +2306,121 @@ function scrollToIndex(ctx, {
+@@ -2320,8 +2352,121 @@ function scrollToIndex(ctx, {
  }
  
  // src/core/initialScroll.ts
@@ -471,7 +471,7 @@ index 229f09a..2a1ceb6 100644
    const requestedIndex = target.index;
    const index = requestedIndex !== void 0 ? clampScrollIndex(requestedIndex, ctx.state.props.data.length) : void 0;
    const itemSize = getItemSizeAtIndex(ctx, index);
-@@ -2704,7 +2849,9 @@ function clearFinishedBootstrapInitialScrollTargetIfMovedAway(ctx) {
+@@ -2747,7 +2892,9 @@ function clearFinishedBootstrapInitialScrollTargetIfMovedAway(ctx) {
      return;
    }
    if (didFinishedInitialScrollMoveAwayFromTarget(ctx, initialScroll)) {
@@ -482,9 +482,9 @@ index 229f09a..2a1ceb6 100644
      if (!shouldKeepEndTargetAlive) {
        if (shouldPreserveInitialScrollForFooterLayout(initialScroll)) {
          clearPendingInitialScrollFooterLayout(ctx, {
-@@ -4637,7 +4784,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
-       }
-       contentBelowAnchor += footerSize + stylePaddingBottom;
+@@ -4672,7 +4819,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
+       contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
        isReady = !hasUnknownTailSize;
 -      nextSize = hasUnknownTailSize ? previousSize || 0 : Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
 +      const knownSizeBound = Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
@@ -492,20 +492,20 @@ index 229f09a..2a1ceb6 100644
      } else if (anchorIndex >= 0) {
        isReady = false;
      }
-@@ -4655,6 +4803,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
-       updateScroll(ctx, state.scroll, true);
+@@ -4692,6 +4840,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
      }
      (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
 +  } else if (!isReady && didSizeChange && nextSize < (previousSize || 0)) {
 +    set$(ctx, "anchoredEndSpaceSize", nextSize);
 +    (_a3 = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onSizeChanged) == null ? void 0 : _a3.call(anchoredEndSpace, nextSize);
 +    if (anchoredEndSpace == null ? void 0 : anchoredEndSpace.includeInEndInset) {
-+      updateScroll(ctx, state.scroll, true);
++      updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
 +    }
    }
    return nextSize;
  }
-@@ -6960,6 +7114,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7075,6 +7229,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      dataVersion,
      drawDistance = 250,
      contentInsetEndAdjustment,
@@ -513,7 +513,7 @@ index 229f09a..2a1ceb6 100644
      estimatedItemSize = 100,
      estimatedListSize,
      extraData,
-@@ -6990,6 +7145,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7105,6 +7260,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      onLayout: onLayoutProp,
      onLoad,
      onMomentumScrollEnd,
@@ -521,7 +521,7 @@ index 229f09a..2a1ceb6 100644
      onRefresh,
      onScroll: onScrollProp,
      onScrollBeginDrag,
-@@ -7076,7 +7232,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7200,7 +7356,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    const combinedRef = useCombinedRef(refScroller, refScrollView);
    const keyExtractor = keyExtractorProp != null ? keyExtractorProp : ((_item, index) => index.toString());
    const stickyHeaderIndices = stickyHeaderIndicesProp;
@@ -530,7 +530,7 @@ index 229f09a..2a1ceb6 100644
    const previousContentInsetEndAdjustmentRef = React2.useRef(contentInsetEndAdjustmentResolved);
    const alwaysRenderIndices = React2.useMemo(() => {
      const indices = getAlwaysRenderIndices(alwaysRender, dataProp, keyExtractor, anchoredEndSpace == null ? void 0 : anchoredEndSpace.anchorIndex);
-@@ -7215,6 +7371,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7341,6 +7497,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      contentContainerAlignItems: contentContainerStyle.alignItems,
      contentInset,
      contentInsetEndAdjustment: contentInsetEndAdjustmentResolved,
@@ -538,7 +538,7 @@ index 229f09a..2a1ceb6 100644
      data: dataProp,
      dataKey,
      dataVersion,
-@@ -7303,6 +7460,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7423,6 +7580,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        return void 0;
      }
      const resolvedOffset = (_a4 = initialScroll.contentOffset) != null ? _a4 : resolveInitialScrollOffset(ctx, initialScroll);
@@ -552,7 +552,7 @@ index 229f09a..2a1ceb6 100644
      return usesBootstrapInitialScroll && ((_b2 = state.initialScrollSession) == null ? void 0 : _b2.kind) === "bootstrap" && Platform.OS === "web" ? void 0 : resolvedOffset;
    }, [usesBootstrapInitialScroll]);
    React2.useLayoutEffect(() => {
-@@ -7526,6 +7690,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7651,6 +7815,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        onScroll: (event) => onScroll(ctx, event),
        onScrollBeginDrag: (event) => {
          var _a4, _b2;
@@ -560,7 +560,7 @@ index 229f09a..2a1ceb6 100644
          prepareReachedEdgeForNextUserScroll(ctx);
          (_b2 = (_a4 = state.props).onScrollBeginDrag) == null ? void 0 : _b2.call(_a4, event);
        },
-@@ -7555,6 +7720,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7681,6 +7846,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        onLayout,
        onLayoutFooter,
        onMomentumScrollEnd: fns.onMomentumScrollEnd,
@@ -569,10 +569,10 @@ index 229f09a..2a1ceb6 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index c2e0f38..5313086 100644
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..2d556eecb0bafe2f54084c809f82144c7a5dce7f 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
-@@ -909,7 +909,7 @@ function setInitialRenderState(ctx, {
+@@ -933,7 +933,7 @@ function setInitialRenderState(ctx, {
    if (didInitialScroll) {
      state.didFinishInitialScroll = true;
    }
@@ -581,7 +581,7 @@ index c2e0f38..5313086 100644
    if (isReadyToRender && !peek$(ctx, "readyToRender")) {
      set$(ctx, "readyToRender", true);
      setAdaptiveRender(ctx, "normal", "ready");
-@@ -1238,18 +1238,23 @@ function calculateOffsetWithOffsetPosition(ctx, offsetParam, params) {
+@@ -1283,18 +1283,23 @@ function calculateOffsetWithOffsetPosition(ctx, offsetParam, params) {
  }
  
  // src/core/clampScrollOffset.ts
@@ -607,7 +607,7 @@ index c2e0f38..5313086 100644
    return clampedOffset;
  }
  
-@@ -1385,10 +1390,10 @@ function checkFinishedScrollFrame(ctx) {
+@@ -1430,10 +1435,10 @@ function checkFinishedScrollFrame(ctx) {
      finishScrollTo(ctx);
    }
  }
@@ -620,19 +620,19 @@ index c2e0f38..5313086 100644
      x: ctx.state.props.horizontal ? offset : 0,
      y: ctx.state.props.horizontal ? 0 : offset
    });
-@@ -1435,7 +1440,10 @@ function checkFinishedScrollFallback(ctx) {
-           });
-           scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
-         } else if (shouldRetryUnalignedEndScroll) {
--          scrollToFallbackOffset(ctx, completionState.clampedTargetOffset);
-+          const isActivelyAnimatingToEnd = !!isStillScrollingTo.animated && Date.now() - state.scrollTime < 100;
-+          if (!isActivelyAnimatingToEnd) {
-+            scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
-+          }
-           scheduleFallbackCheck(100);
-         } else if (shouldFinishZeroTarget || shouldFinishAfterObservedScroll || canFinishInitialScrollWithoutNativeProgress || canFinishAfterSilentNativeDispatch || numChecks > maxChecks) {
-           finishScrollTo(ctx);
-@@ -1496,9 +1504,18 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1482,7 +1487,10 @@ function checkFinishedScrollFallback(ctx) {
+         );
+         scheduleFallbackCheck(SILENT_INITIAL_SCROLL_RETRY_DELAY_MS);
+       } else if (shouldRetryUnalignedEndScroll) {
+-        scrollToFallbackOffset(ctx, completionState.clampedTargetOffset);
++        const isActivelyAnimatingToEnd = !!isStillScrollingTo.animated && Date.now() - state.scrollTime < 100;
++        if (!isActivelyAnimatingToEnd) {
++          scrollToFallbackOffset(ctx, completionState.clampedTargetOffset, !!isStillScrollingTo.animated);
++        }
+         scheduleFallbackCheck(100);
+       } else if (shouldFinishZeroTarget || shouldFinishAfterObservedScroll || canFinishInitialScrollWithoutNativeProgress || canFinishAfterSilentNativeDispatch || numChecks > maxChecks) {
+         finishScrollTo(ctx);
+@@ -1545,9 +1553,18 @@ function doMaintainScrollAtEnd(ctx) {
    }
    if (shouldMaintainScrollAtEnd) {
      state.pendingMaintainScrollAtEnd = false;
@@ -652,7 +652,7 @@ index c2e0f38..5313086 100644
      }
      if (!state.maintainingScrollAtEnd) {
        const pendingState = maintainScrollAtEnd.animated ? "pending-animated" : "pending-instant";
-@@ -1518,9 +1535,18 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1570,9 +1587,18 @@ function doMaintainScrollAtEnd(ctx) {
                y: 0
              });
            } else {
@@ -674,7 +674,7 @@ index c2e0f38..5313086 100644
            }
            setTimeout(
              () => {
-@@ -1550,6 +1576,10 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1603,6 +1629,10 @@ function doMaintainScrollAtEnd(ctx) {
  function requestAdjust(ctx, positionDiff, dataChanged) {
    const state = ctx.state;
    if (Math.abs(positionDiff) > 0.1) {
@@ -685,7 +685,7 @@ index c2e0f38..5313086 100644
      const needsScrollWorkaround = Platform.OS === "android" && !IsNewArchitecture && dataChanged && state.scroll <= positionDiff;
      const doit = () => {
        if (needsScrollWorkaround) {
-@@ -1653,7 +1683,9 @@ function getPredictedNativeClamp(state, unresolvedAmount, totalSize) {
+@@ -1707,7 +1737,9 @@ function getPredictedNativeClamp(state, unresolvedAmount, totalSize) {
    if (Math.abs(unresolvedAmount) <= MVCP_POSITION_EPSILON) {
      return 0;
    }
@@ -696,7 +696,7 @@ index c2e0f38..5313086 100644
    const clampDelta = maxScroll - state.scroll;
    if (unresolvedAmount < 0) {
      return Math.max(unresolvedAmount, Math.min(0, clampDelta));
-@@ -1715,7 +1747,7 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
+@@ -1769,7 +1801,7 @@ function resolvePendingNativeMVCPAdjust(ctx, newScroll) {
      settlePendingNativeMVCPAdjust(ctx, remainingAfterManual, nativeDelta);
      return true;
    }
@@ -705,7 +705,7 @@ index c2e0f38..5313086 100644
    const distanceToClamp = Math.abs(newScroll - expectedNativeClampScroll);
    const isAtExpectedNativeClamp = distanceToClamp <= NATIVE_END_CLAMP_EPSILON;
    if (isAtExpectedNativeClamp) {
-@@ -1848,7 +1880,7 @@ function prepareMVCP(ctx, dataChanged) {
+@@ -1902,7 +1934,7 @@ function prepareMVCP(ctx, dataChanged) {
              if (diff > 0) {
                diff = Math.max(0, totalSize - state.scroll - state.scrollLength);
              } else {
@@ -714,7 +714,7 @@ index c2e0f38..5313086 100644
                state.scroll = maxScroll;
                state.scrollPending = maxScroll;
                diff = 0;
-@@ -2253,8 +2285,121 @@ function scrollToIndex(ctx, {
+@@ -2299,8 +2331,121 @@ function scrollToIndex(ctx, {
  }
  
  // src/core/initialScroll.ts
@@ -836,7 +836,7 @@ index c2e0f38..5313086 100644
    const requestedIndex = target.index;
    const index = requestedIndex !== void 0 ? clampScrollIndex(requestedIndex, ctx.state.props.data.length) : void 0;
    const itemSize = getItemSizeAtIndex(ctx, index);
-@@ -2683,7 +2828,9 @@ function clearFinishedBootstrapInitialScrollTargetIfMovedAway(ctx) {
+@@ -2726,7 +2871,9 @@ function clearFinishedBootstrapInitialScrollTargetIfMovedAway(ctx) {
      return;
    }
    if (didFinishedInitialScrollMoveAwayFromTarget(ctx, initialScroll)) {
@@ -847,9 +847,9 @@ index c2e0f38..5313086 100644
      if (!shouldKeepEndTargetAlive) {
        if (shouldPreserveInitialScrollForFooterLayout(initialScroll)) {
          clearPendingInitialScrollFooterLayout(ctx, {
-@@ -4616,7 +4763,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
-       }
-       contentBelowAnchor += footerSize + stylePaddingBottom;
+@@ -4651,7 +4798,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
+       contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
        isReady = !hasUnknownTailSize;
 -      nextSize = hasUnknownTailSize ? previousSize || 0 : Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
 +      const knownSizeBound = Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
@@ -857,20 +857,20 @@ index c2e0f38..5313086 100644
      } else if (anchorIndex >= 0) {
        isReady = false;
      }
-@@ -4634,6 +4782,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
-       updateScroll(ctx, state.scroll, true);
+@@ -4671,6 +4819,12 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
      }
      (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
 +  } else if (!isReady && didSizeChange && nextSize < (previousSize || 0)) {
 +    set$(ctx, "anchoredEndSpaceSize", nextSize);
 +    (_a3 = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onSizeChanged) == null ? void 0 : _a3.call(anchoredEndSpace, nextSize);
 +    if (anchoredEndSpace == null ? void 0 : anchoredEndSpace.includeInEndInset) {
-+      updateScroll(ctx, state.scroll, true);
++      updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
 +    }
    }
    return nextSize;
  }
-@@ -6939,6 +7093,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7054,6 +7208,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      dataVersion,
      drawDistance = 250,
      contentInsetEndAdjustment,
@@ -878,7 +878,7 @@ index c2e0f38..5313086 100644
      estimatedItemSize = 100,
      estimatedListSize,
      extraData,
-@@ -7055,7 +7210,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7179,7 +7334,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    const combinedRef = useCombinedRef(refScroller, refScrollView);
    const keyExtractor = keyExtractorProp != null ? keyExtractorProp : ((_item, index) => index.toString());
    const stickyHeaderIndices = stickyHeaderIndicesProp;
@@ -887,7 +887,7 @@ index c2e0f38..5313086 100644
    const previousContentInsetEndAdjustmentRef = useRef(contentInsetEndAdjustmentResolved);
    const alwaysRenderIndices = useMemo(() => {
      const indices = getAlwaysRenderIndices(alwaysRender, dataProp, keyExtractor, anchoredEndSpace == null ? void 0 : anchoredEndSpace.anchorIndex);
-@@ -7194,6 +7349,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7320,6 +7475,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      contentContainerAlignItems: contentContainerStyle.alignItems,
      contentInset,
      contentInsetEndAdjustment: contentInsetEndAdjustmentResolved,
@@ -895,7 +895,7 @@ index c2e0f38..5313086 100644
      data: dataProp,
      dataKey,
      dataVersion,
-@@ -7282,6 +7438,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7402,6 +7558,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        return void 0;
      }
      const resolvedOffset = (_a4 = initialScroll.contentOffset) != null ? _a4 : resolveInitialScrollOffset(ctx, initialScroll);
@@ -909,7 +909,7 @@ index c2e0f38..5313086 100644
      return usesBootstrapInitialScroll && ((_b2 = state.initialScrollSession) == null ? void 0 : _b2.kind) === "bootstrap" && Platform.OS === "web" ? void 0 : resolvedOffset;
    }, [usesBootstrapInitialScroll]);
    useLayoutEffect(() => {
-@@ -7505,6 +7668,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7630,6 +7793,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        onScroll: (event) => onScroll(ctx, event),
        onScrollBeginDrag: (event) => {
          var _a4, _b2;
@@ -917,7 +917,7 @@ index c2e0f38..5313086 100644
          prepareReachedEdgeForNextUserScroll(ctx);
          (_b2 = (_a4 = state.props).onScrollBeginDrag) == null ? void 0 : _b2.call(_a4, event);
        },
-@@ -7534,6 +7698,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7660,6 +7824,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        onLayout,
        onLayoutFooter,
        onMomentumScrollEnd: fns.onMomentumScrollEnd,
@@ -926,7 +926,7 @@ index c2e0f38..5313086 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
 diff --git a/reanimated.d.ts b/reanimated.d.ts
-index 940da28..28dccbe 100644
+index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613dae950fe 100644
 --- a/reanimated.d.ts
 +++ b/reanimated.d.ts
 @@ -294,6 +294,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -943,7 +943,7 @@ index 940da28..28dccbe 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/reanimated.js b/reanimated.js
-index f1265fa..16dcef0 100644
+index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..16dcef04a6591d500c724635df272274123bad2d 100644
 --- a/reanimated.js
 +++ b/reanimated.js
 @@ -116,7 +116,7 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
@@ -978,7 +978,7 @@ index f1265fa..16dcef0 100644
        style: viewStyle,
        ...rest
 diff --git a/reanimated.mjs b/reanimated.mjs
-index 29a00d5..9c25ec5 100644
+index 29a00d5dc084fd408a0e0a0a4d64e856d0ed1525..9c25ec5dd79fb137c073adc24643ad8a2996bf56 100644
 --- a/reanimated.mjs
 +++ b/reanimated.mjs
 @@ -92,7 +92,7 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
