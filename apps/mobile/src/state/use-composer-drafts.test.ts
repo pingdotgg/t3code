@@ -66,6 +66,48 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("round-trips modeUserSet:false, which the Aether worktree default depends on", () => {
+    // The decoder strips undeclared keys, so an omission here would drop the
+    // flag on every app restart — and absence reads as user-set, pinning the
+    // mode and silently disabling the provider-derived worktree default.
+    const persisted = {
+      schemaVersion: 1,
+      drafts: {
+        "new-task:environment-1:project-1": {
+          text: "",
+          attachments: [],
+          workspaceSelection: {
+            mode: "local" as const,
+            modeUserSet: false,
+            branch: "main",
+            worktreePath: null,
+          },
+        },
+      },
+    };
+    const decoded = decodePersistedComposerDrafts(persisted);
+    expect(decoded["new-task:environment-1:project-1"]?.workspaceSelection).toEqual({
+      mode: "local",
+      modeUserSet: false,
+      branch: "main",
+      worktreePath: null,
+    });
+    // An explicit pick round-trips too.
+    const pinned = decodePersistedComposerDrafts({
+      ...persisted,
+      drafts: {
+        "new-task:environment-1:project-1": {
+          ...persisted.drafts["new-task:environment-1:project-1"],
+          workspaceSelection: {
+            ...persisted.drafts["new-task:environment-1:project-1"].workspaceSelection,
+            modeUserSet: true,
+          },
+        },
+      },
+    });
+    expect(pinned["new-task:environment-1:project-1"]?.workspaceSelection?.modeUserSet).toBe(true);
+  });
+
   it("keeps legacy content-only drafts and rejects invalid selector state", () => {
     expect(
       decodePersistedComposerDrafts({

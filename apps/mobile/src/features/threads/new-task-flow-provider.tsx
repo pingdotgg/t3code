@@ -753,7 +753,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         runtimeMode: message.runtimeMode,
         interactionMode: message.interactionMode,
         workspaceSelection: {
+          // The queued task's mode is a decision already made for it, so
+          // reopening it for editing keeps that mode pinned rather than
+          // re-deriving a default over the top of it.
           mode: message.creation.workspaceMode,
+          modeUserSet: true,
           branch: message.creation.branch,
           worktreePath: message.creation.worktreePath,
           startFromOrigin: message.creation.startFromOrigin ?? false,
@@ -788,9 +792,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return null;
       }
       const workspaceSelection = draft.workspaceSelection;
-      // Fall back to the resolved mode (server default) so queued tasks drain
-      // with the same mode the composer displayed.
-      const mode = workspaceSelection?.mode ?? workspaceMode;
+      // The stored mode outranks the resolved one ONLY when the user picked
+      // it. A mode that is merely a carried-along default must not win here:
+      // selecting a branch under a local provider stores `local`, and
+      // switching to Aether afterwards has to queue the task in the isolated
+      // worktree its one-way mirror requires — the composer already displays
+      // that, and the queue has to agree or the mirror claims the shared
+      // checkout on drain.
+      const mode =
+        workspaceSelection === undefined || workspaceSelection.modeUserSet === false
+          ? workspaceMode
+          : workspaceSelection.mode;
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back

@@ -76,6 +76,11 @@ export type ComposerDraftSettingsUpdate = Pick<
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
   mode: Schema.Literals(["local", "worktree"]),
+  // MUST stay declared: the decoder strips undeclared keys, so omitting it
+  // here would drop a persisted `false` on hydrate — and absence reads as
+  // user-set, which would pin the mode and silently disable the Aether
+  // worktree safety default after every app restart.
+  modeUserSet: Schema.optional(Schema.Boolean),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
