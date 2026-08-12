@@ -78,7 +78,9 @@ describe("project RPC errors", () => {
     expect(readError.message).toBe("Failed to read workspace file 'src/index.ts' in '/workspace'.");
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
-    expect(writeError.message).toBe("Failed to write workspace file 'src/index.ts' in '/workspace'.");
+    expect(writeError.message).toBe(
+      "Failed to write workspace file 'src/index.ts' in '/workspace'.",
+    );
     expect(writeError.message).not.toContain(cause.message);
     expect(writeError.cause).toBe(cause);
 
