@@ -110,4 +110,47 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.deepEqual(rows[0]?.attachments, []);
     }),
   );
+
+  it.effect("persists cross-thread provenance across later message updates", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-cross-thread");
+      const messageId = MessageId.make("message-cross-thread");
+      const origin = {
+        kind: "cross-thread" as const,
+        sourceThreadId: ThreadId.make("thread-source"),
+        sourceMessageId: MessageId.make("message-source"),
+        sourceThreadTitle: "Source thread",
+      };
+      const createdAt = "2026-03-01T00:00:00.000Z";
+
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "user",
+        text: "initial",
+        origin,
+        isStreaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "user",
+        text: "updated",
+        isStreaming: false,
+        createdAt,
+        updatedAt: "2026-03-01T00:00:01.000Z",
+      });
+
+      const message = yield* repository.getByMessageId({ messageId });
+      assert.equal(message._tag, "Some");
+      if (message._tag === "Some") {
+        assert.deepEqual(message.value.origin, origin);
+      }
+    }),
+  );
 });

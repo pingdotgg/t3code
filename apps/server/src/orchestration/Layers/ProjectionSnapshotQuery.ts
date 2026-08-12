@@ -336,6 +336,7 @@ function mapSessionRow(
     ...(row.providerInstanceId !== null ? { providerInstanceId: row.providerInstanceId } : {}),
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
+    ...(row.activeMessageId != null ? { activeMessageId: row.activeMessageId } : {}),
     ...(row.resumeCursor !== null ? { resumeCursor: row.resumeCursor } : {}),
     lastError: row.lastError,
     updatedAt: row.updatedAt,

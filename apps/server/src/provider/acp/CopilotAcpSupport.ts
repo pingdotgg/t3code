@@ -193,6 +193,7 @@ export function buildCopilotMcpServerOptions(
   toolsetNames.add("create_isolated_workspace");
   toolsetNames.add("switch_workspace");
   toolsetNames.add("create_nested_thread");
+  toolsetNames.add("send_to_thread");
   toolsetNames.add("associate_pull_request");
   return {
     cwd,

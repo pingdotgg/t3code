@@ -19,6 +19,7 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { useSearch } from "@tanstack/react-router";
 import {
   deriveCompletionDividerBeforeEntryId,
   deriveTimelineEntries,
@@ -40,7 +41,9 @@ import { deriveMessagesTimelineRows } from "./MessagesTimeline.logic";
 import { MessagesTimeline, type AssistantResponseMeta } from "./MessagesTimeline";
 import { FindInChatBar } from "./FindInChatBar";
 import { useChatFind, type ChatFindController } from "./useChatFind";
+import { scrollTimelineRowIntoView } from "./useChatFind";
 import { type ExpandedImagePreview } from "./ExpandedImagePreview";
+import { parseThreadMessageRouteSearch } from "../../threadRoutes";
 
 const EMPTY_OPTIMISTIC_USER_MESSAGES: ChatMessage[] = [];
 
@@ -514,6 +517,52 @@ export const ChatTimelineSection = forwardRef<ChatTimelineSectionHandle, ChatTim
       routeThreadKey,
       activeThreadId: threadId,
     });
+    const routeMessageSearch = useSearch({
+      strict: false,
+      select: (search) => parseThreadMessageRouteSearch(search),
+    });
+    const [highlightedMessageId, setHighlightedMessageId] = useState<MessageId | null>(null);
+    const handledRouteMessageRef = useRef<string | null>(null);
+    const highlightTimeoutRef = useRef<number | null>(null);
+
+    useEffect(
+      () => () => {
+        if (highlightTimeoutRef.current !== null) {
+          window.clearTimeout(highlightTimeoutRef.current);
+        }
+      },
+      [],
+    );
+
+    useEffect(() => {
+      const messageId = routeMessageSearch.message;
+      if (!messageId) {
+        return;
+      }
+      const routeMessageKey = `${routeThreadKey}:${messageId}`;
+      if (handledRouteMessageRef.current === routeMessageKey) {
+        return;
+      }
+      const rowIndex = timelineRows.findIndex(
+        (row) => row.kind === "message" && row.message.id === messageId,
+      );
+      if (rowIndex < 0) {
+        return;
+      }
+
+      const row = timelineRows[rowIndex];
+      if (!row) {
+        return;
+      }
+      handledRouteMessageRef.current = routeMessageKey;
+      const highlightedId = messageId as MessageId;
+      setHighlightedMessageId(highlightedId);
+      scrollTimelineRowIntoView({ rowId: row.id, rowIndex, legendListRef: listRef });
+      if (highlightTimeoutRef.current !== null) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+      highlightTimeoutRef.current = window.setTimeout(() => setHighlightedMessageId(null), 1_800);
+    }, [listRef, routeMessageSearch.message, routeThreadKey, timelineRows]);
 
     const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
     onRevertToTurnCountRef.current = onRevertToTurnCount;
@@ -591,6 +640,7 @@ export const ChatTimelineSection = forwardRef<ChatTimelineSectionHandle, ChatTim
           activeChatFindRowId={
             findController.open ? (findController.activeMatch?.rowId ?? null) : null
           }
+          highlightedMessageId={highlightedMessageId}
           reviewResultActive={reviewResultActive}
         />
       </>

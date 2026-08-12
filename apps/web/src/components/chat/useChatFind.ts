@@ -14,11 +14,40 @@ const EMPTY_CHAT_FIND_ROWS: ChatFindRow[] = [];
 const EMPTY_CHAT_FIND_MATCHES: ChatFindMatch[] = [];
 const TIMELINE_ROW_ESTIMATED_SIZE_PX = 90;
 
-function escapeAttributeSelectorValue(value: string): string {
+export function escapeAttributeSelectorValue(value: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
     return CSS.escape(value);
   }
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+export function scrollTimelineRowIntoView(input: {
+  rowId: string;
+  rowIndex: number;
+  legendListRef: RefObject<LegendListRef | null>;
+}): void {
+  const rowSelector = `[data-timeline-row-id="${escapeAttributeSelectorValue(input.rowId)}"]`;
+  const tryScroll = (attempt: number, offsetScrolled: boolean) => {
+    const rowElement = document.querySelector<HTMLElement>(rowSelector);
+    if (rowElement) {
+      rowElement.scrollIntoView({ block: "nearest" });
+      return;
+    }
+
+    if (!offsetScrolled) {
+      input.legendListRef.current?.scrollToOffset?.({
+        offset: input.rowIndex * TIMELINE_ROW_ESTIMATED_SIZE_PX,
+        animated: false,
+      });
+    }
+
+    if (attempt <= 0) {
+      return;
+    }
+    window.requestAnimationFrame(() => tryScroll(attempt - 1, true));
+  };
+
+  window.requestAnimationFrame(() => tryScroll(3, false));
 }
 
 export interface ChatFindController {
@@ -125,28 +154,11 @@ export function useChatFind(input: UseChatFindInput): ChatFindController {
         return;
       }
 
-      const rowSelector = `[data-timeline-row-id="${escapeAttributeSelectorValue(match.rowId)}"]`;
-      const tryScroll = (attempt: number, offsetScrolled: boolean) => {
-        const rowElement = document.querySelector<HTMLElement>(rowSelector);
-        if (rowElement) {
-          rowElement.scrollIntoView({ block: "nearest" });
-          return;
-        }
-
-        if (!offsetScrolled) {
-          legendListRef.current?.scrollToOffset?.({
-            offset: match.rowIndex * TIMELINE_ROW_ESTIMATED_SIZE_PX,
-            animated: false,
-          });
-        }
-
-        if (attempt <= 0) {
-          return;
-        }
-        window.requestAnimationFrame(() => tryScroll(attempt - 1, true));
-      };
-
-      window.requestAnimationFrame(() => tryScroll(3, false));
+      scrollTimelineRowIntoView({
+        rowId: match.rowId,
+        rowIndex: match.rowIndex,
+        legendListRef,
+      });
     },
     [legendListRef],
   );

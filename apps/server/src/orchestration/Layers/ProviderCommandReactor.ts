@@ -1098,6 +1098,19 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const sessionBeforeTurn = yield* resolveThread(event.payload.threadId);
+    if (sessionBeforeTurn?.session) {
+      yield* setThreadSession({
+        threadId: event.payload.threadId,
+        session: {
+          ...sessionBeforeTurn.session,
+          activeMessageId: event.payload.messageId,
+          updatedAt: event.payload.createdAt,
+        },
+        createdAt: event.payload.createdAt,
+      });
+    }
+
     const pendingTurnStart: PendingTurnStart = {
       key,
       messageId: event.payload.messageId,

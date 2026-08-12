@@ -1170,6 +1170,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             onNone: () => null,
             onSome: (session) => session.resumeCursor,
           });
+      const activeMessageId =
+        event.payload.session.activeTurnId !== null &&
+        event.payload.session.activeMessageId === undefined
+          ? Option.match(existingSession, {
+              onNone: () => null,
+              onSome: (session) => session.activeMessageId ?? null,
+            })
+          : (event.payload.session.activeMessageId ?? null);
       if (
         event.payload.session.status !== "running" ||
         event.payload.session.activeTurnId === null
@@ -1200,6 +1208,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         providerInstanceId: event.payload.session.providerInstanceId ?? null,
         runtimeMode: event.payload.session.runtimeMode,
         activeTurnId: event.payload.session.activeTurnId,
+        activeMessageId,
         resumeCursor,
         lastError: event.payload.session.lastError,
         updatedAt: event.payload.session.updatedAt,

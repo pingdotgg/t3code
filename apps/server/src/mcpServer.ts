@@ -9,6 +9,9 @@ import { Effect } from "effect";
 import type { ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import { killProcessTree } from "@t3tools/shared/processTree";
+import { ThreadId } from "@t3tools/contracts";
+
+import { issueCrossThreadDispatchCapability } from "./orchestration/CrossThreadDispatchCapability.ts";
 
 type JsonRpcId = string | number | null;
 
@@ -77,6 +80,7 @@ const TOOL_ALIASES: ReadonlyMap<string, string> = new Map([
   ["switch_workspace", "switch_workspace"],
   ["use_existing_worktree", "switch_workspace"],
   ["create_nested_thread", "create_nested_thread"],
+  ["send_to_thread", "send_to_thread"],
   ["associate_pull_request", "associate_pull_request"],
 ] as const);
 
@@ -661,6 +665,10 @@ async function createNestedThreadTool(
     project,
     "--parent",
     options.threadId,
+    "--cross-thread-source",
+    options.threadId,
+    "--cross-thread-capability",
+    issueCrossThreadDispatchCapability(ThreadId.make(options.threadId)),
     "--provider",
     options.providerInstanceId,
     "--model",
@@ -671,6 +679,33 @@ async function createNestedThreadTool(
     "--title",
     title,
     prompt,
+    ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
+  ]);
+  return result.stdout.trim();
+}
+
+async function sendToThreadTool(
+  options: McpServeOptions,
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (!options.threadId) {
+    throw new Error("send_to_thread is only available from a T3 provider session");
+  }
+  const thread = asString(args.thread)?.trim();
+  const prompt = asString(args.prompt)?.trim();
+  if (!thread) throw new Error("send_to_thread requires a non-empty thread");
+  if (!prompt) throw new Error("send_to_thread requires a non-empty prompt");
+
+  const result = await runCommand(options.cwd, options.cliCommand, [
+    ...(options.cliArgsPrefix ?? []),
+    "chat",
+    "send",
+    thread,
+    prompt,
+    "--cross-thread-source",
+    options.threadId,
+    "--cross-thread-capability",
+    issueCrossThreadDispatchCapability(ThreadId.make(options.threadId)),
     ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
   ]);
   return result.stdout.trim();
@@ -852,6 +887,19 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
     },
   },
   {
+    name: "send_to_thread",
+    description:
+      "Send a prompt to an existing T3 thread from the authenticated current thread. T3 records the initiating source message as provenance; do not use terminal-based `t3 chat send` for cross-thread messaging.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        thread: { type: "string", description: "Destination thread id or title." },
+        prompt: { type: "string" },
+      },
+      required: ["thread", "prompt"],
+    },
+  },
+  {
     name: "associate_pull_request",
     description:
       "Durably associate a pull request with the authenticated current T3 thread. Call this after successfully creating or explicitly opening a PR for this thread. The URL or number is resolved through GitHub and persisted on the thread; never infer association from the current branch.",
@@ -904,6 +952,8 @@ async function callTool(options: McpServeOptions, name: string, args: Record<str
       return await switchWorkspaceTool(options, args);
     case "create_nested_thread":
       return await createNestedThreadTool(options, args);
+    case "send_to_thread":
+      return await sendToThreadTool(options, args);
     case "associate_pull_request":
       return await associatePullRequestTool(options, args);
     default:
@@ -1004,5 +1054,6 @@ export const __testing = {
   availableTools,
   createIsolatedWorkspaceTool,
   createNestedThreadTool,
+  sendToThreadTool,
   switchWorkspaceTool,
 };

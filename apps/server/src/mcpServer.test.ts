@@ -172,6 +172,56 @@ describe("associate_pull_request MCP tool", () => {
   });
 });
 
+describe("send_to_thread MCP tool", () => {
+  it("sends through the authenticated source thread", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "t3-mcp-send-thread-"));
+    const cliPath = path.join(root, "t3-test");
+    const argsPath = path.join(root, "cli-args.txt");
+    const originalArgsPath = process.env.T3_MCP_TEST_ARGS;
+
+    try {
+      await writeFile(
+        cliPath,
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$T3_MCP_TEST_ARGS"\nprintf \'{"ok":true}\\n\'\n',
+      );
+      await chmod(cliPath, 0o755);
+      process.env.T3_MCP_TEST_ARGS = argsPath;
+
+      await expect(
+        __testing.sendToThreadTool(
+          {
+            cwd: root,
+            toolsets: new Set(["send_to_thread"]),
+            threadId: "source-1",
+            cliCommand: cliPath,
+            cliArgsPrefix: ["server.mjs"],
+            cliBaseDir: "/tmp/t3-dev",
+          },
+          { thread: "target-1", prompt: "Investigate this." },
+        ),
+      ).resolves.toBe('{"ok":true}');
+
+      expect((await readFile(argsPath, "utf8")).trim().split("\n")).toEqual([
+        "server.mjs",
+        "chat",
+        "send",
+        "target-1",
+        "Investigate this.",
+        "--cross-thread-source",
+        "source-1",
+        "--cross-thread-capability",
+        expect.any(String),
+        "--base-dir",
+        "/tmp/t3-dev",
+      ]);
+    } finally {
+      if (originalArgsPath === undefined) delete process.env.T3_MCP_TEST_ARGS;
+      else process.env.T3_MCP_TEST_ARGS = originalArgsPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("create_nested_thread MCP tool", () => {
   it("accepts any Copilot model slug and makes reasoning optional", () => {
     expect(__testing.availableTools(new Set(["create_nested_thread"]))).toEqual([
@@ -238,6 +288,10 @@ describe("create_nested_thread MCP tool", () => {
         "project-1",
         "--parent",
         "parent-1",
+        "--cross-thread-source",
+        "parent-1",
+        "--cross-thread-capability",
+        expect.any(String),
         "--provider",
         "copilot-team",
         "--model",
@@ -299,6 +353,10 @@ describe("create_nested_thread MCP tool", () => {
         "project-1",
         "--parent",
         "parent-1",
+        "--cross-thread-source",
+        "parent-1",
+        "--cross-thread-capability",
+        expect.any(String),
         "--provider",
         "copilot",
         "--model",

@@ -2845,6 +2845,81 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-latest-turn-ses
         assert.deepEqual(JSON.parse(rows[0]?.resumeCursor ?? "null"), resumeCursor);
       }),
     );
+
+    it.effect("preserves the active message when active-turn lifecycle updates omit it", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-active-message-preserve");
+        const turnId = TurnId.make("turn-active-message-preserve");
+        const messageId = MessageId.make("message-active-message-preserve");
+
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-active-message-initial"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-12T20:00:00.000Z",
+          commandId: CommandId.make("cmd-active-message-initial"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-active-message-initial"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "copilot",
+              providerInstanceId: ProviderInstanceId.make("copilot"),
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              activeMessageId: messageId,
+              lastError: null,
+              updatedAt: "2026-08-12T20:00:00.000Z",
+            },
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-active-message-lifecycle"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-08-12T20:00:01.000Z",
+          commandId: CommandId.make("cmd-active-message-lifecycle"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-active-message-lifecycle"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "copilot",
+              providerInstanceId: ProviderInstanceId.make("copilot"),
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: "2026-08-12T20:00:01.000Z",
+            },
+          },
+        });
+
+        const rows = yield* sql<{ readonly activeMessageId: string | null }>`
+          SELECT active_message_id AS "activeMessageId"
+          FROM projection_thread_sessions
+          WHERE thread_id = ${threadId}
+        `;
+
+        assert.deepEqual(rows, [{ activeMessageId: messageId }]);
+      }),
+    );
   },
 );
 

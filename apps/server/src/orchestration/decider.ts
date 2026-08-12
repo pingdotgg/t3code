@@ -204,6 +204,63 @@ function buildTurnStartEvents(input: {
   return { userMessageEvent, turnStartRequestedEvent };
 }
 
+function deriveCrossThreadOrigin(input: {
+  readonly command: Extract<OrchestrationCommand, { type: "thread.turn.start" }>;
+  readonly sourceThreadId: ThreadId;
+  readonly targetThread: OrchestrationReadModel["threads"][number];
+  readonly readModel: OrchestrationReadModel;
+}): Effect.Effect<MessageSentPayload["origin"], OrchestrationCommandInvariantError> {
+  const sourceThread = input.readModel.threads.find((thread) => thread.id === input.sourceThreadId);
+  if (!sourceThread) {
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Cross-thread source thread '${input.sourceThreadId}' does not exist.`,
+      }),
+    );
+  }
+  if (input.targetThread.projectId !== sourceThread.projectId) {
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Cross-thread source '${sourceThread.id}' and target '${input.targetThread.id}' belong to different projects.`,
+      }),
+    );
+  }
+  if (sourceThread.session?.activeTurnId === null || sourceThread.session === null) {
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Cross-thread source thread '${sourceThread.id}' has no active turn.`,
+      }),
+    );
+  }
+  const sourceMessageId = sourceThread.session.activeMessageId;
+  if (sourceMessageId === undefined) {
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Cross-thread source thread '${sourceThread.id}' has no authenticated active message.`,
+      }),
+    );
+  }
+  const sourceMessage = sourceThread.messages.find((message) => message.id === sourceMessageId);
+  if (!sourceMessage || sourceMessage.role !== "user") {
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Cross-thread source thread '${sourceThread.id}' has no user message for its active turn.`,
+      }),
+    );
+  }
+  return Effect.succeed({
+    kind: "cross-thread",
+    sourceThreadId: sourceThread.id,
+    sourceMessageId: sourceMessage.id,
+    sourceThreadTitle: sourceThread.title,
+  });
+}
+
 const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   commands,
   readModel,
@@ -988,6 +1045,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const origin =
+        command.crossThreadSourceThreadId === undefined
+          ? undefined
+          : yield* deriveCrossThreadOrigin({
+              command,
+              sourceThreadId: command.crossThreadSourceThreadId,
+              targetThread,
+              readModel,
+            });
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1020,6 +1086,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           text: command.message.text,
           attachments: command.message.attachments,
         },
+        ...(origin !== undefined ? { origin } : {}),
         modelSelection: command.modelSelection,
         titleSeed: command.titleSeed,
         runtimeMode: targetThread.runtimeMode,

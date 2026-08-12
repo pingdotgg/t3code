@@ -75,6 +75,8 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
+import { scopeThreadRef } from "@t3tools/client-runtime";
+import { useNavigate } from "@tanstack/react-router";
 import { formatTimestamp } from "../../timestampFormat";
 
 import {
@@ -83,6 +85,7 @@ import {
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { selectSidebarThreadSummaryByRef, useStore } from "../../store";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via useContext.
@@ -104,6 +107,7 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   activeChatFindRowId: string | null;
+  highlightedMessageId: MessageId | null;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   onRevertUserMessage: (messageId: MessageId) => void;
@@ -150,6 +154,7 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   activeChatFindRowId?: string | null;
+  highlightedMessageId?: MessageId | null;
   reviewResultActive?: boolean;
   hasMoreOlder?: boolean;
   loadingOlder?: boolean;
@@ -200,6 +205,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   onIsAtEndChange,
   activeChatFindRowId = null,
+  highlightedMessageId = null,
   reviewResultActive = false,
   hasMoreOlder = false,
   loadingOlder = false,
@@ -292,6 +298,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       activeThreadId,
       activeChatFindRowId,
+      highlightedMessageId,
       onRevertUserMessage,
       onForkAssistantMessage: handleForkAssistantMessage,
       onImageExpand,
@@ -314,6 +321,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       activeThreadId,
       activeChatFindRowId,
+      highlightedMessageId,
       onRevertUserMessage,
       handleForkAssistantMessage,
       onImageExpand,
@@ -417,6 +425,9 @@ function TimelineRowContent(props: { row: TimelineRow }) {
       data-chat-find-active={ctx.activeChatFindRowId === row.id ? "true" : undefined}
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
+      data-message-highlighted={
+        row.kind === "message" && row.message.id === ctx.highlightedMessageId ? "true" : undefined
+      }
     >
       {row.kind === "work" && (
         <WorkGroupSection
@@ -450,7 +461,16 @@ function TimelineRowContent(props: { row: TimelineRow }) {
           );
           return (
             <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+              <div
+                className={cn(
+                  "group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3",
+                  row.message.origin?.kind === "cross-thread" &&
+                    "border-violet-400/55 bg-violet-500/5",
+                )}
+              >
+                {row.message.origin?.kind === "cross-thread" ? (
+                  <CrossThreadProvenance origin={row.message.origin} />
+                ) : null}
                 {regularImages.length > 0 && (
                   <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
                     {regularImages.map(
@@ -727,6 +747,51 @@ function formatBillingAmount(value: number): string {
       ? Math.min(20, Math.max(2, Math.ceil(-Math.log10(absoluteValue))))
       : 2;
   return value.toFixed(fractionDigits);
+}
+
+function CrossThreadProvenance({
+  origin,
+}: {
+  origin: Extract<NonNullable<TimelineMessage["origin"]>, { kind: "cross-thread" }>;
+}) {
+  const navigate = useNavigate();
+  const ctx = use(TimelineRowCtx);
+  const sourceThreadRef = scopeThreadRef(ctx.activeThreadEnvironmentId, origin.sourceThreadId);
+  const sourceThread = useStore((state) => selectSidebarThreadSummaryByRef(state, sourceThreadRef));
+  const sourceTitle = sourceThread?.title.trim() || origin.sourceThreadTitle;
+  const canNavigate = sourceThread !== null && sourceThread !== undefined;
+
+  if (!canNavigate) {
+    return (
+      <span
+        className="mb-2 inline-flex max-w-full items-center rounded-md border border-violet-400/30 bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-700 dark:text-violet-300"
+        title={`Source chat unavailable: ${sourceTitle}`}
+      >
+        From {sourceTitle}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="mb-2 inline-flex max-w-full cursor-pointer items-center rounded-md border border-violet-400/40 bg-violet-500/10 px-2 py-1 text-[11px] font-medium text-violet-700 transition-colors hover:bg-violet-500/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 dark:text-violet-300"
+      title={`Open source chat: ${sourceTitle}`}
+      aria-label={`Open source chat ${sourceTitle} at the initiating message`}
+      onClick={() => {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: sourceThreadRef.environmentId,
+            threadId: sourceThreadRef.threadId,
+          },
+          search: (previous) => ({ ...previous, message: origin.sourceMessageId }),
+        });
+      }}
+    >
+      <span className="truncate">From {sourceTitle}</span>
+    </button>
+  );
 }
 
 function formatCompactNumber(value: number): string {

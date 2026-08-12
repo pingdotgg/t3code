@@ -21,6 +21,7 @@ import { ServerRuntimeStartup } from "../serverRuntimeStartup.ts";
 import { projectReadModel, projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
 import { makeClientCommandDispatcher } from "./clientCommandDispatcher.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
+import { consumeCrossThreadDispatchCapability } from "./CrossThreadDispatchCapability.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
@@ -175,7 +176,23 @@ export const orchestrationDispatchRouteLayer = HttpRouter.add(
           }),
       ),
     );
-    const normalizedCommand = yield* normalizeDispatchCommand(command);
+    const trustedCommand =
+      command.type === "thread.turn.start" && command.crossThreadSourceThreadId !== undefined
+        ? (() => {
+            const capability = command.crossThreadDispatchCapability;
+            if (
+              capability === undefined ||
+              !consumeCrossThreadDispatchCapability(capability, command.crossThreadSourceThreadId)
+            ) {
+              throw new OrchestrationDispatchCommandError({
+                message: "Invalid cross-thread dispatch capability.",
+              });
+            }
+            const { crossThreadDispatchCapability: _, ...trusted } = command;
+            return trusted;
+          })()
+        : command;
+    const normalizedCommand = yield* normalizeDispatchCommand(trustedCommand);
     const dispatchCommand = makeClientCommandDispatcher({
       orchestrationEngine,
       startup,

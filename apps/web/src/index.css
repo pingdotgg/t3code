@@ -999,3 +999,23 @@ label:has(> select#reasoning-effort) select {
   background-color: rgba(249, 115, 22, 0.6);
   color: inherit;
 }
+
+[data-message-highlighted="true"] > * {
+  animation: cross-thread-message-highlight 1.8s ease-out;
+}
+
+@keyframes cross-thread-message-highlight {
+  0%,
+  45% {
+    box-shadow: 0 0 0 3px rgb(139 92 246 / 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(139 92 246 / 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-message-highlighted="true"] > * {
+    animation: none;
+  }
+}

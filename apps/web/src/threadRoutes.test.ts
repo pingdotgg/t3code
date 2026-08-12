@@ -8,6 +8,7 @@ import {
   buildThreadRouteParams,
   clearAgentRunRouteSearch,
   parseAgentRunRouteSearch,
+  parseThreadMessageRouteSearch,
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "./threadRoutes";
@@ -71,6 +72,14 @@ describe("threadRoutes", () => {
     expect(parseAgentRunRouteSearch({ agent: " agent-1 " })).toEqual({ agent: "agent-1" });
     expect(parseAgentRunRouteSearch({ agent: "" })).toEqual({});
     expect(parseAgentRunRouteSearch({ agent: 1 })).toEqual({});
+  });
+
+  it("normalizes a message deep-link search parameter", () => {
+    expect(parseThreadMessageRouteSearch({ message: " message-1 " })).toEqual({
+      message: "message-1",
+    });
+    expect(parseThreadMessageRouteSearch({ message: "" })).toEqual({});
+    expect(parseThreadMessageRouteSearch({ message: 1 })).toEqual({});
   });
 
   it("clears a nested agent selection when navigating to its parent", () => {

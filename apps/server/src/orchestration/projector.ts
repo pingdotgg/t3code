@@ -606,12 +606,21 @@ export function projectEvent(
           return nextBase;
         }
 
-        const session: OrchestrationSession = yield* decodeForEvent(
+        const decodedSession: OrchestrationSession = yield* decodeForEvent(
           OrchestrationSession,
           payload.session,
           event.type,
           "session",
         );
+        const session =
+          decodedSession.activeTurnId !== null && decodedSession.activeMessageId === undefined
+            ? {
+                ...decodedSession,
+                ...(thread.session?.activeMessageId !== undefined
+                  ? { activeMessageId: thread.session.activeMessageId }
+                  : {}),
+              }
+            : decodedSession;
 
         return {
           ...nextBase,

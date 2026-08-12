@@ -12,7 +12,9 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import {
   resolveThreadRouteRef,
   parseAgentRunRouteSearch,
+  parseThreadMessageRouteSearch,
   type AgentRunRouteSearch,
+  type ThreadMessageRouteSearch,
   type ThreadRouteTarget,
 } from "../threadRoutes";
 import { SidebarInset } from "~/components/ui/sidebar";
@@ -107,12 +109,18 @@ function ChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
-  validateSearch: (search): DiffRouteSearch & AgentRunRouteSearch => ({
+  validateSearch: (search): DiffRouteSearch & AgentRunRouteSearch & ThreadMessageRouteSearch => ({
     ...parseDiffRouteSearch(search),
     ...parseAgentRunRouteSearch(search),
+    ...parseThreadMessageRouteSearch(search),
   }),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch & AgentRunRouteSearch>(["diff"])],
+    middlewares: [
+      retainSearchParams<DiffRouteSearch & AgentRunRouteSearch & ThreadMessageRouteSearch>([
+        "diff",
+        "message",
+      ]),
+    ],
   },
   component: ChatThreadRouteView,
 });

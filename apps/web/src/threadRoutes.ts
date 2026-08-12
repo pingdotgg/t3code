@@ -16,10 +16,22 @@ export interface AgentRunRouteSearch {
   agent?: string | undefined;
 }
 
+export interface ThreadMessageRouteSearch {
+  message?: string | undefined;
+}
+
 export function parseAgentRunRouteSearch(search: Record<string, unknown>): AgentRunRouteSearch {
   if (typeof search.agent !== "string") return {};
   const agent = search.agent.trim();
   return agent ? { agent } : {};
+}
+
+export function parseThreadMessageRouteSearch(
+  search: Record<string, unknown>,
+): ThreadMessageRouteSearch {
+  if (typeof search.message !== "string") return {};
+  const message = search.message.trim();
+  return message ? { message } : {};
 }
 
 export function clearAgentRunRouteSearch<T extends Record<string, unknown>>(
