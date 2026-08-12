@@ -33,6 +33,7 @@ import {
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
+import { canonicalizeSshRemoteUrl } from "./sshRemoteUrl.ts";
 
 export interface ExecuteGitInput {
   readonly operation: string;
@@ -469,6 +470,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       },
     ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"));
 
+  const sshConfigProbe = (cwd: string) => (host: string) =>
+    vcsProcess
+      .run({
+        operation: "GitVcsDriver.sshConfig",
+        command: "ssh",
+        args: ["-G", "--", host],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 64 * 1024,
+      })
+      .pipe(
+        Effect.map((result) => result.stdout),
+        Effect.orElseSucceed(() => ""),
+      );
+
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
@@ -574,7 +591,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }
 
       const parsed = parseGitRemoteVerboseOutput(result.stdout);
-      const remotes = Array.from(parsed.entries()).flatMap(([name, remote]) => {
+      const configured = Array.from(parsed.entries()).flatMap(([name, remote]) => {
         if (!remote.url) {
           return [];
         }
@@ -587,6 +604,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           },
         ];
       });
+
+      const remotes = yield* Effect.forEach(configured, (remote) =>
+        canonicalizeSshRemoteUrl(remote.url, sshConfigProbe(cwd)).pipe(
+          Effect.map((url) => ({ ...remote, url })),
+        ),
+      );
 
       return {
         remotes,

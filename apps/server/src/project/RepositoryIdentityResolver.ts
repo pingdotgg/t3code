@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { canonicalizeSshRemoteUrl, sshConfigProbe } from "../vcs/sshRemoteUrl.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
@@ -132,7 +133,15 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   }
 
   const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
-  return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
+  if (!remote) {
+    return null;
+  }
+
+  const remoteUrl = yield* canonicalizeSshRemoteUrl(
+    remote.remoteUrl,
+    sshConfigProbe(processRunner),
+  );
+  return buildRepositoryIdentity({ ...remote, remoteUrl, rootPath: cacheKey });
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (

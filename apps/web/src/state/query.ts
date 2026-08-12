@@ -14,8 +14,9 @@ export interface EnvironmentQueryView<A> {
   readonly refresh: () => void;
 }
 
-function formatError(cause: Cause.Cause<unknown>): string {
-  const error = Cause.squash(cause);
+export function environmentQueryError<A, E>(result: AsyncResult.AsyncResult<A, E>): string | null {
+  if (result._tag !== "Failure" || Cause.hasInterruptsOnly(result.cause)) return null;
+  const error = Cause.squash(result.cause);
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : "The environment request failed.";
@@ -29,7 +30,7 @@ export function useEnvironmentQuery<A, E>(
   const refresh = useAtomRefresh(selectedAtom);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
-    error: result._tag === "Failure" ? formatError(result.cause) : null,
+    error: environmentQueryError(result),
     isPending: atom !== null && result.waiting,
     refresh,
   };

@@ -56,6 +56,8 @@ import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { canonicalizeSshRemoteUrl, sshConfigProbe } from "../vcs/sshRemoteUrl.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import { detectPrTemplate } from "../sourceControl/PrTemplateDetection.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
@@ -593,6 +595,7 @@ function toPullRequestHeadRemoteInfo(pr: {
 
 export const make = Effect.gen(function* () {
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1102,6 +1105,15 @@ export const make = Effect.gen(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
+  const readRemoteUrl = (cwd: string, key: string) =>
+    readConfigValueNullable(cwd, key).pipe(
+      Effect.flatMap((remoteUrl) =>
+        remoteUrl === null
+          ? Effect.succeed(null)
+          : canonicalizeSshRemoteUrl(remoteUrl, sshConfigProbe(processRunner)),
+      ),
+    );
+
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
     cwd: string,
     branch: string | null,
@@ -1111,8 +1123,8 @@ export const make = Effect.gen(function* () {
         ? "origin"
         : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin");
     const remoteUrl =
-      (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
-      (yield* readConfigValueNullable(cwd, "remote.origin.url"));
+      (yield* readRemoteUrl(cwd, `remote.${preferredRemoteName}.url`)) ??
+      (yield* readRemoteUrl(cwd, "remote.origin.url"));
 
     return remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
   });
@@ -1129,7 +1141,7 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
+    const remoteUrl = yield* readRemoteUrl(cwd, `remote.${remoteName}.url`);
     const repositoryNameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
     return {
       remoteUrlKey: remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null,
@@ -2320,4 +2332,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(GitManager, make);
+export const layer = Layer.effect(GitManager, make).pipe(Layer.provide(ProcessRunner.layer));
