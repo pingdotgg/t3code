@@ -97,7 +97,9 @@ struct HomeThreadMetadataTests {
                     path: "/work/t3code"
                 ),
             ],
-            providers: [FeatureProvider(id: "codex-work", name: "Config name")]
+            providersByEnvironment: [
+                "device": [FeatureProvider(id: "codex-work", name: "Config name")],
+            ]
         )
 
         #expect(thread.homeEnvironmentLabel(in: snapshot) == "leftbook")
