@@ -37,6 +37,7 @@ function WorkspaceIcon(props: { variant: ThreadCommandSubtitleVariant; isWorktre
 export function ThreadCommandSubtitle(props: {
   environmentId: EnvironmentId;
   projectCwd: string | null;
+  projectFaviconPath?: string | null;
   projectTitle: string | null;
   branch: string | null;
   worktreePath: string | null;
@@ -71,6 +72,7 @@ export function ThreadCommandSubtitle(props: {
             <ProjectFavicon
               environmentId={props.environmentId}
               cwd={props.projectCwd}
+              faviconPath={props.projectFaviconPath}
               className="size-3 shrink-0"
             />
           ) : null}
