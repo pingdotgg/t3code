@@ -416,7 +416,12 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
       return; // Exit early, 0ms startup!
     }
 
-    // Run the necessary probes concurrently, bounded by the slowest single probe
+    // Concurrent, not sequential: these two probes are independent (only their
+    // results are combined below) and each spawns its own PowerShell. Run in
+    // series they sit at offset 0 of desktop.startup, before anything else, and
+    // launch traces measured them at 2718ms then 2066ms — the entire 4.8s
+    // startup span, of which desktop.bootstrap is ~30ms. Total cost here is
+    // therefore bounded by the slowest single probe.
     const [noProfile, profile] = yield* Effect.all(
       [
         readWindowsEnvironment(["PATH"], { loadProfile: false }),
