@@ -18,6 +18,7 @@ describe("terminalUiStateStore actions", () => {
     useTerminalUiStateStore.persist.clearStorage();
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
+      terminalCustomLabelsByThreadKey: {},
       suppressedTerminalIdsByThreadKey: {},
     });
   });
@@ -136,6 +137,26 @@ describe("terminalUiStateStore actions", () => {
     expect(terminalUiState.terminalGroups).toEqual([
       { id: "group-terminal-2", terminalIds: ["terminal-2"] },
     ]);
+  });
+
+  it("persists a custom terminal label and removes it when the terminal closes", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "terminal-2");
+    store.setTerminalCustomLabel(THREAD_REF, "terminal-2", "Dev server");
+
+    expect(
+      useTerminalUiStateStore.getState().terminalCustomLabelsByThreadKey[
+        scopedThreadKey(THREAD_REF)
+      ],
+    ).toEqual({ "terminal-2": "Dev server" });
+
+    useTerminalUiStateStore.getState().closeTerminal(THREAD_REF, "terminal-2");
+
+    expect(
+      useTerminalUiStateStore.getState().terminalCustomLabelsByThreadKey[
+        scopedThreadKey(THREAD_REF)
+      ],
+    ).toBeUndefined();
   });
 
   it("ensures unknown server terminals are registered, opened, and activated", () => {

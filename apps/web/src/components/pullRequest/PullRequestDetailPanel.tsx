@@ -25,6 +25,7 @@ import {
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   HammerIcon,
+  LayersIcon,
   MessageCircleQuestionIcon,
   MessageSquareIcon,
   LinkIcon,
@@ -50,6 +51,7 @@ import {
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { changeRequestRepositoryUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -60,6 +62,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import {
@@ -74,6 +77,7 @@ import {
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { SegmentedTab, SegmentedTabList } from "../ui/segmented-tabs";
 import {
   Menu,
   MenuItem,
@@ -502,6 +506,30 @@ export function PullRequestDetailPanel({
           },
     [activity, coreDetail],
   );
+  const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
+  const baseBranchRefQuery = useEnvironmentQuery(
+    detail === null
+      ? null
+      : vcsEnvironment.listRefs({
+          environmentId,
+          input: {
+            cwd: detail.workspaceRoot,
+            query: detail.baseBranch,
+            includeMatchingRemoteRefs: true,
+            limit: 20,
+          },
+        }),
+  );
+  const matchingBaseBranchRefs =
+    detail === null
+      ? []
+      : (baseBranchRefQuery.data?.refs.filter(
+          (refName) =>
+            refName.name === detail.baseBranch || refName.name.endsWith(`/${detail.baseBranch}`),
+        ) ?? []);
+  const isStackedPullRequest =
+    matchingBaseBranchRefs.length > 0 &&
+    !matchingBaseBranchRefs.some((refName) => refName.isDefault);
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
   const refreshDetail = useCallback(() => {
@@ -1054,7 +1082,7 @@ export function PullRequestDetailPanel({
             aria-hidden={condensed}
             inert={condensed}
             className={cn(
-              "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-opacity sm:text-xs motion-reduce:transition-none",
+              "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-opacity motion-reduce:transition-none",
               // Sequenced, not simultaneous: the leaving layer clears quickly before the
               // arriving one lands, so no frame shows both texts superimposed at half opacity.
               condensed
@@ -1064,9 +1092,20 @@ export function PullRequestDetailPanel({
           >
             {detail && statePresentation ? (
               <>
-                <span className="min-w-0 truncate" title={detail.repository}>
-                  {detail.repository}
-                </span>
+                {repositoryUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
+                    className="min-w-0 truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    title={`Open ${detail.repository} repository`}
+                  >
+                    {detail.repository}
+                  </button>
+                ) : (
+                  <span className="min-w-0 truncate font-medium text-muted-foreground">
+                    {detail.repository}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
@@ -1312,16 +1351,15 @@ export function PullRequestDetailPanel({
                   <MenuTrigger
                     disabled={handoff !== null}
                     render={
-                      <Button size="xs" variant="outline">
-                        {handoff?.startsWith("checkout") ? (
-                          "Checking out..."
-                        ) : (
-                          <>
-                            <GitBranchIcon className="size-3" />
-                            Check out
-                            <ChevronDownIcon className="size-3 text-muted-foreground" />
-                          </>
-                        )}
+                      <Button size="xs" variant="outline" className="gap-0 p-0">
+                        <span className="inline-flex h-full items-center gap-1.5 ps-[8.5px] pe-2">
+                          <GitBranchIcon aria-hidden className="size-3.5" />
+                          {handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
+                        </span>
+                        <span aria-hidden className="h-4 w-px shrink-0 bg-input" />
+                        <span className="inline-flex h-full w-6 shrink-0 items-center justify-center">
+                          <ChevronDownIcon aria-hidden className="size-4 text-muted-foreground" />
+                        </span>
                       </Button>
                     }
                   />
@@ -1419,30 +1457,31 @@ export function PullRequestDetailPanel({
           >
             {detail ? (
               <div className="flex min-w-0 items-center gap-1 px-4 pb-2">
-                <nav aria-label="Pull request tabs" className="flex shrink-0 items-center gap-0.5">
-                  {visibleTabs.map((item) => (
-                    <button
-                      key={item.value}
-                      type="button"
-                      tabIndex={condensed ? 0 : -1}
-                      aria-pressed={tab === item.value}
-                      onClick={() => setTab(item.value)}
-                      className={cn(
-                        "rounded-md px-2 py-1 text-[11px] transition-colors",
-                        tab === item.value
-                          ? "bg-accent text-foreground"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
+                <nav aria-label="Pull request tabs" className="shrink-0">
+                  <SegmentedTabList>
+                    {visibleTabs.map((item) => (
+                      <SegmentedTab
+                        key={item.value}
+                        density="compact"
+                        selected={tab === item.value}
+                        tabIndex={condensed ? 0 : -1}
+                        onClick={() => setTab(item.value)}
+                      >
+                        {item.label}
+                      </SegmentedTab>
+                    ))}
+                  </SegmentedTabList>
                 </nav>
                 <span
                   className="ml-auto inline-flex min-w-0 shrink items-center gap-1 font-mono text-[11px] text-muted-foreground"
                   title={`${detail.baseBranch} ← ${detail.headBranch}`}
                 >
-                  <span className="truncate">{detail.baseBranch}</span>
+                  <span className="inline-flex min-w-0 items-center gap-1 rounded bg-accent px-1.5 py-0.5 text-accent-foreground">
+                    {isStackedPullRequest ? (
+                      <LayersIcon aria-label="Stacked pull request" className="size-2.5 shrink-0" />
+                    ) : null}
+                    <span className="min-w-0 truncate font-medium">{detail.baseBranch}</span>
+                  </span>
                   {freshness ? (
                     <PullRequestBaseFreshnessWarning
                       baseBranch={detail.baseBranch}
@@ -1452,8 +1491,13 @@ export function PullRequestDetailPanel({
                       iconClassName="size-3"
                     />
                   ) : null}
-                  <ArrowLeftIcon aria-label="receives changes from" className="size-3 shrink-0" />
-                  <span className="truncate">{detail.headBranch}</span>
+                  <ArrowLeftIcon
+                    aria-label="receives changes from"
+                    className="size-3 shrink-0 text-muted-foreground"
+                  />
+                  <span className="min-w-0 truncate text-muted-foreground/80">
+                    {detail.headBranch}
+                  </span>
                 </span>
                 <span className="ml-2 inline-flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
                   <span className="inline-flex items-center gap-1 tabular-nums">
@@ -1500,7 +1544,7 @@ export function PullRequestDetailPanel({
             inert={condensed}
           >
             {detail ? (
-              <div className="col-span-2 mt-3 min-w-0 px-4 pb-4">
+              <div className="col-span-2 mt-1 min-w-0 px-4 pb-4">
                 {titleDraft === null ? (
                   <div className="group flex min-w-0 items-start gap-1">
                     <h1 className="min-w-0 flex-1 text-base font-semibold leading-snug">
@@ -1567,12 +1611,17 @@ export function PullRequestDetailPanel({
                 </PullRequestMetaLine>
 
                 <div className="mt-4 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  <code
-                    className="min-w-0 max-w-48 shrink truncate rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground"
+                  <span
+                    className="inline-flex min-w-0 max-w-72 shrink items-center gap-1.5 rounded-md bg-accent px-2 py-1 text-accent-foreground"
                     title={detail.baseBranch}
                   >
-                    {detail.baseBranch}
-                  </code>
+                    {isStackedPullRequest ? (
+                      <LayersIcon aria-label="Stacked pull request" className="size-3 shrink-0" />
+                    ) : null}
+                    <code className="min-w-0 truncate font-mono text-xs font-medium">
+                      {detail.baseBranch}
+                    </code>
+                  </span>
                   {freshness ? (
                     <PullRequestBaseFreshnessWarning
                       baseBranch={detail.baseBranch}
@@ -1584,7 +1633,7 @@ export function PullRequestDetailPanel({
                   <ArrowLeftIcon aria-label="receives changes from" className="size-4 shrink-0" />
                   <button
                     type="button"
-                    className="grid min-w-0 max-w-64 shrink cursor-pointer rounded-md bg-muted px-2 py-1 font-mono text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                    className="grid min-w-0 max-w-64 shrink cursor-pointer rounded-md bg-muted/60 px-2 py-1 font-mono text-xs text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
                     aria-label={isBranchCopied ? "Branch name copied" : "Copy pull request branch"}
                     title={isBranchCopied ? "Copied" : "Copy pull request branch"}
                     onClick={() => copyBranchToClipboard(detail.headBranch)}
@@ -1628,7 +1677,7 @@ export function PullRequestDetailPanel({
               <div className="col-span-2 flex items-center gap-1 px-4 pb-3">
                 <Badge
                   variant="error"
-                  className="h-auto gap-1.5 rounded-md px-3 py-1.5 text-xs text-destructive"
+                  className="h-6 gap-1.5 rounded-md px-2 py-1 text-xs text-destructive sm:h-6"
                 >
                   <TriangleAlertIcon className="size-3.5" />
                   Merge conflicts
@@ -1651,22 +1700,17 @@ export function PullRequestDetailPanel({
                 className="col-span-2 flex min-w-0 items-center gap-1 overflow-x-auto border-t border-border/60 px-4 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 aria-label="Pull request tabs"
               >
-                {visibleTabs.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    aria-pressed={tab === item.value}
-                    onClick={() => setTab(item.value)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors",
-                      tab === item.value
-                        ? "bg-accent text-foreground"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+                <SegmentedTabList>
+                  {visibleTabs.map((item) => (
+                    <SegmentedTab
+                      key={item.value}
+                      selected={tab === item.value}
+                      onClick={() => setTab(item.value)}
+                    >
+                      {item.label}
+                    </SegmentedTab>
+                  ))}
+                </SegmentedTabList>
                 {tab === "summary" ? (
                   <span
                     className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"

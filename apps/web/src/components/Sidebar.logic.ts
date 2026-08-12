@@ -299,8 +299,9 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
 export function shouldCreateNewThreadInCurrentProject(
   shiftKey: boolean,
   projectGroupCount: number,
+  hasProjectScope = false,
 ): boolean {
-  return shiftKey || projectGroupCount <= 1;
+  return hasProjectScope || shiftKey || projectGroupCount <= 1;
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

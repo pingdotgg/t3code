@@ -434,12 +434,16 @@ describe("isSidebarNestedLinkClick", () => {
 });
 
 describe("shouldCreateNewThreadInCurrentProject", () => {
-  it("creates directly on shift+click in a multi-project setup", () => {
-    expect(shouldCreateNewThreadInCurrentProject(true, 2)).toBe(true);
+  it("creates directly when the sidebar is scoped to a project", () => {
+    expect(shouldCreateNewThreadInCurrentProject(false, 2, true)).toBe(true);
   });
 
-  it("opens the picker on a plain click in a multi-project setup", () => {
-    expect(shouldCreateNewThreadInCurrentProject(false, 2)).toBe(false);
+  it("opens the picker when all projects are visible in a multi-project setup", () => {
+    expect(shouldCreateNewThreadInCurrentProject(false, 2, false)).toBe(false);
+  });
+
+  it("creates directly on shift+click in a multi-project setup", () => {
+    expect(shouldCreateNewThreadInCurrentProject(true, 2)).toBe(true);
   });
 
   it("creates directly on any click with a single project", () => {

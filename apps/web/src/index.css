@@ -1349,15 +1349,16 @@ html[data-theme-id] [data-chat-header] [data-toolbar-control] {
 
 /* The panel layout toggles stay ghost: they render both inside the header and
    in the titlebar strip, so filling them would make them change appearance as
-   the panel opens. They only take the themed foreground; hover and pressed
-   keep the base ghost accent. The tooltip trigger's data-slot wins over the
-   toggle's when the trigger renders the toggle, so match both. */
+   the panel opens. Their icons use the same themed foreground as the toolbar
+   action text; hover and pressed keep the base ghost accent. The tooltip
+   trigger's data-slot wins over the toggle's when it renders the toggle, so
+   match both. */
 html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"],
 html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"],
 html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="toggle"],
 html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigger"] {
-  --control-icon-color: var(--toolbar-foreground);
-  color: var(--toolbar-foreground);
+  --control-icon-color: var(--toolbar-control-foreground);
+  color: var(--toolbar-control-foreground);
 }
 
 html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,

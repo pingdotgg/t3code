@@ -1,6 +1,7 @@
 import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
 import { memo } from "react";
 
+import { ButtonGroup } from "../ui/group";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -12,6 +13,7 @@ interface PanelLayoutControlsProps {
   rightPanelAvailable: boolean;
   rightPanelOpen: boolean;
   rightPanelShortcutLabel: string | null;
+  rightPanelUnavailableLabel?: string;
   /** Running + waiting subagents in this thread; badges the right panel toggle. */
   liveAgentCount: number;
   onToggleTerminal: () => void;
@@ -26,13 +28,14 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
+  rightPanelUnavailableLabel = "Right panel is unavailable",
   liveAgentCount,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
   return (
-    <div
-      className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
+    <ButtonGroup
+      className="h-full shrink-0 items-center [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
       {showTerminalControl ? (
@@ -40,7 +43,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0 [-webkit-app-region:no-drag]"
+                className="shrink-0 text-foreground [--control-icon-color:currentColor] [-webkit-app-region:no-drag]"
                 pressed={terminalOpen}
                 onPressedChange={onToggleTerminal}
                 aria-label="Toggle terminal drawer"
@@ -63,7 +66,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         <TooltipTrigger
           render={
             <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
+              className="shrink-0 text-foreground [--control-icon-color:currentColor] [-webkit-app-region:no-drag] disabled:opacity-40"
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
               aria-label={
@@ -94,10 +97,10 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
                   ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
                   : ""
               }`
-            : "Right panel is unavailable"}
+            : rightPanelUnavailableLabel}
         </TooltipPopup>
       </Tooltip>
-    </div>
+    </ButtonGroup>
   );
 });
 
@@ -114,7 +117,7 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
       <TooltipTrigger
         render={
           <Toggle
-            className="shrink-0 [-webkit-app-region:no-drag]"
+            className="shrink-0 text-foreground [--control-icon-color:currentColor] [-webkit-app-region:no-drag]"
             pressed={maximized}
             onPressedChange={onToggle}
             aria-label={label}

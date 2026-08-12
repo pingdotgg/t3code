@@ -19,6 +19,12 @@ function ids(state: ThreadActionMenuState): string[] {
   return buildThreadActionMenuItems(state).map((item) => item.id);
 }
 
+function allIds(state: ThreadActionMenuState): string[] {
+  const flatten = (items: ReturnType<typeof buildThreadActionMenuItems>): string[] =>
+    items.flatMap((item) => [item.id, ...(item.children ? flatten(item.children) : [])]);
+  return flatten(buildThreadActionMenuItems(state));
+}
+
 describe("buildThreadActionMenuItems", () => {
   it("hides lifecycle items when the environment lacks the capabilities", () => {
     expect(
@@ -26,15 +32,15 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy-path", "copy-thread-id", "delete"]);
+    ).toEqual(["rename", "mark-unread", "copy", "delete"]);
   });
 
   it("includes branch items only for threads with a branch", () => {
-    const withBranch = ids({ ...baseState, branch: "feat/menu" });
+    const withBranch = allIds({ ...baseState, branch: "feat/menu" });
     expect(withBranch).toContain("new-thread-on-branch");
     expect(withBranch).toContain("copy-branch");
-    expect(ids(baseState)).not.toContain("new-thread-on-branch");
-    expect(ids(baseState)).not.toContain("copy-branch");
+    expect(allIds(baseState)).not.toContain("new-thread-on-branch");
+    expect(allIds(baseState)).not.toContain("copy-branch");
   });
 
   it("flips lifecycle labels with thread state", () => {
@@ -62,5 +68,27 @@ describe("buildThreadActionMenuItems", () => {
   it("marks delete as destructive and keeps it last", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
+  });
+
+  it("groups copy actions in one submenu", () => {
+    const copy = buildThreadActionMenuItems({ ...baseState, branch: "main" }).find(
+      (item) => item.id === "copy",
+    );
+
+    expect(copy).toMatchObject({ icon: "copy", separatorBefore: true });
+    expect(copy?.children?.map((item) => item.id)).toEqual([
+      "copy-path",
+      "copy-branch",
+      "copy-thread-id",
+    ]);
+  });
+
+  it("separates action groups and gives every top-level action an icon", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
+
+    expect(items.find((item) => item.id === "rename")?.separatorBefore).toBe(true);
+    expect(items.find((item) => item.id === "copy")?.separatorBefore).toBe(true);
+    expect(items.find((item) => item.id === "delete")?.separatorBefore).toBe(true);
+    expect(items.every((item) => typeof item.icon === "string")).toBe(true);
   });
 });

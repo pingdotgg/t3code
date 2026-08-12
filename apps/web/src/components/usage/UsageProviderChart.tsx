@@ -29,18 +29,13 @@ interface UsageProviderChartProps {
   readonly timeZone: string;
 }
 
-/** One day's per-provider values, shared by the paths and the hover readout. */
+/** One day's per-provider values, shared by the bars and the hover readout. */
 export interface DayColumn {
   readonly bands: readonly {
     readonly provider: UsageProviderKind;
     readonly value: number;
   }[];
   readonly total: number;
-}
-
-interface Point {
-  readonly x: number;
-  readonly y: number;
 }
 
 function valueFor(
@@ -69,92 +64,6 @@ function buildPeriodColumns(
 }
 
 /**
- * Monotone cubic tangents (Fritsch-Carlson).
- *
- * Plain cubic smoothing overshoots on spiky daily data and would dip the area
- * below zero between points, which reads as negative spend. This variant is
- * shape-preserving, so a smoothed series never leaves the range of its samples.
- */
-function monotoneTangents(points: readonly Point[]): readonly number[] {
-  const count = points.length;
-  if (count < 2) return [0];
-
-  const slopes: number[] = [];
-  for (let index = 0; index < count - 1; index += 1) {
-    const dx = (points[index + 1]?.x ?? 0) - (points[index]?.x ?? 0);
-    const dy = (points[index + 1]?.y ?? 0) - (points[index]?.y ?? 0);
-    slopes.push(dx === 0 ? 0 : dy / dx);
-  }
-
-  const tangents: number[] = Array.from({ length: count }, () => 0);
-  tangents[0] = slopes[0] ?? 0;
-  tangents[count - 1] = slopes[count - 2] ?? 0;
-  for (let index = 1; index < count - 1; index += 1) {
-    const previous = slopes[index - 1] ?? 0;
-    const next = slopes[index] ?? 0;
-    tangents[index] = previous * next <= 0 ? 0 : (previous + next) / 2;
-  }
-
-  for (let index = 0; index < count - 1; index += 1) {
-    const slope = slopes[index] ?? 0;
-    if (slope === 0) {
-      tangents[index] = 0;
-      tangents[index + 1] = 0;
-      continue;
-    }
-    const a = (tangents[index] ?? 0) / slope;
-    const b = (tangents[index + 1] ?? 0) / slope;
-    const magnitude = a * a + b * b;
-    if (magnitude > 9) {
-      const scale = 3 / Math.sqrt(magnitude);
-      tangents[index] = scale * a * slope;
-      tangents[index + 1] = scale * b * slope;
-    }
-  }
-
-  return tangents;
-}
-
-/** One cubic segment of a smoothed boundary. */
-interface CurveSegment {
-  readonly from: Point;
-  readonly c1: Point;
-  readonly c2: Point;
-  readonly to: Point;
-}
-
-/** Smoothed polyline through `points`, as explicit cubic control points. */
-function smoothCurve(points: readonly Point[]): readonly CurveSegment[] {
-  if (points.length < 2) return [];
-  const tangents = monotoneTangents(points);
-  const segments: CurveSegment[] = [];
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const from = points[index];
-    const to = points[index + 1];
-    if (from === undefined || to === undefined) continue;
-    const dx = to.x - from.x;
-    segments.push({
-      from,
-      c1: { x: from.x + dx / 3, y: from.y + ((tangents[index] ?? 0) * dx) / 3 },
-      c2: { x: to.x - dx / 3, y: to.y - ((tangents[index + 1] ?? 0) * dx) / 3 },
-      to,
-    });
-  }
-  return segments;
-}
-
-function curvePath(segments: readonly CurveSegment[], startCommand: "M" | "L"): string {
-  const first = segments[0];
-  if (first === undefined) return "";
-  let path = `${startCommand}${first.from.x.toFixed(2)},${first.from.y.toFixed(2)}`;
-  for (const segment of segments) {
-    path += ` C${segment.c1.x.toFixed(2)},${segment.c1.y.toFixed(2)} ${segment.c2.x.toFixed(2)},${segment.c2.y.toFixed(2)} ${segment.to.x.toFixed(2)},${segment.to.y.toFixed(2)}`;
-  }
-  return path;
-}
-
-/**
  * Builds a scale whose maximum is a readable 1/2/5 x 10^n step at or above the
  * peak.
  *
@@ -179,12 +88,11 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
 /**
  * Turns the merged daily totals into one column per day.
  *
- * Values are absolute, not cumulative: the series are layered from a shared
- * zero baseline rather than stacked. A stacked chart puts whichever provider is
- * drawn last permanently above the other, which reads as "that one is bigger"
- * even on days where it is not.
+ * Values stay absolute in the data model. The renderer stacks them in the
+ * stable provider order, which keeps the individual values available to the
+ * hover readout while making the bar height equal the period total.
  *
- * The chart paths and the hover readout both consume this, so the number under
+ * The chart bars and the hover readout both consume this, so the number under
  * the cursor is by construction the number that was plotted rather than a
  * second derivation that can drift from it.
  */
@@ -217,65 +125,56 @@ export function UsageProviderChart({
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
 
-  const { paths, ticks, stepX, toY, series } = useMemo(() => {
+  const { barWidth, series, slotWidth, ticks, toY } = useMemo(() => {
     if (periods.length === 0) {
       return {
-        paths: [],
-        ticks: [0] as readonly number[],
-        stepX: 0,
-        toY: () => VIEW_HEIGHT,
+        barWidth: 0,
         series: [] as readonly DayColumn[],
+        slotWidth: 0,
+        ticks: [0] as readonly number[],
+        toY: () => VIEW_HEIGHT,
       };
     }
 
     const columns = buildPeriodColumns(periods, byPeriod, metric);
-
-    // The scale tops out at the largest single provider-day, not the largest
-    // sum: layered series each measure from zero, so a combined peak would
-    // leave the plot permanently half empty.
-    const peak = columns.reduce(
-      (max, column) => column.bands.reduce((inner, band) => Math.max(inner, band.value), max),
-      0,
-    );
+    const peak = columns.reduce((max, column) => Math.max(max, column.total), 0);
     const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
-    const step = periods.length === 1 ? 0 : VIEW_WIDTH / (periods.length - 1);
-    // Reserve a sliver above the top gridline so the series stroke, which is
-    // drawn at constant screen width, is not shaved off at a peak.
+    const slot = VIEW_WIDTH / periods.length;
+    const width = Math.max(2, Math.min(48, slot * 0.72));
     const toY = (value: number) =>
       max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
 
-    const built = PROVIDER_ORDER.map((provider, providerIndex) => {
-      const curve = smoothCurve(
-        columns.map((column, dayIndex) => ({
-          x: dayIndex * step,
-          y: toY(column.bands[providerIndex]?.value ?? 0),
-        })),
-      );
-      const line = curvePath(curve, "M");
-      return {
-        provider,
-        total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
-        area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
-        line,
-      };
-    });
-
-    // Paint the heavier series first so the lighter one is never buried under
-    // it. The fills are faint enough that the order barely shows, but the
-    // strokes are drawn in a second pass regardless, so neither can be hidden.
-    const ordered = [...built].sort((a, b) => b.total - a.total);
-
-    return { paths: ordered, ticks: tickValues, stepX: step, toY, series: columns };
+    return {
+      barWidth: width,
+      series: columns,
+      slotWidth: slot,
+      ticks: tickValues,
+      toY,
+    };
   }, [byPeriod, metric, periods]);
 
   const format = metric === "tokens" ? formatTokens : formatUsd;
 
   const handleMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      const bounds = plotRef.current?.getBoundingClientRect();
-      if (bounds === undefined || bounds.width === 0 || periods.length === 0) return;
-      const fraction = (event.clientX - bounds.left) / bounds.width;
-      const index = Math.round(fraction * (periods.length - 1));
+      const plot = plotRef.current;
+      if (plot === null || periods.length === 0) return;
+      const bounds = plot.getBoundingClientRect();
+      if (bounds.width === 0) return;
+      const localX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
+      const localY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
+      const fraction = localX / bounds.width;
+      const index = Math.floor(fraction * periods.length);
+      plot.style.setProperty("--usage-tooltip-x", `${localX}px`);
+      plot.style.setProperty("--usage-tooltip-y", `${localY}px`);
+      plot.style.setProperty(
+        "--usage-tooltip-shift-x",
+        localX > bounds.width * 0.65 ? "calc(-100% - 12px)" : "12px",
+      );
+      plot.style.setProperty(
+        "--usage-tooltip-shift-y",
+        localY > bounds.height * 0.55 ? "calc(-100% - 12px)" : "12px",
+      );
       setHoverIndex(Math.min(periods.length - 1, Math.max(0, index)));
     },
     [periods.length],
@@ -283,7 +182,6 @@ export function UsageProviderChart({
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
-  const hoverLeft = periods.length <= 1 ? 0 : ((hoverIndex ?? 0) / (periods.length - 1)) * 100;
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
@@ -337,41 +235,47 @@ export function UsageProviderChart({
               );
             })}
 
-            {/* Fills first, then every stroke, so no series covers another's line. */}
-            {paths.map(({ provider, area }) => (
-              <path key={provider} d={area} fill={PROVIDER_COLOR[provider]} fillOpacity={0.12} />
-            ))}
-            {paths.map(({ provider, line }) => (
-              <path
-                key={provider}
-                d={line}
-                fill="none"
-                stroke={PROVIDER_COLOR[provider]}
-                strokeWidth={2}
-                vectorEffect="non-scaling-stroke"
-              />
-            ))}
-
             {hoverIndex === null ? null : (
-              <line
-                x1={hoverIndex * stepX}
-                x2={hoverIndex * stepX}
-                y1={PLOT_TOP}
-                y2={VIEW_HEIGHT}
-                stroke="currentColor"
-                strokeWidth={1}
-                className="text-muted-foreground"
-                vectorEffect="non-scaling-stroke"
+              <rect
+                x={hoverIndex * slotWidth}
+                y={0}
+                width={slotWidth}
+                height={VIEW_HEIGHT}
+                fill="currentColor"
+                fillOpacity={0.3}
+                className="text-muted"
               />
             )}
+
+            {series.flatMap((column, columnIndex) => {
+              let stackedValue = 0;
+              return column.bands.map((band) => {
+                const bottom = toY(stackedValue);
+                stackedValue += band.value;
+                const top = toY(stackedValue);
+                return (
+                  <rect
+                    key={`${columnIndex}:${band.provider}`}
+                    x={columnIndex * slotWidth + (slotWidth - barWidth) / 2}
+                    y={top}
+                    width={barWidth}
+                    height={Math.max(0, bottom - top)}
+                    rx={Math.min(1.5, barWidth / 4)}
+                    fill={PROVIDER_COLOR[band.provider]}
+                  />
+                );
+              });
+            })}
           </svg>
 
           {hoveredPeriod === undefined ? null : (
             <div
-              className="pointer-events-none absolute top-0 z-10 min-w-36 border border-border bg-background/95 px-2 py-1.5 text-xs"
+              className="pointer-events-none absolute z-10 min-w-36 rounded-xl border border-border/50 bg-background/65 px-2.5 py-2 text-xs shadow-lg backdrop-blur-xl backdrop-saturate-150 will-change-transform"
               style={{
-                left: `${hoverLeft}%`,
-                transform: hoverLeft > 60 ? "translateX(-100%)" : "translateX(0)",
+                left: "var(--usage-tooltip-x, 0px)",
+                top: "var(--usage-tooltip-y, 0px)",
+                transform:
+                  "translate(var(--usage-tooltip-shift-x, 12px), var(--usage-tooltip-shift-y, 12px))",
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
@@ -415,24 +319,6 @@ export function UsageProviderChart({
             : formatPeriod(periods[periods.length - 1] ?? "")}
         </span>
       </div>
-    </div>
-  );
-}
-
-export function UsageChartLegend() {
-  return (
-    <div className="flex items-center gap-4">
-      {PROVIDER_ORDER.map((provider) => {
-        // The marks carry the same fills as the bands, so they key the chart
-        // just as a colour swatch would.
-        const Mark = PROVIDER_MARK[provider];
-        return (
-          <span key={provider} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Mark className="size-3.5 shrink-0" aria-hidden />
-            {PROVIDER_LABEL[provider]}
-          </span>
-        );
-      })}
     </div>
   );
 }

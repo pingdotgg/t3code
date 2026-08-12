@@ -77,9 +77,7 @@ describe("buildDayColumns", () => {
     ]);
   });
 
-  it("keeps band values absolute rather than cumulative", () => {
-    // Regression: the bands were once stack offsets, which drew Claude Code
-    // permanently above Codex regardless of which provider spent more.
+  it("keeps absolute provider values in the stable stack order", () => {
     const [first] = buildDayColumns(days, byDay, "cost");
 
     expect(first?.bands).toEqual([
