@@ -6,7 +6,7 @@ struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
     @State private var dockedSoftwareKeyboardOccupiesScreen = false
-    @State private var composerWindow: UIWindow?
+    @State private var composerWindow = FeatureComposerWindowBox()
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
@@ -115,7 +115,7 @@ struct FeatureComposerView: View {
             }
             .background {
                 FeatureComposerWindowReader { window in
-                    composerWindow = window
+                    composerWindow.window = window
                     updateSoftwareKeyboardState(in: window)
                 }
                 .frame(width: 0, height: 0)
@@ -139,7 +139,7 @@ struct FeatureComposerView: View {
                     for: UIResponder.keyboardWillChangeFrameNotification
                 )
             ) { notification in
-                updateSoftwareKeyboardState(from: notification, in: composerWindow)
+                updateSoftwareKeyboardState(from: notification, in: composerWindow.window)
             }
             // New Thread autofocus can begin the keyboard transition before this
             // sheet's composer has subscribed to the "will change" event.
@@ -148,7 +148,7 @@ struct FeatureComposerView: View {
                     for: UIResponder.keyboardDidShowNotification
                 )
             ) { notification in
-                updateSoftwareKeyboardState(from: notification, in: composerWindow)
+                updateSoftwareKeyboardState(from: notification, in: composerWindow.window)
             }
             .onReceive(
                 NotificationCenter.default.publisher(
@@ -580,6 +580,10 @@ private struct FeatureComposerWindowReader: UIViewRepresentable {
             }
         }
     }
+}
+
+private final class FeatureComposerWindowBox {
+    weak var window: UIWindow?
 }
 
 enum FeatureComposerKeyboardLayout {
