@@ -1293,28 +1293,27 @@ private struct FeatureTimestampRevealMessageView: View {
     @ObservedObject var reveal: FeatureTimestampRevealState
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            FeatureMessageView(message: message)
-
-            if message.createdAt != .distantPast {
-                Text(message.createdAt, format: .dateTime.hour().minute())
-                    .font(T3Typography.supporting.monospacedDigit())
-                    .foregroundStyle(T3Colors.textTertiary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .dynamicTypeSize(.small ... .accessibility1)
-                    .frame(
-                        width: TranscriptTimestampRevealGeometry.maximumWidth,
-                        alignment: .trailing
-                    )
-                    .padding(.vertical, 5)
-                    .background(T3Colors.surface, in: Capsule())
-                    .frame(width: reveal.width, alignment: .trailing)
-                    .clipped()
-                    .opacity(reveal.width > 0 ? 1 : 0)
-                    .accessibilityHidden(true)
+        FeatureMessageView(message: message)
+            .overlay(alignment: .topTrailing) {
+                if message.createdAt != .distantPast {
+                    Text(message.createdAt, format: .dateTime.hour().minute())
+                        .font(T3Typography.supporting.monospacedDigit())
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .dynamicTypeSize(.small ... .accessibility1)
+                        .frame(
+                            width: TranscriptTimestampRevealGeometry.maximumWidth,
+                            alignment: .trailing
+                        )
+                        .padding(.vertical, 5)
+                        .background(T3Colors.surface, in: Capsule())
+                        .frame(width: reveal.width, alignment: .trailing)
+                        .clipped()
+                        .opacity(reveal.width > 0 ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
             }
-        }
     }
 }
 
