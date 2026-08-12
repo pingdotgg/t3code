@@ -576,7 +576,11 @@ function SidebarRail({
       const nextWidth = clampSidebarWidth(resolvedResizable.defaultWidth, resolvedResizable);
       wrapper.style.setProperty("--sidebar-width", `${nextWidth}px`);
       if (resolvedResizable.storageKey && typeof window !== "undefined") {
-        setLocalStorageItem(resolvedResizable.storageKey, nextWidth, Schema.Finite);
+        try {
+          setLocalStorageItem(resolvedResizable.storageKey, nextWidth, Schema.Finite);
+        } catch (error) {
+          console.error("Could not persist sidebar width.", error);
+        }
       }
       resolvedResizable.onResize?.(nextWidth);
     },
