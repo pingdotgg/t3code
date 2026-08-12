@@ -54,6 +54,15 @@ function repoNameOf(repoRoot: string): string {
   return base.length > 0 ? base : "repo";
 }
 
+function hasTakenName(takenNames: ReadonlySet<string> | undefined, candidate: string): boolean {
+  if (!takenNames) return false;
+  const foldedCandidate = candidate.toLowerCase();
+  for (const takenName of takenNames) {
+    if (takenName.toLowerCase() === foldedCandidate) return true;
+  }
+  return false;
+}
+
 /** Join path segments with a forward slash (git accepts these on every OS). */
 function joinPath(...segments: ReadonlyArray<string>): string {
   return segments
@@ -80,7 +89,7 @@ export function worktreePlacement(input: {
   const base = repoNameOf(input.repoRoot);
   let name = base;
   let suffix = 2;
-  while (input.takenNames?.has(name)) {
+  while (hasTakenName(input.takenNames, name)) {
     name = `${base}-${suffix}`;
     suffix += 1;
   }
@@ -166,7 +175,7 @@ export const createThreadWorktrees = (
             repoRoot: target.repoRoot,
             takenNames,
           });
-          takenNames.add(basenameOf(worktreePath));
+          takenNames.add(basenameOf(worktreePath).toLowerCase());
           const result = yield* gitWorkflow.createWorktree({
             cwd: target.repoRoot,
             refName: target.baseRef,

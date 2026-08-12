@@ -97,6 +97,18 @@ describe("worktreePlacement", () => {
       }),
     ).toBe("/t3/worktrees/project-1/thread-1/backend-2");
   });
+
+  it("disambiguates repo basenames that differ only by case", () => {
+    expect(
+      worktreePlacement({
+        worktreesDir: WORKTREES_DIR,
+        projectId: PROJECT_ID,
+        threadId: THREAD_ID,
+        repoRoot: "/Users/me/other/app",
+        takenNames: new Set(["App"]),
+      }),
+    ).toBe("/t3/worktrees/project-1/thread-1/app-2");
+  });
 });
 
 describe("createThreadWorktrees", () => {
