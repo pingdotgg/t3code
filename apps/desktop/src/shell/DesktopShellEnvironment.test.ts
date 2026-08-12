@@ -349,7 +349,7 @@ describe("DesktopShellEnvironment", () => {
       const fs = yield* Effect.promise(() => import("node:fs"));
       const os = yield* Effect.promise(() => import("node:os"));
       const path = yield* Effect.promise(() => import("node:path"));
-      
+
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
       try {
         fs.writeFileSync(path.join(tempDir, "node.exe"), "");
@@ -379,7 +379,7 @@ describe("DesktopShellEnvironment", () => {
       const fs = yield* Effect.promise(() => import("node:fs"));
       const os = yield* Effect.promise(() => import("node:os"));
       const path = yield* Effect.promise(() => import("node:path"));
-      
+
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
       try {
         fs.writeFileSync(path.join(tempDir, "node.exe"), "");
@@ -403,6 +403,40 @@ describe("DesktopShellEnvironment", () => {
         const profileIdx = commands.findIndex((c) => c._tag === "StandardCommand" && !c.args.includes("-NoProfile"));
         assert.isTrue(noProfileIdx !== -1);
         assert.isTrue(profileIdx !== -1);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("skips PowerShell probes when node is in knownWindowsCliDirs but not on PATH", () =>
+    Effect.gen(function* () {
+      const fs = yield* Effect.promise(() => import("node:fs"));
+      const os = yield* Effect.promise(() => import("node:os"));
+      const path = yield* Effect.promise(() => import("node:path"));
+
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-test-"));
+      const knownPath = path.join(tempDir, "nodejs");
+      fs.mkdirSync(knownPath, { recursive: true });
+
+      try {
+        fs.writeFileSync(path.join(knownPath, "node.exe"), "");
+
+        // PATH doesn't have node, but knownWindowsCliDirs will (simulated by tempDir inside PROGRAMFILES)
+        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32", PROGRAMFILES: tempDir };
+        const commands: ChildProcess.Command[] = [];
+
+        yield* runShellEnvironment({
+          env,
+          platform: "win32",
+          handler: (command) => {
+            commands.push(command);
+            return envOutput({ PATH: "C:\\Windows\\System32" });
+          },
+        });
+
+        assert.equal(commands.length, 0);
+        assert.isTrue(env.PATH!.includes("nodejs"));
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
