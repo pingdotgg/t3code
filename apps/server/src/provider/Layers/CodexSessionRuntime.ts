@@ -40,6 +40,9 @@ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
+const decodeV2ThreadResumeResponse = Schema.decodeUnknownEffect(
+  EffectCodexSchema.V2ThreadResumeResponse,
+);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -448,6 +451,12 @@ type CodexThreadOpenResponse =
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
 
 interface CodexThreadOpenClient {
+  readonly raw: {
+    readonly request: (
+      method: string,
+      payload?: unknown,
+    ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+  };
   readonly request: <M extends CodexThreadOpenMethod>(
     method: M,
     payload: CodexRpc.ClientRequestParamsByMethod[M],
@@ -475,12 +484,27 @@ export const openCodexThread = (input: {
     return input.client.request("thread/start", startParams);
   }
 
-  return input.client
+  return input.client.raw
     .request("thread/resume", {
       threadId: resumeThreadId,
       ...startParams,
+      // T3 already persists the visible transcript. Asking Codex to rebuild and
+      // return every historical turn can make large resumes exhaust the local
+      // backend before the session becomes ready.
+      excludeTurns: true,
     })
     .pipe(
+      Effect.flatMap((rawResponse) =>
+        decodeV2ThreadResumeResponse(rawResponse).pipe(
+          Effect.mapError((error) =>
+            CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+              "decode-response-payload",
+              error,
+              { method: "thread/resume" },
+            ),
+          ),
+        ),
+      ),
       Effect.catchIf(isRecoverableThreadResumeError, (error) =>
         Effect.logWarning("codex app-server thread resume fell back to fresh start", {
           threadId: input.threadId,

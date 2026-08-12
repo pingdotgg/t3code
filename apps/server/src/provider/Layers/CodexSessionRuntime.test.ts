@@ -48,16 +48,20 @@ function makeThreadOpenResponse(
     modelProvider: "openai",
     approvalPolicy: "never",
     approvalsReviewer: "user",
-    sandbox: { type: "danger-full-access" },
+    sandbox: { type: "dangerFullAccess" },
     thread: {
       id: threadId,
-      createdAt: "2026-04-18T00:00:00.000Z",
-      source: { session: "cli" },
+      cliVersion: "0.147.0",
+      createdAt: 1_776_470_400,
+      cwd: "/tmp/project",
+      ephemeral: false,
+      modelProvider: "openai",
+      preview: "",
+      sessionId: threadId,
+      source: "cli",
       turns: [],
-      status: {
-        state: "idle",
-        activeFlags: [],
-      },
+      status: { type: "idle" },
+      updatedAt: 1_776_470_400,
     },
   } as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/start"];
 }
@@ -398,19 +402,22 @@ describe("openCodexThread", () => {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          calls.push({ method, payload });
-          if (method === "thread/resume") {
+        raw: {
+          request: (method: string, payload?: unknown) => {
+            calls.push({ method: method as "thread/resume", payload });
             return Effect.fail(
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
                 errorMessage: "thread not found",
               }),
             );
-          }
+          },
+        },
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
           return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
         },
       };
@@ -436,18 +443,19 @@ describe("openCodexThread", () => {
   it.effect("propagates non-recoverable resume failures", () =>
     Effect.gen(function* () {
       const client = {
-        request: <M extends "thread/start" | "thread/resume">(
-          method: M,
-          _payload: CodexRpc.ClientRequestParamsByMethod[M],
-        ) => {
-          if (method === "thread/resume") {
-            return Effect.fail(
+        raw: {
+          request: () =>
+            Effect.fail(
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
                 errorMessage: "timed out waiting for server",
               }),
-            );
-          }
+            ),
+        },
+        request: <M extends "thread/start" | "thread/resume">(
+          _method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
           return Effect.succeed(
             makeThreadOpenResponse("fresh-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
           );
@@ -466,6 +474,51 @@ describe("openCodexThread", () => {
 
       NodeAssert.ok(isCodexAppServerRequestError(error));
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
+    }),
+  );
+
+  it.effect("resumes without returning historical turns", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: string; payload: unknown }> = [];
+      const resumed = makeThreadOpenResponse("resumed-thread");
+      const client = {
+        raw: {
+          request: (method: string, payload?: unknown) => {
+            calls.push({ method, payload });
+            return Effect.succeed(resumed);
+          },
+        },
+        request: <M extends "thread/start" | "thread/resume">(
+          _method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => Effect.succeed(resumed as CodexRpc.ClientRequestResponsesByMethod[M]),
+      };
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "existing-thread",
+      });
+
+      NodeAssert.equal(opened.thread.id, "resumed-thread");
+      NodeAssert.deepStrictEqual(calls, [
+        {
+          method: "thread/resume",
+          payload: {
+            threadId: "existing-thread",
+            cwd: "/tmp/project",
+            approvalPolicy: "never",
+            sandbox: "danger-full-access",
+            approvalsReviewer: "user",
+            model: "gpt-5.3-codex",
+            excludeTurns: true,
+          },
+        },
+      ]);
     }),
   );
 });
