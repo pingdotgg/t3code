@@ -65,7 +65,6 @@ describe("projectPiEvent", () => {
     Effect.gen(function* () {
       const text = yield* decodeKnown({
         type: "message_update",
-        message: assistantMessage(),
         assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "hello" },
       });
       const thought = yield* decodeKnown({
@@ -141,6 +140,7 @@ describe("projectPiEvent", () => {
         messages: [assistantMessage("aborted")],
         willRetry: false,
       });
+      const settled = yield* decodeKnown({ type: "agent_settled" });
 
       expect(projectPiEvent(messageEnd)).toEqual([
         {
@@ -153,9 +153,10 @@ describe("projectPiEvent", () => {
       ]);
       expect(projectPiEvent(retrying)).toEqual([{ type: "run.retrying" }]);
       expect(projectPiEvent(failed)).toEqual([
-        { type: "run.terminal", status: "failed", errorMessage: "provider failed" },
+        { type: "run.finished", status: "failed", errorMessage: "provider failed" },
       ]);
-      expect(projectPiEvent(aborted)).toEqual([{ type: "run.terminal", status: "interrupted" }]);
+      expect(projectPiEvent(aborted)).toEqual([{ type: "run.finished", status: "interrupted" }]);
+      expect(projectPiEvent(settled)).toEqual([{ type: "run.settled" }]);
     }),
   );
 
@@ -207,6 +208,23 @@ describe("projectPiEvent", () => {
 
 describe("projectPiExtensionUiRequest", () => {
   it("maps blocking extension UI methods and ignores display-only methods", () => {
+    expect(
+      projectPiExtensionUiRequest({
+        type: "extension_ui_request",
+        id: "editor-1",
+        method: "editor",
+        title: "Edit instructions",
+        prefill: "draft",
+        timeout: 15_000,
+      }),
+    ).toEqual({
+      type: "user-input",
+      requestId: "editor-1",
+      method: "editor",
+      title: "Edit instructions",
+      prefill: "draft",
+      timeoutMs: 15_000,
+    });
     expect(
       projectPiExtensionUiRequest({
         type: "extension_ui_request",

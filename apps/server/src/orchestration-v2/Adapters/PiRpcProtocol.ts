@@ -102,7 +102,7 @@ const PiKnownEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("message_start"), message: PiMessage }),
   Schema.Struct({
     type: Schema.Literal("message_update"),
-    message: PiMessage,
+    message: Schema.optional(PiMessage),
     assistantMessageEvent: PiAssistantMessageEvent,
   }),
   Schema.Struct({ type: Schema.Literal("message_end"), message: PiMessage }),
@@ -250,7 +250,7 @@ export type PiProjectedEvent =
       readonly errorMessage?: string;
     }
   | {
-      readonly type: "run.terminal";
+      readonly type: "run.finished";
       readonly status: PiTerminalStatus;
       readonly errorMessage?: string;
     }
@@ -349,7 +349,7 @@ export function projectPiEvent(event: PiKnownEvent): ReadonlyArray<PiProjectedEv
       if (message?.stopReason === "aborted") {
         return [
           {
-            type: "run.terminal",
+            type: "run.finished",
             status: "interrupted",
             ...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
           },
@@ -358,13 +358,13 @@ export function projectPiEvent(event: PiKnownEvent): ReadonlyArray<PiProjectedEv
       if (message?.stopReason === "error") {
         return [
           {
-            type: "run.terminal",
+            type: "run.finished",
             status: "failed",
             ...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
           },
         ];
       }
-      return [{ type: "run.terminal", status: "completed" }];
+      return [{ type: "run.finished", status: "completed" }];
     }
     case "auto_retry_start":
       return [
@@ -472,6 +472,7 @@ export function projectPiExtensionUiRequest(request: PiRpcRecord): PiRuntimeProm
       method,
       title,
       ...(Predicate.isString(prefill) ? { prefill } : {}),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
     };
   }
   return undefined;

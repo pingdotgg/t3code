@@ -209,7 +209,7 @@ export const makePiRpcTransport = Effect.fn("PiRpcTransport.make")(function* (
   yield* Stream.fromQueue(outgoing).pipe(
     Stream.run(child.stdin),
     Effect.mapError((cause) => new PiRpcTransportError({ operation: "write", cause })),
-    Effect.catch((error) => Queue.fail(messages, error)),
+    Effect.catch((error) => Queue.fail(messages, error).pipe(Effect.andThen(markClosed()))),
     Effect.forkScoped,
   );
 
@@ -229,15 +229,16 @@ export const makePiRpcTransport = Effect.fn("PiRpcTransport.make")(function* (
     const id = `t3-pi-${++nextRequestId}`;
     const deferred = yield* Deferred.make<PiRpcResponse>();
     pendingRequests.set(id, deferred);
-    yield* offerRecord({ ...command, id }).pipe(
-      Effect.tapError(() => Effect.sync(() => pendingRequests.delete(id))),
+    const outcome = yield* offerRecord({ ...command, id }).pipe(
+      Effect.andThen(
+        Deferred.await(deferred).pipe(
+          Effect.map(Option.some),
+          Effect.race(Deferred.await(closed).pipe(Effect.as(Option.none<PiRpcResponse>()))),
+          Effect.timeoutOption(timeoutMs),
+        ),
+      ),
+      Effect.ensuring(Effect.sync(() => pendingRequests.delete(id))),
     );
-    const outcome = yield* Deferred.await(deferred).pipe(
-      Effect.map(Option.some),
-      Effect.race(Deferred.await(closed).pipe(Effect.as(Option.none<PiRpcResponse>()))),
-      Effect.timeoutOption(timeoutMs),
-    );
-    pendingRequests.delete(id);
     return Option.isNone(outcome) ? undefined : Option.getOrUndefined(outcome.value);
   });
 

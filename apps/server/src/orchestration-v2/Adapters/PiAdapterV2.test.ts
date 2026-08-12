@@ -26,7 +26,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { makePiAdapterV2, PiProviderCapabilitiesV2 } from "./PiAdapterV2.ts";
 
@@ -55,10 +55,15 @@ const assistantMessage = {
 
 const isCapabilities = Schema.is(OrchestrationV2ProviderCapabilities);
 
-const makeFixtureSpawner = (options?: { readonly approval?: boolean }) =>
+const makeFixtureSpawner = (options?: {
+  readonly approval?: boolean;
+  readonly terminalWithPendingApproval?: boolean;
+  readonly promptFailure?: boolean;
+}) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
     const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    const cancelledResponse = yield* Deferred.make<Record<string, unknown>>();
     const commands: Array<Record<string, unknown>> = [];
     const offer = (record: Record<string, unknown>) =>
       Queue.offer(stdout, encoder.encode(`${JSON.stringify(record)}\n`));
@@ -79,6 +84,16 @@ const makeFixtureSpawner = (options?: { readonly approval?: boolean }) =>
         } else if (type === "set_thinking_level") {
           yield* response();
         } else if (type === "prompt") {
+          if (options?.promptFailure === true) {
+            yield* offer({
+              type: "response",
+              id,
+              command: type,
+              success: false,
+              error: "rejected",
+            });
+            return;
+          }
           yield* response();
           yield* offer({ type: "agent_start" });
           yield* offer({ type: "turn_start" });
@@ -90,6 +105,10 @@ const makeFixtureSpawner = (options?: { readonly approval?: boolean }) =>
               title: "Run command",
               message: "Allow the command?",
             });
+            if (options.terminalWithPendingApproval === true) {
+              yield* offer({ type: "agent_end", messages: [], willRetry: false });
+              yield* offer({ type: "agent_settled" });
+            }
             return;
           }
           yield* offer({
@@ -114,6 +133,7 @@ const makeFixtureSpawner = (options?: { readonly approval?: boolean }) =>
           yield* offer({ type: "agent_end", messages: [assistantMessage], willRetry: false });
           yield* offer({ type: "agent_settled" });
         } else if (type === "extension_ui_response") {
+          if (command["cancelled"] === true) yield* Deferred.succeed(cancelledResponse, command);
           yield* offer({ type: "agent_end", messages: [], willRetry: false });
           yield* offer({ type: "agent_settled" });
         }
@@ -139,7 +159,7 @@ const makeFixtureSpawner = (options?: { readonly approval?: boolean }) =>
         }),
       ),
     );
-    return { spawner, commands } as const;
+    return { spawner, commands, cancelledResponse } as const;
   });
 
 describe("PiAdapterV2", () => {
@@ -159,7 +179,7 @@ describe("PiAdapterV2", () => {
 
   it.effect("runs a persisted RPC turn through text, tool, and terminal V2 events", () =>
     Effect.gen(function* () {
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const fileSystem = yield* FileSystem.FileSystem;
       const { spawner, commands } = yield* makeFixtureSpawner();
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-" });
@@ -244,7 +264,9 @@ describe("PiAdapterV2", () => {
           (event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.type === "dynamic_tool" &&
-            event.turnItem.status === "completed",
+            event.turnItem.status === "completed" &&
+            "input" in event.turnItem &&
+            JSON.stringify(event.turnItem.input) === JSON.stringify({ path: "README.md" }),
         ),
       ).toBe(true);
       expect(
@@ -275,12 +297,12 @@ describe("PiAdapterV2", () => {
       expect(commands.find((command) => command["type"] === "switch_session")).toMatchObject({
         sessionPath: "C:/sessions/pi-fixture.jsonl",
       });
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("round-trips extension approvals and resolves their projected lifecycle", () =>
     Effect.gen(function* () {
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const fileSystem = yield* FileSystem.FileSystem;
       const { spawner, commands } = yield* makeFixtureSpawner({ approval: true });
       const adapter = makePiAdapterV2({
@@ -375,6 +397,153 @@ describe("PiAdapterV2", () => {
             event.turnItem.status === "completed",
         ),
       ).toBe(true);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("cancels pending extension prompts when the Pi run settles", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { spawner, cancelledResponse } = yield* makeFixtureSpawner({
+        approval: true,
+        terminalWithPendingApproval: true,
+      });
+      const adapter = makePiAdapterV2({
+        instanceId: ProviderInstanceId.make("pi"),
+        settings: { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+        environment: process.env,
+        idAllocator,
+        spawner,
+        fileSystem,
+        attachmentsDir: process.cwd(),
+        defaultCwd: process.cwd(),
+      });
+      const threadId = ThreadId.make("thread-pi-cancel-prompt");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("pi"),
+        model: "openai-codex/gpt-5.4",
+      };
+      const runtimePolicy = {
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        cwd: process.cwd(),
+      };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-pi-cancel-prompt"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* runtime.startTurn({
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("project-pi"),
+        } as OrchestrationV2AppThread,
+        threadId,
+        runId: RunId.make("run-pi-cancel-prompt"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("attempt-pi-cancel-prompt"),
+        rootNodeId: NodeId.make("node-pi-cancel-prompt-root"),
+        providerThread,
+        message: {
+          messageId: MessageId.make("message-pi-cancel-prompt"),
+          text: "Ask, then settle",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      expect(
+        events.some(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
+        ),
+      ).toBe(true);
+      expect(yield* Deferred.await(cancelledResponse)).toMatchObject({
+        type: "extension_ui_response",
+        id: "extension-confirm-1",
+        cancelled: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("rolls back in-memory running state when the prompt RPC fails", () =>
+    Effect.gen(function* () {
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { spawner } = yield* makeFixtureSpawner({ promptFailure: true });
+      const adapter = makePiAdapterV2({
+        instanceId: ProviderInstanceId.make("pi"),
+        settings: { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+        environment: process.env,
+        idAllocator,
+        spawner,
+        fileSystem,
+        attachmentsDir: process.cwd(),
+        defaultCwd: process.cwd(),
+      });
+      const threadId = ThreadId.make("thread-pi-prompt-failure");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("pi"),
+        model: "openai-codex/gpt-5.4",
+      };
+      const runtimePolicy = {
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        cwd: process.cwd(),
+      };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-pi-prompt-failure"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime
+        .startTurn({
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("project-pi"),
+          } as OrchestrationV2AppThread,
+          threadId,
+          runId: RunId.make("run-pi-prompt-failure"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-pi-prompt-failure"),
+          rootNodeId: NodeId.make("node-pi-prompt-failure-root"),
+          providerThread,
+          message: {
+            messageId: MessageId.make("message-pi-prompt-failure"),
+            text: "Fail to start",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+      const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+      expect(snapshot.providerThread.status).toBe("idle");
+      expect(snapshot.providerTurns).toMatchObject([{ status: "failed" }]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 });

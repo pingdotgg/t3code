@@ -9,10 +9,12 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
+  type ModelSelection,
   PiSettings as PiSettingsSchema,
   type PiSettings,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -30,7 +32,7 @@ import { ServerConfig } from "../../config.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { splitPiModelSlug } from "../../provider/Layers/PiProvider.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterEventStreamError,
@@ -46,11 +48,14 @@ import {
   ProviderAdapterTurnStartError,
   ProviderAdapterV2,
   type ProviderAdapterV2Event,
+  type ProviderAdapterV2EnsureThreadInput,
+  type ProviderAdapterV2Error,
   type ProviderAdapterV2ForkThreadInput,
   type ProviderAdapterV2InterruptInput,
   type ProviderAdapterV2OpenSessionInput,
   type ProviderAdapterV2ReadThreadSnapshotInput,
   type ProviderAdapterV2RollbackThreadInput,
+  type ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2RuntimeRequestResponseInput,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2SteerInput,
@@ -174,7 +179,7 @@ interface PiAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: PiSettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
   readonly attachmentsDir: string;
@@ -187,8 +192,10 @@ interface ActivePiTurn {
   nextItemOrdinal: number;
   readonly itemOrdinals: Map<string, number>;
   readonly content: Map<string, string>;
+  readonly toolArgs: Map<string, unknown>;
   readonly startedAt: DateTime.Utc;
   interrupted: boolean;
+  pendingTerminal?: Extract<PiProjectedEvent, { readonly type: "run.finished" }>;
 }
 
 interface PiThreadState {
@@ -332,7 +339,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         };
         const events = yield* Queue.unbounded<
           ProviderAdapterV2Event,
-          import("../ProviderAdapter.ts").ProviderAdapterV2Error | Cause.Done<void>
+          ProviderAdapterV2Error | Cause.Done<void>
         >();
         let threadState: PiThreadState | undefined;
         const pendingPrompts = new Map<string, PendingPiPrompt>();
@@ -342,11 +349,13 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         const updateSession = (
           status: OrchestrationV2ProviderSession["status"],
           error: string | null = null,
+          model: OrchestrationV2ProviderSession["model"] = providerSession.model,
         ) =>
           Effect.gen(function* () {
             providerSession = {
               ...providerSession,
               status,
+              model,
               lastError: error,
               updatedAt: yield* DateTime.now,
             };
@@ -579,6 +588,12 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             nativeItemId,
           });
           const completed = projected.type === "tool.completed";
+          const args =
+            projected.type === "tool.completed"
+              ? (turn.toolArgs.get(nativeItemId) ?? {})
+              : projected.args;
+          if (completed) turn.toolArgs.delete(nativeItemId);
+          else turn.toolArgs.set(nativeItemId, args);
           yield* emit({
             type: "node.updated",
             driver: PI_DRIVER_KIND,
@@ -617,7 +632,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             updatedAt: now,
             type: "dynamic_tool",
             toolName: projected.toolName,
-            input: projected.type === "tool.completed" ? {} : projected.args,
+            input: args,
             ...(projected.type === "tool.updated"
               ? { output: projected.partialResult }
               : projected.type === "tool.completed"
@@ -738,6 +753,115 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           yield* emit({ type: "turn_item.updated", driver: PI_DRIVER_KIND, turnItem });
         });
 
+        const cancelPendingPrompts = Effect.fnUntraced(function* (
+          state: PiThreadState,
+          turn: ActivePiTurn,
+          cancelledAt: DateTime.Utc,
+        ) {
+          const pending = Array.from(pendingPrompts.entries()).filter(
+            ([, prompt]) => prompt.runtimeRequest.providerTurnId === turn.providerTurn.id,
+          );
+          yield* Effect.forEach(
+            pending,
+            ([requestId, prompt]) =>
+              Effect.gen(function* () {
+                pendingPrompts.delete(requestId);
+                yield* transport
+                  .send({
+                    type: "extension_ui_response",
+                    id: prompt.nativeRequestId,
+                    cancelled: true,
+                  })
+                  .pipe(Effect.ignore);
+                const runtimeRequest: OrchestrationV2RuntimeRequest = {
+                  ...prompt.runtimeRequest,
+                  status: "cancelled",
+                  resolvedAt: cancelledAt,
+                };
+                state.runtimeRequests.set(requestId, runtimeRequest);
+                yield* emit({
+                  type: "runtime_request.updated",
+                  driver: PI_DRIVER_KIND,
+                  threadId: turn.input.threadId,
+                  runtimeRequest,
+                });
+                yield* emit({
+                  type: "node.updated",
+                  driver: PI_DRIVER_KIND,
+                  node: { ...prompt.node, status: "cancelled", completedAt: cancelledAt },
+                });
+                yield* emit({
+                  type: "turn_item.updated",
+                  driver: PI_DRIVER_KIND,
+                  turnItem: {
+                    ...prompt.turnItem,
+                    status: "cancelled",
+                    completedAt: cancelledAt,
+                    updatedAt: cancelledAt,
+                  },
+                });
+              }),
+            { concurrency: 1, discard: true },
+          );
+        });
+
+        const finalizeTurn = Effect.fnUntraced(function* (
+          state: PiThreadState,
+          turn: ActivePiTurn,
+          projected: Extract<PiProjectedEvent, { readonly type: "run.finished" }>,
+        ) {
+          const completedAt = yield* DateTime.now;
+          const status = turn.interrupted
+            ? "interrupted"
+            : projected.status === "failed"
+              ? "failed"
+              : projected.status === "interrupted"
+                ? "interrupted"
+                : "completed";
+          yield* cancelPendingPrompts(state, turn, completedAt);
+          yield* finalizeContent(state, turn, completedAt, status);
+          turn.providerTurn = { ...turn.providerTurn, status, completedAt };
+          state.providerTurns.set(String(turn.providerTurn.id), turn.providerTurn);
+          yield* emit({
+            type: "provider_turn.updated",
+            driver: PI_DRIVER_KIND,
+            threadId: turn.input.threadId,
+            providerTurn: turn.providerTurn,
+          });
+          yield* emit(
+            status === "failed"
+              ? {
+                  type: "turn.terminal",
+                  driver: PI_DRIVER_KIND,
+                  providerThreadId: state.providerThread.id,
+                  providerTurnId: turn.providerTurn.id,
+                  runOrdinal: turn.input.runOrdinal,
+                  failureItemOrdinal: turn.nextItemOrdinal,
+                  status,
+                  failure: {
+                    class: "provider_error",
+                    message: projected.errorMessage ?? "Pi run failed.",
+                    code: null,
+                    retryable: null,
+                  },
+                  threadDisposition: "reusable",
+                }
+              : {
+                  type: "turn.terminal",
+                  driver: PI_DRIVER_KIND,
+                  providerThreadId: state.providerThread.id,
+                  providerTurnId: turn.providerTurn.id,
+                  runOrdinal: turn.input.runOrdinal,
+                  status,
+                  failure: null,
+                  threadDisposition: "reusable",
+                },
+          );
+          delete state.activeTurn;
+          yield* updateThread(state, { status: "idle", lastRunOrdinal: turn.input.runOrdinal });
+          yield* updateSession("ready");
+        });
+
         const handleProjected = Effect.fnUntraced(function* (
           state: PiThreadState,
           projected: PiProjectedEvent,
@@ -760,56 +884,16 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           if (turn !== undefined && projected.type === "run.retrying") {
             return yield* updateSession("running");
           }
-          if (turn !== undefined && projected.type === "run.terminal") {
-            const completedAt = yield* DateTime.now;
-            const status = turn.interrupted
-              ? "interrupted"
-              : projected.status === "failed"
-                ? "failed"
-                : projected.status === "interrupted"
-                  ? "interrupted"
-                  : "completed";
-            yield* finalizeContent(state, turn, completedAt, status);
-            turn.providerTurn = { ...turn.providerTurn, status, completedAt };
-            state.providerTurns.set(String(turn.providerTurn.id), turn.providerTurn);
-            yield* emit({
-              type: "provider_turn.updated",
-              driver: PI_DRIVER_KIND,
-              threadId: turn.input.threadId,
-              providerTurn: turn.providerTurn,
-            });
-            yield* emit(
-              status === "failed"
-                ? {
-                    type: "turn.terminal",
-                    driver: PI_DRIVER_KIND,
-                    providerThreadId: state.providerThread.id,
-                    providerTurnId: turn.providerTurn.id,
-                    runOrdinal: turn.input.runOrdinal,
-                    failureItemOrdinal: turn.nextItemOrdinal,
-                    status,
-                    failure: {
-                      class: "provider_error",
-                      message: projected.errorMessage ?? "Pi run failed.",
-                      code: null,
-                      retryable: null,
-                    },
-                    threadDisposition: "reusable",
-                  }
-                : {
-                    type: "turn.terminal",
-                    driver: PI_DRIVER_KIND,
-                    providerThreadId: state.providerThread.id,
-                    providerTurnId: turn.providerTurn.id,
-                    runOrdinal: turn.input.runOrdinal,
-                    status,
-                    failure: null,
-                    threadDisposition: "reusable",
-                  },
+          if (turn !== undefined && projected.type === "run.finished") {
+            turn.pendingTerminal = projected;
+            return;
+          }
+          if (turn !== undefined && projected.type === "run.settled") {
+            return yield* finalizeTurn(
+              state,
+              turn,
+              turn.pendingTerminal ?? { type: "run.finished", status: "completed" },
             );
-            delete state.activeTurn;
-            yield* updateThread(state, { status: "idle", lastRunOrdinal: turn.input.runOrdinal });
-            yield* updateSession("ready");
           }
         });
 
@@ -842,9 +926,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           Effect.forkScoped,
         );
 
-        const ensureThread = (
-          ensureInput: import("../ProviderAdapter.ts").ProviderAdapterV2EnsureThreadInput,
-        ) =>
+        const ensureThread = (ensureInput: ProviderAdapterV2EnsureThreadInput) =>
           Effect.gen(function* () {
             if (ensureInput.existingProviderThread?.nativeThreadRef?.nativeId) {
               yield* requestData(transport, {
@@ -925,9 +1007,9 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           ensureThread,
           resumeThread: (resumeInput: {
             readonly providerThread: OrchestrationV2ProviderThread;
-            readonly threadId?: import("@t3tools/contracts").ThreadId;
-            readonly modelSelection?: import("@t3tools/contracts").ModelSelection;
-            readonly runtimePolicy?: import("../ProviderAdapter.ts").ProviderAdapterV2RuntimePolicy;
+            readonly threadId?: ThreadId;
+            readonly modelSelection?: ModelSelection;
+            readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
           }) =>
             ensureThread({
               threadId: resumeInput.threadId ?? resumeInput.providerThread.appThreadId!,
@@ -1009,6 +1091,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                 nextItemOrdinal: 0,
                 itemOrdinals: new Map(),
                 content: new Map(),
+                toolArgs: new Map(),
                 startedAt,
                 interrupted: false,
               };
@@ -1016,7 +1099,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                 status: "active",
                 firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
               });
-              yield* updateSession("running");
+              yield* updateSession("running", null, turnInput.modelSelection.model);
               yield* emit({
                 type: "provider_turn.updated",
                 driver: PI_DRIVER_KIND,
@@ -1027,7 +1110,29 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                 type: "prompt",
                 message: turnInput.message.text,
                 ...(images.length > 0 ? { images } : {}),
-              });
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.gen(function* () {
+                    const completedAt = yield* DateTime.now;
+                    const failedProviderTurn: OrchestrationV2ProviderTurn = {
+                      ...providerTurn,
+                      status: "failed",
+                      completedAt,
+                    };
+                    delete state.activeTurn;
+                    state.providerTurns.set(String(providerTurn.id), failedProviderTurn);
+                    yield* emit({
+                      type: "provider_turn.updated",
+                      driver: PI_DRIVER_KIND,
+                      threadId: turnInput.threadId,
+                      providerTurn: failedProviderTurn,
+                    });
+                    yield* updateThread(state, { status: "idle" });
+                    yield* updateSession("ready");
+                    return yield* cause;
+                  }),
+                ),
+              );
             }).pipe(
               Effect.mapError(
                 (cause) =>
@@ -1214,7 +1319,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
 export type PiAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
   | ServerConfig;
 
 export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2DriverEnv> = {
@@ -1226,7 +1331,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
       const hostEnvironment = yield* HostProcessEnvironment;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
       return makePiAdapterV2({
         instanceId: input.instanceId,

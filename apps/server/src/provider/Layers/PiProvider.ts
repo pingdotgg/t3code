@@ -240,11 +240,9 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
 
-  const models = modelsFromSettings(
-    settings,
-    yield* discoverPiModelsViaRpc(settings, cwd, environment),
-  );
-  const authenticated = models.length > 0;
+  const discoveredModels = yield* discoverPiModelsViaRpc(settings, cwd, environment);
+  const models = modelsFromSettings(settings, discoveredModels);
+  const authenticated = discoveredModels.length > 0;
   return buildServerProvider({
     presentation: PI_PRESENTATION,
     enabled: true,
