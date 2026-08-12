@@ -272,6 +272,21 @@ function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffRev
   const rows: DiffReviewLine[] = [];
 
   for (const hunk of fileDiff.hunks) {
+    if (!fileDiff.isPartial) {
+      const oldHunkStart = hunk.deletionStart + (hunk.deletionCount === 0 ? 1 : 0);
+      const newHunkStart = hunk.additionStart + (hunk.additionCount === 0 ? 1 : 0);
+      for (let offset = hunk.collapsedBefore; offset > 0; offset -= 1) {
+        const oldLineNumber = oldHunkStart - offset;
+        const newLineNumber = newHunkStart - offset;
+        rows.push({
+          change: "context",
+          oldLineNumber,
+          newLineNumber,
+          content: stripTrailingNewline(fileDiff.additionLines[newLineNumber - 1] ?? ""),
+        });
+      }
+    }
+
     let oldLineNumber = hunk.deletionStart;
     let newLineNumber = hunk.additionStart;
     let deletionLineIndex = hunk.deletionLineIndex;
@@ -319,6 +334,28 @@ function buildDiffReviewLines(fileDiff: FileDiffMetadata): ReadonlyArray<DiffRev
         newLineNumber += 1;
         additionLineIndex += 1;
       }
+    }
+  }
+
+  if (!fileDiff.isPartial) {
+    const lastHunk = fileDiff.hunks.at(-1);
+    const oldStart = lastHunk
+      ? lastHunk.deletionStart + lastHunk.deletionCount + (lastHunk.deletionCount === 0 ? 1 : 0)
+      : 1;
+    const newStart = lastHunk
+      ? lastHunk.additionStart + lastHunk.additionCount + (lastHunk.additionCount === 0 ? 1 : 0)
+      : 1;
+    const trailingLines = Math.min(
+      fileDiff.deletionLines.length - oldStart + 1,
+      fileDiff.additionLines.length - newStart + 1,
+    );
+    for (let offset = 0; offset < trailingLines; offset += 1) {
+      rows.push({
+        change: "context",
+        oldLineNumber: oldStart + offset,
+        newLineNumber: newStart + offset,
+        content: stripTrailingNewline(fileDiff.additionLines[newStart + offset - 1] ?? ""),
+      });
     }
   }
 
@@ -371,51 +408,6 @@ function findDiffReviewLineIndex(
   return lines.findIndex((line) => line[fallbackKey] === lineNumber);
 }
 
-/** Resolve a line Pierre hydrated from the unchanged regions outside the host patch's hunks. */
-function resolveExpandedContextPosition(
-  fileDiff: FileDiffMetadata,
-  lineNumber: number,
-  side: SelectionSide | undefined,
-): PullRequestReviewPosition | null {
-  if (fileDiff.isPartial) return null;
-
-  const selectedSide = side === "deletions" ? "left" : "right";
-  let oldContextStart = 1;
-  let newContextStart = 1;
-
-  for (let hunkIndex = 0; hunkIndex <= fileDiff.hunks.length; hunkIndex += 1) {
-    const hunk = fileDiff.hunks[hunkIndex];
-    const oldContextEnd =
-      hunk === undefined
-        ? fileDiff.deletionLines.length + 1
-        : hunk.deletionStart + (hunk.deletionCount === 0 ? 1 : 0);
-    const newContextEnd =
-      hunk === undefined
-        ? fileDiff.additionLines.length + 1
-        : hunk.additionStart + (hunk.additionCount === 0 ? 1 : 0);
-    const selectedStart = selectedSide === "left" ? oldContextStart : newContextStart;
-    const selectedEnd = selectedSide === "left" ? oldContextEnd : newContextEnd;
-    const otherStart = selectedSide === "left" ? newContextStart : oldContextStart;
-    const otherEnd = selectedSide === "left" ? newContextEnd : oldContextEnd;
-    const offset = lineNumber - selectedStart;
-
-    if (offset >= 0 && lineNumber < selectedEnd && otherStart + offset < otherEnd) {
-      return {
-        kind: "context",
-        oldLine: selectedSide === "left" ? lineNumber : otherStart + offset,
-        newLine: selectedSide === "right" ? lineNumber : otherStart + offset,
-        side: selectedSide,
-      };
-    }
-
-    if (hunk === undefined) return null;
-    oldContextStart = oldContextEnd + hunk.deletionCount;
-    newContextStart = newContextEnd + hunk.additionCount;
-  }
-
-  return null;
-}
-
 /** Resolve the host-facing coordinates of a line selected in the diff viewer. */
 export function resolveDiffReviewPosition(
   fileDiff: FileDiffMetadata,
@@ -423,15 +415,7 @@ export function resolveDiffReviewPosition(
   side: SelectionSide | undefined,
 ): PullRequestReviewPosition | null {
   const lines = buildDiffReviewLines(fileDiff);
-  const preferredKey = side === "deletions" ? "oldLineNumber" : "newLineNumber";
-  const preferredIndex = lines.findIndex((line) => line[preferredKey] === lineNumber);
-  if (preferredIndex < 0) {
-    const expandedPosition = resolveExpandedContextPosition(fileDiff, lineNumber, side);
-    if (expandedPosition !== null) return expandedPosition;
-  }
-
-  const line =
-    lines[preferredIndex >= 0 ? preferredIndex : findDiffReviewLineIndex(lines, lineNumber, side)];
+  const line = lines[findDiffReviewLineIndex(lines, lineNumber, side)];
   if (line === undefined) return null;
 
   switch (line.change) {
