@@ -19,6 +19,7 @@ import { Skeleton } from "~/components/ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { subscribeContextMenuClosed } from "~/contextMenuLifetime";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
 
@@ -234,18 +235,27 @@ function Sidebar({
     }
 
     const release = () => setPeekHeld(false);
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-slot='context-menu']")) {
+        return;
+      }
+      release();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         release();
       }
     };
-    document.addEventListener("pointerdown", release, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown);
     window.addEventListener("blur", release);
+    const unsubscribeContextMenuClosed = subscribeContextMenuClosed(release);
     return () => {
-      document.removeEventListener("pointerdown", release, true);
+      document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("blur", release);
+      unsubscribeContextMenuClosed();
     };
   }, [canPeek, peekHeld]);
 

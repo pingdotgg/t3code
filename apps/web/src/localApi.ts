@@ -2,6 +2,7 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 
 import { requestConfirmDialog } from "./confirmDialog";
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { notifyContextMenuClosed } from "./contextMenuLifetime";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 
@@ -36,10 +37,14 @@ function createBrowserLocalApi(): LocalApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+        try {
+          if (window.desktopBridge) {
+            return (await window.desktopBridge.showContextMenu(items, position)) as T | null;
+          }
+          return await showContextMenuFallback(items, position);
+        } finally {
+          notifyContextMenuClosed();
         }
-        return showContextMenuFallback(items, position);
       },
     },
     persistence: {

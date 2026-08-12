@@ -196,6 +196,12 @@ describe("showContextMenuFallback", () => {
     await expect(selectionPromise).resolves.toBe("rename");
   });
 
+  it("marks the fallback menu as a context-menu slot", () => {
+    void showContextMenuFallback([{ id: "rename", label: "Rename" }]);
+    const menu = (document as unknown as FakeDocument).body.children[0];
+    expect(menu?.dataset.slot).toBe("context-menu");
+  });
+
   it("ignores a click from the gesture that opened the menu", async () => {
     let enablePointerSelection: ((time: number) => void) | undefined;
     vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {

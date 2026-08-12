@@ -85,6 +85,36 @@ describe("LocalApi", () => {
     expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
   });
 
+  it("notifies when a browser context menu closes", async () => {
+    const listener = vi.fn();
+    const { subscribeContextMenuClosed } = await import("./contextMenuLifetime");
+    const unsubscribe = subscribeContextMenuClosed(listener);
+    showContextMenuFallbackMock.mockResolvedValue("rename");
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(
+      createLocalApi().contextMenu.show([{ id: "rename", label: "Rename" }]),
+    ).resolves.toBe("rename");
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it("notifies when a desktop context menu closes", async () => {
+    const listener = vi.fn();
+    const { subscribeContextMenuClosed } = await import("./contextMenuLifetime");
+    const unsubscribe = subscribeContextMenuClosed(listener);
+    testWindow().desktopBridge = {
+      showContextMenu: vi.fn().mockResolvedValue("delete"),
+    } as unknown as DesktopBridge;
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(
+      createLocalApi().contextMenu.show([{ id: "delete", label: "Delete" }]),
+    ).resolves.toBe("delete");
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
   it("uses the themed confirmation host when it is available", async () => {
     requestConfirmDialogMock.mockResolvedValue(true);
     const { createLocalApi } = await import("./localApi");
