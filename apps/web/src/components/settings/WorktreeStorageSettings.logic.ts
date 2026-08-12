@@ -1,14 +1,25 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, WorktreeStorageEntry } from "@t3tools/contracts";
+import {
+  threadKeepsWorktreeActive,
+  type EnvironmentId,
+  type ProjectId,
+  type WorktreeStorageEntry,
+} from "@t3tools/contracts";
 
 import type { WorktreeStoragePreviewEntry } from "../../lib/worktreeStorageState";
 
 export interface ScopedWorktreeStorageEntry extends WorktreeStorageEntry {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
-  readonly projectTitle: string;
+}
+
+export interface WorktreeProjectGroup {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly title: string;
   readonly workspaceRoot: string;
   readonly faviconPath: string | null;
+  readonly worktrees: ReadonlyArray<ScopedWorktreeStorageEntry>;
 }
 
 type WorktreeStorageLifecycleThread = Pick<
@@ -24,51 +35,43 @@ type WorktreeStorageLifecycleThread = Pick<
   | "backgroundLiveness"
 >;
 
-export function threadKeepsWorktreeActive(thread: WorktreeStorageLifecycleThread): boolean {
-  const hasLiveRuntime =
-    thread.session?.status === "starting" ||
-    thread.session?.status === "running" ||
-    thread.latestTurn?.state === "running" ||
-    thread.hasPendingApprovals ||
-    thread.hasPendingUserInput ||
-    thread.backgroundLiveness != null;
-
-  return hasLiveRuntime || (thread.archivedAt === null && thread.settledOverride !== "settled");
-}
-
 export function worktreeStorageActivityRevision(
   threads: ReadonlyArray<WorktreeStorageLifecycleThread>,
   environmentIds: ReadonlyArray<EnvironmentId>,
 ): string {
   const includedEnvironments = new Set(environmentIds);
-  const activeByWorktree = new Map<string, boolean>();
+  const activeKeys = new Set<string>();
 
   for (const thread of threads) {
-    if (thread.worktreePath === null || !includedEnvironments.has(thread.environmentId)) continue;
-    const key = JSON.stringify([thread.environmentId, thread.worktreePath]);
-    activeByWorktree.set(
-      key,
-      (activeByWorktree.get(key) ?? false) || threadKeepsWorktreeActive(thread),
-    );
+    if (
+      thread.worktreePath === null ||
+      !includedEnvironments.has(thread.environmentId) ||
+      !threadKeepsWorktreeActive(thread)
+    ) {
+      continue;
+    }
+    activeKeys.add(JSON.stringify([thread.environmentId, thread.worktreePath]));
   }
 
-  return JSON.stringify([...activeByWorktree].sort(([left], [right]) => left.localeCompare(right)));
+  return JSON.stringify([...activeKeys].sort());
 }
 
-export function flattenWorktreeStoragePreviews(
+export function worktreeStorageProjectGroups(
   previews: ReadonlyArray<WorktreeStoragePreviewEntry>,
-): ReadonlyArray<ScopedWorktreeStorageEntry> {
+): ReadonlyArray<WorktreeProjectGroup> {
   return previews.flatMap(({ environmentId, preview }) =>
-    preview.projects.flatMap((project) =>
-      project.worktrees.map((worktree) => ({
+    preview.projects.map((project) => ({
+      key: JSON.stringify([environmentId, project.projectId]),
+      environmentId,
+      title: project.title,
+      workspaceRoot: project.workspaceRoot,
+      faviconPath: project.faviconPath,
+      worktrees: project.worktrees.map((worktree) => ({
         ...worktree,
         environmentId,
         projectId: project.projectId,
-        projectTitle: project.title,
-        workspaceRoot: project.workspaceRoot,
-        faviconPath: project.faviconPath,
       })),
-    ),
+    })),
   );
 }
 

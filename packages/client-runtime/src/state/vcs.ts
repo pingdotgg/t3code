@@ -327,7 +327,6 @@ export function createVcsEnvironmentAtoms<R, E>(
       onSettled: (target, registry) =>
         invalidateCachedVcsRefs(registry, {
           environmentId: target.environmentId,
-          cwd: "worktree storage cleanup",
         }),
     }),
     createRef: createEnvironmentRpcCommand(runtime, {

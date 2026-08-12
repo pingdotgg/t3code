@@ -1,8 +1,8 @@
 import {
   WorktreeStorageError,
+  threadKeepsWorktreeActive,
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
-  type OrchestrationThreadShell,
   type WorktreeCleanupInput,
   type WorktreeCleanupOutcome,
   type WorktreeCleanupResult,
@@ -12,7 +12,6 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -29,18 +28,6 @@ const WORKTREE_INSPECTION_CONCURRENCY = 4;
 interface ManagedWorktree {
   readonly path: string;
   readonly refName: string;
-}
-
-function threadKeepsWorktreeActive(thread: OrchestrationThreadShell): boolean {
-  const hasLiveRuntime =
-    thread.session?.status === "starting" ||
-    thread.session?.status === "running" ||
-    thread.latestTurn?.state === "running" ||
-    thread.hasPendingApprovals ||
-    thread.hasPendingUserInput ||
-    thread.backgroundLiveness != null;
-
-  return hasLiveRuntime || (thread.archivedAt === null && thread.settledOverride !== "settled");
 }
 
 export class WorktreeStorage extends Context.Service<
@@ -204,7 +191,7 @@ export const make = Effect.gen(function* () {
         }
         return fileSystem.stat(entryPath).pipe(
           Effect.map((info) =>
-            info.type === "File" || info.type === "SymbolicLink"
+            info.type === "File"
               ? {
                   device: info.dev,
                   inode: Option.getOrNull(info.ino),
@@ -307,19 +294,13 @@ export const make = Effect.gen(function* () {
           title: project.title,
           workspaceRoot: project.workspaceRoot,
           faviconPath: project.faviconPath ?? null,
-          sizeBytes: sumByteCounts(sortedWorktrees.map((worktree) => worktree.sizeBytes)),
           worktrees: sortedWorktrees,
         });
       }
 
       return {
-        totalSizeBytes: sumByteCounts(projects.map((project) => project.sizeBytes)),
-        reclaimableSizeBytes: sumByteCounts(
-          projects.flatMap((project) =>
-            project.worktrees.flatMap((worktree) =>
-              worktree.status === "clean" ? [worktree.sizeBytes] : [],
-            ),
-          ),
+        totalSizeBytes: sumByteCounts(
+          projects.flatMap((project) => project.worktrees.map((worktree) => worktree.sizeBytes)),
         ),
         projects,
       };
@@ -350,98 +331,78 @@ export const make = Effect.gen(function* () {
         if (handledTargets.has(targetKey)) continue;
         handledTargets.add(targetKey);
 
+        const record = (status: WorktreeCleanupOutcome["status"], detail?: string) => {
+          outcomes.push({
+            ...target,
+            path: canonicalTargetPath,
+            status,
+            ...(detail === undefined ? {} : { detail }),
+          });
+        };
+
         const project = projectsById.get(target.projectId);
         if (!project) {
-          outcomes.push({ ...target, path: canonicalTargetPath, status: "skipped_missing" });
+          record("skipped_missing");
           continue;
         }
         if (!(yield* pathExists("WorktreeStorage.cleanup", canonicalTargetPath))) {
-          outcomes.push({ ...target, path: canonicalTargetPath, status: "skipped_missing" });
+          record("skipped_missing");
           continue;
         }
         if (
           canonicalTargetPath === worktreesRoot ||
           !isWithinRoot(canonicalTargetPath, worktreesRoot)
         ) {
-          outcomes.push({
-            ...target,
-            path: canonicalTargetPath,
-            status: "skipped_missing",
-            detail: "The selected path is not a T3-managed worktree.",
-          });
+          record("skipped_missing", "The selected path is not a T3-managed worktree.");
           continue;
         }
         if (activePaths.has(canonicalTargetPath)) {
-          outcomes.push({ ...target, path: canonicalTargetPath, status: "skipped_active" });
+          record("skipped_active");
           continue;
         }
 
         let projectWorktrees = listedWorktreesByProject.get(project.id);
         if (!projectWorktrees) {
-          const listedResult = yield* listManagedWorktrees(project, worktreesRoot).pipe(
-            Effect.map((worktrees) => ({ ok: true as const, worktrees })),
-            Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
-          );
-          if (!listedResult.ok) {
-            outcomes.push({
-              ...target,
-              path: canonicalTargetPath,
-              status: "failed",
-              detail: listedResult.error.message,
-            });
+          const listedResult = yield* Effect.result(listManagedWorktrees(project, worktreesRoot));
+          if (listedResult._tag === "Failure") {
+            record("failed", listedResult.failure.message);
             continue;
           }
-          projectWorktrees = listedResult.worktrees;
+          projectWorktrees = listedResult.success;
           listedWorktreesByProject.set(project.id, projectWorktrees);
         }
         if (!projectWorktrees.some((worktree) => worktree.path === canonicalTargetPath)) {
-          outcomes.push({ ...target, path: canonicalTargetPath, status: "skipped_missing" });
+          record("skipped_missing");
           continue;
         }
 
-        const statusResult = yield* git.statusDetailsLocal(canonicalTargetPath).pipe(
-          Effect.map((status) => ({ ok: true as const, status })),
-          Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
-        );
-        if (!statusResult.ok) {
-          outcomes.push({
-            ...target,
-            path: canonicalTargetPath,
-            status: "failed",
-            detail: statusResult.error.message,
-          });
+        const statusResult = yield* Effect.result(git.statusDetailsLocal(canonicalTargetPath));
+        if (statusResult._tag === "Failure") {
+          record("failed", statusResult.failure.message);
           continue;
         }
         if (
-          statusResult.status.hasWorkingTreeChanges &&
+          statusResult.success.hasWorkingTreeChanges &&
           !confirmedDirtyPaths.has(canonicalTargetPath)
         ) {
-          outcomes.push({ ...target, path: canonicalTargetPath, status: "skipped_dirty" });
+          record("skipped_dirty");
           continue;
         }
 
         // Force is required to remove ignored build artifacts. The fresh status check above keeps
         // tracked and untracked user changes opt-in, while Git keeps the branch and every commit.
-        const removeResult = yield* git
-          .removeWorktree({
+        const removeResult = yield* Effect.result(
+          git.removeWorktree({
             cwd: project.workspaceRoot,
             path: canonicalTargetPath,
             force: true,
-          })
-          .pipe(
-            Effect.as({ ok: true as const }),
-            Effect.catch((error) => Effect.succeed({ ok: false as const, error })),
-          );
-        outcomes.push(
-          removeResult.ok
-            ? { ...target, path: canonicalTargetPath, status: "removed" }
-            : {
-                ...target,
-                path: canonicalTargetPath,
-                status: "failed",
-                detail: removeResult.error.message,
-              },
+          }),
         );
+        if (removeResult._tag === "Success") {
+          record("removed");
+        } else {
+          record("failed", removeResult.failure.message);
+        }
       }
 
       return { outcomes };
@@ -450,5 +411,3 @@ export const make = Effect.gen(function* () {
 
   return WorktreeStorage.of({ preview, cleanup });
 });
-
-export const layer = Layer.effect(WorktreeStorage, make);

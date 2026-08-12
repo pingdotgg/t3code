@@ -6,6 +6,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import type { OrchestrationThreadShell } from "./orchestration.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
@@ -186,7 +187,6 @@ export const WorktreeStorageProject = Schema.Struct({
   title: TrimmedNonEmptyStringSchema,
   workspaceRoot: TrimmedNonEmptyStringSchema,
   faviconPath: Schema.NullOr(TrimmedNonEmptyStringSchema),
-  sizeBytes: NonNegativeInt,
   worktrees: Schema.Array(WorktreeStorageEntry),
 });
 export type WorktreeStorageProject = typeof WorktreeStorageProject.Type;
@@ -196,10 +196,32 @@ export type WorktreeStoragePreviewInput = typeof WorktreeStoragePreviewInput.Typ
 
 export const WorktreeStoragePreviewResult = Schema.Struct({
   totalSizeBytes: NonNegativeInt,
-  reclaimableSizeBytes: NonNegativeInt,
   projects: Schema.Array(WorktreeStorageProject),
 });
 export type WorktreeStoragePreviewResult = typeof WorktreeStoragePreviewResult.Type;
+
+export function threadKeepsWorktreeActive(
+  thread: Pick<
+    OrchestrationThreadShell,
+    | "archivedAt"
+    | "settledOverride"
+    | "session"
+    | "latestTurn"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "backgroundLiveness"
+  >,
+): boolean {
+  const hasLiveRuntime =
+    thread.session?.status === "starting" ||
+    thread.session?.status === "running" ||
+    thread.latestTurn?.state === "running" ||
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    thread.backgroundLiveness != null;
+
+  return hasLiveRuntime || (thread.archivedAt === null && thread.settledOverride !== "settled");
+}
 
 export const WorktreeCleanupTarget = Schema.Struct({
   projectId: ProjectId,

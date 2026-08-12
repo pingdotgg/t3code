@@ -9,6 +9,7 @@ import {
   GitResolvePullRequestResult,
   WorktreeCleanupInput,
   WorktreeStoragePreviewResult,
+  threadKeepsWorktreeActive,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -135,14 +136,12 @@ describe("worktree storage contracts", () => {
   it("decodes grouped worktree size and safety metadata", () => {
     const parsed = decodeWorktreeStoragePreviewResult({
       totalSizeBytes: 1_024,
-      reclaimableSizeBytes: 512,
       projects: [
         {
           projectId: "project-1",
           title: "T3 Code",
           workspaceRoot: "/repo",
           faviconPath: null,
-          sizeBytes: 1_024,
           worktrees: [
             {
               path: "/worktrees/feature-a",
@@ -165,6 +164,21 @@ describe("worktree storage contracts", () => {
       "clean",
       "dirty",
     ]);
+  });
+
+  it("treats unsettled threads as keeping their worktree active", () => {
+    const base = {
+      archivedAt: null,
+      settledOverride: null,
+      session: null,
+      latestTurn: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      backgroundLiveness: null,
+    } as const;
+
+    expect(threadKeepsWorktreeActive(base)).toBe(true);
+    expect(threadKeepsWorktreeActive({ ...base, settledOverride: "settled" })).toBe(false);
   });
 
   it("requires explicit cleanup targets and carries separately confirmed dirty paths", () => {

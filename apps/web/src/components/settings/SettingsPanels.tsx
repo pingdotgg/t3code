@@ -2385,7 +2385,6 @@ export function ArchivedThreadsPanel() {
         const result = await unarchiveThread(threadRef);
         if (result._tag === "Success") {
           refreshArchivedThreads();
-          refreshWorktreeStorageForEnvironment(threadRef.environmentId);
         } else if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           toastManager.add(
@@ -2513,7 +2512,6 @@ export function ArchivedThreadsPanel() {
                         );
                         if (result._tag === "Success") {
                           refreshArchivedThreads();
-                          refreshWorktreeStorageForEnvironment(thread.environmentId);
                           return;
                         }
                         if (!isAtomCommandInterrupted(result)) {

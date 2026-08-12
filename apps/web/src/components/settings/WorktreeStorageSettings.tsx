@@ -34,11 +34,11 @@ import { toastManager } from "../ui/toast";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
-  flattenWorktreeStoragePreviews,
   formatStorageByteCount,
   type ScopedWorktreeStorageEntry,
   sumWorktreeStorageBytes,
   worktreeStorageActivityRevision,
+  worktreeStorageProjectGroups,
   worktreeStorageSelectionKey,
 } from "./WorktreeStorageSettings.logic";
 
@@ -50,38 +50,6 @@ const STATUS_PRESENTATION = {
   dirty: { label: "Uncommitted changes", variant: "warning" },
 } as const;
 
-interface WorktreeProjectGroup {
-  readonly key: string;
-  readonly environmentId: EnvironmentId;
-  readonly title: string;
-  readonly workspaceRoot: string;
-  readonly faviconPath: string | null;
-  readonly worktrees: ReadonlyArray<ScopedWorktreeStorageEntry>;
-}
-
-function groupWorktreesByProject(
-  worktrees: ReadonlyArray<ScopedWorktreeStorageEntry>,
-): ReadonlyArray<WorktreeProjectGroup> {
-  const groups = new Map<string, WorktreeProjectGroup>();
-  for (const worktree of worktrees) {
-    const key = JSON.stringify([worktree.environmentId, worktree.projectId]);
-    const current = groups.get(key);
-    if (current) {
-      groups.set(key, { ...current, worktrees: [...current.worktrees, worktree] });
-      continue;
-    }
-    groups.set(key, {
-      key,
-      environmentId: worktree.environmentId,
-      title: worktree.projectTitle,
-      workspaceRoot: worktree.workspaceRoot,
-      faviconPath: worktree.faviconPath,
-      worktrees: [worktree],
-    });
-  }
-  return [...groups.values()];
-}
-
 export function WorktreeStorageSettings({
   environmentIds,
 }: {
@@ -92,8 +60,8 @@ export function WorktreeStorageSettings({
   const cleanupWorktrees = useAtomCommand(vcsEnvironment.cleanupWorktrees, {
     reportFailure: false,
   });
-  const worktrees = useMemo(() => flattenWorktreeStoragePreviews(previews), [previews]);
-  const groups = useMemo(() => groupWorktreesByProject(worktrees), [worktrees]);
+  const groups = useMemo(() => worktreeStorageProjectGroups(previews), [previews]);
+  const worktrees = useMemo(() => groups.flatMap((group) => group.worktrees), [groups]);
   const cleanWorktrees = useMemo(
     () => worktrees.filter((worktree) => worktree.status === "clean"),
     [worktrees],
@@ -352,25 +320,26 @@ export function WorktreeStorageSettings({
           </DialogHeader>
           <DialogPanel className="space-y-3">
             <div className="divide-y divide-border/60 rounded-xl border border-input">
-              {selectedWorktrees.map((worktree) => (
-                <div
-                  key={worktreeStorageSelectionKey(worktree)}
-                  className="flex items-start justify-between gap-4 px-3 py-2.5"
-                >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{worktree.refName}</div>
-                    <div className="truncate text-xs text-muted-foreground">{worktree.path}</div>
+              {selectedWorktrees.map((worktree) => {
+                const status = STATUS_PRESENTATION[worktree.status];
+                return (
+                  <div
+                    key={worktreeStorageSelectionKey(worktree)}
+                    className="flex items-start justify-between gap-4 px-3 py-2.5"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{worktree.refName}</div>
+                      <div className="truncate text-xs text-muted-foreground">{worktree.path}</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Badge variant={status.variant}>{status.label}</Badge>
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        {formatStorageByteCount(worktree.sizeBytes)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Badge variant={STATUS_PRESENTATION[worktree.status].variant}>
-                      {STATUS_PRESENTATION[worktree.status].label}
-                    </Badge>
-                    <span className="text-xs tabular-nums text-muted-foreground">
-                      {formatStorageByteCount(worktree.sizeBytes)}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {selectedDirtyWorktrees.length > 0 ? (

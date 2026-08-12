@@ -167,12 +167,6 @@ it.effect("previews status and only removes explicitly safe worktrees", () =>
           "feature/settled": "clean",
         },
       );
-      assert.equal(
-        preview.reclaimableSizeBytes,
-        previewProject.worktrees
-          .filter((worktree) => worktree.status === "clean")
-          .reduce((total, worktree) => total + worktree.sizeBytes, 0),
-      );
 
       yield* fileSystem.writeFileString(
         path.join(newlyDirtyPath, "appeared-after-preview.txt"),

@@ -1,31 +1,28 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, threadKeepsWorktreeActive } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  flattenWorktreeStoragePreviews,
   formatStorageByteCount,
-  threadKeepsWorktreeActive,
   worktreeStorageActivityRevision,
+  worktreeStorageProjectGroups,
   worktreeStorageSelectionKey,
 } from "./WorktreeStorageSettings.logic";
 
 describe("worktree storage settings", () => {
-  it("flattens previews without losing environment or project identity", () => {
+  it("groups previews without losing environment or project identity", () => {
     const environmentId = EnvironmentId.make("local");
     const projectId = ProjectId.make("project-1");
-    const entries = flattenWorktreeStoragePreviews([
+    const groups = worktreeStorageProjectGroups([
       {
         environmentId,
         preview: {
           totalSizeBytes: 42,
-          reclaimableSizeBytes: 42,
           projects: [
             {
               projectId,
               title: "T3 Code",
               workspaceRoot: "/repo",
               faviconPath: null,
-              sizeBytes: 42,
               worktrees: [
                 { path: "/worktrees/feature", refName: "feature", sizeBytes: 42, status: "clean" },
               ],
@@ -35,10 +32,14 @@ describe("worktree storage settings", () => {
       },
     ]);
 
-    expect(entries).toEqual([
-      expect.objectContaining({ environmentId, projectId, projectTitle: "T3 Code" }),
+    expect(groups).toEqual([
+      expect.objectContaining({
+        environmentId,
+        title: "T3 Code",
+        worktrees: [expect.objectContaining({ environmentId, projectId })],
+      }),
     ]);
-    expect(worktreeStorageSelectionKey(entries[0]!)).toBe(
+    expect(worktreeStorageSelectionKey(groups[0]!.worktrees[0]!)).toBe(
       JSON.stringify([environmentId, "/worktrees/feature"]),
     );
   });
@@ -72,6 +73,9 @@ describe("worktree storage settings", () => {
     expect(threadKeepsWorktreeActive(settledThread)).toBe(false);
     expect(worktreeStorageActivityRevision([activeThread], [environmentId])).not.toBe(
       worktreeStorageActivityRevision([settledThread], [environmentId]),
+    );
+    expect(worktreeStorageActivityRevision([settledThread], [environmentId])).toBe(
+      worktreeStorageActivityRevision([], [environmentId]),
     );
   });
 
