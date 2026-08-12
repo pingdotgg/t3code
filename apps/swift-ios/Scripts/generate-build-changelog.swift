@@ -63,7 +63,16 @@ func normalizedRepositoryURL(_ rawValue: String?) -> String? {
     } else if value.hasPrefix("ssh://git@") {
         value = "https://" + value.dropFirst("ssh://git@".count)
     }
-    return value.hasPrefix("https://") ? value : nil
+    guard var components = URLComponents(string: value),
+          components.scheme == "https",
+          components.host != nil else {
+        return nil
+    }
+    components.user = nil
+    components.password = nil
+    components.query = nil
+    components.fragment = nil
+    return components.string
 }
 let pullRequestRepositoryURL = normalizedRepositoryURL(rawPullRequestRepositoryURL)
 let containingRemoteNames = git([
