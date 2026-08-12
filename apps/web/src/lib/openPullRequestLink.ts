@@ -255,9 +255,17 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
   return useCallback(
     (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
-      event.preventDefault();
       event.stopPropagation();
-      if (openChangeRequest(event, prUrl, targetThreadRef)) return true;
+      const openInBrowser = shouldOpenPullRequestExternally(event);
+      const isAnchor =
+        event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
+      // A real link already knows how to cmd/ctrl+click. Leave its default
+      // action alone so the browser (or Electron's window-open handler) opens
+      // the host. Buttons have no href, so they still go through openExternal.
+      if (openInBrowser && isAnchor) return false;
+
+      event.preventDefault();
+      if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
 
       const api = readLocalApi();
       if (!api) {
