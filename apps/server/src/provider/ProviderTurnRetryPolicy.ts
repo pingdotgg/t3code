@@ -67,7 +67,8 @@ export function retryableProviderServiceFailure(
 ): RetryableProviderFailure | undefined {
   switch (error._tag) {
     case "ProviderAdapterSessionClosedError": {
-      return { message: error.message };
+      const message = normalizeFailureMessage([messageFromUnknown(error.cause), error.message]);
+      return isRetryableFailureMessage(message, true) ? { message } : undefined;
     }
     case "ProviderAdapterProcessError": {
       const message = normalizeFailureMessage([
