@@ -927,15 +927,17 @@ const makeWsRpcLayer = (
               // preserving today's single-worktree behavior exactly.
               const worktreeProjectId =
                 targetProjectId ??
-                (yield* projectionSnapshotQuery.getThreadShellById(command.threadId).pipe(
-                  Effect.map((shell) => (Option.isSome(shell) ? shell.value.projectId : undefined)),
-                  Effect.orElseSucceed(() => undefined),
-                ));
+                (yield* projectionSnapshotQuery
+                  .getThreadShellById(command.threadId)
+                  .pipe(
+                    Effect.map((shell) =>
+                      Option.isSome(shell) ? shell.value.projectId : undefined,
+                    ),
+                  ));
               const projectShell = worktreeProjectId
-                ? yield* projectionSnapshotQuery.getProjectShellById(worktreeProjectId).pipe(
-                    Effect.map(Option.getOrUndefined),
-                    Effect.orElseSucceed(() => undefined),
-                  )
+                ? yield* projectionSnapshotQuery
+                    .getProjectShellById(worktreeProjectId)
+                    .pipe(Effect.map(Option.getOrUndefined))
                 : undefined;
               const repoRoots =
                 projectShell?.repoRoots && projectShell.repoRoots.length > 0
