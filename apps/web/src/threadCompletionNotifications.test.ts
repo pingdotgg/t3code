@@ -27,6 +27,7 @@ function makeEnvironmentState(overrides: {
   readonly title?: string;
   readonly completedAt?: string;
   readonly activeTurnId?: TurnId | null;
+  readonly hasPendingQueuedTurn?: boolean;
 }): EnvironmentState {
   const nextThreadId = overrides.threadId ?? threadId;
   const turnId = overrides.turnId ?? TurnId.make("turn-1");
@@ -88,6 +89,7 @@ function makeEnvironmentState(overrides: {
         hasPendingApprovals: false,
         hasPendingUserInput: false,
         hasActionableProposedPlan: false,
+        hasPendingQueuedTurn: overrides.hasPendingQueuedTurn ?? false,
       },
     },
     bootstrapComplete: overrides.bootstrapComplete,
@@ -191,6 +193,69 @@ describe("collectThreadCompletionNotifications", () => {
         tracker,
       }),
     ).toEqual([]);
+  });
+
+  it("does not notify a completed turn while a handoff/user continuation is still queued", () => {
+    const tracker = makeTracker();
+    collectThreadCompletionNotifications({
+      environmentStateById: {
+        [environmentId]: makeEnvironmentState({ bootstrapComplete: true }),
+      },
+      notificationMode: "all",
+      activeThreadKey: null,
+      isDocumentFocused: false,
+      tracker,
+    });
+
+    const completedWithQueue = makeEnvironmentState({
+      bootstrapComplete: true,
+      threadId: ThreadId.make("thread-handoff"),
+      turnId: TurnId.make("turn-handoff-boundary"),
+      title: "Handoff in progress",
+      completedAt: "2026-06-10T00:03:00.000Z",
+      hasPendingQueuedTurn: true,
+    });
+
+    expect(
+      collectThreadCompletionNotifications({
+        environmentStateById: {
+          [environmentId]: completedWithQueue,
+        },
+        notificationMode: "all",
+        activeThreadKey: null,
+        isDocumentFocused: false,
+        tracker,
+      }),
+    ).toEqual([]);
+
+    // Once the queue drains, the same completed boundary may notify if it is
+    // still the latest terminal turn and has not been seeded yet.
+    const afterQueueDrained = makeEnvironmentState({
+      bootstrapComplete: true,
+      threadId: ThreadId.make("thread-handoff"),
+      turnId: TurnId.make("turn-handoff-boundary"),
+      title: "Handoff in progress",
+      completedAt: "2026-06-10T00:03:00.000Z",
+    });
+
+    expect(
+      collectThreadCompletionNotifications({
+        environmentStateById: {
+          [environmentId]: afterQueueDrained,
+        },
+        notificationMode: "all",
+        activeThreadKey: null,
+        isDocumentFocused: false,
+        tracker,
+      }),
+    ).toMatchObject([
+      {
+        kind: "thread-turn-completed",
+        threadId: "thread-handoff",
+        turnId: "turn-handoff-boundary",
+        title: "Chat completed",
+      },
+    ]);
   });
 });
 

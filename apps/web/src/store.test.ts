@@ -123,6 +123,7 @@ function makeSidebarThreadSummary(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    hasPendingQueuedTurn: false,
     ...overrides,
   };
 }
@@ -402,6 +403,7 @@ describe("syncServerShellSnapshot", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          hasPendingQueuedTurn: false,
         },
         {
           id: addedThreadId,
@@ -423,6 +425,7 @@ describe("syncServerShellSnapshot", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          hasPendingQueuedTurn: false,
         },
       ],
       updatedAt,
@@ -799,6 +802,7 @@ describe("incremental orchestration updates", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          hasPendingQueuedTurn: false,
         },
       },
       localEnvironmentId,
@@ -1445,6 +1449,7 @@ describe("incremental orchestration updates", () => {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      hasPendingQueuedTurn: false,
     } as const;
 
     let state = makeEmptyState();

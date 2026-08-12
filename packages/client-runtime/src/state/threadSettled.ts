@@ -3,6 +3,8 @@ export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 type ThreadLifecycleSnapshot = {
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  /** Shell-projected non-failed queue (handoff continuation or user follow-up). */
+  readonly hasPendingQueuedTurn?: boolean;
   readonly latestUserMessageAt: string | null;
   readonly latestTurn: {
     readonly state: string;
@@ -60,6 +62,7 @@ export function canSettle(
   return (
     !shell.hasPendingApprovals &&
     !shell.hasPendingUserInput &&
+    !shell.hasPendingQueuedTurn &&
     shell.session?.status !== "starting" &&
     shell.session?.status !== "error" &&
     shell.latestTurn?.state !== "running" &&
@@ -99,7 +102,10 @@ export function canSnooze(
   options: { readonly now: string },
 ): boolean {
   return (
-    !shell.hasPendingApprovals && !shell.hasPendingUserInput && !hasQueuedTurnStart(shell, options)
+    !shell.hasPendingApprovals &&
+    !shell.hasPendingUserInput &&
+    !shell.hasPendingQueuedTurn &&
+    !hasQueuedTurnStart(shell, options)
   );
 }
 

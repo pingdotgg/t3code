@@ -73,7 +73,7 @@ export function resolveThreadStatus(
     };
   }
 
-  if (thread.session?.status === "running") {
+  if (thread.hasPendingQueuedTurn || thread.session?.status === "running") {
     return {
       kind: "working",
       label: "Working",

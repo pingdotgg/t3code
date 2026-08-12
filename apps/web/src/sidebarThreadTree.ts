@@ -61,6 +61,7 @@ export function expandSidebarThreadsWithAgentRuns(input: {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          hasPendingQueuedTurn: false,
           virtualAgentRun: {
             parentThreadId: thread.id,
             taskId: agentRun.taskId,

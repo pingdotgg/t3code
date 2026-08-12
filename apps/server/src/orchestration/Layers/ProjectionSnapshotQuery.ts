@@ -596,6 +596,37 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  // Shell sidebar status needs queue presence without hydrating full queued-turn
+  // payloads for every thread on every snapshot.
+  const listThreadIdsWithPendingQueuedTurns = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({
+      threadId: ThreadId,
+    }),
+    execute: () =>
+      sql`
+        SELECT DISTINCT thread_id AS "threadId"
+        FROM projection_queued_turns
+        WHERE failed_at IS NULL
+        ORDER BY thread_id ASC
+      `,
+  });
+
+  const hasPendingQueuedTurnForThread = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: Schema.Struct({
+      threadId: ThreadId,
+    }),
+    execute: ({ threadId }) =>
+      sql`
+        SELECT thread_id AS "threadId"
+        FROM projection_queued_turns
+        WHERE thread_id = ${threadId}
+          AND failed_at IS NULL
+        LIMIT 1
+      `,
+  });
+
   const listThreadActivityRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionThreadActivityDbRowSchema,
@@ -1719,6 +1750,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listThreadIdsWithPendingQueuedTurns(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getShellSnapshot:listPendingQueuedTurnThreads:query",
+                "ProjectionSnapshotQuery.getShellSnapshot:listPendingQueuedTurnThreads:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1747,12 +1786,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             latestTurnRows,
             turnSnapshotBounds,
             backgroundAgentActivityRows,
+            pendingQueuedTurnThreadRows,
             stateRows,
             workflowSnapshot,
             updatedAtBounds,
           ]) =>
             Effect.gen(function* () {
               const { artifacts: workflowArtifacts, runs: workflowRuns } = workflowSnapshot;
+              const pendingQueuedTurnThreadIds = new Set(
+                pendingQueuedTurnThreadRows.map((row) => row.threadId),
+              );
               let updatedAt: string | null = null;
               // Aggregates rather than row folds: the row queries above exclude
               // soft-deleted rows, but a delete bumps `updated_at` and must
@@ -1841,6 +1884,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     hasPendingApprovals: row.pendingApprovalCount > 0,
                     hasPendingUserInput: row.pendingUserInputCount > 0,
                     hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                    hasPendingQueuedTurn: pendingQueuedTurnThreadIds.has(row.threadId),
                     ...(backgroundAgentRunsByThread.get(row.threadId)?.length
                       ? { backgroundAgentRuns: backgroundAgentRunsByThread.get(row.threadId)! }
                       : {}),
@@ -2007,41 +2051,54 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const getThreadShellProjectContextById: ProjectionSnapshotQueryShape["getThreadShellProjectContextById"] =
     (threadId) =>
       Effect.gen(function* () {
-        const [threadRow, latestTurnRow, sessionRow, backgroundAgentActivityRows] =
-          yield* Effect.all([
-            getActiveThreadRowById({ threadId }).pipe(
-              Effect.mapError(
-                toPersistenceSqlOrDecodeError(
-                  "ProjectionSnapshotQuery.getThreadShellById:getThread:query",
-                  "ProjectionSnapshotQuery.getThreadShellById:getThread:decodeRow",
-                ),
+        const [
+          threadRow,
+          latestTurnRow,
+          sessionRow,
+          backgroundAgentActivityRows,
+          pendingQueuedTurnRow,
+        ] = yield* Effect.all([
+          getActiveThreadRowById({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:getThread:query",
+                "ProjectionSnapshotQuery.getThreadShellById:getThread:decodeRow",
               ),
             ),
-            getLatestTurnRowByThread({ threadId }).pipe(
-              Effect.mapError(
-                toPersistenceSqlOrDecodeError(
-                  "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:query",
-                  "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:decodeRow",
-                ),
+          ),
+          getLatestTurnRowByThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:query",
+                "ProjectionSnapshotQuery.getThreadShellById:getLatestTurn:decodeRow",
               ),
             ),
-            getThreadSessionRowByThread({ threadId }).pipe(
-              Effect.mapError(
-                toPersistenceSqlOrDecodeError(
-                  "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
-                  "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
-                ),
+          ),
+          getThreadSessionRowByThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:getSession:query",
+                "ProjectionSnapshotQuery.getThreadShellById:getSession:decodeRow",
               ),
             ),
-            listBackgroundAgentActivityRowsByThread({ threadId }).pipe(
-              Effect.mapError(
-                toPersistenceSqlOrDecodeError(
-                  "ProjectionSnapshotQuery.getThreadShellById:listBackgroundAgentActivities:query",
-                  "ProjectionSnapshotQuery.getThreadShellById:listBackgroundAgentActivities:decodeRows",
-                ),
+          ),
+          listBackgroundAgentActivityRowsByThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:listBackgroundAgentActivities:query",
+                "ProjectionSnapshotQuery.getThreadShellById:listBackgroundAgentActivities:decodeRows",
               ),
             ),
-          ]);
+          ),
+          hasPendingQueuedTurnForThread({ threadId }).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadShellById:hasPendingQueuedTurn:query",
+                "ProjectionSnapshotQuery.getThreadShellById:hasPendingQueuedTurn:decodeRow",
+              ),
+            ),
+          ),
+        ]);
 
         if (Option.isNone(threadRow)) {
           return Option.none<ProjectionThreadShellProjectContext>();
@@ -2080,6 +2137,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
             hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
             hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+            hasPendingQueuedTurn: Option.isSome(pendingQueuedTurnRow),
             ...(backgroundAgentRuns.length > 0 ? { backgroundAgentRuns } : {}),
           },
           project:

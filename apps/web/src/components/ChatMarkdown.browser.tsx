@@ -115,6 +115,7 @@ function addThreadSummary(threadId: ThreadId, title: string) {
             hasPendingApprovals: false,
             hasPendingUserInput: false,
             hasActionableProposedPlan: false,
+            hasPendingQueuedTurn: false,
           },
         },
       },

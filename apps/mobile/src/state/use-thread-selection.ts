@@ -63,6 +63,7 @@ function threadDetailToShell(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    hasPendingQueuedTurn: false,
   };
 }
 

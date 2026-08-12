@@ -67,6 +67,12 @@ export function collectThreadCompletionNotifications(
         continue;
       }
 
+      // Shell-projected queue flag (handoff continuation or user follow-up).
+      // Do not seed notifiedTurnKeys so a later true completion can still notify.
+      if (candidate.summary.hasPendingQueuedTurn) {
+        continue;
+      }
+
       input.tracker.notifiedTurnKeys.add(candidate.turnKey);
       if (
         isFirstCompletedBootstrap ||

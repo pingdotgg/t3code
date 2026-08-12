@@ -131,9 +131,12 @@ interface SidebarV2ThreadNode {
 
 /** Matches the client archive guard: a live agent run or an in-flight session turn. */
 export function isSidebarV2ArchiveBlockedThread(
-  thread: Pick<SidebarThreadSummary, "session" | "virtualAgentRun">,
+  thread: Pick<SidebarThreadSummary, "session" | "virtualAgentRun" | "hasPendingQueuedTurn">,
 ): boolean {
   if (thread.virtualAgentRun?.status === "running") {
+    return true;
+  }
+  if (thread.hasPendingQueuedTurn) {
     return true;
   }
   return thread.session?.status === "running" && thread.session.activeTurnId != null;
@@ -406,7 +409,12 @@ export type SidebarV2Status = "approval" | "input" | "working" | "failed" | "rea
 
 type SidebarV2StatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "latestTurn" | "session" | "virtualAgentRun"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "hasPendingQueuedTurn"
+  | "latestTurn"
+  | "session"
+  | "virtualAgentRun"
 > & {
   readonly hasPendingTurn?: boolean;
 };
@@ -417,8 +425,11 @@ export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2S
   // Upstream reads a provider-session phase this fork does not carry, so
   // "working" reuses the same predicate v1's status pill does — including the
   // pre-adoption `connecting` phase, which is work the user is waiting on.
+  // `hasPendingQueuedTurn` covers the handoff gap after turn A completes and
+  // before the continuation turn is adopted (shell-projected, not detail-only).
   if (
     thread.hasPendingTurn ||
+    thread.hasPendingQueuedTurn ||
     thread.virtualAgentRun?.status === "running" ||
     isThreadActivelyWorking(thread.latestTurn, thread.session) ||
     thread.session?.status === "connecting"

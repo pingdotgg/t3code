@@ -194,6 +194,7 @@ export interface SidebarThreadSummary {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  hasPendingQueuedTurn: boolean;
   backgroundAgentRuns?: readonly OrchestrationBackgroundAgentRunShell[];
   virtualAgentRun?: {
     parentThreadId: ThreadId;

@@ -221,6 +221,17 @@ function isTerminalSessionActivity(session: SessionActivityState | null): boolea
   );
 }
 
+/**
+ * Non-failed queued turns mean the thread still has work to do — including the
+ * gap between a workspace-handoff turn completing and its continuation starting.
+ * Prefer the shell-projected `hasPendingQueuedTurn` flag for sidebar/notify paths.
+ */
+export function hasActionableQueuedTurn(
+  queuedTurns: readonly { readonly failedAt: string | null }[] | null | undefined,
+): boolean {
+  return (queuedTurns ?? []).some((queuedTurn) => queuedTurn.failedAt === null);
+}
+
 export function isThreadActivelyWorking(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,

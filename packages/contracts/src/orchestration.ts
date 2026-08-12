@@ -514,6 +514,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  // True while a non-failed queued turn remains (handoff continuation or user
+  // follow-up). Defaults false so older snapshots/clients decode cleanly.
+  hasPendingQueuedTurn: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   backgroundAgentRuns: Schema.optionalKey(Schema.Array(OrchestrationBackgroundAgentRunShell)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;

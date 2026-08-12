@@ -12,6 +12,7 @@ import { newCommandId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import {
   selectProjectByRef,
+  selectSidebarThreadSummaryByRef,
   selectThreadByRef,
   selectThreadsForEnvironment,
   useStore,
@@ -65,6 +66,10 @@ export function useThreadActions() {
       if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
         throw new Error("Cannot archive a running thread.");
       }
+      const summary = selectSidebarThreadSummaryByRef(useStore.getState(), threadRef);
+      if (summary?.hasPendingQueuedTurn) {
+        throw new Error("Cannot archive a thread with a queued continuation.");
+      }
 
       const threadsBeforeArchive = selectThreadsForEnvironment(
         useStore.getState(),
@@ -104,10 +109,12 @@ export function useThreadActions() {
       const api = readEnvironmentApi(target.environmentId);
       const resolved = resolveThreadTarget(target);
       if (!api || !resolved) return;
+      const summary = selectSidebarThreadSummaryByRef(useStore.getState(), target);
       if (
         (resolved.thread.session?.status === "running" &&
           resolved.thread.session.activeTurnId != null) ||
-        resolved.thread.latestTurn?.state === "running"
+        resolved.thread.latestTurn?.state === "running" ||
+        summary?.hasPendingQueuedTurn
       ) {
         throw new Error("Cannot settle a thread with active work.");
       }

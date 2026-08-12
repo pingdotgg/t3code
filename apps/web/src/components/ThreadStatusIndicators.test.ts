@@ -42,6 +42,7 @@ function thread(id: string, input: Partial<SidebarThreadSummary> = {}): SidebarT
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    hasPendingQueuedTurn: false,
     ...input,
   };
 }

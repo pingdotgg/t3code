@@ -31,11 +31,14 @@ const baseThread = {
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   hasActionableProposedPlan: false,
+  hasPendingQueuedTurn: false,
 };
 
 describe("thread sidebar lifecycle", () => {
   it("does not settle active or queued work", () => {
     expect(canSettle({ ...baseThread, hasPendingApprovals: true }, { now })).toBe(false);
+    expect(canSettle({ ...baseThread, hasPendingQueuedTurn: true }, { now })).toBe(false);
+    expect(canSnooze({ ...baseThread, hasPendingQueuedTurn: true }, { now })).toBe(false);
     expect(
       hasQueuedTurnStart(
         { ...baseThread, latestUserMessageAt: "2026-07-30T00:01:00.000Z" },

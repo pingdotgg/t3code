@@ -105,6 +105,7 @@ type ThreadStatusInput = Pick<
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "hasPendingQueuedTurn"
   | "interactionMode"
   | "latestTurn"
   | "session"
@@ -432,6 +433,7 @@ export function resolveThreadStatusPill(input: {
 
   if (
     input.hasPendingTurn ||
+    thread.hasPendingQueuedTurn ||
     thread.virtualAgentRun?.status === "running" ||
     isThreadActivelyWorking(thread.latestTurn, thread.session)
   ) {

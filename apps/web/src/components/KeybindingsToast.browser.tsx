@@ -229,6 +229,7 @@ function toShellSnapshot(snapshot: OrchestrationReadModel) {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      hasPendingQueuedTurn: false,
     })),
     updatedAt: snapshot.updatedAt,
   };

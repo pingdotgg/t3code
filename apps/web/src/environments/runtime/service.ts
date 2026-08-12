@@ -239,7 +239,8 @@ function isNonIdleThreadDetailSubscription(entry: ThreadDetailSubscriptionEntry)
     if (
       sidebarThread.hasPendingApprovals ||
       sidebarThread.hasPendingUserInput ||
-      sidebarThread.hasActionableProposedPlan
+      sidebarThread.hasActionableProposedPlan ||
+      sidebarThread.hasPendingQueuedTurn
     ) {
       return true;
     }

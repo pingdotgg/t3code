@@ -20,6 +20,7 @@ import {
   findLatestProposedPlan,
   findSidebarProposedPlan,
   hasActionableProposedPlan,
+  hasActionableQueuedTurn,
   hasToolActivityForTurn,
   isThreadActivelyWorking,
   isLatestTurnSettled,
@@ -1824,6 +1825,27 @@ describe("hasToolActivityForTurn", () => {
 
     expect(hasToolActivityForTurn(activities, TurnId.make("turn-1"))).toBe(true);
     expect(hasToolActivityForTurn(activities, TurnId.make("turn-2"))).toBe(false);
+  });
+});
+
+describe("hasActionableQueuedTurn", () => {
+  it("is true only for non-failed queued turns", () => {
+    expect(hasActionableQueuedTurn(undefined)).toBe(false);
+    expect(hasActionableQueuedTurn([])).toBe(false);
+    expect(
+      hasActionableQueuedTurn([
+        {
+          failedAt: "2026-02-27T21:10:00.000Z",
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      hasActionableQueuedTurn([
+        {
+          failedAt: null,
+        },
+      ]),
+    ).toBe(true);
   });
 });
 

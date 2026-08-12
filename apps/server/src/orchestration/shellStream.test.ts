@@ -48,6 +48,7 @@ describe("filterArchivedShellSnapshot", () => {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      hasPendingQueuedTurn: false,
     });
     const snapshot = {
       snapshotSequence: 3,

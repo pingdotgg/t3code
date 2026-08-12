@@ -86,6 +86,7 @@ function makeThreadShellSnapshot(params: {
   readonly hasPendingApprovals?: boolean;
   readonly hasPendingUserInput?: boolean;
   readonly hasActionableProposedPlan?: boolean;
+  readonly hasPendingQueuedTurn?: boolean;
 }): OrchestrationShellSnapshot {
   const projectId = ProjectId.make("project-1");
   const turnId = TurnId.make("turn-1");
@@ -137,6 +138,7 @@ function makeThreadShellSnapshot(params: {
         hasPendingApprovals: params.hasPendingApprovals ?? false,
         hasPendingUserInput: params.hasPendingUserInput ?? false,
         hasActionableProposedPlan: params.hasActionableProposedPlan ?? false,
+        hasPendingQueuedTurn: params.hasPendingQueuedTurn ?? false,
       },
     ],
   };

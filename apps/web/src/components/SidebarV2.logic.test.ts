@@ -51,6 +51,7 @@ function thread(overrides: Partial<SidebarThreadSummary> = {}): SidebarThreadSum
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    hasPendingQueuedTurn: false,
     ...overrides,
   };
 }
@@ -520,6 +521,14 @@ describe("resolveSidebarV2Status", () => {
     expect(resolveSidebarV2Status(thread({ session: session({ status: "connecting" }) }))).toBe(
       "working",
     );
+  });
+
+  it("reports a queued continuation as working across the handoff boundary", () => {
+    expect(resolveSidebarV2Status(thread({ hasPendingQueuedTurn: true }))).toBe("working");
+  });
+
+  it("blocks archive while a queued continuation is pending", () => {
+    expect(isSidebarV2ArchiveBlockedThread(thread({ hasPendingQueuedTurn: true }))).toBe(true);
   });
 
   it("reports an errored session as failed and everything else as ready", () => {

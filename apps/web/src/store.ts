@@ -404,6 +404,7 @@ function mapThreadShell(
     hasPendingApprovals: thread.hasPendingApprovals,
     hasPendingUserInput: thread.hasPendingUserInput,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
+    hasPendingQueuedTurn: thread.hasPendingQueuedTurn,
     backgroundAgentRuns: thread.backgroundAgentRuns ?? [],
   };
   return {
@@ -545,6 +546,7 @@ function sidebarThreadSummariesEqual(
     left.hasPendingApprovals === right.hasPendingApprovals &&
     left.hasPendingUserInput === right.hasPendingUserInput &&
     left.hasActionableProposedPlan === right.hasActionableProposedPlan &&
+    left.hasPendingQueuedTurn === right.hasPendingQueuedTurn &&
     backgroundAgentRunsEqual(left.backgroundAgentRuns, right.backgroundAgentRuns)
   );
 }
