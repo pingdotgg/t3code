@@ -67,7 +67,7 @@ describe("parseGrokAcpModelMeta", () => {
     expect(meta.reasoningEffort).toBe("high");
     expect(meta.totalContextTokens).toBe(500000);
     expect(meta.reasoningEfforts.map((choice) => choice.id)).toEqual(["xhigh", "high", "medium"]);
-    expect(grokReasoningEffortCapabilities(meta.reasoningEfforts).optionDescriptors[0]?.id).toBe(
+    expect(grokReasoningEffortCapabilities(meta.reasoningEfforts).optionDescriptors?.[0]?.id).toBe(
       GROK_REASONING_EFFORT_OPTION_ID,
     );
   });

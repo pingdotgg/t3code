@@ -341,8 +341,8 @@ export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
   readonly requestedModelId: string | undefined;
-  readonly currentReasoningEffort?: string;
-  readonly requestedReasoningEffort?: string;
+  readonly currentReasoningEffort?: string | undefined;
+  readonly requestedReasoningEffort?: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
 }): Effect.Effect<GrokAcpSelection, E> {
   const nextModelId = input.requestedModelId ?? input.currentModelId;
