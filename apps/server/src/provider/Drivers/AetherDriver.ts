@@ -160,7 +160,9 @@ export const AetherDriver: ProviderDriver<AetherSettings, AetherDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Aether snapshot: ${cause.message ?? String(cause)}`,
+              // Stable structural phrase; the dynamic cause is preserved below, not folded
+              // into the caller-visible message (Effect service conventions).
+              detail: "Failed to build the Aether provider snapshot.",
               cause,
             }),
         ),
