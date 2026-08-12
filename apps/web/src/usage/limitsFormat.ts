@@ -16,6 +16,12 @@ const DATE_TIME = new Intl.DateTimeFormat("en-US", {
   hour: "2-digit",
   minute: "2-digit",
 });
+const SIDEBAR_DATE_TIME = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 /**
  * When a window resets: `16:00` inside 24 hours, `8/12 16:00` beyond.
@@ -29,6 +35,15 @@ export function formatResetAt(resetsAt: string | null, nowMs: number): string | 
   if (at <= nowMs) return "now";
   if (at - nowMs < 24 * 60 * 60 * 1000) return TIME.format(at);
   return DATE_TIME.format(at).replace(", ", " ");
+}
+
+/** Absolute reset time for the compact gauge tooltip, or `Resets now` once due. */
+export function formatSidebarResetAt(resetsAt: string | null, nowMs: number): string {
+  if (resetsAt === null) return "Reset time unavailable";
+  const at = Date.parse(resetsAt);
+  if (Number.isNaN(at)) return "Reset time unavailable";
+  if (at <= nowMs) return "Resets now";
+  return `Resets ${SIDEBAR_DATE_TIME.format(at)}`;
 }
 
 /** Age of a snapshot: `just now`, `5m ago`, `6h ago`, `3d ago`. */

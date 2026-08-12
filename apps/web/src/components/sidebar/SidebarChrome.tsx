@@ -20,7 +20,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "../ui/sidebar";
-import { AccountLimitsHoverCard } from "../usage/AccountLimits";
+import { AccountLimitsHoverCard, AccountLimitsSidebarGauges } from "../usage/AccountLimits";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
@@ -132,13 +132,9 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarUpdatePill />
       <SidebarMenu>
         <SidebarMenuItem>
-          {/* `hidden: false` overrides the sidebar default of only showing
-              menu tooltips while collapsed: availability is worth a hover in
-              either state. */}
           <SidebarMenuButton
             onClick={handleUsageClick}
             tooltip={{
-              hidden: false,
               side: "right",
               align: "end",
               sideOffset: 8,
@@ -147,6 +143,7 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
           >
             <ChartNoAxesColumnIcon />
             <span>Usage</span>
+            <AccountLimitsSidebarGauges />
           </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>
