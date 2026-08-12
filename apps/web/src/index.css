@@ -448,8 +448,22 @@ code {
 }
 
 /* Scrollbar styling */
+* {
+  scrollbar-color: transparent transparent;
+}
+
+.is-scrolling {
+  scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
+}
+
+.dark.is-scrolling,
+.dark .is-scrolling {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -457,19 +471,27 @@ code {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+  background: transparent;
   border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+.is-scrolling::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.25);
 }
 
-.dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+.is-scrolling::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
+.dark ::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.dark .is-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.dark .is-scrolling::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.18);
 }
 
@@ -490,11 +512,18 @@ code {
 
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar > .slider {
   border-radius: 3px;
+  opacity: 0;
+  transition: opacity 150ms ease-in-out;
 }
 
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
   width: 6px !important;
   left: 0 !important;
+}
+
+.thread-terminal-drawer .xterm .xterm-scrollable-element.is-scrolling > .scrollbar > .slider,
+.thread-terminal-drawer .xterm .xterm-scrollable-element:has(.is-scrolling) > .scrollbar > .slider {
+  opacity: 1;
 }
 
 /* Reasoning select -- clickable label surface */
@@ -674,7 +703,7 @@ label:has(> select#reasoning-effort) select {
 
 .markdown-file-link-tooltip-scroll {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+  scrollbar-color: transparent transparent;
 }
 
 .markdown-file-link-tooltip-scroll::-webkit-scrollbar {
@@ -687,6 +716,14 @@ label:has(> select#reasoning-effort) select {
 
 .markdown-file-link-tooltip-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
+  background: transparent;
+}
+
+.markdown-file-link-tooltip-scroll.is-scrolling {
+  scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+}
+
+.markdown-file-link-tooltip-scroll.is-scrolling::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--border) 78%, transparent);
 }
 
@@ -929,20 +966,28 @@ label:has(> select#reasoning-effort) select {
 }
 
 .model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.1);
+  background: transparent;
   border-radius: 2px;
 }
 
-.model-picker-list::-webkit-scrollbar-thumb:hover {
+.model-picker-list.is-scrolling::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.2);
 }
 
-.dark .model-picker-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+.model-picker-list.is-scrolling::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
 }
 
-.dark .model-picker-list::-webkit-scrollbar-thumb:hover {
+.dark .model-picker-list::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.dark .model-picker-list.is-scrolling::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
+}
+
+.dark .model-picker-list.is-scrolling::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 /* Chat find — CSS Custom Highlight API */

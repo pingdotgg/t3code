@@ -17,6 +17,30 @@ const history = isElectron ? createHashHistory() : createBrowserHistory();
 
 const router = getRouter(history);
 
+const scrollingTimers = new WeakMap<HTMLElement, number>();
+
+document.addEventListener(
+  "scroll",
+  (event) => {
+    const scrollingElement =
+      event.target instanceof HTMLElement ? event.target : document.documentElement;
+    const existingTimer = scrollingTimers.get(scrollingElement);
+    if (existingTimer !== undefined) {
+      window.clearTimeout(existingTimer);
+    }
+
+    scrollingElement.classList.add("is-scrolling");
+    scrollingTimers.set(
+      scrollingElement,
+      window.setTimeout(() => {
+        scrollingElement.classList.remove("is-scrolling");
+        scrollingTimers.delete(scrollingElement);
+      }, 500),
+    );
+  },
+  { capture: true, passive: true },
+);
+
 if (isElectron) {
   syncDocumentWindowControlsOverlayClass();
   syncDocumentAppZoomVariable();
