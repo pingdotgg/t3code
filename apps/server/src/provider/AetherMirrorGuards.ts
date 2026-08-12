@@ -32,6 +32,10 @@ export interface AetherMirrorOwnership {
     writes: ReadonlyArray<string>,
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<A, E, R>;
+  /** For a check that consults every claim regardless of where it lives. */
+  readonly whileAllClaimsFrozen: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly ownsCwd: (cwd: string) => Effect.Effect<boolean>;
   readonly ownsTargetPath: (cwd: string, target: string) => Effect.Effect<boolean>;
   readonly ownsPathWithin: (cwd: string, target: string) => Effect.Effect<boolean>;
@@ -69,9 +73,12 @@ export const guardAetherRemoveWorktree = <A, E, R>(
   input: { readonly cwd: string; readonly path: string },
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | GitCommandError, R> =>
-  registry.whileClaimsFrozen(
-    // Both: the repository the command runs in AND the worktree it deletes.
-    [input.cwd, input.path],
+  // ALL claims, not just the paths this request names: `ownsTargetPath` also
+  // refuses on a bare basename match, because `git worktree remove <name>`
+  // resolves a bare component to a worktree the request never spells out. A
+  // path-scoped freeze would leave a same-named mirror registerable elsewhere
+  // between the check and the delete, and git would then remove it.
+  registry.whileAllClaimsFrozen(
     Effect.gen(function* () {
       const ownsCwd = yield* registry.ownsCwd(input.cwd);
       const ownsTarget = yield* registry.ownsTargetPath(input.cwd, input.path);

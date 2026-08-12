@@ -108,6 +108,25 @@ export class AetherMirrorRegistry extends Context.Service<
       writes: ReadonlyArray<string>,
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E, R>;
+    /**
+     * Run `effect` while NO claim anywhere can appear or vanish. Required by
+     * the one guard whose answer does not depend on a path: `ownsTargetPath`
+     * also refuses on a bare BASENAME match against every active claim,
+     * because `git worktree remove <name>` resolves a bare component to a
+     * worktree whose real location the request never names. Freezing only the
+     * paths that request mentions would leave a same-named mirror registerable
+     * elsewhere on disk between the check and the delete — and git would then
+     * remove the live mirror it just claimed.
+     *
+     * Deliberately NOT used by the path-scoped guards: this blocks every
+     * registration for its duration, so putting a slow network mutation (a
+     * stacked action's push, a pull) under it would recreate the process-wide
+     * stall the path scoping exists to prevent. Registrations are short, so a
+     * removal waits only on them.
+     */
+    readonly whileAllClaimsFrozen: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     /** Does any active Aether thread own this cwd? */
     readonly ownsCwd: (cwd: string) => Effect.Effect<boolean>;
     /**
@@ -155,6 +174,12 @@ export const make = Effect.sync(() => {
   // So a claim conflicts with exactly the mutations writing at or under it,
   // and unrelated checkouts share no key. `makeUnsafe` so handing a lock out
   // cannot yield between the map's get and set.
+  // Guards every claim REGARDLESS of location, for the checks that consult
+  // the whole table rather than a path. Registrations take it as readers, so
+  // they never block each other; only a location-independent guard takes it
+  // exclusively. Acquired OUTSIDE any path lock, which is what keeps the two
+  // lock families from ever forming a cycle.
+  const claimSentinel = Semaphore.makeUnsafe(CLAIM_LOCK_PERMITS);
   const pathLocks = new Map<string, Semaphore.Semaphore>();
   const lockFor = (path: string): Semaphore.Semaphore => {
     const existing = pathLocks.get(path);
@@ -178,12 +203,21 @@ export const make = Effect.sync(() => {
       return yield* keys.reduce((guarded, key) => lockFor(key).withPermits(1)(guarded), effect);
     });
 
+  const whileAllClaimsFrozen = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    claimSentinel.withPermits(CLAIM_LOCK_PERMITS)(effect);
+
+  // Sentinel FIRST, then the path lock: every caller that takes both acquires
+  // them in this order, so a registration blocked on a path lock is never
+  // holding one a location-independent guard needs.
   const withClaimsExclusive = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
-    canonicalize(cwd).pipe(
-      Effect.flatMap((path) => lockFor(path).withPermits(CLAIM_LOCK_PERMITS)(effect)),
+    claimSentinel.withPermits(1)(
+      canonicalize(cwd).pipe(
+        Effect.flatMap((path) => lockFor(path).withPermits(CLAIM_LOCK_PERMITS)(effect)),
+      ),
     );
   return AetherMirrorRegistry.of({
     whileClaimsFrozen,
+    whileAllClaimsFrozen,
     register: (cwd, key) =>
       withClaimsExclusive(
         cwd,

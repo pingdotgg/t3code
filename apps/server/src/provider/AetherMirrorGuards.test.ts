@@ -305,6 +305,50 @@ describe("AetherMirrorGuards", () => {
     }),
   );
 
+  it.effect("a removeWorktree blocks a same-basename registration ANYWHERE on disk", () =>
+    // `ownsTargetPath` also refuses on a bare basename match, because
+    // `git worktree remove <name>` resolves a bare component to a worktree the
+    // request never spells out. Freezing only the paths the request names
+    // would leave that worktree registerable elsewhere between the check and
+    // the delete — and git would then remove the mirror it had just claimed.
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const registry = yield* make;
+      const removalStarted = yield* Deferred.make<void>();
+      const releaseRemoval = yield* Deferred.make<void>();
+
+      const guarded = yield* Effect.forkChild(
+        guardAetherRemoveWorktree(
+          registry,
+          { cwd: "/repos/projA", path: "feature-x" },
+          Effect.gen(function* () {
+            yield* Deferred.succeed(removalStarted, undefined);
+            yield* Deferred.await(releaseRemoval);
+            order.push("removed");
+            return "removed";
+          }),
+        ),
+      );
+      yield* Deferred.await(removalStarted);
+
+      // The worktree git would actually delete lives nowhere near the request:
+      // only the BASENAME ties them together.
+      const registering = yield* Effect.forkChild(
+        registry
+          .register("/var/worktrees/projA/feature-x", "aether:thread-1")
+          .pipe(Effect.tap(() => Effect.sync(() => order.push("register")))),
+      );
+      // @effect-diagnostics-next-line globalTimers:off
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 100)));
+      expect(order).toEqual([]);
+
+      yield* Deferred.succeed(releaseRemoval, undefined);
+      yield* Fiber.join(guarded);
+      yield* Fiber.join(registering);
+      expect(order).toEqual(["removed", "register"]);
+    }),
+  );
+
   it("aetherMirrorWriteFileError carries the refusal as its message", () => {
     const error = aetherMirrorWriteFileError({ cwd: "/repos/mirror", relativePath: "src/a.ts" });
     expect(error._tag).toBe("ProjectWriteFileError");
