@@ -118,6 +118,12 @@ const NON_REPOSITORY_REMOTE_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitRemot
  * A `GIT_CONFIG_COUNT` that is not a count is left alone. Git rejects a bogus
  * value itself, and appending to it would overwrite the caller's first entry and
  * turn that loud failure into a silently different config.
+ *
+ * The existing count is found case-insensitively, and its name reused. Windows
+ * environment variables ignore case, but spreading `process.env` into a plain
+ * object keeps whatever casing the host used, so adding `GIT_CONFIG_COUNT`
+ * beside an inherited `git_config_count` would leave two entries that differ
+ * only in case. Spawn keeps one of those, which would drop the caller's entries.
  */
 export const windowsLongPathConfigEnv = (
   platform: NodeJS.Platform,
@@ -126,13 +132,15 @@ export const windowsLongPathConfigEnv = (
   if (platform !== "win32") {
     return {};
   }
-  const inherited = env.GIT_CONFIG_COUNT?.trim();
+  const countKey =
+    Object.keys(env).find((key) => key.toUpperCase() === "GIT_CONFIG_COUNT") ?? "GIT_CONFIG_COUNT";
+  const inherited = env[countKey]?.trim();
   if (inherited !== undefined && inherited !== "" && !/^\d+$/.test(inherited)) {
     return {};
   }
   const count = inherited === undefined || inherited === "" ? 0 : Number.parseInt(inherited, 10);
   return {
-    GIT_CONFIG_COUNT: String(count + 1),
+    [countKey]: String(count + 1),
     [`GIT_CONFIG_KEY_${count}`]: "core.longpaths",
     [`GIT_CONFIG_VALUE_${count}`]: "true",
   };

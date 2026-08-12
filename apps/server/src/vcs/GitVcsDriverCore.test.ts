@@ -1774,6 +1774,26 @@ describe("windowsLongPathConfigEnv", () => {
     assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { GIT_CONFIG_COUNT: "0" }), expected);
   });
 
+  it("reuses an inherited count whose name differs only in case", () => {
+    const result = windowsLongPathConfigEnv("win32", { git_config_count: "2" });
+
+    assert.deepStrictEqual(result, {
+      git_config_count: "3",
+      GIT_CONFIG_KEY_2: "core.longpaths",
+      GIT_CONFIG_VALUE_2: "true",
+    });
+    // Two entries differing only in case collapse on spawn, and the survivor
+    // would decide whether the caller's config or this one is honoured.
+    assert.equal(
+      Object.keys(result).filter((key) => key.toUpperCase() === "GIT_CONFIG_COUNT").length,
+      1,
+    );
+  });
+
+  it("leaves a malformed count alone regardless of its casing", () => {
+    assert.deepStrictEqual(windowsLongPathConfigEnv("win32", { git_config_count: "nope" }), {});
+  });
+
   it("leaves a malformed count alone so git still reports it", () => {
     for (const malformed of ["not-a-number", "2x", "-1", "1.5"]) {
       assert.deepStrictEqual(
