@@ -269,6 +269,11 @@ type StyledDiffCodeViewProps<LAnnotation> = (
 ) & {
   readonly options?: StyledDiffCodeViewOptions<LAnnotation>;
   readonly viewerRef?: Ref<CodeViewHandle<LAnnotation>>;
+  /**
+   * Appended to the shared stylesheet inside the viewer's shadow root, for a surface that has
+   * to restyle chrome the viewer owns — such as replacing its per-file line counts.
+   */
+  readonly unsafeCSSExtra?: string;
 };
 
 /** The shared web CodeView surface: app styling and virtualized geometry stay paired here. */
@@ -276,6 +281,7 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   options,
   viewerRef,
   className,
+  unsafeCSSExtra,
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
   return (
@@ -291,7 +297,9 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
       }
       options={{
         ...options,
-        unsafeCSS: DIFF_VIEW_UNSAFE_CSS,
+        unsafeCSS: unsafeCSSExtra
+          ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
+          : DIFF_VIEW_UNSAFE_CSS,
         itemMetrics: {
           diffHeaderHeight: 32,
           hunkSeparatorHeight: 24,

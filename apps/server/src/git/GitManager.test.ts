@@ -9,8 +9,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
@@ -1383,6 +1385,58 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
       expect(status.refName).toBe("feature/status-no-gh");
       expect(status.pr).toBeNull();
+    }),
+  );
+
+  it.effect("status logs actionable provider detail without exposing the upstream cause", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-rate-limited"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-rate-limited"]);
+
+      const upstreamCause = "GraphQL rate limit for user ID 51714798 and token secret-value";
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          failWith: new GitHubCli.GitHubCliRateLimitError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error(upstreamCause),
+          }),
+        },
+      });
+      const logs: Array<{ message: string; annotations: Record<string, unknown> }> = [];
+      const logger = Logger.make<unknown, void>(({ fiber, message }) => {
+        logs.push({
+          message: String(message),
+          annotations: { ...fiber.getRef(References.CurrentLogAnnotations) },
+        });
+      });
+
+      const status = yield* manager
+        .status({ cwd: repoDir })
+        .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+
+      expect(status.pr).toBeNull();
+      const warning = logs.find((entry) => entry.message.includes("PR lookup failed"));
+      expect(warning?.annotations).toMatchObject({
+        operation: "lookupStatusPr",
+        branch: "feature/status-rate-limited",
+        errorTag: "SourceControlProviderError",
+        provider: "github",
+        providerOperation: "listChangeRequests",
+        providerCommand: "gh",
+        errorDetail:
+          "GitHub API rate limit exceeded. Run `gh api rate_limit` to inspect the quota and reset time.",
+      });
+      const loggedText = [
+        warning?.message ?? "",
+        ...Object.values(warning?.annotations ?? {}).map(String),
+      ].join("\n");
+      expect(loggedText).not.toContain(upstreamCause);
+      expect(loggedText).not.toContain("secret-value");
     }),
   );
 

@@ -1,5 +1,3 @@
-import type { PullRequestListEntry } from "@t3tools/contracts";
-
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
@@ -7,6 +5,9 @@ import { getSourceControlPresentationForKind } from "~/sourceControlPresentation
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
+import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import {
   PullRequestActorLabel,
   PullRequestDiffStat,
@@ -19,20 +20,23 @@ function PullRequestRowImpl({
   selected,
   showProjectTitle,
   showProvider,
+  environmentLabel,
   matchedElsewhere,
   onSelect,
 }: {
-  entry: PullRequestListEntry;
+  entry: EnvironmentPullRequestEntry;
   selected: boolean;
   showProjectTitle: boolean;
   /** Only when the list spans more than one host, where the repository alone is ambiguous. */
   showProvider: boolean;
+  /** Names the server this row was read from, where the list spans more than one. */
+  environmentLabel?: string;
   /**
    * A search found this, but in something the row does not show — a description, a comment, a
    * commit message. Saying so is the difference between a result and an apparently random row.
    */
   matchedElsewhere?: boolean;
-  onSelect: (entry: PullRequestListEntry) => void;
+  onSelect: (entry: EnvironmentPullRequestEntry) => void;
 }) {
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
   return (
@@ -67,13 +71,52 @@ function PullRequestRowImpl({
                 <TooltipPopup>{providerName}</TooltipPopup>
               </Tooltip>
             ) : null}
-            #{entry.number}
+            {/* The number carries the link, here as much as on the detail: a right-click on it
+                copies the pull request's own address rather than opening the editing menu. */}
+            <span
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void showPullRequestLinkContextMenu({
+                  url: entry.url,
+                  openLabel: openOnHostLabel(entry.provider),
+                  position: { x: event.clientX, y: event.clientY },
+                });
+              }}
+            >
+              #{entry.number}
+            </span>
           </span>
           {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
+          {environmentLabel ? (
+            <span className="max-w-32 shrink-0 truncate">{environmentLabel}</span>
+          ) : null}
           <PullRequestActorLabel actor={entry.author} className="max-w-40 shrink-0" />
-          <span className="truncate" title={`${entry.headBranch} to ${entry.baseBranch}`}>
-            {entry.headBranch}
-          </span>
+          {/* Only a verdict somebody has actually given: "review required" is the absence of
+              one, and saying so on every unreviewed row would say nothing. */}
+          {entry.reviewDecision === "approved" || entry.reviewDecision === "changes-requested" ? (
+            <span
+              className={cn(
+                "shrink-0",
+                entry.reviewDecision === "approved"
+                  ? "text-emerald-600/90 dark:text-emerald-400/80"
+                  : "text-amber-600/90 dark:text-amber-400/80",
+              )}
+            >
+              {entry.reviewDecision === "approved" ? "Approved" : "Changes requested"}
+            </span>
+          ) : null}
+          {entry.checksState === undefined ? null : (
+            <PullRequestChecksPopover
+              checksState={entry.checksState}
+              environmentId={entry.environmentId}
+              reference={{
+                projectId: entry.projectId,
+                repository: entry.repository,
+                number: entry.number,
+              }}
+            />
+          )}
           {matchedElsewhere ? (
             <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-[10px]">
               matched in the description

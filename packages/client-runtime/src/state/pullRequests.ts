@@ -102,9 +102,21 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
+    update: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:update",
+      tag: WS_METHODS.pullRequestsUpdate,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
     comment: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:comment",
       tag: WS_METHODS.pullRequestsComment,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
+    updateComment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:update-comment",
+      tag: WS_METHODS.pullRequestsUpdateComment,
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
@@ -140,6 +152,12 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     setThreadResolution: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:set-thread-resolution",
       tag: WS_METHODS.pullRequestsSetThreadResolution,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
+    setReaction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-reaction",
+      tag: WS_METHODS.pullRequestsSetReaction,
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),

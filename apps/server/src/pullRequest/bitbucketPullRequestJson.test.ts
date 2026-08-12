@@ -315,6 +315,22 @@ describe("decodeStatusesJson", () => {
 
     expect(decoded.items[0]?.status).toBe(expected);
   });
+
+  it("keeps two statuses that share a display name but have different keys", () => {
+    const decoded = expectSuccess(
+      decodeStatusesJson(
+        page([
+          { key: "build", name: "Pipeline", state: "SUCCESSFUL" },
+          { key: "deploy", name: "Pipeline", state: "FAILED" },
+        ]),
+      ),
+    );
+
+    expect(decoded.items.map((check) => [check.name, check.status])).toEqual([
+      ["build / Pipeline", "success"],
+      ["deploy / Pipeline", "failure"],
+    ]);
+  });
 });
 
 describe("decodeDiffstatJson", () => {

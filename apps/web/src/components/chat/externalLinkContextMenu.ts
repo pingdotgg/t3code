@@ -20,9 +20,25 @@ const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [
   { id: "copy-link", label: "Copy Link" },
 ] as const satisfies readonly ContextMenuItem<ExternalLinkContextMenuAction>[];
 
+/**
+ * The integrated browser is not always there to offer — it needs a thread to open beside and a
+ * runtime that can show it — but the other two answers hold wherever a link does. Dropping the
+ * whole menu with the one item that cannot be honoured is what left a right-click on a link
+ * showing the platform's cut-and-paste menu instead of a way to copy the link.
+ */
+export function externalLinkContextMenuItems(options: {
+  readonly canOpenInPreview: boolean;
+}): readonly ContextMenuItem<ExternalLinkContextMenuAction>[] {
+  return options.canOpenInPreview
+    ? EXTERNAL_LINK_CONTEXT_MENU_ITEMS
+    : EXTERNAL_LINK_CONTEXT_MENU_ITEMS.filter((item) => item.id !== "open-in-preview");
+}
+
 interface ShowExternalLinkContextMenuOptions {
   readonly href: string;
   readonly position: { readonly x: number; readonly y: number };
+  /** Absent means yes, which is what every caller before the browser could be missing meant. */
+  readonly canOpenInPreview?: boolean;
   readonly showContextMenu: (
     items: readonly ContextMenuItem<ExternalLinkContextMenuAction>[],
     position: { readonly x: number; readonly y: number },
@@ -50,6 +66,7 @@ export function resolveExternalWebLinkHost(href: string | undefined): string | n
 export async function showExternalLinkContextMenu({
   href,
   position,
+  canOpenInPreview = true,
   showContextMenu,
   openInPreview,
   openExternal,
@@ -58,7 +75,7 @@ export async function showExternalLinkContextMenu({
 }: ShowExternalLinkContextMenuOptions): Promise<void> {
   let action: ExternalLinkContextMenuAction | null;
   try {
-    action = await showContextMenu(EXTERNAL_LINK_CONTEXT_MENU_ITEMS, position);
+    action = await showContextMenu(externalLinkContextMenuItems({ canOpenInPreview }), position);
   } catch (cause) {
     reportFailure("show-link-context-menu", cause);
     return;

@@ -44,6 +44,14 @@ T3 Code works with the platforms your team already uses:
 - Open the review directly in your browser with one click
 - Check out a teammate's branch to review code locally
 
+**Fix what you wrote, in place**
+
+- Rewrite a pull request's title and description from the review itself, in Markdown, with a
+  preview before you save
+- Rewrite your own comments the same way, wherever they are shown
+- Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
+  comments stay read-only here, as they already were
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:

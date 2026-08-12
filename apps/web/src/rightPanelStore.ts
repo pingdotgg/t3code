@@ -52,6 +52,12 @@ export type RightPanelSurface =
        */
       id: `pull-request:${string}`;
       kind: "pull-request";
+      /**
+       * Which server the change request was read from. The list spans every connected one, so
+       * two of them can hold the same project id; a panel beside a thread leaves this out and
+       * takes the environment from its own ref.
+       */
+      environmentId?: string;
       projectId: string;
       repository: string;
       number: number;
@@ -86,7 +92,7 @@ interface RightPanelStoreState {
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
-    target: { projectId: string; repository: string; number: number },
+    target: { environmentId?: string; projectId: string; repository: string; number: number },
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
@@ -161,14 +167,20 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
 
 export function pullRequestSurfaceId(target: {
+  environmentId?: string;
   projectId: string;
   repository: string;
   number: number;
 }): PullRequestSurface["id"] {
-  return `pull-request:${encodeURIComponent(target.projectId)}:${encodeURIComponent(target.repository)}:${target.number}`;
+  // The environment leads the id where there is one, so the same change request read from two
+  // servers is two tabs rather than one tab that changes its mind about which server it is on.
+  const scope =
+    target.environmentId === undefined ? "" : `${encodeURIComponent(target.environmentId)}:`;
+  return `pull-request:${scope}${encodeURIComponent(target.projectId)}:${encodeURIComponent(target.repository)}:${target.number}`;
 }
 
 export function pullRequestSurface(target: {
+  environmentId?: string;
   projectId: string;
   repository: string;
   number: number;
@@ -176,10 +188,28 @@ export function pullRequestSurface(target: {
   return {
     id: pullRequestSurfaceId(target),
     kind: "pull-request",
+    ...(target.environmentId === undefined ? {} : { environmentId: target.environmentId }),
     projectId: target.projectId,
     repository: target.repository,
     number: target.number,
   };
+}
+
+/**
+ * A pull-request tab's status map with one entry set. Keyed by the surface the panel is showing
+ * rather than by a key rebuilt from the status, so the tab is found again whether or not that
+ * surface was opened with an environment on it. Returns the same map when the tab's own fields
+ * have not changed, so a caller can skip a re-render.
+ */
+export function updatePullRequestTabStatus<Status extends { state: unknown; isDraft: boolean }>(
+  statuses: Readonly<Record<string, Status>>,
+  surfaceId: string,
+  status: Status,
+): Readonly<Record<string, Status>> {
+  return statuses[surfaceId]?.state === status.state &&
+    statuses[surfaceId]?.isDraft === status.isDraft
+    ? statuses
+    : { ...statuses, [surfaceId]: status };
 }
 
 const upsertSurface = (
@@ -260,7 +290,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       ) {
                         return [];
                       }
-                      return [pullRequestSurface(surface)];
+                      const { environmentId, ...rest } = surface;
+                      // Anything else stored under that name is not an environment.
+                      return [
+                        pullRequestSurface({
+                          ...rest,
+                          ...(typeof environmentId === "string" ? { environmentId } : {}),
+                        }),
+                      ];
                     }
                     if (surface.kind !== "terminal") return [surface];
                     if (

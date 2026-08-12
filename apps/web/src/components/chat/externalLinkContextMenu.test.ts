@@ -41,6 +41,25 @@ describe("external chat link context menu", () => {
     expect(harness.copyLink).not.toHaveBeenCalled();
   });
 
+  it("still offers the link's own actions where the integrated browser cannot be opened", async () => {
+    const harness = createHarness(null);
+
+    await showExternalLinkContextMenu({
+      href: "https://github.com/pingdotgg/t3code/pull/6169",
+      canOpenInPreview: false,
+      position: { x: 4, y: 8 },
+      ...harness,
+    });
+
+    expect(harness.showContextMenu).toHaveBeenCalledWith(
+      [
+        { id: "open-external", label: "Open in system browser" },
+        { id: "copy-link", label: "Copy Link" },
+      ],
+      { x: 4, y: 8 },
+    );
+  });
+
   it("copies the exact destination without opening it", async () => {
     const harness = createHarness("copy-link");
     const href = "https://example.com/docs?topic=menus#copy";

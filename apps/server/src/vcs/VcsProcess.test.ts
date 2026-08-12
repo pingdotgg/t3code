@@ -140,6 +140,31 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("classifies API rate limits without retaining provider stderr", () =>
+    Effect.gen(function* () {
+      const providerStderr =
+        "GraphQL: API rate limit already exceeded for user ID 51714798 and token secret-value.";
+      const error = yield* run({
+        operation: "test.rate-limit",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(1)", providerStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        command: "node",
+        exitCode: 1,
+        detail: "API rate limit exceeded.",
+        failureKind: "rate-limited",
+        stderrLength: providerStderr.length,
+        stderrTruncated: false,
+      });
+      expect(error.message).not.toContain(providerStderr);
+      expect(error.message).not.toContain("secret-value");
+    }).pipe(provideLive),
+  );
+
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
     Effect.gen(function* () {
       const secretArgument = "--token=super-secret-token";
