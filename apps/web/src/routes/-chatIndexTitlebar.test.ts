@@ -6,15 +6,15 @@ import { describe, expect, it } from "vite-plus/test";
 describe("hosted static onboarding header", () => {
   it("uses the shared workspace topbar geometry", () => {
     const routeSource = NodeFS.readFileSync(new URL("./_chat.index.tsx", import.meta.url), "utf8");
-    const onboardingHeader = routeSource.slice(
-      routeSource.indexOf("function HostedStaticOnboardingState()"),
-      routeSource.indexOf(
-        '<Empty className="flex-1">',
-        routeSource.indexOf("function HostedStaticOnboardingState()"),
-      ),
-    );
+    const onboardingStart = routeSource.indexOf("function HostedStaticOnboardingState()");
+    const onboardingEnd = routeSource.indexOf('<Empty className="flex-1">', onboardingStart);
+
+    expect(onboardingStart).toBeGreaterThanOrEqual(0);
+    expect(onboardingEnd).toBeGreaterThan(onboardingStart);
+
+    const onboardingHeader = routeSource.slice(onboardingStart, onboardingEnd);
 
     expect(onboardingHeader).toContain("workspace-topbar");
-    expect(onboardingHeader).not.toMatch(/(?:^|:)py-/);
+    expect(onboardingHeader).not.toMatch(/(?:^|\s)(?:[\w-]+:)*py-/);
   });
 });
