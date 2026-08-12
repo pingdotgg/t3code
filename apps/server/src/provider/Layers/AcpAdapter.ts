@@ -812,7 +812,8 @@ export function makeAcpProviderAdapter<Settings>(
             Stream.mapEffect(acp.getEvents(), (event) =>
               Effect.gen(function* () {
                 switch (event._tag) {
-                  case "ModeChanged":
+                  case "EventStreamBarrier":
+                    yield* Deferred.succeed(event.acknowledge, undefined);
                     return;
                   case "AssistantItemStarted":
                     yield* offerRuntimeEvent(
