@@ -1,12 +1,19 @@
-import { SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChartNoAxesColumnIcon,
+  GitPullRequestIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { memo, useCallback } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { usePrimaryEnvironment } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
+  resolveSidebarStageFocusRingOffsetClass,
   SidebarStageBackdrop,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
@@ -20,8 +27,9 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "../ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
-import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -51,7 +59,8 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         className={cn(
           "relative z-10 md:hidden",
           backdropVariant &&
-            "[:hover,[data-pressed]]:bg-white/15 focus-visible:ring-white/90 focus-visible:ring-offset-blue-700 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white!",
+            "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
+          backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
       <SidebarBrand onBackdrop={backdropVariant !== null} />
@@ -111,24 +120,106 @@ function T3Wordmark() {
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  const handleSettingsClick = useCallback(() => {
+  const currentFooterPage = useLocation({
+    select: (location) =>
+      location.pathname === "/usage"
+        ? "usage"
+        : location.pathname === "/pull-requests"
+          ? "pull-requests"
+          : null,
+  });
+  const primaryEnvironment = usePrimaryEnvironment();
+  const pullRequestsSupported =
+    primaryEnvironment?.serverConfig?.environment.capabilities.pullRequests === true;
+  const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
     }
+  }, [isMobile, setOpenMobile]);
+  const handlePullRequestsClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  }, [closeMobileSidebar, navigate]);
+  const handleSettingsClick = useCallback(() => {
+    closeMobileSidebar();
     void navigate({ to: "/settings" });
+  }, [closeMobileSidebar, navigate]);
+
+  const handleUsageClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
+
+  const handleBackClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/" });
+  }, [closeMobileSidebar, navigate]);
 
   return (
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
-      <SidebarUpdatePill />
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton onClick={handleSettingsClick}>
-            <SettingsIcon />
-            <span>Settings</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+      <SidebarUpdateArchitectureWarning />
+      <SidebarMenu className="flex-row items-center">
+        {currentFooterPage ? (
+          <SidebarMenuItem className="min-w-0 flex-1">
+            <SidebarMenuButton onClick={handleBackClick}>
+              <ArrowLeftIcon />
+              <span>Back</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ) : (
+          <>
+            <SidebarMenuItem className="shrink-0">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <SidebarMenuButton
+                      aria-label="Settings"
+                      onClick={handleSettingsClick}
+                      size="icon"
+                    >
+                      <SettingsIcon />
+                    </SidebarMenuButton>
+                  }
+                />
+                <TooltipPopup side="top">Settings</TooltipPopup>
+              </Tooltip>
+            </SidebarMenuItem>
+            {pullRequestsSupported ? (
+              <SidebarMenuItem className="shrink-0">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <SidebarMenuButton
+                        aria-label="Pull Requests"
+                        onClick={handlePullRequestsClick}
+                        size="icon"
+                      >
+                        <GitPullRequestIcon />
+                      </SidebarMenuButton>
+                    }
+                  />
+                  <TooltipPopup side="top">Pull Requests</TooltipPopup>
+                </Tooltip>
+              </SidebarMenuItem>
+            ) : null}
+            <SidebarMenuItem className="shrink-0">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <SidebarMenuButton aria-label="Usage" onClick={handleUsageClick} size="icon">
+                      <ChartNoAxesColumnIcon />
+                    </SidebarMenuButton>
+                  }
+                />
+                <TooltipPopup side="top">Usage</TooltipPopup>
+              </Tooltip>
+            </SidebarMenuItem>
+          </>
+        )}
+        <SidebarUpdatePill />
       </SidebarMenu>
     </SidebarFooter>
   );

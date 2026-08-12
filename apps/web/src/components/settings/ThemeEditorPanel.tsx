@@ -228,7 +228,6 @@ export function ThemeEditorPanel({
     };
     window.addEventListener("resize", clamp);
     return () => window.removeEventListener("resize", clamp);
-    // oxlint-disable-next-line exhaustive-deps -- clampPosition reads live layout only.
   }, [isMinimized, open]);
 
   // The draft only reaches the live app once this open has been seeded;
@@ -611,7 +610,7 @@ export function ThemeEditorPanel({
     [activeAppearance, editingTheme, selectedRole],
   );
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = () => {
     if (!name.trim()) {
       setError("Name your theme first.");
       return;
@@ -646,8 +645,8 @@ export function ThemeEditorPanel({
           return;
         }
         mergedAppearance = editedModes[0] ?? null;
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
             name: mergeTarget.label,
@@ -659,7 +658,8 @@ export function ThemeEditorPanel({
             },
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-        );
+          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+        });
         retiredTheme = editingTheme;
         try {
           removeCustomTheme(editingTheme.id);
@@ -677,8 +677,8 @@ export function ThemeEditorPanel({
       } else if (editingTheme) {
         const baseAppearance = editingTheme.appearance;
         const variantAppearance = baseAppearance === "light" ? "dark" : "light";
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: editingTheme.id,
             name,
@@ -689,7 +689,8 @@ export function ThemeEditorPanel({
               : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
-        );
+          ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
+        });
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
           setError(
@@ -702,8 +703,8 @@ export function ThemeEditorPanel({
         // survives when every palette in the theme came from the guided
         // editor.
         mergedAppearance = activeAppearance;
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
             name: mergeTarget.label,
@@ -715,7 +716,8 @@ export function ThemeEditorPanel({
             },
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-        );
+          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+        });
       } else {
         savedTheme = installCustomTheme(
           parseThemeFile({
@@ -763,19 +765,7 @@ export function ThemeEditorPanel({
             : "Could not create the theme.",
       );
     }
-  }, [
-    activeAppearance,
-    colorsByAppearance,
-    editingTheme,
-    isAdvanced,
-    isEditing,
-    mergeTarget,
-    name,
-    onOpenChange,
-    onSaved,
-    simpleColorsDirtyByAppearance,
-    takenAppearances,
-  ]);
+  };
 
   const renderNameField = () => (
     <label className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">

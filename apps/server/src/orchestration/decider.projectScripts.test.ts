@@ -94,6 +94,47 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
+  it.effect("propagates a project favicon path in project.meta.update", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const readModel = yield* projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-favicon"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-favicon"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-favicon"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-favicon"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-favicon"),
+          title: "Favicon",
+          workspaceRoot: "/tmp/favicon",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-update-favicon"),
+          projectId: asProjectId("project-favicon"),
+          faviconPath: "brand/icon.svg",
+        },
+        readModel,
+      });
+
+      const event = Array.isArray(result) ? result[0] : result;
+      expect(event.type).toBe("project.meta-updated");
+      expect((event.payload as { faviconPath?: string }).faviconPath).toBe("brand/icon.svg");
+    }),
+  );
+
   it.effect("rejects project.create for an active workspace root that already exists", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";

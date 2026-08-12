@@ -27,6 +27,7 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
+import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -65,8 +66,8 @@ function threadTimeLabel(thread: EnvironmentThreadShell): string {
   return relativeTime(thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt);
 }
 
-// Menus stay lifecycle-focused: settle/un-settle plus delete. Archive keeps
-// its own surface (thread screen / settings) rather than crowding the row.
+// Menus keep lifecycle and title regeneration together. Archive keeps its
+// own surface (thread screen / settings) rather than crowding v2 rows.
 const CARD_MENU_ACTIONS: MenuAction[] = [
   { id: "settle", title: "Settle", image: "checkmark" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
@@ -230,6 +231,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         {props.project ? (
           <ProjectFavicon
             environmentId={pendingTask.message.environmentId}
+            faviconPath={props.project.faviconPath}
             size={15}
             projectTitle={projectTitle}
             workspaceRoot={props.project.workspaceRoot}
@@ -340,6 +342,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly fullSwipeWidth?: number;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onSnoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
@@ -354,6 +357,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozeSupported: boolean;
   /** False on servers that predate thread.pin/unpin. */
   readonly pinningSupported: boolean;
+  /** False on servers that predate thread title regeneration. */
+  readonly titleRegenerationSupported: boolean;
+  /** False on servers that predate thread.pin.reorder. Gates the pinned
+      Move up / Move down menu items. */
+  readonly pinReorderSupported?: boolean;
+  readonly onMovePinnedThread?: (thread: EnvironmentThreadShell, direction: "up" | "down") => void;
+  /** Position flags for the pinned block so the menu disables the move that
+      would fall off the end of the list. */
+  readonly canMovePinnedUp?: boolean;
+  readonly canMovePinnedDown?: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   /** Reports this row's live PR state up so the partition can auto-settle
@@ -375,6 +388,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     variant,
     onSelectThread,
     onDeleteThread,
+    onRegenerateThreadTitle,
     onSettleThread,
     onSnoozeThread,
     onUnsnoozeThread,
@@ -382,6 +396,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onArchiveThread,
     onPinThread,
     onUnpinThread,
+    onMovePinnedThread,
     onChangeRequestState,
   } = props;
   const snoozedRow = props.snoozed === true;
@@ -407,6 +422,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const timeLabel = threadTimeLabel(thread);
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
+  const handleRegenerateTitle = useCallback(
+    () => onRegenerateThreadTitle(thread),
+    [onRegenerateThreadTitle, thread],
+  );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const handleSnooze = useCallback(
     (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil),
@@ -416,6 +435,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleUnsettle = useCallback(() => onUnsettleThread(thread), [onUnsettleThread, thread]);
   const handlePin = useCallback(() => onPinThread(thread), [onPinThread, thread]);
   const handleUnpin = useCallback(() => onUnpinThread(thread), [onUnpinThread, thread]);
+  const handleMovePinnedUp = useCallback(
+    () => onMovePinnedThread?.(thread, "up"),
+    [onMovePinnedThread, thread],
+  );
+  const handleMovePinnedDown = useCallback(
+    () => onMovePinnedThread?.(thread, "down"),
+    [onMovePinnedThread, thread],
+  );
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
 
   // Swipe: the v2 primary action is the lifecycle transition. Every settled
@@ -459,12 +486,42 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () =>
       props.pinningSupported
         ? [
+            ...(pinnedRow && props.pinReorderSupported === true
+              ? [
+                  {
+                    id: "move-pin-up",
+                    title: "Move up",
+                    image: "arrow.up",
+                    attributes: { disabled: props.canMovePinnedUp !== true },
+                  } satisfies MenuAction,
+                  {
+                    id: "move-pin-down",
+                    title: "Move down",
+                    image: "arrow.down",
+                    attributes: { disabled: props.canMovePinnedDown !== true },
+                  } satisfies MenuAction,
+                ]
+              : []),
             pinnedRow
               ? { id: "unpin", title: "Unpin", image: "pin.slash" }
               : { id: "pin", title: "Pin", image: "pin" },
           ]
         : [],
-    [pinnedRow, props.pinningSupported],
+    [
+      pinnedRow,
+      props.canMovePinnedDown,
+      props.canMovePinnedUp,
+      props.pinReorderSupported,
+      props.pinningSupported,
+    ],
+  );
+  const titleRegenerationMenuItems = useMemo<MenuAction[]>(
+    () =>
+      buildThreadTitleRegenerationMenuItems({
+        supported: props.titleRegenerationSupported,
+        isRegenerating: thread.titleRegeneration != null,
+      }),
+    [props.titleRegenerationSupported, thread.titleRegeneration],
   );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -476,13 +533,31 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         subactions: snoozePresetActions,
       },
       ...pinMenuItem,
+      ...titleRegenerationMenuItems,
       { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
     ],
-    [pinMenuItem, snoozePresetActions],
+    [pinMenuItem, snoozePresetActions, titleRegenerationMenuItems],
   );
   const cardMenuActions = useMemo<MenuAction[]>(
-    () => [CARD_MENU_ACTIONS[0]!, ...pinMenuItem, ...CARD_MENU_ACTIONS.slice(1)],
-    [pinMenuItem],
+    () => [
+      CARD_MENU_ACTIONS[0]!,
+      ...pinMenuItem,
+      ...titleRegenerationMenuItems,
+      ...CARD_MENU_ACTIONS.slice(1),
+    ],
+    [pinMenuItem, titleRegenerationMenuItems],
+  );
+  const slimMenuActions = useMemo<MenuAction[]>(
+    () => [SLIM_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SLIM_MENU_ACTIONS[1]!],
+    [titleRegenerationMenuItems],
+  );
+  const snoozedMenuActions = useMemo<MenuAction[]>(
+    () => [SNOOZED_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SNOOZED_MENU_ACTIONS[1]!],
+    [titleRegenerationMenuItems],
+  );
+  const legacyMenuActions = useMemo<MenuAction[]>(
+    () => [LEGACY_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, LEGACY_MENU_ACTIONS[1]!],
+    [titleRegenerationMenuItems],
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -491,7 +566,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
       if (nativeEvent.event === "pin") handlePin();
       if (nativeEvent.event === "unpin") handleUnpin();
+      if (nativeEvent.event === "move-pin-up") handleMovePinnedUp();
+      if (nativeEvent.event === "move-pin-down") handleMovePinnedDown();
       if (nativeEvent.event === "archive") handleArchive();
+      if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "delete") handleDelete();
       const snoozeSelection = resolveThreadListV2SnoozeMenuSelection({
         event: nativeEvent.event,
@@ -507,6 +585,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [
       handleArchive,
       handleDelete,
+      handleRegenerateTitle,
+      handleMovePinnedDown,
+      handleMovePinnedUp,
       handlePin,
       handleSettle,
       handleSnooze,
@@ -587,6 +668,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {props.project ? (
           <ProjectFavicon
             environmentId={thread.environmentId}
+            faviconPath={props.project.faviconPath}
             size={15}
             projectTitle={props.projectTitle ?? props.project.title}
             workspaceRoot={props.project.workspaceRoot}
@@ -775,6 +857,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             <View className="opacity-40">
               <ProjectFavicon
                 environmentId={thread.environmentId}
+                faviconPath={props.project.faviconPath}
                 size={15}
                 projectTitle={props.projectTitle ?? props.project.title}
                 workspaceRoot={props.project.workspaceRoot}
@@ -844,11 +927,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <ControlPillMenu
             actions={
               snoozedRow
-                ? SNOOZED_MENU_ACTIONS
+                ? snoozedMenuActions
                 : !props.settlementSupported
-                  ? LEGACY_MENU_ACTIONS
+                  ? legacyMenuActions
                   : canUnsettle
-                    ? SLIM_MENU_ACTIONS
+                    ? slimMenuActions
                     : swipeActions.secondary === "snooze"
                       ? snoozableCardMenuActions
                       : cardMenuActions
