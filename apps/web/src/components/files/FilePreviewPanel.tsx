@@ -55,7 +55,7 @@ import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import { fileBreadcrumbs } from "./filePath";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import { isMarkdownPreviewFile, resolveMarkdownTaskPreviewUpdate } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 import {
   confirmProjectFileQueryData,
@@ -704,6 +704,7 @@ function RenderedMarkdownSurface({
   cwd,
   relativePath,
   contents,
+  truncated,
   threadRef,
   onPendingChange,
 }: Omit<
@@ -715,6 +716,7 @@ function RenderedMarkdownSurface({
   | "wordWrap"
   | "onPostRender"
 > & {
+  truncated: boolean;
   threadRef: ScopedThreadRef;
 }) {
   const saveCoordinator = useFileSaveCoordinator({
@@ -731,15 +733,24 @@ function RenderedMarkdownSurface({
         cwd={cwd}
         threadRef={threadRef}
         className="mx-auto max-w-4xl px-6 py-5"
-        onTaskListChange={({ markerOffset, checked }) => {
-          const currentContents =
-            getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-            contents;
-          const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-          if (nextContents === currentContents) return;
-          setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-          saveCoordinator.change(nextContents);
-        }}
+        onTaskListChange={
+          truncated
+            ? undefined
+            : ({ markerOffset, checked }) => {
+                const currentContents =
+                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+                  contents;
+                const nextContents = resolveMarkdownTaskPreviewUpdate({
+                  markdown: currentContents,
+                  markerOffset,
+                  checked,
+                  truncated,
+                });
+                if (nextContents === null) return;
+                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+                saveCoordinator.change(nextContents);
+              }
+        }
       />
     </ScrollArea>
   );
@@ -970,7 +981,8 @@ export default function FilePreviewPanel({
       ) : null}
       {relativePath && file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
-          Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
+          Read-only preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()}{" "}
+          byte file.
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -1004,6 +1016,7 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 threadRef={threadRef}
                 contents={file.data.contents}
+                truncated={file.data.truncated}
                 onPendingChange={onPendingChange}
               />
             ) : file.data.truncated ? (

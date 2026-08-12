@@ -5,7 +5,11 @@ import {
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  isMarkdownPreviewFile,
+  resolveMarkdownTaskPreviewUpdate,
+  setMarkdownTaskChecked,
+} from "./filePreviewMode";
 
 describe("file comment annotations", () => {
   it("normalizes and formats selected line ranges", () => {
@@ -78,5 +82,32 @@ describe("setMarkdownTaskChecked", () => {
   it("leaves the document unchanged for a stale or invalid marker offset", () => {
     expect(setMarkdownTaskChecked(markdown, 0, true)).toBe(markdown);
     expect(setMarkdownTaskChecked(markdown, 200, true)).toBe(markdown);
+  });
+
+  it("refuses rendered task-list mutations for a truncated Markdown read", () => {
+    const fullMarkdown = `- [ ] Keep the complete file\n${"x".repeat(1024 * 1024)}`;
+    const truncatedMarkdown = fullMarkdown.slice(0, 1024 * 1024);
+
+    expect(
+      resolveMarkdownTaskPreviewUpdate({
+        markdown: truncatedMarkdown,
+        markerOffset: 2,
+        checked: true,
+        truncated: true,
+      }),
+    ).toBeNull();
+    expect(fullMarkdown.startsWith(truncatedMarkdown)).toBe(true);
+    expect(fullMarkdown.length).toBeGreaterThan(truncatedMarkdown.length);
+  });
+
+  it("returns a task-list update for a complete Markdown read", () => {
+    expect(
+      resolveMarkdownTaskPreviewUpdate({
+        markdown,
+        markerOffset: 2,
+        checked: true,
+        truncated: false,
+      }),
+    ).toBe("- [x] First\n- [x] Second\n");
   });
 });
