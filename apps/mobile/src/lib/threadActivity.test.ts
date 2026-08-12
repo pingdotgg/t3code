@@ -184,11 +184,13 @@ describe("derivePendingUserInputs", () => {
     expect(pending[0]!.questions[1]!.options).toEqual([]);
     // Submit stays disabled until the custom-only question is answered too.
     expect(
-      buildPendingUserInputAnswers(pending[0]!.questions, { q1: { selectedOptionLabel: "All" } }),
+      buildPendingUserInputAnswers(pending[0]!.questions, {
+        q1: { selectedOptionLabels: ["All"] },
+      }),
     ).toBeNull();
     expect(
       buildPendingUserInputAnswers(pending[0]!.questions, {
-        q1: { selectedOptionLabel: "All" },
+        q1: { selectedOptionLabels: ["All"] },
         q2: { customAnswer: "ship it" },
       }),
     ).toEqual({ q1: "All", q2: "ship it" });
