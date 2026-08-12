@@ -505,6 +505,66 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
     }),
   );
 
+  it.effect("does not let a skill package's body tree starve sibling discovery", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeFixture();
+      const packageDirectory = path.join(fixture.projectCursor, "a-package");
+      const childNames = Array.from(
+        { length: MAX_DIRECTORIES_PER_ROOT },
+        (_, index) => `asset-${String(index).padStart(4, "0")}`,
+      );
+      let packageChildrenStatted = 0;
+
+      yield* writeSkill(packageDirectory, frontmatter("a-package", "Has a large asset tree."));
+      yield* writeSkill(
+        path.join(fixture.projectCursor, "z-sibling"),
+        frontmatter("z-sibling", "Must still be discovered."),
+      );
+
+      const resolvedPackageDirectory = yield* fs.realPath(packageDirectory);
+      const directoryInfo = yield* fs.stat(packageDirectory);
+      const instrumented = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          ...fs,
+          readDirectory: (directory, options) =>
+            String(directory) === resolvedPackageDirectory
+              ? Effect.succeed(["SKILL.md", ...childNames])
+              : fs.readDirectory(directory, options),
+          realPath: (filePath) => {
+            const current = String(filePath);
+            if (current.startsWith(`${packageDirectory}${path.sep}`)) {
+              return Effect.succeed(
+                path.join(resolvedPackageDirectory, path.relative(packageDirectory, current)),
+              );
+            }
+            return fs.realPath(filePath);
+          },
+          stat: (filePath) => {
+            const current = String(filePath);
+            if (current.startsWith(`${packageDirectory}${path.sep}`)) {
+              packageChildrenStatted += 1;
+              return Effect.succeed(directoryInfo);
+            }
+            return fs.stat(filePath);
+          },
+        }),
+      );
+
+      const skills = yield* discoverCursorSkills(fixture.workspace, fixture.environment).pipe(
+        Effect.provide(instrumented),
+      );
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["a-package", "z-sibling"],
+      );
+      assert.equal(packageChildrenStatted, 0);
+    }),
+  );
+
   it.effect("collects the current skill before bounding child inspection in a wide directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

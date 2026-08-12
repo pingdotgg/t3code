@@ -321,6 +321,11 @@ const collectSkillsInRoot = Effect.fn("collectSkillsInRoot")(function* (input: {
             ...(description ? { description } : {}),
           });
         }
+
+        // A directory containing SKILL.md is a skill package, not another
+        // category root. Its scripts, references, and assets must not consume
+        // the shared traversal budget and hide later sibling skills.
+        return;
       }
 
       const remainingEntries = MAX_ENTRIES_PER_ROOT - entriesInspected;
