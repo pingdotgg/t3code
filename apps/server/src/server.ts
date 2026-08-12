@@ -101,6 +101,9 @@ import * as CliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import { connectHttpApiLayer } from "./cloud/http.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
+import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
+import { layer as PullRequestProviderRegistryLive } from "./pullRequest/PullRequestProviderRegistry.ts";
+import { layer as PullRequestServiceLive } from "./pullRequest/PullRequestService.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -198,6 +201,10 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitStatusBroadcasterLive.pipe(Layer.provide(GitManagerLayerLive))),
   Layer.provideMerge(GitCoreLive),
   Layer.provideMerge(GitHubCliLive),
+);
+
+const PullRequestLayerLive = PullRequestServiceLive.pipe(
+  Layer.provideMerge(PullRequestProviderRegistryLive),
 );
 
 // The MCP credential registry and the automation broker are runtime services:
@@ -310,6 +317,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(PullRequestLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
@@ -384,6 +392,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   orchestrationShellSnapshotRouteLayer,
   orchestrationSnapshotRouteLayer,
   orchestrationThreadSnapshotRouteLayer,
+  pullRequestHttpApiLayer,
   ConnectHttpApiLayerLive,
   mobileRouteLayer,
   otlpTracesProxyRouteLayer,

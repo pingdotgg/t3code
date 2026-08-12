@@ -178,6 +178,25 @@ import {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
+import {
+  PullRequestActionInput,
+  PullRequestActivity,
+  PullRequestCommentInput,
+  PullRequestDetail,
+  PullRequestInvalidateInput,
+  PullRequestListInput,
+  PullRequestListResult,
+  PullRequestListStatsInput,
+  PullRequestListStatsResult,
+  PullRequestOperationError,
+  PullRequestRef,
+  PullRequestReviewerCandidateList,
+  PullRequestReviewerRequestInput,
+  PullRequestSubmitReviewInput,
+  PullRequestThreadReplyInput,
+  PullRequestThreadResolutionInput,
+  PullRequestUnavailableError,
+} from "./pullRequest.ts";
 import { WorkflowRunError, WorkflowRunResult } from "./agentWorkflows.ts";
 import { WorkflowRunInput } from "./workflowRuntime.ts";
 
@@ -282,6 +301,20 @@ export const WS_METHODS = {
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
+
+  // Pull request methods
+  pullRequestsList: "pullRequests.list",
+  pullRequestsListStats: "pullRequests.listStats",
+  pullRequestsDetail: "pullRequests.detail",
+  pullRequestsActivity: "pullRequests.activity",
+  pullRequestsRunAction: "pullRequests.runAction",
+  pullRequestsComment: "pullRequests.comment",
+  pullRequestsSubmitReview: "pullRequests.submitReview",
+  pullRequestsReplyToThread: "pullRequests.replyToThread",
+  pullRequestsSetThreadResolution: "pullRequests.setThreadResolution",
+  pullRequestsInvalidate: "pullRequests.invalidate",
+  pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
+  pullRequestsRequestReviewers: "pullRequests.requestReviewers",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
@@ -466,6 +499,86 @@ export const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomati
 
 export const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutomationFocusHost, {
   payload: PreviewAutomationHostFocus,
+});
+
+const PullRequestRpcError = Schema.Union([PullRequestUnavailableError, PullRequestOperationError]);
+
+export const WsPullRequestsListRpc = Rpc.make(WS_METHODS.pullRequestsList, {
+  payload: PullRequestListInput,
+  success: PullRequestListResult,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsListStatsRpc = Rpc.make(WS_METHODS.pullRequestsListStats, {
+  payload: PullRequestListStatsInput,
+  success: PullRequestListStatsResult,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsDetailRpc = Rpc.make(WS_METHODS.pullRequestsDetail, {
+  payload: PullRequestRef,
+  success: PullRequestDetail,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsActivityRpc = Rpc.make(WS_METHODS.pullRequestsActivity, {
+  payload: PullRequestRef,
+  success: PullRequestActivity,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsRunActionRpc = Rpc.make(WS_METHODS.pullRequestsRunAction, {
+  payload: PullRequestActionInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsCommentRpc = Rpc.make(WS_METHODS.pullRequestsComment, {
+  payload: PullRequestCommentInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsSubmitReviewRpc = Rpc.make(WS_METHODS.pullRequestsSubmitReview, {
+  payload: PullRequestSubmitReviewInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsReplyToThreadRpc = Rpc.make(WS_METHODS.pullRequestsReplyToThread, {
+  payload: PullRequestThreadReplyInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsSetThreadResolutionRpc = Rpc.make(
+  WS_METHODS.pullRequestsSetThreadResolution,
+  {
+    payload: PullRequestThreadResolutionInput,
+    success: Schema.Void,
+    error: PullRequestRpcError,
+  },
+);
+
+export const WsPullRequestsInvalidateRpc = Rpc.make(WS_METHODS.pullRequestsInvalidate, {
+  payload: PullRequestInvalidateInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
+});
+
+export const WsPullRequestsReviewerCandidatesRpc = Rpc.make(
+  WS_METHODS.pullRequestsReviewerCandidates,
+  {
+    payload: PullRequestRef,
+    success: PullRequestReviewerCandidateList,
+    error: PullRequestRpcError,
+  },
+);
+
+export const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequestsRequestReviewers, {
+  payload: PullRequestReviewerRequestInput,
+  success: Schema.Void,
+  error: PullRequestRpcError,
 });
 
 export const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(
@@ -945,6 +1058,18 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
+  WsPullRequestsListRpc,
+  WsPullRequestsListStatsRpc,
+  WsPullRequestsDetailRpc,
+  WsPullRequestsActivityRpc,
+  WsPullRequestsRunActionRpc,
+  WsPullRequestsCommentRpc,
+  WsPullRequestsSubmitReviewRpc,
+  WsPullRequestsReplyToThreadRpc,
+  WsPullRequestsSetThreadResolutionRpc,
+  WsPullRequestsInvalidateRpc,
+  WsPullRequestsReviewerCandidatesRpc,
+  WsPullRequestsRequestReviewersRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeGitStatusRpc,
   WsGitPullRpc,

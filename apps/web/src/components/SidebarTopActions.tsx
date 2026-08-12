@@ -1,4 +1,4 @@
-import { PlusIcon, SearchIcon, SparklesIcon } from "lucide-react";
+import { GitPullRequestIcon, PlusIcon, SearchIcon, SparklesIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import { CommandDialogTrigger } from "./ui/command";
@@ -39,6 +39,18 @@ export function SidebarTopActions({
             <SearchIcon className="size-3.5" />
             <span className="flex-1 truncate text-left">Search</span>
           </CommandDialogTrigger>
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="sm"
+            className="gap-2 px-2 py-1 text-[length:var(--app-sidebar-font-size)] text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
+            onClick={() =>
+              void navigate({ to: "/pull-requests", search: { state: "open", involvement: "all" } })
+            }
+          >
+            <GitPullRequestIcon className="size-3.5" />
+            <span className="flex-1 truncate text-left">Pull Requests</span>
+          </SidebarMenuButton>
         </SidebarMenuItem>
         <SidebarMenuItem>
           <SidebarMenuButton

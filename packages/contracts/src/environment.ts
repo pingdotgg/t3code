@@ -22,6 +22,8 @@ export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.T
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
+  // Optional so clients can avoid PR requests against older servers.
+  pullRequests: Schema.optionalKey(Schema.Boolean),
   // Optional so clients can safely avoid lifecycle commands on older servers.
   threadSettlement: Schema.optionalKey(Schema.Boolean),
   threadSnooze: Schema.optionalKey(Schema.Boolean),

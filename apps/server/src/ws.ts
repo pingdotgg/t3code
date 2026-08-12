@@ -26,6 +26,7 @@ import {
   type GitActionProgressEvent,
   type GitManagerServiceError,
   GitHubCliError,
+  PullRequestUnavailableError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -165,6 +166,7 @@ import {
 import { respondToAuthError } from "./auth/http.ts";
 import { expandHomePath } from "./pathExpansion.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
@@ -270,6 +272,15 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const previewManager = yield* PreviewManager;
       const portDiscovery = yield* PortDiscovery;
       const previewAutomationBroker = yield* PreviewAutomationBroker;
+      const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
+      const withPullRequests = <A>(
+        operation: (service: PullRequestService.PullRequestService["Service"]) => Effect.Effect<A>,
+      ) =>
+        Option.match(pullRequests, {
+          onNone: () =>
+            Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" })),
+          onSome: operation,
+        });
       const dispatchNormalizedCommand = makeClientCommandDispatcher({
         orchestrationEngine,
         startup,
@@ -1903,6 +1914,80 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             WS_METHODS.previewAutomationFocusHost,
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.pullRequestsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsList,
+            withPullRequests((service) => service.list(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
+        [WS_METHODS.pullRequestsListStats]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsListStats,
+            withPullRequests((service) => service.listStats(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsDetail]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsDetail,
+            withPullRequests((service) => service.detail(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsActivity]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsActivity,
+            withPullRequests((service) => service.activity(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsRunAction]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsRunAction,
+            withPullRequests((service) => service.runAction(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsComment]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsComment,
+            withPullRequests((service) => service.comment(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsSubmitReview]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSubmitReview,
+            withPullRequests((service) => service.submitReview(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsReplyToThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsReplyToThread,
+            withPullRequests((service) => service.replyToThread(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsSetThreadResolution]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetThreadResolution,
+            withPullRequests((service) => service.setThreadResolution(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsInvalidate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsInvalidate,
+            withPullRequests((service) => service.invalidate(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsReviewerCandidates,
+            withPullRequests((service) => service.reviewerCandidates(input)),
+            { "rpc.aggregate": "pull-requests" },
+          ),
+        [WS_METHODS.pullRequestsRequestReviewers]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsRequestReviewers,
+            withPullRequests((service) => service.requestReviewers(input)),
+            { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.subscribeGitStatus]: (input) =>
           observeRpcStream(

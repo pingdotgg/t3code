@@ -104,6 +104,23 @@ import { EnvironmentId, IsoDateTime, ThreadId, TurnId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import type { WorkflowRunResult } from "./agentWorkflows.ts";
 import type { WorkflowRunInput } from "./workflowRuntime.ts";
+import type {
+  PullRequestActionInput,
+  PullRequestActivity,
+  PullRequestCommentInput,
+  PullRequestDetail,
+  PullRequestInvalidateInput,
+  PullRequestListInput,
+  PullRequestListResult,
+  PullRequestListStatsInput,
+  PullRequestListStatsResult,
+  PullRequestRef,
+  PullRequestReviewerCandidateList,
+  PullRequestReviewerRequestInput,
+  PullRequestSubmitReviewInput,
+  PullRequestThreadReplyInput,
+  PullRequestThreadResolutionInput,
+} from "./pullRequest.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
 import { Schema } from "effect";
 
@@ -978,6 +995,20 @@ export interface EnvironmentApi {
         onResubscribe?: () => void;
       },
     ) => () => void;
+  };
+  pullRequests: {
+    list: (input: PullRequestListInput) => Promise<PullRequestListResult>;
+    listStats: (input: PullRequestListStatsInput) => Promise<PullRequestListStatsResult>;
+    detail: (input: PullRequestRef) => Promise<PullRequestDetail>;
+    activity: (input: PullRequestRef) => Promise<PullRequestActivity>;
+    runAction: (input: PullRequestActionInput) => Promise<void>;
+    comment: (input: PullRequestCommentInput) => Promise<void>;
+    submitReview: (input: PullRequestSubmitReviewInput) => Promise<void>;
+    replyToThread: (input: PullRequestThreadReplyInput) => Promise<void>;
+    setThreadResolution: (input: PullRequestThreadResolutionInput) => Promise<void>;
+    invalidate: (input: PullRequestInvalidateInput) => Promise<void>;
+    reviewerCandidates: (input: PullRequestRef) => Promise<PullRequestReviewerCandidateList>;
+    requestReviewers: (input: PullRequestReviewerRequestInput) => Promise<void>;
   };
   server: {
     exportThreadMarkdown: (

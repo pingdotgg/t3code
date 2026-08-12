@@ -62,6 +62,14 @@ import {
   collectStaleActiveTurnToastRequests,
   collectThreadCompletionNotifications,
 } from "../threadCompletionNotifications";
+import {
+  findGitHubPullRequestProject,
+  INTERNAL_PULL_REQUEST_NAVIGATION_EVENT,
+  type InternalPullRequestNavigation,
+  openExternalPullRequestLink,
+} from "../lib/openPullRequestLink";
+import { usePrimaryEnvironmentDescriptor, usePrimaryEnvironmentId } from "../environments/primary";
+import { selectProjectsAcrossEnvironments } from "../store";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -115,6 +123,7 @@ function RootRouteView() {
         <ThreadCompletionNotificationCoordinator />
         <StaleActiveTurnToastCoordinator />
         <EventRouter />
+        <InternalPullRequestNavigationHandler />
         <DesktopBrowserRuntime authenticated />
         <PreviewAutomationHosts />
         <ElectronBrowserHost />
@@ -130,6 +139,55 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function InternalPullRequestNavigationHandler() {
+  const navigate = useNavigate();
+  const descriptor = usePrimaryEnvironmentDescriptor();
+  const environmentId = usePrimaryEnvironmentId();
+  const projects = useStore(selectProjectsAcrossEnvironments);
+
+  useEffect(() => {
+    const open = (event: Event) => {
+      const { host, number, repository, url } = (
+        event as CustomEvent<InternalPullRequestNavigation>
+      ).detail;
+      if (
+        !Number.isSafeInteger(number) ||
+        number <= 0 ||
+        typeof host !== "string" ||
+        host.length === 0 ||
+        typeof repository !== "string" ||
+        repository.length === 0
+      ) {
+        return;
+      }
+      const project = findGitHubPullRequestProject(projects, {
+        environmentId,
+        host,
+        repository,
+      });
+      if (!descriptor?.capabilities.pullRequests || !project) {
+        openExternalPullRequestLink(url);
+        return;
+      }
+      void navigate({
+        to: "/pull-requests",
+        search: {
+          state: "all",
+          involvement: "all",
+          host,
+          repository,
+          number,
+          selectedProjectId: project.id,
+        },
+      });
+    };
+    window.addEventListener(INTERNAL_PULL_REQUEST_NAVIGATION_EVENT, open);
+    return () => window.removeEventListener(INTERNAL_PULL_REQUEST_NAVIGATION_EVENT, open);
+  }, [descriptor?.capabilities.pullRequests, environmentId, navigate, projects]);
+
+  return null;
 }
 
 function ThreadCompletionNotificationCoordinator() {

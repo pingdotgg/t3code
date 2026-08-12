@@ -4,6 +4,7 @@ export {
   getSavedEnvironmentRuntimeState,
   hasSavedEnvironmentRegistryHydrated,
   listSavedEnvironmentRecords,
+  readSavedEnvironmentBearerToken,
   resetSavedEnvironmentRegistryStoreForTests,
   resetSavedEnvironmentRuntimeStoreForTests,
   resolveEnvironmentHttpUrl,

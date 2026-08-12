@@ -135,6 +135,20 @@ export interface WsRpcClient {
       typeof WS_METHODS.gitPrewarmReviewChangesContext
     >;
   };
+  readonly pullRequests: {
+    readonly list: RpcUnaryMethod<typeof WS_METHODS.pullRequestsList>;
+    readonly listStats: RpcUnaryMethod<typeof WS_METHODS.pullRequestsListStats>;
+    readonly detail: RpcUnaryMethod<typeof WS_METHODS.pullRequestsDetail>;
+    readonly activity: RpcUnaryMethod<typeof WS_METHODS.pullRequestsActivity>;
+    readonly runAction: RpcUnaryMethod<typeof WS_METHODS.pullRequestsRunAction>;
+    readonly comment: RpcUnaryMethod<typeof WS_METHODS.pullRequestsComment>;
+    readonly submitReview: RpcUnaryMethod<typeof WS_METHODS.pullRequestsSubmitReview>;
+    readonly replyToThread: RpcUnaryMethod<typeof WS_METHODS.pullRequestsReplyToThread>;
+    readonly setThreadResolution: RpcUnaryMethod<typeof WS_METHODS.pullRequestsSetThreadResolution>;
+    readonly invalidate: RpcUnaryMethod<typeof WS_METHODS.pullRequestsInvalidate>;
+    readonly reviewerCandidates: RpcUnaryMethod<typeof WS_METHODS.pullRequestsReviewerCandidates>;
+    readonly requestReviewers: RpcUnaryMethod<typeof WS_METHODS.pullRequestsRequestReviewers>;
+  };
   readonly workflow: {
     readonly run: RpcUnaryMethod<typeof WS_METHODS.workflowRun>;
   };
@@ -321,6 +335,31 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.gitResolveReviewChangesContext](input)),
       prewarmReviewChangesContext: (input) =>
         transport.request((client) => client[WS_METHODS.gitPrewarmReviewChangesContext](input)),
+    },
+    pullRequests: {
+      list: (input) => transport.request((client) => client[WS_METHODS.pullRequestsList](input)),
+      listStats: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsListStats](input)),
+      detail: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsDetail](input)),
+      activity: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsActivity](input)),
+      runAction: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsRunAction](input)),
+      comment: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsComment](input)),
+      submitReview: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsSubmitReview](input)),
+      replyToThread: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsReplyToThread](input)),
+      setThreadResolution: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsSetThreadResolution](input)),
+      invalidate: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsInvalidate](input)),
+      reviewerCandidates: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsReviewerCandidates](input)),
+      requestReviewers: (input) =>
+        transport.request((client) => client[WS_METHODS.pullRequestsRequestReviewers](input)),
     },
     workflow: {
       run: (input) => transport.request((client) => client[WS_METHODS.workflowRun](input)),

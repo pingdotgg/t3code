@@ -40,6 +40,13 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
+    readonly stdin?: string;
+    /**
+     * Bounded reads are needed for pull-request diffs and file expansions, where a complete
+     * response is not always safe to retain in memory.
+     */
+    readonly maxOutputBytes?: number;
+    readonly truncateOutputAtMaxBytes?: boolean;
   }) => Effect.Effect<ProcessRunResult, GitHubCliError>;
 
   /**

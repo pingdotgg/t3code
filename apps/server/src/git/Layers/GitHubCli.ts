@@ -108,6 +108,13 @@ const makeGitHubCli = Effect.sync(() => {
         runProcess("gh", input.args, {
           cwd: input.cwd,
           timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+          ...(input.maxOutputBytes === undefined
+            ? {}
+            : {
+                maxBufferBytes: input.maxOutputBytes,
+                outputMode: input.truncateOutputAtMaxBytes === true ? "truncate" : "error",
+              }),
         }),
       catch: (error) => normalizeGitHubCliError("execute", error),
     });
