@@ -23,6 +23,7 @@ import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import * as MobileRegistrations from "./MobileRegistrations.ts";
+import * as WebPushDeliveries from "./WebPushDeliveries.ts";
 
 const device: RelayDeviceRegistrationRequest = {
   deviceId: "device-1" as RelayDeviceRegistrationRequest["deviceId"],
@@ -126,6 +127,11 @@ function makeDeliveryAttempts(
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
+  webPush: {
+    subject: "https://relay.example.test",
+    publicKey: "web-push-public-key",
+    privateKey: Redacted.make("web-push-private-key"),
+  },
   apns: {
     environment: "sandbox",
     teamId: "team-id",
@@ -159,6 +165,9 @@ function makeRegistrationReplayLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(Devices.Devices, input.devices),
+        Layer.succeed(WebPushDeliveries.WebPushDeliveries, {
+          sendForUser: () => Effect.void,
+        }),
         Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
         Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
         Layer.succeed(LiveActivities.LiveActivities, input.liveActivities),

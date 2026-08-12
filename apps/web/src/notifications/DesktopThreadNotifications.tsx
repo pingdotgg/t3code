@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type {
@@ -7,7 +9,8 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 
-import { getClientSettings } from "~/hooks/useSettings";
+import { isElectron } from "~/env";
+import { getClientSettings, useClientSettings } from "~/hooks/useSettings";
 import { useActiveThreadRefFromRoute } from "~/hooks/useActiveThreadRef";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails, environmentThreadShells } from "~/state/threads";
@@ -30,6 +33,7 @@ import {
   THREAD_ALERT_FOCUSED_TTL_MS,
   THREAD_ALERT_MAX_TTL_MS,
 } from "./threadAlertStore";
+import { reconcileWebPushRegistration } from "./webPush";
 
 /**
  * Latest assistant text for a thread, but only when that thread's detail atom
@@ -239,6 +243,29 @@ function DesktopThreadNotifications() {
   return null;
 }
 
+function WebPushRegistrationHost() {
+  const settings = useClientSettings();
+  const relaySession = useAtomValue(managedRelaySessionAtom);
+
+  useEffect(() => {
+    if (isElectron) {
+      return;
+    }
+    void reconcileWebPushRegistration(settings).catch((error: unknown) => {
+      console.error("[WEB_PUSH] subscription reconciliation failed", { error });
+    });
+  }, [
+    relaySession?.accountId,
+    settings.desktopNotificationSound,
+    settings.desktopNotifyApprovalNeeded,
+    settings.desktopNotifyTaskCompleted,
+    settings.desktopNotifyTaskFailed,
+    settings.webPushNotificationsEnabled,
+  ]);
+
+  return null;
+}
+
 /**
  * Alerts for agent task transitions: the native OS banner on desktop, plus the
  * chime and sidebar highlights that survive Do Not Disturb.
@@ -249,5 +276,10 @@ function DesktopThreadNotifications() {
  * discard them for no reason.
  */
 export function DesktopThreadNotificationsHost() {
-  return <DesktopThreadNotifications />;
+  return (
+    <>
+      <DesktopThreadNotifications />
+      <WebPushRegistrationHost />
+    </>
+  );
 }

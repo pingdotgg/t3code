@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
@@ -21,6 +22,7 @@ import {
   healthApi,
   metadataApi,
   mobileApi,
+  webPushApi,
   relayClientAuthLayer,
   relayDpopClientAuthLayer,
   relayCors,
@@ -57,6 +59,55 @@ import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublish
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
+import * as WebPushSubscriptions from "./agentActivity/WebPushSubscriptions.ts";
+import * as WebPushDeliveries from "./agentActivity/WebPushDeliveries.ts";
+
+function decodeBase64(value: string): Uint8Array {
+  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const base64 = value.replaceAll("-", "+").replaceAll("_", "/");
+  return decodeBase64(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="));
+}
+
+function encodeBase64Url(value: Uint8Array): string {
+  let binary = "";
+  for (const byte of value) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
+async function webPushKeysFromPkcs8(privateKeyPem: string): Promise<{
+  readonly publicKey: string;
+  readonly privateKey: string;
+}> {
+  const der = decodeBase64(privateKeyPem.replace(/-----[^-]+-----/gu, "").replaceAll(/\s+/gu, ""));
+  const keyData = new Uint8Array(der.length);
+  keyData.set(der);
+  const privateKey = await globalThis.crypto.subtle.importKey(
+    "pkcs8",
+    keyData,
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign"],
+  );
+  const jwk = await globalThis.crypto.subtle.exportKey("jwk", privateKey);
+  if (!jwk.x || !jwk.y || !jwk.d) {
+    throw new Error("Web Push P-256 key did not export complete JWK coordinates.");
+  }
+  const x = decodeBase64Url(jwk.x);
+  const y = decodeBase64Url(jwk.y);
+  const publicKey = new Uint8Array(1 + x.length + y.length);
+  publicKey[0] = 0x04;
+  publicKey.set(x, 1);
+  publicKey.set(y, 1 + x.length);
+  return {
+    publicKey: encodeBase64Url(publicKey),
+    privateKey: jwk.d,
+  };
+}
 
 const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -85,6 +136,7 @@ const relayApiLayer = Layer.mergeAll(
   healthApi,
   metadataApi,
   mobileApi,
+  webPushApi,
   clientApi,
   tokenApi,
   dpopClientApi,
@@ -92,6 +144,10 @@ const relayApiLayer = Layer.mergeAll(
 );
 
 const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
+const WebPushKeyPair = Alchemy.KeyPair("WebPushKeyPair", {
+  algorithm: "ec",
+  namedCurve: "P-256",
+});
 const ApnsDeliveryJobSigningSecret = Alchemy.makeRandom("ApnsDeliveryJobSigningSecret", {
   bytes: 32,
 });
@@ -118,6 +174,7 @@ export const ApiLive = Api.make(
     const apnsDeliveryQueue = yield* RelayApnsDeliveryQueue;
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
     const cloudMintKeyPair = yield* CloudMintKeyPair;
+    const webPushKeyPair = yield* WebPushKeyPair;
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
     const randomApnsDeliveryJobSigningSecret = yield* ApnsDeliveryJobSigningSecret;
@@ -147,6 +204,11 @@ export const ApiLive = Api.make(
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
+    const webPushPrivateKeyAccessor = yield* webPushKeyPair.privateKey;
+    const webPushPrivateKey = yield* webPushPrivateKeyAccessor;
+    const webPushKeys = yield* Effect.promise(() =>
+      webPushKeysFromPkcs8(Redacted.value(webPushPrivateKey)),
+    );
     const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(yield* RelayDb.RelayHyperdrive);
     const db = yield* Drizzle.Postgres(hyperdrive.connectionString);
 
@@ -171,6 +233,11 @@ export const ApiLive = Api.make(
           bundleId: apnsBundleId,
           privateKey: apnsPrivateKey,
         },
+        webPush: {
+          subject: relayPublicOrigin,
+          publicKey: webPushKeys.publicKey,
+          privateKey: Redacted.make(webPushKeys.privateKey),
+        },
         apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
         clerkSecretKey,
         clerkPublishableKey,
@@ -190,19 +257,7 @@ export const ApiLive = Api.make(
       }).pipe(Effect.map(makeRelayTraceLayer)),
     );
 
-    const runtimeLayer = Layer.empty.pipe(
-      Layer.provideMerge(MobileRegistrations.layer),
-      Layer.provideMerge(AgentActivityPublisher.layer),
-      Layer.provideMerge(EnvironmentConnector.layer),
-      Layer.provideMerge(EnvironmentLinker.layer),
-      Layer.provideMerge(EnvironmentPublishSignatures.layer),
-      Layer.provideMerge(
-        ManagedEndpointProvider.layerCloudflareBindings(
-          managedEndpointTunnelBinding,
-          managedEndpointDnsBinding,
-          alchemyRuntimeContext,
-        ),
-      ),
+    const foundationLayer = Layer.empty.pipe(
       Layer.provideMerge(DpopProofs.layer),
       Layer.provideMerge(ApnsDeliveries.layer),
       Layer.provideMerge(ApnsClient.layer.pipe(Layer.provideMerge(ApnsProviderTokens.layer))),
@@ -211,6 +266,7 @@ export const ApiLive = Api.make(
       ),
       Layer.provideMerge(AgentActivityRows.layer),
       Layer.provideMerge(Devices.layer),
+      Layer.provideMerge(WebPushSubscriptions.layer),
       Layer.provideMerge(EnvironmentCredentials.layer),
       Layer.provideMerge(
         Layer.mergeAll(
@@ -229,6 +285,22 @@ export const ApiLive = Api.make(
       ),
       Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
       Layer.provideMerge(webcryptoLayer),
+    );
+    const runtimeLayer = Layer.empty.pipe(
+      Layer.provideMerge(MobileRegistrations.layer),
+      Layer.provideMerge(AgentActivityPublisher.layer),
+      Layer.provideMerge(WebPushDeliveries.layer),
+      Layer.provideMerge(EnvironmentConnector.layer),
+      Layer.provideMerge(EnvironmentLinker.layer),
+      Layer.provideMerge(EnvironmentPublishSignatures.layer),
+      Layer.provideMerge(
+        ManagedEndpointProvider.layerCloudflareBindings(
+          managedEndpointTunnelBinding,
+          managedEndpointDnsBinding,
+          alchemyRuntimeContext,
+        ),
+      ),
+      Layer.provideMerge(foundationLayer),
     );
 
     const appLayer = relayApiLayer.pipe(

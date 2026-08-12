@@ -1,8 +1,16 @@
 import { BellIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
+import { useState } from "react";
 
 import { isElectron } from "~/env";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import {
+  disableWebPushNotifications,
+  enableWebPushNotifications,
+  isWebPushSupported,
+} from "~/notifications/webPush";
 import { Switch } from "../ui/switch";
 import {
   SettingResetButton,
@@ -47,7 +55,7 @@ const NOTIFICATION_TOGGLES: ReadonlyArray<{
   {
     key: "desktopNotificationSound",
     searchId: "notification-sound",
-    description: "Play the system notification sound.",
+    description: "Play an alert sound.",
     resetLabel: "notification sound",
   },
 ];
@@ -55,47 +63,65 @@ const NOTIFICATION_TOGGLES: ReadonlyArray<{
 export function NotificationsSettingsPanel() {
   const settings = useClientSettings();
   const updateSettings = useUpdateClientSettings();
+  const relaySession = useAtomValue(managedRelaySessionAtom);
+  const [webPushError, setWebPushError] = useState<string | null>(null);
+  const [webPushPending, setWebPushPending] = useState(false);
+  const enabledKey = isElectron
+    ? ("desktopNotificationsEnabled" as const)
+    : ("webPushNotificationsEnabled" as const);
+  const notificationsEnabled = settings[enabledKey];
+  const notificationsDisabled = isElectron && !notificationsEnabled;
+  const webPushAvailable = isWebPushSupported() && relaySession !== null;
 
-  if (!isElectron) {
-    return (
-      <SettingsPageContainer>
-        <SettingsSection title="Notifications" icon={<BellIcon className="size-4" />}>
-          <p className="px-3 text-[13px] text-muted-foreground/80 sm:px-4">
-            Native notifications are available in the desktop app.
-          </p>
-        </SettingsSection>
-      </SettingsPageContainer>
-    );
-  }
-
-  const notificationsDisabled = !settings.desktopNotificationsEnabled;
+  const setNotificationsEnabled = async (checked: boolean) => {
+    if (isElectron) {
+      updateSettings({ desktopNotificationsEnabled: checked });
+      return;
+    }
+    setWebPushPending(true);
+    setWebPushError(null);
+    try {
+      if (checked) {
+        await enableWebPushNotifications({
+          ...settings,
+          webPushNotificationsEnabled: true,
+        });
+      } else {
+        await disableWebPushNotifications();
+      }
+      updateSettings({ webPushNotificationsEnabled: checked });
+    } catch (error) {
+      setWebPushError(error instanceof Error ? error.message : "Web Push setup failed.");
+    } finally {
+      setWebPushPending(false);
+    }
+  };
 
   return (
     <SettingsPageContainer>
       <SettingsSection title="Notifications" icon={<BellIcon className="size-4" />}>
         <SettingsRow
           {...searchableSetting("notifications")}
-          description="Show a native notification when an agent needs you. Suppressed while you are looking at that thread."
+          title={isElectron ? "Notifications" : "Web Push"}
+          description={
+            webPushError ??
+            (!isElectron && !webPushAvailable
+              ? "Sign in to T3 Connect to enable Web Push."
+              : "Notify when an agent needs you. Suppressed while you are looking at that thread.")
+          }
           resetAction={
-            settings.desktopNotificationsEnabled !==
-            DEFAULT_CLIENT_SETTINGS.desktopNotificationsEnabled ? (
+            notificationsEnabled !== DEFAULT_CLIENT_SETTINGS[enabledKey] ? (
               <SettingResetButton
                 label="notifications"
-                onClick={() =>
-                  updateSettings({
-                    desktopNotificationsEnabled:
-                      DEFAULT_CLIENT_SETTINGS.desktopNotificationsEnabled,
-                  })
-                }
+                onClick={() => void setNotificationsEnabled(DEFAULT_CLIENT_SETTINGS[enabledKey])}
               />
             ) : null
           }
           control={
             <Switch
-              checked={settings.desktopNotificationsEnabled}
-              onCheckedChange={(checked) =>
-                updateSettings({ desktopNotificationsEnabled: Boolean(checked) })
-              }
+              checked={notificationsEnabled}
+              disabled={webPushPending || (!isElectron && !webPushAvailable)}
+              onCheckedChange={(checked) => void setNotificationsEnabled(Boolean(checked))}
               aria-label="Enable notifications"
             />
           }

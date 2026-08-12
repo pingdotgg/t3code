@@ -28,6 +28,11 @@ import {
   RelayProtectedError,
   type RelayProtectedError as RelayProtectedErrorType,
   RelayUnregisterDeviceEndpoint,
+  RelayRegisterWebPushEndpoint,
+  RelayUnregisterWebPushEndpoint,
+  RelayWebPushRegistrationScope,
+  type RelayWebPushRegistrationRequest,
+  type RelayWebPushVapidPublicKeyResponse,
 } from "@t3tools/contracts/relay";
 import { encodeOAuthScope, oauthScopeSetEquals } from "@t3tools/shared/oauthScope";
 import { decodeRelayJwt } from "@t3tools/shared/relayJwt";
@@ -95,6 +100,9 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "unregister relay mobile device",
   "register relay live activity",
   "read relay agent activity snapshot",
+  "read relay Web Push VAPID key",
+  "register relay Web Push subscription",
+  "unregister relay Web Push subscription",
 ]);
 export type ManagedRelayRequestAction = typeof ManagedRelayRequestAction.Type;
 
@@ -111,6 +119,9 @@ export const ManagedRelayRequestActivity = Schema.Literals([
   "Relay mobile device unregistration",
   "Relay Live Activity registration",
   "Relay agent activity snapshot",
+  "Relay Web Push VAPID key lookup",
+  "Relay Web Push subscription registration",
+  "Relay Web Push subscription unregistration",
 ]);
 export type ManagedRelayRequestActivity = typeof ManagedRelayRequestActivity.Type;
 
@@ -297,6 +308,18 @@ export class ManagedRelayClient extends Context.Service<
     readonly getAgentActivitySnapshot: (input: {
       readonly clerkToken: string;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, ManagedRelayClientError>;
+    readonly getWebPushVapidPublicKey: Effect.Effect<
+      RelayWebPushVapidPublicKeyResponse,
+      ManagedRelayClientError
+    >;
+    readonly registerWebPush: (input: {
+      readonly clerkToken: string;
+      readonly payload: RelayWebPushRegistrationRequest;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly unregisterWebPush: (input: {
+      readonly clerkToken: string;
+      readonly subscriptionId: string;
+    }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
   }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayClient") {}
@@ -418,6 +441,9 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     unregisterDevice: unavailable("clientRuntime.managedRelay.unregisterDevice"),
     registerLiveActivity: unavailable("clientRuntime.managedRelay.registerLiveActivity"),
     getAgentActivitySnapshot: unavailable("clientRuntime.managedRelay.getAgentActivitySnapshot"),
+    getWebPushVapidPublicKey: unavailable("clientRuntime.managedRelay.getWebPushVapidPublicKey")(),
+    registerWebPush: unavailable("clientRuntime.managedRelay.registerWebPush"),
+    unregisterWebPush: unavailable("clientRuntime.managedRelay.unregisterWebPush"),
     resetTokenCache: Effect.void.pipe(
       Effect.withSpan("clientRuntime.managedRelay.resetTokenCache"),
     ),
@@ -472,6 +498,14 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     registerLiveActivity: (): DpopProofTarget => ({
       method: RelayRegisterLiveActivityEndpoint.method,
       url: urlBuilder.mobile.registerLiveActivity(),
+    }),
+    registerWebPush: (): DpopProofTarget => ({
+      method: RelayRegisterWebPushEndpoint.method,
+      url: urlBuilder.webPush.registerWebPush(),
+    }),
+    unregisterWebPush: (subscriptionId: string): DpopProofTarget => ({
+      method: RelayUnregisterWebPushEndpoint.method,
+      url: urlBuilder.webPush.unregisterWebPush({ params: { subscriptionId } }),
     }),
   };
 
@@ -687,6 +721,23 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       {
         ...input,
         scopes: [RelayMobileRegistrationScope],
+      },
+      request,
+    );
+
+  const webPushRegistrationRequest = <A>(
+    input: {
+      readonly clerkToken: string;
+      readonly target: DpopProofTarget;
+    },
+    request: (
+      authorization: ManagedRelayAuthorization,
+    ) => Effect.Effect<A, ManagedRelayClientError>,
+  ) =>
+    runDpopRequest(
+      {
+        ...input,
+        scopes: [RelayWebPushRegistrationScope],
       },
       request,
     );
@@ -909,6 +960,58 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         );
       },
       Effect.withSpan("clientRuntime.managedRelay.registerLiveActivity"),
+      withRelayClientTracing,
+    ),
+    getWebPushVapidPublicKey: client.metadata
+      .webPushVapidPublicKey()
+      .pipe(
+        Effect.mapError(relayRequestError("read relay Web Push VAPID key")),
+        timeoutRelayRequest("Relay Web Push VAPID key lookup"),
+        Effect.withSpan("clientRuntime.managedRelay.getWebPushVapidPublicKey"),
+        withRelayClientTracing,
+      ),
+    registerWebPush: Effect.fnUntraced(
+      function* (input) {
+        return yield* webPushRegistrationRequest(
+          {
+            clerkToken: input.clerkToken,
+            target: dpopProofTargets.registerWebPush(),
+          },
+          (authorization) =>
+            client.webPush
+              .registerWebPush({
+                headers: dpopHeaders(authorization),
+                payload: input.payload,
+              })
+              .pipe(
+                Effect.mapError(relayRequestError("register relay Web Push subscription")),
+                timeoutRelayRequest("Relay Web Push subscription registration"),
+              ),
+        );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.registerWebPush"),
+      withRelayClientTracing,
+    ),
+    unregisterWebPush: Effect.fnUntraced(
+      function* (input) {
+        return yield* webPushRegistrationRequest(
+          {
+            clerkToken: input.clerkToken,
+            target: dpopProofTargets.unregisterWebPush(input.subscriptionId),
+          },
+          (authorization) =>
+            client.webPush
+              .unregisterWebPush({
+                headers: dpopHeaders(authorization),
+                params: { subscriptionId: input.subscriptionId },
+              })
+              .pipe(
+                Effect.mapError(relayRequestError("unregister relay Web Push subscription")),
+                timeoutRelayRequest("Relay Web Push subscription unregistration"),
+              ),
+        );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.unregisterWebPush"),
       withRelayClientTracing,
     ),
     resetTokenCache: SynchronizedRef.set(cachedTokens, []).pipe(

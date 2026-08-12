@@ -19,6 +19,10 @@
       "types": "./src/agentAwareness.ts",
       "import": "./src/agentAwareness.ts"
     },
+    "./agentNotifications": {
+      "types": "./src/agentNotifications.ts",
+      "import": "./src/agentNotifications.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"

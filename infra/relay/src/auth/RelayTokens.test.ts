@@ -16,6 +16,11 @@ const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test/",
+  webPush: {
+    subject: "https://relay.example.test",
+    publicKey: "web-push-public-key",
+    privateKey: Redacted.make("web-push-private-key"),
+  },
   apns: {
     environment: "sandbox",
     teamId: "team-id",
