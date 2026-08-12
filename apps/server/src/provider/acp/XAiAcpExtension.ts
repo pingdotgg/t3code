@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -19,11 +20,15 @@ type XAiPromptCompleteNotification = typeof XAiPromptCompleteNotification.Type;
 interface PendingXAiPromptCompletion {
   readonly sessionId: string;
   readonly promptId: string;
-  readonly deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse>;
+  readonly deferred: Deferred.Deferred<
+    EffectAcpSchema.PromptResponse,
+    EffectAcpErrors.AcpRequestError
+  >;
 }
 
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+const xAiRateLimitedErrorCode = -32003;
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -278,7 +283,7 @@ const registerXAiPromptCompletionFallback = (
   sessionId: string,
   promptId: string,
 ) =>
-  Deferred.make<EffectAcpSchema.PromptResponse>().pipe(
+  Deferred.make<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>().pipe(
     Effect.tap((deferred) =>
       Ref.update(pendingRef, (pending) => [...pending, { sessionId, promptId, deferred }]),
     ),
@@ -287,7 +292,7 @@ const registerXAiPromptCompletionFallback = (
 
 const unregisterXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
-  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse>,
+  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>,
 ) => Ref.update(pendingRef, (pending) => pending.filter((entry) => entry.deferred !== deferred));
 
 const abortPendingPromptCompletions = (
@@ -358,12 +363,47 @@ const resolveXAiPromptCompletionFallback = ({
           return [Effect.void, pending] as const;
         }
         return [
-          Deferred.succeed(entry.deferred, promptResponseFromXAi(notification)).pipe(Effect.asVoid),
+          settleXAiPromptCompletion(entry.deferred, notification),
           [...pending.slice(0, index), ...pending.slice(index + 1)],
         ] as const;
       }).pipe(Effect.flatten);
     }),
   );
+
+const settleXAiPromptCompletion = (
+  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>,
+  notification: XAiPromptCompleteNotification,
+) => {
+  if (notification.stopReason === "rate_limit") {
+    return Deferred.fail(
+      deferred,
+      new EffectAcpErrors.AcpRequestError({
+        code: xAiRateLimitedErrorCode,
+        errorMessage: "Grok usage limit reached. Try again later.",
+      }),
+    ).pipe(Effect.asVoid);
+  }
+  if (notification.stopReason === "error") {
+    return Deferred.fail(
+      deferred,
+      EffectAcpErrors.AcpRequestError.internalError(
+        xAiAgentResultMessage(notification.agentResult) ?? "Grok prompt failed.",
+      ),
+    ).pipe(Effect.asVoid);
+  }
+  return Deferred.succeed(deferred, promptResponseFromXAi(notification)).pipe(Effect.asVoid);
+};
+
+function xAiAgentResultMessage(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return trimmed(value);
+  }
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+  const message = "message" in value ? value.message : undefined;
+  return typeof message === "string" ? trimmed(message) : undefined;
+}
 
 const rememberCompletedXAiPromptId = (
   completedPromptIdsRef: Ref.Ref<ReadonlyArray<string>>,
