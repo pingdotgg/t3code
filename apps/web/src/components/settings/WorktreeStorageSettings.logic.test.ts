@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, threadKeepsWorktreeActive } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, threadKeepsWorktreeActive } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -96,6 +96,39 @@ describe("worktree storage settings", () => {
 
     expect(worktreeStorageActivityRevision([activeThread], [environmentId])).toBe(
       worktreeStorageActivityRevision([settledThread, activeThread], [environmentId]),
+    );
+  });
+
+  it("keeps a worktree active while an archived owning thread still has a live runtime", () => {
+    const environmentId = EnvironmentId.make("local");
+    const archivedLiveThread = {
+      environmentId,
+      worktreePath: "/worktrees/archived-live",
+      archivedAt: "2026-08-12T00:00:00.000Z",
+      settledOverride: null,
+      session: {
+        threadId: ThreadId.make("thread-archived-live"),
+        status: "running" as const,
+        providerName: "codex",
+        runtimeMode: "full-access" as const,
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-08-12T00:00:00.000Z",
+      },
+      latestTurn: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      backgroundLiveness: null,
+    };
+    const archivedIdleThread = {
+      ...archivedLiveThread,
+      session: null,
+    };
+
+    expect(threadKeepsWorktreeActive(archivedLiveThread)).toBe(true);
+    expect(threadKeepsWorktreeActive(archivedIdleThread)).toBe(false);
+    expect(worktreeStorageActivityRevision([archivedLiveThread], [environmentId])).not.toBe(
+      worktreeStorageActivityRevision([archivedIdleThread], [environmentId]),
     );
   });
 });

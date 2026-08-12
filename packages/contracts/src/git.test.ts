@@ -181,6 +181,32 @@ describe("worktree storage contracts", () => {
     expect(threadKeepsWorktreeActive({ ...base, settledOverride: "settled" })).toBe(false);
   });
 
+  it("keeps a worktree active while an archived thread still has a live runtime", () => {
+    const archived = {
+      archivedAt: "2026-08-12T00:00:00.000Z",
+      settledOverride: null,
+      session: null,
+      latestTurn: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      backgroundLiveness: null,
+    } as const;
+
+    expect(threadKeepsWorktreeActive(archived)).toBe(false);
+    expect(
+      threadKeepsWorktreeActive({
+        ...archived,
+        session: { status: "running" },
+      } as Parameters<typeof threadKeepsWorktreeActive>[0]),
+    ).toBe(true);
+    expect(
+      threadKeepsWorktreeActive({
+        ...archived,
+        latestTurn: { state: "running" },
+      } as Parameters<typeof threadKeepsWorktreeActive>[0]),
+    ).toBe(true);
+  });
+
   it("requires explicit cleanup targets and carries separately confirmed dirty paths", () => {
     const parsed = decodeWorktreeCleanupInput({
       targets: [{ projectId: "project-1", path: "/worktrees/feature-b" }],

@@ -12,12 +12,14 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { parseWorktreeBranchPaths } from "./GitVcsDriverCore.ts";
 
@@ -82,28 +84,53 @@ export const make = Effect.gen(function* () {
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
   };
 
-  const loadShellSnapshot = (operation: string) =>
-    projectionSnapshotQuery.getShellSnapshot().pipe(
+  const loadSnapshot = (
+    operation: string,
+    query: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
+    detail: string,
+  ) =>
+    query.pipe(
       Effect.mapError(
         (cause) =>
           new WorktreeStorageError({
             operation,
-            detail: "Could not read the current projects and active threads.",
+            detail,
             cause,
           }),
       ),
     );
 
+  const loadShellSnapshots = (operation: string) =>
+    Effect.all(
+      [
+        loadSnapshot(
+          operation,
+          projectionSnapshotQuery.getShellSnapshot(),
+          "Could not read the current projects and active threads.",
+        ),
+        loadSnapshot(
+          operation,
+          projectionSnapshotQuery.getArchivedShellSnapshot(),
+          "Could not read archived threads that may still own a worktree.",
+        ),
+      ],
+      { concurrency: 2 },
+    );
+
   const resolveActivePaths = Effect.fn("WorktreeStorage.resolveActivePaths")(function* (
     snapshot: OrchestrationShellSnapshot,
+    archivedSnapshot: OrchestrationShellSnapshot,
   ) {
-    const candidates = [
-      ...snapshot.projects.map((project) => project.workspaceRoot),
-      ...snapshot.threads.flatMap((thread) =>
+    const worktreePathsFor = (threads: OrchestrationShellSnapshot["threads"]) =>
+      threads.flatMap((thread) =>
         thread.worktreePath === null || !threadKeepsWorktreeActive(thread)
           ? []
           : [thread.worktreePath],
-      ),
+      );
+    const candidates = [
+      ...snapshot.projects.map((project) => project.workspaceRoot),
+      ...worktreePathsFor(snapshot.threads),
+      ...worktreePathsFor(archivedSnapshot.threads),
     ];
     const canonicalPaths = yield* Effect.forEach(candidates, canonicalizePath, {
       concurrency: 16,
@@ -233,9 +260,9 @@ export const make = Effect.gen(function* () {
 
   const preview: WorktreeStorage["Service"]["preview"] = Effect.fn("WorktreeStorage.preview")(
     function* () {
-      const snapshot = yield* loadShellSnapshot("WorktreeStorage.preview");
+      const [snapshot, archivedSnapshot] = yield* loadShellSnapshots("WorktreeStorage.preview");
       const [worktreesRoot, activePaths] = yield* Effect.all(
-        [canonicalizePath(config.worktreesDir), resolveActivePaths(snapshot)],
+        [canonicalizePath(config.worktreesDir), resolveActivePaths(snapshot, archivedSnapshot)],
         { concurrency: 2 },
       );
       const seenPaths = new Set<string>();
@@ -309,11 +336,11 @@ export const make = Effect.gen(function* () {
 
   const cleanup: WorktreeStorage["Service"]["cleanup"] = Effect.fn("WorktreeStorage.cleanup")(
     function* (input) {
-      const snapshot = yield* loadShellSnapshot("WorktreeStorage.cleanup");
+      const [snapshot, archivedSnapshot] = yield* loadShellSnapshots("WorktreeStorage.cleanup");
       const [worktreesRoot, activePaths, confirmedDirtyPaths] = yield* Effect.all(
         [
           canonicalizePath(config.worktreesDir),
-          resolveActivePaths(snapshot),
+          resolveActivePaths(snapshot, archivedSnapshot),
           Effect.forEach(input.confirmedDirtyPaths ?? [], canonicalizePath, {
             concurrency: 16,
           }).pipe(Effect.map((paths) => new Set(paths))),
@@ -376,32 +403,67 @@ export const make = Effect.gen(function* () {
           continue;
         }
 
+        const [freshSnapshot, freshArchivedSnapshot] =
+          yield* loadShellSnapshots("WorktreeStorage.cleanup");
+        const freshActivePaths = yield* resolveActivePaths(freshSnapshot, freshArchivedSnapshot);
+        if (freshActivePaths.has(canonicalTargetPath)) {
+          record("skipped_active");
+          continue;
+        }
+
         const statusResult = yield* Effect.result(git.statusDetailsLocal(canonicalTargetPath));
         if (statusResult._tag === "Failure") {
           record("failed", statusResult.failure.message);
           continue;
         }
-        if (
-          statusResult.success.hasWorkingTreeChanges &&
-          !confirmedDirtyPaths.has(canonicalTargetPath)
-        ) {
+        const dirtyConfirmed = confirmedDirtyPaths.has(canonicalTargetPath);
+        if (statusResult.success.hasWorkingTreeChanges && !dirtyConfirmed) {
           record("skipped_dirty");
           continue;
         }
 
-        // Force is required to remove ignored build artifacts. The fresh status check above keeps
-        // tracked and untracked user changes opt-in, while Git keeps the branch and every commit.
-        const removeResult = yield* Effect.result(
+        const removeWorktree = (force: boolean) =>
           git.removeWorktree({
             cwd: project.workspaceRoot,
             path: canonicalTargetPath,
-            force: true,
-          }),
-        );
-        if (removeResult._tag === "Success") {
+            force,
+          });
+
+        // Confirmed dirty trees already opted into destroying local files. Unconfirmed trees
+        // try without --force first so Git itself refuses if user files appeared after status.
+        // Ignored build artifacts still require --force; a second status check keeps that path
+        // from deleting newly written tracked or untracked files.
+        if (dirtyConfirmed) {
+          const removeResult = yield* Effect.result(removeWorktree(true));
+          if (removeResult._tag === "Success") {
+            record("removed");
+          } else {
+            record("failed", removeResult.failure.message);
+          }
+          continue;
+        }
+
+        const gentleRemove = yield* Effect.result(removeWorktree(false));
+        if (gentleRemove._tag === "Success") {
+          record("removed");
+          continue;
+        }
+
+        const statusBeforeForce = yield* Effect.result(git.statusDetailsLocal(canonicalTargetPath));
+        if (statusBeforeForce._tag === "Failure") {
+          record("failed", statusBeforeForce.failure.message);
+          continue;
+        }
+        if (statusBeforeForce.success.hasWorkingTreeChanges) {
+          record("skipped_dirty");
+          continue;
+        }
+
+        const forcedRemove = yield* Effect.result(removeWorktree(true));
+        if (forcedRemove._tag === "Success") {
           record("removed");
         } else {
-          record("failed", removeResult.failure.message);
+          record("failed", forcedRemove.failure.message);
         }
       }
 
@@ -411,3 +473,5 @@ export const make = Effect.gen(function* () {
 
   return WorktreeStorage.of({ preview, cleanup });
 });
+
+export const layer = Layer.effect(WorktreeStorage, make);

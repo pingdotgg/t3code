@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 
 import { ServerConfig } from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -49,8 +50,9 @@ function makeProject(workspaceRoot: string): OrchestrationProjectShell {
 function makeThread(
   id: string,
   worktreePath: string,
-  lifecycle: "active" | "settled",
+  lifecycle: "active" | "settled" | "archived" | "archived-live",
 ): OrchestrationThreadShell {
+  const archived = lifecycle === "archived" || lifecycle === "archived-live";
   return {
     id: ThreadId.make(id),
     projectId,
@@ -63,14 +65,34 @@ function makeThread(
     latestTurn: null,
     createdAt: now,
     updatedAt: now,
-    archivedAt: null,
+    archivedAt: archived ? now : null,
     settledOverride: lifecycle === "settled" ? "settled" : null,
     settledAt: lifecycle === "settled" ? now : null,
-    session: null,
+    session:
+      lifecycle === "archived-live"
+        ? {
+            threadId: ThreadId.make(id),
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          }
+        : null,
     latestUserMessageAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+  };
+}
+
+function emptySnapshot(): OrchestrationShellSnapshot {
+  return {
+    snapshotSequence: 1,
+    projects: [],
+    threads: [],
+    updatedAt: now,
   };
 }
 
@@ -88,6 +110,16 @@ function makeSnapshot(
     ],
     updatedAt: now,
   };
+}
+
+function projectionLayer(
+  snapshot: OrchestrationShellSnapshot,
+  archivedSnapshot: OrchestrationShellSnapshot = emptySnapshot(),
+) {
+  return Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+    getShellSnapshot: () => Effect.succeed(snapshot),
+    getArchivedShellSnapshot: () => Effect.succeed(archivedSnapshot),
+  });
 }
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
@@ -127,11 +159,13 @@ it.effect("previews status and only removes explicitly safe worktrees", () =>
       const cleanPath = path.join(projectWorktreesRoot, "clean");
       const dirtyPath = path.join(projectWorktreesRoot, "dirty");
       const newlyDirtyPath = path.join(projectWorktreesRoot, "newly-dirty");
+      const archivedLivePath = path.join(projectWorktreesRoot, "archived-live");
       yield* git(repository, ["worktree", "add", "-b", "feature/active", activePath]);
       yield* git(repository, ["worktree", "add", "-b", "feature/settled", settledPath]);
       yield* git(repository, ["worktree", "add", "-b", "feature/clean", cleanPath]);
       yield* git(repository, ["worktree", "add", "-b", "feature/dirty", dirtyPath]);
       yield* git(repository, ["worktree", "add", "-b", "feature/newly-dirty", newlyDirtyPath]);
+      yield* git(repository, ["worktree", "add", "-b", "feature/archived-live", archivedLivePath]);
       yield* fileSystem.makeDirectory(path.join(cleanPath, ".cache"), { recursive: true });
       yield* fileSystem.writeFileString(
         path.join(cleanPath, ".cache", "artifact.bin"),
@@ -144,12 +178,14 @@ it.effect("previews status and only removes explicitly safe worktrees", () =>
       yield* fileSystem.writeFileString(path.join(dirtyPath, "notes.txt"), "uncommitted\n");
 
       const snapshot = makeSnapshot(repository, activePath, settledPath);
+      const archivedSnapshot: OrchestrationShellSnapshot = {
+        snapshotSequence: 1,
+        projects: [makeProject(repository)],
+        threads: [makeThread("thread-archived-live-worktree", archivedLivePath, "archived-live")],
+        updatedAt: now,
+      };
       const storage = yield* WorktreeStorage.make.pipe(
-        Effect.provide(
-          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-            getShellSnapshot: () => Effect.succeed(snapshot),
-          }),
-        ),
+        Effect.provide(projectionLayer(snapshot, archivedSnapshot)),
       );
       const preview = yield* storage.preview();
       const previewProject = preview.projects[0];
@@ -161,6 +197,7 @@ it.effect("previews status and only removes explicitly safe worktrees", () =>
         ),
         {
           "feature/active": "active",
+          "feature/archived-live": "active",
           "feature/clean": "clean",
           "feature/dirty": "dirty",
           "feature/newly-dirty": "clean",
@@ -179,6 +216,7 @@ it.effect("previews status and only removes explicitly safe worktrees", () =>
       const firstCleanup = yield* storage.cleanup({
         targets: [
           { projectId, path: activePath },
+          { projectId, path: archivedLivePath },
           { projectId, path: settledPath },
           { projectId, path: cleanPath },
           { projectId, path: dirtyPath },
@@ -188,9 +226,17 @@ it.effect("previews status and only removes explicitly safe worktrees", () =>
       });
       assert.deepStrictEqual(
         firstCleanup.outcomes.map((outcome) => outcome.status),
-        ["skipped_active", "removed", "removed", "skipped_dirty", "skipped_dirty"],
+        [
+          "skipped_active",
+          "skipped_active",
+          "removed",
+          "removed",
+          "skipped_dirty",
+          "skipped_dirty",
+        ],
       );
       assert.equal(yield* fileSystem.exists(activePath), true);
+      assert.equal(yield* fileSystem.exists(archivedLivePath), true);
       assert.equal(yield* fileSystem.exists(settledPath), false);
       assert.equal(yield* fileSystem.exists(cleanPath), false);
       assert.equal(yield* fileSystem.exists(dirtyPath), true);
@@ -207,6 +253,142 @@ it.effect("previews status and only removes explicitly safe worktrees", () =>
       assert.equal(yield* git(repository, ["rev-parse", "feature/dirty"]), dirtyCommit);
       assert.equal(yield* git(repository, ["rev-parse", "feature/newly-dirty"]), newlyDirtyCommit);
       assert.equal(yield* fileSystem.exists(activePath), true);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("skips a worktree that becomes active before it is removed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const repository = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-storage-activate-during-cleanup-",
+      });
+      yield* driver.initRepo({ cwd: repository });
+      yield* git(repository, ["config", "user.email", "test@test.com"]);
+      yield* git(repository, ["config", "user.name", "Test"]);
+      yield* fileSystem.writeFileString(path.join(repository, "README.md"), "# storage test\n");
+      yield* git(repository, ["add", "."]);
+      yield* git(repository, ["commit", "-m", "initial commit"]);
+
+      const projectWorktreesRoot = path.join(config.worktreesDir, "storage-activate");
+      yield* fileSystem.makeDirectory(projectWorktreesRoot, { recursive: true });
+      const firstPath = path.join(projectWorktreesRoot, "first");
+      const secondPath = path.join(projectWorktreesRoot, "second");
+      yield* git(repository, ["worktree", "add", "-b", "feature/first", firstPath]);
+      yield* git(repository, ["worktree", "add", "-b", "feature/second", secondPath]);
+
+      const snapshotRef = yield* Ref.make(
+        makeSnapshot(repository, path.join(projectWorktreesRoot, "unused"), firstPath),
+      );
+      const storage = yield* WorktreeStorage.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+              getShellSnapshot: () => Ref.get(snapshotRef),
+              getArchivedShellSnapshot: () => Effect.succeed(emptySnapshot()),
+            }),
+            Layer.succeed(GitVcsDriver.GitVcsDriver, {
+              ...driver,
+              removeWorktree: (input) =>
+                Ref.update(snapshotRef, (snapshot) => ({
+                  ...snapshot,
+                  threads: [
+                    ...snapshot.threads,
+                    makeThread("thread-activated-during-cleanup", secondPath, "active"),
+                  ],
+                })).pipe(Effect.andThen(driver.removeWorktree(input))),
+            }),
+          ),
+        ),
+      );
+
+      const cleanup = yield* storage.cleanup({
+        targets: [
+          { projectId, path: firstPath },
+          { projectId, path: secondPath },
+        ],
+        confirmedDirtyPaths: [],
+      });
+      assert.deepStrictEqual(
+        cleanup.outcomes.map((outcome) => outcome.status),
+        ["removed", "skipped_active"],
+      );
+      assert.equal(yield* fileSystem.exists(firstPath), false);
+      assert.equal(yield* fileSystem.exists(secondPath), true);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("does not force-remove a worktree that becomes dirty after the status check", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const repository = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-storage-dirty-during-remove-",
+      });
+      yield* driver.initRepo({ cwd: repository });
+      yield* git(repository, ["config", "user.email", "test@test.com"]);
+      yield* git(repository, ["config", "user.name", "Test"]);
+      yield* fileSystem.writeFileString(path.join(repository, ".gitignore"), ".cache/\n");
+      yield* fileSystem.writeFileString(path.join(repository, "README.md"), "# storage test\n");
+      yield* git(repository, ["add", "."]);
+      yield* git(repository, ["commit", "-m", "initial commit"]);
+
+      const projectWorktreesRoot = path.join(config.worktreesDir, "storage-dirty-race");
+      yield* fileSystem.makeDirectory(projectWorktreesRoot, { recursive: true });
+      const racePath = path.join(projectWorktreesRoot, "race");
+      yield* git(repository, ["worktree", "add", "-b", "feature/race", racePath]);
+      yield* fileSystem.makeDirectory(path.join(racePath, ".cache"), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(racePath, ".cache", "artifact.bin"), "ignored\n");
+
+      const snapshot = makeSnapshot(
+        repository,
+        path.join(projectWorktreesRoot, "unused"),
+        racePath,
+      );
+      const storage = yield* WorktreeStorage.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            projectionLayer(snapshot),
+            Layer.succeed(GitVcsDriver.GitVcsDriver, {
+              ...driver,
+              statusDetailsLocal: (cwd) =>
+                driver
+                  .statusDetailsLocal(cwd)
+                  .pipe(
+                    Effect.tap((status) =>
+                      status.hasWorkingTreeChanges
+                        ? Effect.void
+                        : fileSystem
+                            .writeFileString(
+                              path.join(cwd, "appeared-after-status.txt"),
+                              "do not delete\n",
+                            )
+                            .pipe(Effect.orDie),
+                    ),
+                  ),
+            }),
+          ),
+        ),
+      );
+
+      const cleanup = yield* storage.cleanup({
+        targets: [{ projectId, path: racePath }],
+        confirmedDirtyPaths: [],
+      });
+      assert.equal(cleanup.outcomes[0]?.status, "skipped_dirty");
+      assert.equal(yield* fileSystem.exists(racePath), true);
+      assert.equal(
+        yield* fileSystem.exists(path.join(racePath, "appeared-after-status.txt")),
+        true,
+      );
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

@@ -158,7 +158,9 @@ export function WorktreeStorageSettings({
         });
         if (result._tag === "Success") {
           outcomes.push(...result.value.outcomes);
-        } else if (!isAtomCommandInterrupted(result)) {
+        } else if (isAtomCommandInterrupted(result)) {
+          failures.push(new Error("Worktree cleanup was interrupted."));
+        } else {
           failures.push(squashAtomCommandFailure(result));
         }
       }
