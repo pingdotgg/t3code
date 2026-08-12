@@ -26,6 +26,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -60,6 +61,11 @@ import {
   resolveKimiQuestionPermissionOption,
 } from "../acp/KimiUserInput.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
+import {
+  getKimiCliCompatibilityIssue,
+  parseKimiCliVersion,
+  runKimiVersionCommand,
+} from "../Drivers/KimiVersion.ts";
 import type { KimiAdapterShape } from "../Services/KimiAdapter.ts";
 
 const PROVIDER = ProviderDriverKind.make("kimi");
@@ -187,6 +193,39 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
     const threadLocks = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+    const ensureSupportedKimiVersion = (threadId: ThreadId) =>
+      Effect.gen(function* () {
+        const probe = yield* runKimiVersionCommand(kimiSettings, options?.environment).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.result,
+        );
+        if (Result.isFailure(probe)) {
+          return yield* new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId,
+            detail: "Failed to verify the Kimi CLI version before starting ACP.",
+            cause: probe.failure,
+          });
+        }
+        if (probe.success.code !== 0) {
+          return yield* new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId,
+            detail: `Kimi CLI version check exited with code ${probe.success.code}.`,
+          });
+        }
+        const version = parseKimiCliVersion(`${probe.success.stdout}\n${probe.success.stderr}`);
+        const compatibilityIssue = getKimiCliCompatibilityIssue(version);
+        if (compatibilityIssue !== null) {
+          return yield* new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId,
+            detail: compatibilityIssue,
+          });
+        }
+      });
     const randomUUIDv4 = crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
@@ -303,6 +342,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               issue: "cwd is required and must be non-empty.",
             });
           }
+          yield* ensureSupportedKimiVersion(input.threadId);
           const existing = sessions.get(input.threadId);
           if (existing) yield* stopSessionInternal(existing);
 

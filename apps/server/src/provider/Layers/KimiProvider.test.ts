@@ -279,6 +279,19 @@ describe("checkKimiProviderStatus", () => {
     expect(snapshot.message).toContain("thinking levels");
   });
 
+  it("rejects prereleases older than the minimum stable Kimi version", async () => {
+    const binaryPath = await makeKimiFixture("ready", "0.29.0-beta.1");
+    const snapshot = await runNode(
+      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+        ...process.env,
+        T3_KIMI_FIXTURE_MODE: "ready",
+      }),
+    );
+
+    expect(snapshot.status).toBe("error");
+    expect(snapshot.version).toBe("0.29.0-beta.1");
+  });
+
   it("rejects Kimi output whose version cannot be verified", async () => {
     const binaryPath = await makeKimiFixture("ready", "unknown");
     const snapshot = await runNode(

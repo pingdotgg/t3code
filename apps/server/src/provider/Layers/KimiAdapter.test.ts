@@ -10,6 +10,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -29,7 +30,7 @@ const decodeKimiSettings = Schema.decodeSync(KimiSettings);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 
-async function makeKimiWrapper(extraEnv?: Record<string, string>) {
+async function makeKimiWrapper(extraEnv?: Record<string, string>, version = "0.29.0") {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-acp-mock-"));
   const windows = process.platform === "win32";
   const wrapperPath = NodePath.join(directory, windows ? "kimi.cmd" : "fake-kimi.sh");
@@ -41,8 +42,8 @@ async function makeKimiWrapper(extraEnv?: Record<string, string>) {
     )
     .join("\n");
   const script = windows
-    ? `@echo off\r\n${envExports}\r\n${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)} %*\r\n`
-    : `#!/bin/sh\n${envExports}\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)} "$@"\n`;
+    ? `@echo off\r\nif "%~1"=="--version" (\r\n  echo kimi ${version}\r\n  exit /b 0\r\n)\r\n${envExports}\r\n${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)} %*\r\n`
+    : `#!/bin/sh\nif [ "$1" = "--version" ]; then\n  printf 'kimi ${version}\\n'\n  exit 0\nfi\n${envExports}\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)} "$@"\n`;
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
   if (!windows) await NodeFSP.chmod(wrapperPath, 0o755);
   return wrapperPath;
@@ -73,6 +74,30 @@ const makeTestAdapter = (binaryPath: string, instanceId = ProviderInstanceId.mak
   makeKimiAdapter(decodeKimiSettings({ binaryPath }), { instanceId }).pipe(Effect.orDie);
 
 it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
+  it.effect("rejects an incompatible Kimi CLI before starting ACP", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeTestAdapter(
+        yield* Effect.promise(() => makeKimiWrapper(undefined, "0.28.1")),
+      );
+      const threadId = ThreadId.make("kimi-old-version");
+      const result = yield* Effect.result(
+        adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("kimi"),
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        }),
+      );
+
+      if (Result.isSuccess(result)) {
+        yield* adapter.stopSession(threadId);
+        assert.fail("expected an incompatible Kimi version to be rejected");
+      }
+      assert.equal(result.failure._tag, "ProviderAdapterProcessError");
+      assert.include(result.failure.message, "0.29.0");
+    }),
+  );
+
   it.effect("starts a Kimi ACP session and emits canonical prompt lifecycle events", () =>
     Effect.gen(function* () {
       const directory = yield* Effect.promise(() =>
