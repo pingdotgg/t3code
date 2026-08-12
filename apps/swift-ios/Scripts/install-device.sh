@@ -79,7 +79,7 @@ build_settings=(
 if [[ "${CONFIGURATION}" == "Debug" ]]; then
   GIT_COMMIT="$(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   if [[ "${GIT_COMMIT}" != "unknown" ]] && \
-     [[ -n "$(git -C "${APP_DIR}" status --porcelain -- . 2>/dev/null)" ]]; then
+     [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
     GIT_COMMIT="${GIT_COMMIT}-dirty"
   fi
 
