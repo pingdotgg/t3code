@@ -2,10 +2,23 @@ import type {
   EnvironmentId,
   ProjectId,
   PullRequestInvolvement,
+  PullRequestListFilters,
   PullRequestListState,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { FolderGit2Icon, LayersIcon, ListFilterIcon, LoaderIcon, SearchIcon } from "lucide-react";
+import {
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleSlashIcon,
+  CircleXIcon,
+  EyeOffIcon,
+  FolderGit2Icon,
+  GitPullRequestDraftIcon,
+  LayersIcon,
+  ListFilterIcon,
+  LoaderIcon,
+  SearchIcon,
+} from "lucide-react";
 import type { ElementType } from "react";
 
 import { cn } from "~/lib/utils";
@@ -82,7 +95,7 @@ export function PullRequestSearchInput({
         type="text"
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
-        placeholder="Search pull requests"
+        placeholder="Search pull requests, or label:bug"
         aria-label="Search pull requests"
         // Tracks the shared input's height at both widths, so it stays level with the icon
         // button beside it rather than towering over it on wide screens.
@@ -101,6 +114,38 @@ export function PullRequestSearchInput({
 const ALL_PROJECTS_VALUE = "all";
 /** MenuRadioGroup wants a string, so "every host" wears the one value no host can be. */
 const ALL_HOSTS_VALUE = "";
+/** The same trick for the servers, which are named by an id no empty string can collide with. */
+const ALL_SERVERS_VALUE = "";
+/** The unset value of each narrowing group, which no filter of theirs is named after. */
+const UNFILTERED_VALUE = "all";
+/**
+ * A project's own radio value, carrying the server along with the id: the id alone is only
+ * unique within its own server, so two rows sharing one would otherwise both read as checked.
+ */
+const projectMenuValue = (project: {
+  readonly id: ProjectId;
+  readonly environmentId: EnvironmentId;
+}) => `${project.environmentId} ${project.id}`;
+
+const DRAFT_OPTIONS = [
+  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
+  { value: "only", label: "Drafts only", Icon: GitPullRequestDraftIcon },
+  { value: "hide", label: "Hide drafts", Icon: EyeOffIcon },
+] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
+
+const REVIEW_OPTIONS = [
+  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
+  { value: "approved", label: "Approved", Icon: CircleCheckIcon },
+  { value: "changes-requested", label: "Changes requested", Icon: CircleXIcon },
+  { value: "review-required", label: "Review required", Icon: CircleDashedIcon },
+  { value: "none", label: "No reviews", Icon: CircleSlashIcon },
+] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
+
+const CHECKS_OPTIONS = [
+  { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
+  { value: "passing", label: "Passing", Icon: CircleCheckIcon },
+  { value: "failing", label: "Failing", Icon: CircleXIcon },
+] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
 
 function PullRequestFilterRadioGroup<Value extends string>({
   label,
@@ -147,12 +192,17 @@ export function PullRequestFiltersMenu({
   involvement,
   involvementOptions,
   onInvolvement,
+  filters,
+  onFilters,
   host,
   hostOptions,
   onHost,
-  environmentId,
+  server,
+  serverOptions,
+  onServer,
   projects,
   projectId,
+  projectEnvironmentId,
   unavailable,
   onProject,
 }: {
@@ -162,6 +212,9 @@ export function PullRequestFiltersMenu({
   involvement: PullRequestInvolvement;
   involvementOptions: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
   onInvolvement: (involvement: PullRequestInvolvement) => void;
+  /** The narrowings beyond state and involvement; an absent field is that group unfiltered. */
+  filters: PullRequestListFilters;
+  onFilters: (filters: PullRequestListFilters) => void;
   host: string | undefined;
   /**
    * Includes the "all hosts" entry, whose value is the empty string. With fewer than two real
@@ -169,24 +222,52 @@ export function PullRequestFiltersMenu({
    */
   hostOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onHost: (host: string | undefined) => void;
-  /** Where the projects' own favicons are read from; null before the environment is known. */
-  environmentId: EnvironmentId | null;
+  server: EnvironmentId | undefined;
+  /**
+   * Includes the "all servers" entry, whose value is the empty string. With one server there is
+   * nothing to switch between, so the whole group stays out of the menu.
+   */
+  serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
+  onServer: (server: EnvironmentId | undefined) => void;
+  /** The projects of every connected environment, each carrying the one its favicon is read from. */
   projects: ReadonlyArray<{
     readonly id: ProjectId;
+    readonly environmentId: EnvironmentId;
     readonly title: string;
     readonly workspaceRoot: string;
   }>;
   projectId: ProjectId | undefined;
+  /**
+   * The server the selected project belongs to. A project id is only unique within its own
+   * server, so without this two rows sharing an id would both read as checked here.
+   */
+  projectEnvironmentId: EnvironmentId | undefined;
   /**
    * Projects whose repository could not be read this time round. They are named here, where
    * the reader is already choosing between projects, rather than as a count above the list
    * that says something is missing without saying which.
    */
   unavailable: ReadonlyMap<ProjectId, string>;
-  onProject: (projectId: ProjectId | undefined) => void;
+  /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
+  onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
 }) {
   const filtered =
-    state !== "open" || involvement !== "all" || host !== undefined || projectId !== undefined;
+    state !== "open" ||
+    involvement !== "all" ||
+    host !== undefined ||
+    server !== undefined ||
+    projectId !== undefined ||
+    Object.keys(filters).length > 0;
+  /**
+   * Rebuilt rather than spread so an unfiltered group leaves the record instead of lingering in
+   * it as an explicit `undefined`, which the listing input does not accept.
+   */
+  const withFilter = (key: keyof PullRequestListFilters, value: string): PullRequestListFilters =>
+    Object.fromEntries(
+      Object.entries({ ...filters, [key]: value === UNFILTERED_VALUE ? undefined : value }).filter(
+        ([, held]) => held !== undefined,
+      ),
+    ) as PullRequestListFilters;
   return (
     <Menu>
       <MenuTrigger
@@ -219,6 +300,27 @@ export function PullRequestFiltersMenu({
           options={involvementOptions}
           onChange={onInvolvement}
         />
+        <MenuSeparator />
+        <PullRequestFilterRadioGroup
+          label="Draft"
+          value={filters.draft ?? UNFILTERED_VALUE}
+          options={DRAFT_OPTIONS}
+          onChange={(next) => onFilters(withFilter("draft", next))}
+        />
+        <MenuSeparator />
+        <PullRequestFilterRadioGroup
+          label="Review"
+          value={filters.review ?? UNFILTERED_VALUE}
+          options={REVIEW_OPTIONS}
+          onChange={(next) => onFilters(withFilter("review", next))}
+        />
+        <MenuSeparator />
+        <PullRequestFilterRadioGroup
+          label="Checks"
+          value={filters.checks ?? UNFILTERED_VALUE}
+          options={CHECKS_OPTIONS}
+          onChange={(next) => onFilters(withFilter("checks", next))}
+        />
         {hostOptions.length > 2 ? (
           <>
             <MenuSeparator />
@@ -230,12 +332,40 @@ export function PullRequestFiltersMenu({
             />
           </>
         ) : null}
+        {serverOptions.length > 2 ? (
+          <>
+            <MenuSeparator />
+            <PullRequestFilterRadioGroup
+              label="Server"
+              value={server ?? ALL_SERVERS_VALUE}
+              options={serverOptions}
+              onChange={(next) =>
+                onServer(next === ALL_SERVERS_VALUE ? undefined : (next as EnvironmentId))
+              }
+            />
+          </>
+        ) : null}
         <MenuSeparator />
         <MenuRadioGroup
-          value={projectId ?? ALL_PROJECTS_VALUE}
+          value={
+            projectId === undefined || projectEnvironmentId === undefined
+              ? ALL_PROJECTS_VALUE
+              : projectMenuValue({ id: projectId, environmentId: projectEnvironmentId })
+          }
           onValueChange={(next) => {
-            const nextProjectId = next === ALL_PROJECTS_VALUE ? undefined : (next as ProjectId);
-            if (nextProjectId !== projectId) onProject(nextProjectId);
+            if (next === ALL_PROJECTS_VALUE) {
+              if (projectId !== undefined) onProject(undefined, undefined);
+              return;
+            }
+            // The value carries both halves, since the id alone cannot tell two servers' rows
+            // apart once they share one.
+            const project = projects.find((candidate) => projectMenuValue(candidate) === next);
+            if (
+              project !== undefined &&
+              (project.id !== projectId || project.environmentId !== projectEnvironmentId)
+            ) {
+              onProject(project.id, project.environmentId);
+            }
           }}
         >
           <MenuGroupLabel>Project</MenuGroupLabel>
@@ -255,22 +385,18 @@ export function PullRequestFiltersMenu({
               const reason = unavailable.get(project.id);
               return (
                 <MenuRadioItem
-                  key={project.id}
-                  value={project.id}
+                  key={projectMenuValue(project)}
+                  value={projectMenuValue(project)}
                   disabled={reason !== undefined}
                   title={reason}
                 >
                   <span className="flex min-w-0 flex-1 items-center gap-2">
-                    {environmentId === null ? (
-                      <FolderGit2Icon aria-hidden className="size-3.5 shrink-0" />
-                    ) : (
-                      <ProjectFavicon
-                        environmentId={environmentId}
-                        cwd={project.workspaceRoot}
-                        fallbackIcon={FolderGit2Icon}
-                        className="size-3.5 shrink-0"
-                      />
-                    )}
+                    <ProjectFavicon
+                      environmentId={project.environmentId}
+                      cwd={project.workspaceRoot}
+                      fallbackIcon={FolderGit2Icon}
+                      className="size-3.5 shrink-0"
+                    />
                     <span className="min-w-0 flex-1 truncate">{project.title}</span>
                     {reason === undefined ? null : (
                       <span className="shrink-0 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:text-amber-400/90">

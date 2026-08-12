@@ -3,22 +3,29 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import type {
-  PullRequestAction,
-  PullRequestActor,
-  PullRequestInvolvement,
-  PullRequestListState,
-  PullRequestMergeMethod,
-  PullRequestReviewCommentDraft,
-  PullRequestReviewVerdict,
-  PullRequestReviewerCandidateList,
-  PullRequestReviewerKind,
-  PullRequestThreadComment,
+import {
+  resolvePullRequestAuthorFilter,
+  type PullRequestAction,
+  type PullRequestActor,
+  type PullRequestInvolvement,
+  type PullRequestListFilters,
+  type PullRequestListState,
+  type PullRequestMergeMethod,
+  type PullRequestOmittedFileStat,
+  type PullRequestReaction,
+  type PullRequestReactionContent,
+  type PullRequestReviewCommentDraft,
+  type PullRequestReviewVerdict,
+  type PullRequestReviewerCandidateList,
+  type PullRequestReviewerKind,
+  type PullRequestThreadComment,
+  type PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import {
   ACTOR_AVATARS_GRAPHQL_QUERY,
+  ADD_REACTION_GRAPHQL_MUTATION,
   buildReviewSubmissionJson,
   buildReviewerRequestJson,
   decodeActorAvatarsJson,
@@ -26,10 +33,13 @@ import {
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
   decodePullRequestListJson,
+  decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
   decodePullRequestStatsJson,
+  decodeReactionSubjectScopeJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
+  decodeReviewDismissalsJson,
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
   buildPullRequestStatsGraphQlQuery,
@@ -37,18 +47,29 @@ import {
   pullRequestSearchGraphQlQuery,
   PULL_REQUEST_SEARCH_MAX_ROWS,
   PULL_REQUEST_ACTIVITY_JSON_FIELDS,
+  BASE_COMPARISON_GRAPHQL_QUERY,
+  decodeBaseComparisonJson,
   PULL_REQUEST_DETAIL_JSON_FIELDS,
   PULL_REQUEST_LIST_JSON_FIELDS,
+  PULL_REQUEST_NODE_ID_GRAPHQL_QUERY,
+  REACTION_SUBJECT_PULL_REQUEST_GRAPHQL_QUERY,
+  REMOVE_REACTION_GRAPHQL_MUTATION,
+  gitHubReactionContent,
   REPOSITORY_ACCESS_JSON_FIELDS,
   RESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
   REVIEWER_CANDIDATES_GRAPHQL_QUERY,
   REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY,
+  REVIEW_DISMISSALS_GRAPHQL_QUERY,
   REVIEW_THREAD_REPLY_GRAPHQL_MUTATION,
   REVIEW_THREADS_GRAPHQL_QUERY,
   reviewThreadConversation,
   UNRESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
+  UPDATE_ISSUE_COMMENT_GRAPHQL_MUTATION,
+  UPDATE_PULL_REQUEST_GRAPHQL_MUTATION,
+  UPDATE_REVIEW_COMMENT_GRAPHQL_MUTATION,
   VIEWER_PERMISSIONS_GRAPHQL_QUERY,
   decodeViewerPermissionsJson,
+  type GitHubBaseComparison,
   type GitHubPullRequestDetail,
   type GitHubPullRequestActivity,
   type GitHubPullRequestListItem,
@@ -199,6 +220,24 @@ export class GitHubRepositorySelectorError extends Schema.TaggedErrorClass<GitHu
   }
 }
 
+/** Not a decode failure: the reader named a subject this pull request never handed out. */
+export class GitHubSubjectScopeError extends Schema.TaggedErrorClass<GitHubSubjectScopeError>()(
+  "GitHubSubjectScopeError",
+  {
+    command: Schema.Literal("gh"),
+    cwd: Schema.String,
+    operation: Schema.String,
+  },
+) {
+  get detail(): string {
+    return "The named subject did not belong to the named pull request.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export type GitHubPullRequestCliError =
   | GitHubCli.GitHubCliError
   | GitHubPullRequestReadError
@@ -207,6 +246,7 @@ export type GitHubPullRequestCliError =
   | GitHubDiffRevisionsUnavailableError
   | GitHubDiffFileContentsUnavailableError
   | GitHubRepositorySelectorError
+  | GitHubSubjectScopeError
   | GitHubViewerLoginUnavailableError;
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
@@ -270,6 +310,8 @@ export interface GitHubPullRequestDiffSlice {
   readonly truncated: boolean;
   /** Where the next slice starts, or null once the patch is whole. */
   readonly nextCursor: string | null;
+  /** GitHub's own counts for the files whose hunks it withheld from this slice. */
+  readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
 }
 
 export class GitHubPullRequestCli extends Context.Service<
@@ -291,6 +333,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly query?: string | undefined;
       /** Where to carry on from, as a `updated:` qualifier on the same search. */
       readonly cursor?: ProviderListCursor | undefined;
+      /** Further narrowings, as qualifiers on the search and as a local pass on the fallback. */
+      readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestCliError>;
 
     /**
@@ -309,6 +353,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly limit: number;
       readonly query?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
+      readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<GitHubPullRequestSearchBatch, GitHubPullRequestCliError>;
 
     /** The line counts the search leaves out, for rows already on the page. */
@@ -327,6 +372,20 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<GitHubPullRequestDetail, GitHubPullRequestCliError>;
+
+    /**
+     * How far the branch trails its base, and whether this viewer may update it. Its own read
+     * because the comparison needs the head ref the detail answers with — a fork's branch is not
+     * addressable in the base repository by name alone.
+     */
+    readonly getPullRequestBaseComparison: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      /** Qualified `owner:branch`, which is the only form a fork's head resolves under. */
+      readonly headRef: string;
+    }) => Effect.Effect<GitHubBaseComparison, GitHubPullRequestCliError>;
 
     readonly getPullRequestActivity: (input: {
       readonly cwd: string;
@@ -418,6 +477,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly number: number;
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
     readonly commentOnPullRequest: (input: {
@@ -452,6 +512,47 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly threadId: string;
       readonly resolved: boolean;
+    }) => Effect.Effect<void, GitHubPullRequestCliError>;
+
+    /**
+     * Adds a reaction to a remark, or takes it back. `subjectId` is any node GitHub calls
+     * reactable — a comment, a review, or the pull request itself, which is looked up here
+     * because nothing in the conversation names it. A given `subjectId` is confirmed to belong
+     * to this pull request before the mutation runs, since nothing else ties the two together.
+     */
+    readonly setReaction: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly subjectId?: string | undefined;
+      readonly content: PullRequestReactionContent;
+      readonly reacted: boolean;
+    }) => Effect.Effect<void, GitHubPullRequestCliError>;
+
+    /** Rewrites the pull request's own words, leaving whichever of the two was not given. */
+    readonly updatePullRequest: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly title?: string | undefined;
+      readonly body?: string | undefined;
+    }) => Effect.Effect<void, GitHubPullRequestCliError>;
+
+    /**
+     * Rewrites a remark. `commentId` is trusted to be whatever node it names, so it is confirmed
+     * to belong to this pull request before the mutation runs, the way a reaction subject is.
+     * Whether the remark is the reader's to rewrite is GitHub's own answer, not one asked here.
+     */
+    readonly updateComment: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly commentId: string;
+      readonly kind: "issue-comment" | "review-comment";
+      readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
   }
 >()("t3/pullRequest/GitHubPullRequestCli") {}
@@ -501,6 +602,76 @@ function searchPhrase(query: string): string {
   return `"${query.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
+/** GitHub's own spelling of a review state, which is not the contract's. */
+const REVIEW_QUALIFIERS = {
+  approved: "approved",
+  "changes-requested": "changes_requested",
+  "review-required": "required",
+  none: "none",
+} as const;
+
+/**
+ * The extra narrowings as GitHub search qualifiers. Values a reader typed are quoted, and the
+ * one character that could end the quoted value early is dropped rather than escaped: no GitHub
+ * label or login holds a double quote, so there is nothing to preserve and everything to lose.
+ */
+function qualifierValue(value: string): string {
+  return `"${value.replaceAll('"', "").trim()}"`;
+}
+
+function filterQualifiers(
+  filters: PullRequestListFilters | undefined,
+  viewer: string,
+): ReadonlyArray<string> {
+  if (filters === undefined) return [];
+  return [
+    // One qualifier per group, its names joined by commas — GitHub's own OR.
+    ...(filters.labels ?? []).flatMap((group) =>
+      group.length === 0 ? [] : [`label:${group.map(qualifierValue).join(",")}`],
+    ),
+    ...(filters.excludedLabels ?? []).map((label) => `-label:${qualifierValue(label)}`),
+    ...(filters.author === undefined
+      ? []
+      : [`author:${qualifierValue(resolvePullRequestAuthorFilter(filters.author, viewer))}`]),
+    ...(filters.draft === undefined ? [] : [`draft:${filters.draft === "only"}`]),
+    ...(filters.review === undefined ? [] : [`review:${REVIEW_QUALIFIERS[filters.review]}`]),
+    ...(filters.checks === undefined
+      ? []
+      : [`status:${filters.checks === "passing" ? "success" : "failure"}`]),
+  ];
+}
+
+/**
+ * The same narrowings over a row that has already arrived, for the search-free fallback. Every
+ * listed row now carries its own `checksState`, so `checks` is judged the way `review` is: by
+ * equality against the row's field. Unlike `review`, `checks` has no `"none"` value to catch an
+ * absent state on purpose — a row with no checks configured, or whose checks are still `pending`,
+ * equals neither `"passing"` nor `"failing"` and so fails both, the same as a row search would
+ * not have surfaced for `status:success` or `status:failure`.
+ */
+function matchesFilters(
+  item: GitHubPullRequestListItem,
+  filters: PullRequestListFilters | undefined,
+  viewer: string,
+): boolean {
+  if (filters === undefined) return true;
+  const labels = item.labels.map((label) => label.name.trim().toLowerCase());
+  const holds = (label: string) => labels.includes(label.trim().toLowerCase());
+  return (
+    (filters.draft === undefined || item.isDraft === (filters.draft === "only")) &&
+    (filters.review === undefined ||
+      (filters.review === "none"
+        ? item.reviewDecision === null
+        : item.reviewDecision === filters.review)) &&
+    (filters.checks === undefined || item.checksState === filters.checks) &&
+    (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
+    (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
+    (filters.author === undefined ||
+      item.author?.login.toLowerCase() ===
+        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
+  );
+}
+
 function involvementArgs(input: {
   readonly state: PullRequestListState;
   readonly involvement: PullRequestInvolvement;
@@ -513,6 +684,7 @@ function involvementArgs(input: {
    * cannot use search at all and takes whatever order `gh pr list` answers in.
    */
   readonly sorted: boolean;
+  readonly filters?: PullRequestListFilters | undefined;
 }): ReadonlyArray<string> {
   // `--state closed` includes merged pull requests, so the Closed tab additionally excludes
   // them through search; `--author` and `review-requested:` are GitHub's own filters. `gh`
@@ -531,6 +703,7 @@ function involvementArgs(input: {
         // sharing one instant are ordinary and the caller drops the ones it has already sent —
         // asking for strictly older would lose the rest of them instead.
         ...(input.cursor === undefined ? [] : [`updated:<=${input.cursor.updatedBefore}`]),
+        ...filterQualifiers(input.filters, input.viewer),
         // `gh pr list` answers newest-created first, which is not the order the page reads rows in
         // and not an order a continuation can carry on from: a change request opened last year and
         // touched this morning belongs at the top of the list and at the front of the first slice.
@@ -550,6 +723,7 @@ function matchesUnsortedListing(
     readonly state: PullRequestListState;
     readonly involvement: PullRequestInvolvement;
     readonly viewer: string;
+    readonly filters?: PullRequestListFilters | undefined;
   },
 ): boolean {
   const matchesState = input.state === "all" || item.state === input.state;
@@ -560,7 +734,7 @@ function matchesUnsortedListing(
       ? item.author?.login.toLowerCase() === viewer
       : item.hasTeamReviewRequest ||
         item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer));
-  return matchesState && matchesInvolvement;
+  return matchesState && matchesInvolvement && matchesFilters(item, input.filters, input.viewer);
 }
 
 /** What a repository selector may hold before it goes into a search as itself. */
@@ -587,6 +761,7 @@ function searchQuery(input: {
   readonly viewer: string;
   readonly query?: string | undefined;
   readonly cursor?: ProviderListCursor | undefined;
+  readonly filters?: PullRequestListFilters | undefined;
 }): string | null {
   if (input.repositories.length === 0) return null;
   const repositories = input.repositories.map((repository) => repository.trim());
@@ -603,6 +778,7 @@ function searchQuery(input: {
     ...(query.length === 0 ? [] : [searchPhrase(query)]),
     // Inclusive, and de-duplicated by the caller, for the reason the per-repository read gives.
     ...(input.cursor === undefined ? [] : [`updated:<=${input.cursor.updatedBefore}`]),
+    ...filterQualifiers(input.filters, input.viewer),
     // The order the page reads its rows in, and the only order a continuation can carry on from.
     "sort:updated-desc",
     ...repositories.map((repository) => `repo:${repository}`),
@@ -621,10 +797,20 @@ function cursorVariable(cursor: string | null): readonly [string, string] {
 function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
+  updateMethod: PullRequestUpdateMethod | undefined,
 ): ReadonlyArray<string> {
   switch (action) {
     case "merge":
       return ["merge", `--${mergeMethod ?? "merge"}`];
+    // `--auto` arms the same command instead of running it, and still needs the strategy: GitHub
+    // stores the strategy with the standing instruction rather than choosing one at merge time.
+    case "enable-auto-merge":
+      return ["merge", "--auto", `--${mergeMethod ?? "merge"}`];
+    case "disable-auto-merge":
+      return ["merge", "--disable-auto"];
+    // `gh` updates with a merge commit unless asked to rebase, which is GitHub's own default.
+    case "update-branch":
+      return ["update-branch", ...(updateMethod === "rebase" ? ["--rebase"] : [])];
     case "ready":
       return ["ready"];
     case "draft":
@@ -638,6 +824,62 @@ function actionArgs(
 
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
+
+  /**
+   * The pull request's own node id, which is what a mutation against the pull request itself is
+   * addressed by: a reaction on its description, or a rewrite of its words.
+   */
+  const pullRequestNodeId = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+    readonly number: number;
+    readonly operation: string;
+  }) => {
+    const { owner, name } = parseRepositorySelector(input.repository);
+    return graphqlRead({
+      cwd: input.cwd,
+      host: input.host,
+      operation: input.operation,
+      variables: [
+        ["-f", `owner=${owner}`],
+        ["-f", `name=${name}`],
+        ["-F", `number=${input.number}`],
+      ],
+      query: PULL_REQUEST_NODE_ID_GRAPHQL_QUERY,
+      decode: decodePullRequestNodeIdJson,
+    });
+  };
+
+  /**
+   * Whether a client-given subject actually belongs to the pull request the request names. A
+   * subject id is trusted to be whatever node it names, and that node can hang off any pull
+   * request on the host — so the mutation itself would write wherever the id actually belongs,
+   * not wherever the request says it does, unless this confirms the two agree first.
+   */
+  const subjectBelongsToPullRequest = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly host: string;
+    readonly number: number;
+    readonly subjectId: string;
+    readonly operation: string;
+  }) => {
+    const { owner, name } = parseRepositorySelector(input.repository);
+    return graphqlRead({
+      cwd: input.cwd,
+      host: input.host,
+      operation: input.operation,
+      variables: [
+        ["-f", `owner=${owner}`],
+        ["-f", `name=${name}`],
+        ["-F", `number=${input.number}`],
+        ["-f", `subjectId=${input.subjectId}`],
+      ],
+      query: REACTION_SUBJECT_PULL_REQUEST_GRAPHQL_QUERY,
+      decode: decodeReactionSubjectScopeJson,
+    });
+  };
 
   // `gh` resolves a bare `owner/repo` against whichever host it defaults to, which is
   // github.com. Naming the host makes a GitHub Enterprise repository resolve to its own
@@ -796,6 +1038,9 @@ export const make = Effect.gen(function* () {
             patch: decoded.success.patch,
             truncated: decoded.success.truncated,
             nextCursor: morePages ? String(input.page + 1) : null,
+            ...(decoded.success.omittedFileStats.length === 0
+              ? {}
+              : { omittedFileStats: decoded.success.omittedFileStats }),
           });
         }),
       );
@@ -977,10 +1222,15 @@ export const make = Effect.gen(function* () {
       // repository's whole list, which is every row the reader did not search for. The fallback
       // is for a repository the index does not cover, and a listing with no text to match is the
       // only place an empty answer can mean that.
-      const searched = (input.query?.trim().length ?? 0) > 0;
+      // Every filter is a qualifier `matchesFilters` can judge over the fallback's own rows just
+      // as well as search judges them over its own, so carrying them into the fallback answers
+      // the same read rather than a wider one. Free text is the one thing the fallback cannot
+      // judge locally — it lists rows, it does not search their text — so a query still rules
+      // the fallback out: an empty answer under one is already the answer.
+      const hasQuery = (input.query?.trim().length ?? 0) > 0;
       return read(true).pipe(
         Effect.flatMap((batch) =>
-          batch.items.length === 0 && input.cursor === undefined && !searched
+          batch.items.length === 0 && input.cursor === undefined && !hasQuery
             ? read(false)
             : Effect.succeed(batch),
         ),
@@ -1084,6 +1334,23 @@ export const make = Effect.gen(function* () {
                 );
           }),
         ),
+
+    getPullRequestBaseComparison: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getPullRequestBaseComparison",
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+          ["-f", `headRef=${input.headRef}`],
+        ],
+        query: BASE_COMPARISON_GRAPHQL_QUERY,
+        decode: decodeBaseComparisonJson,
+      });
+    },
 
     getPullRequestActivity: (input) =>
       github
@@ -1216,8 +1483,12 @@ export const make = Effect.gen(function* () {
           { readonly additions: number; readonly deletions: number }
         >();
         let reviewers: ReadonlyArray<PullRequestActor> = [];
+        let reactions: GitHubReviewThreadPage["reactions"] = [];
+        const reactionsById = new Map<string, ReadonlyArray<PullRequestReaction>>();
         let commits: GitHubReviewThreadPage["commits"] = [];
         let viewer: GitHubReviewThreadPage["viewer"] = { canUpdate: true, didAuthor: false };
+        const dismissalsByReviewId = new Map<string, string>();
+        let dismissalCursor: string | null = null;
         let cursor: string | null = null;
         let page = 0;
         do {
@@ -1229,13 +1500,45 @@ export const make = Effect.gen(function* () {
           // first one already carries all of them.
           if (page === 0) {
             reviewers = read.reviewers;
+            reactions = read.reactions;
+            for (const [id, entry] of read.reactionsById) reactionsById.set(id, entry);
             commits = read.commits;
             viewer = read.viewer;
+            for (const [id, message] of read.dismissalsByReviewId)
+              dismissalsByReviewId.set(id, message);
+            dismissalCursor = read.nextDismissalCursor;
             for (const [oid, stat] of read.commitStats) commitStats.set(oid, stat);
           }
           cursor = read.nextCursor;
           page += 1;
         } while (cursor !== null && page < REVIEW_THREAD_PAGES);
+
+        // Almost never entered: the embedded page already holds every dismissal a pull request
+        // ordinarily accrues. Followed so a review whose event fell past that page still finds
+        // its reason.
+        let dismissalPage = 0;
+        while (dismissalCursor !== null && dismissalPage < REVIEW_THREAD_PAGES) {
+          const read: {
+            readonly dismissalsByReviewId: ReadonlyMap<string, string>;
+            readonly nextCursor: string | null;
+          } = yield* graphqlRead({
+            cwd: input.cwd,
+            host: input.host,
+            operation: "listReviewThreadComments",
+            variables: [
+              ["-f", `owner=${owner}`],
+              ["-f", `name=${name}`],
+              ["-F", `number=${input.number}`],
+              ["-f", `cursor=${dismissalCursor}`],
+            ],
+            query: REVIEW_DISMISSALS_GRAPHQL_QUERY,
+            decode: decodeReviewDismissalsJson,
+          });
+          for (const [id, message] of read.dismissalsByReviewId)
+            dismissalsByReviewId.set(id, message);
+          dismissalCursor = read.nextCursor;
+          dismissalPage += 1;
+        }
 
         // Only the threads GitHub said were unfinished cost a request; the rest arrived whole
         // with the page they were listed on.
@@ -1264,11 +1567,14 @@ export const make = Effect.gen(function* () {
         const reviewThreads = finished.map((entry) => entry.thread);
         return {
           comments: reviewThreadConversation(reviewThreads),
+          dismissalsByReviewId,
           reviewThreads,
           // GitHub's own count of each thread, so the number the page shows is the host's even
           // where a bound kept some of the words on GitHub.
           commentCount: finished.reduce((total, entry) => total + entry.commentCount, 0),
           truncated: cursor !== null || finished.some((entry) => entry.truncated),
+          reactions,
+          reactionsById,
           reviewers,
           avatarsByLogin,
           commitStats,
@@ -1396,7 +1702,11 @@ export const make = Effect.gen(function* () {
     },
 
     runPullRequestAction: (input) => {
-      const [subcommand, ...flags] = actionArgs(input.action, input.mergeMethod);
+      const [subcommand, ...flags] = actionArgs(
+        input.action,
+        input.mergeMethod,
+        input.updateMethod,
+      );
       return github
         .execute({
           cwd: input.cwd,
@@ -1467,6 +1777,91 @@ export const make = Effect.gen(function* () {
           : UNRESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
         variables: { threadId: input.threadId },
       }),
+
+    setReaction: (input) => {
+      const givenSubjectId = input.subjectId;
+      const subjectId =
+        givenSubjectId === undefined
+          ? pullRequestNodeId({ ...input, operation: "setReaction" })
+          : subjectBelongsToPullRequest({
+              ...input,
+              subjectId: givenSubjectId,
+              operation: "setReaction",
+            }).pipe(
+              Effect.flatMap((belongs) =>
+                belongs
+                  ? Effect.succeed(givenSubjectId)
+                  : Effect.fail(
+                      new GitHubSubjectScopeError({
+                        command: "gh",
+                        cwd: input.cwd,
+                        operation: "setReaction",
+                      }),
+                    ),
+              ),
+            );
+      return subjectId.pipe(
+        Effect.flatMap((subjectId) =>
+          graphql({
+            cwd: input.cwd,
+            host: input.host,
+            query: input.reacted ? ADD_REACTION_GRAPHQL_MUTATION : REMOVE_REACTION_GRAPHQL_MUTATION,
+            variables: { subjectId, content: gitHubReactionContent(input.content) },
+          }),
+        ),
+      );
+    },
+
+    updatePullRequest: (input) =>
+      pullRequestNodeId({ ...input, operation: "updatePullRequest" }).pipe(
+        Effect.flatMap((pullRequestId) =>
+          graphql({
+            cwd: input.cwd,
+            host: input.host,
+            query: UPDATE_PULL_REQUEST_GRAPHQL_MUTATION,
+            // A field the caller did not name is left out of the request entirely, so GitHub
+            // keeps the words that are there rather than being asked for an empty one.
+            variables: {
+              pullRequestId,
+              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.body === undefined ? {} : { body: input.body }),
+            },
+          }),
+        ),
+      ),
+
+    updateComment: (input) =>
+      subjectBelongsToPullRequest({
+        cwd: input.cwd,
+        repository: input.repository,
+        host: input.host,
+        number: input.number,
+        subjectId: input.commentId,
+        operation: "updateComment",
+      }).pipe(
+        Effect.flatMap((belongs) =>
+          belongs
+            ? Effect.succeed(input.commentId)
+            : Effect.fail(
+                new GitHubSubjectScopeError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  operation: "updateComment",
+                }),
+              ),
+        ),
+        Effect.flatMap((commentId) =>
+          graphql({
+            cwd: input.cwd,
+            host: input.host,
+            query:
+              input.kind === "issue-comment"
+                ? UPDATE_ISSUE_COMMENT_GRAPHQL_MUTATION
+                : UPDATE_REVIEW_COMMENT_GRAPHQL_MUTATION,
+            variables: { commentId, body: input.body },
+          }),
+        ),
+      ),
   });
 });
 
