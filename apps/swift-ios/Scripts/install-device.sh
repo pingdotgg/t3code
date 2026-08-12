@@ -100,26 +100,30 @@ if [[ "${CONFIGURATION}" == "Debug" ]]; then
   fi
   # Prefer an explicit comparison line, then the public repository's default.
   GIT_BASE_REF="${T3_SWIFT_BASE_REF:-}"
-  if [[ -n "${GIT_BASE_REF}" ]] && \
+  if [[ -z "${GIT_BASE_REF}" ]] || \
      ! git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
-    die "T3_SWIFT_BASE_REF does not resolve to a commit: ${GIT_BASE_REF}"
-  fi
-  if [[ -z "${GIT_BASE_REF}" ]]; then
     GIT_TERMINAL_PROMPT=0 git -C "${APP_DIR}" \
       -c "core.sshCommand=ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=1" \
       -c http.lowSpeedLimit=1 \
       -c http.lowSpeedTime=15 \
       fetch --quiet "${GIT_REPO_REMOTE}" 2>/dev/null || true
   fi
-  if [[ "${GIT_COMMIT}" == *-dirty ]] || ! git -C "${APP_DIR}" branch -r --contains HEAD \
-      --format='%(refname:short)' 2>/dev/null | grep -Eq "^${GIT_REPO_REMOTE}/"; then
+  if [[ -n "${GIT_BASE_REF}" ]] && \
+     ! git -C "${APP_DIR}" rev-parse --verify --quiet "${GIT_BASE_REF}^{commit}" >/dev/null; then
+    die "T3_SWIFT_BASE_REF does not resolve to a commit: ${GIT_BASE_REF}"
+  fi
+  GIT_REMOTE_CONTAINMENT="$(
+    git -C "${APP_DIR}" branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null || true
+  )"
+  if [[ "${GIT_COMMIT}" == *-dirty ]] || \
+     ! grep -Eq "^${GIT_REPO_REMOTE}/" <<< "${GIT_REMOTE_CONTAINMENT}"; then
     GIT_REPO_URL=""
   fi
   if [[ -z "${GIT_BASE_REF}" ]]; then
     GIT_BASE_REF="$(git -C "${APP_DIR}" symbolic-ref --short refs/remotes/upstream/HEAD 2>/dev/null || true)"
   fi
   if [[ -z "${GIT_BASE_REF}" ]] && \
-     git -C "${APP_DIR}" rev-parse --verify --quiet refs/remotes/upstream/main^{commit} >/dev/null; then
+     git -C "${APP_DIR}" rev-parse --verify --quiet "refs/remotes/upstream/main^{commit}" >/dev/null; then
     GIT_BASE_REF="upstream/main"
   fi
   if [[ -z "${GIT_BASE_REF}" ]]; then
