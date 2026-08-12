@@ -55,6 +55,15 @@ export interface ComposerDraftContent {
 
 export interface ComposerDraftWorkspaceSelection {
   readonly mode: "local" | "worktree";
+  /**
+   * True once the user PICKED the mode. While false the stored `mode` is only
+   * a resolved default that an incidental write (a branch pick, a
+   * start-from-origin toggle) carried along, so a provider-derived default may
+   * still override it — the Aether one-way-mirror default does. Absent means a
+   * draft written before this field existed: treated as user-set, so an
+   * existing pick is never surprise-flipped.
+   */
+  readonly modeUserSet?: boolean;
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;

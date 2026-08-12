@@ -443,7 +443,19 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     projectSetting: selectedProject?.defaultThreadEnvMode,
     projectFilePending: t3ProjectFileQuery.isPending,
   });
-  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
+  // Only an EXPLICIT pick pins the mode. Incidental writes (selectBranch,
+  // setStartFromOrigin) carry the resolved mode along so the queued-task
+  // snapshot stays right, which would otherwise freeze the Aether worktree
+  // default into the draft as if the user had chosen it — and keep worktree
+  // after switching to a provider that never wanted it. Absent flag = a draft
+  // from before this field, treated as user-set so an existing pick stands.
+  const storedWorkspaceSelection = selectedProjectDraft.workspaceSelection;
+  const workspaceModeUserSet =
+    storedWorkspaceSelection !== undefined && storedWorkspaceSelection.modeUserSet !== false;
+  const workspaceMode =
+    workspaceModeUserSet && storedWorkspaceSelection !== undefined
+      ? storedWorkspaceSelection.mode
+      : defaultWorkspaceMode;
 
   const selectedModelOption =
     modelOptions.find(
@@ -615,6 +627,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       updateComposerDraftSettings(selectedProjectDraftKey, {
         workspaceSelection: {
           mode,
+          // The one write that means "the user chose this".
+          modeUserSet: true,
           branch: selectedBranchName,
           worktreePath: selectedWorktreePath,
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
@@ -632,13 +646,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       updateComposerDraftSettings(selectedProjectDraftKey, {
         workspaceSelection: {
           mode: workspaceMode,
+          modeUserSet: workspaceModeUserSet,
           branch: branch.name,
           worktreePath: normalizeSelectedWorktreePath(selectedProject, branch),
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
       });
     },
-    [draftStartFromOrigin, selectedProject, selectedProjectDraftKey, workspaceMode],
+    [
+      draftStartFromOrigin,
+      selectedProject,
+      selectedProjectDraftKey,
+      workspaceMode,
+      workspaceModeUserSet,
+    ],
   );
 
   const setStartFromOrigin = useCallback(
@@ -649,13 +670,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       updateComposerDraftSettings(selectedProjectDraftKey, {
         workspaceSelection: {
           mode: workspaceMode,
+          modeUserSet: workspaceModeUserSet,
           branch: selectedBranchName,
           worktreePath: selectedWorktreePath,
           startFromOrigin: value,
         },
       });
     },
-    [selectedBranchName, selectedProjectDraftKey, selectedWorktreePath, workspaceMode],
+    [
+      selectedBranchName,
+      selectedProjectDraftKey,
+      selectedWorktreePath,
+      workspaceMode,
+      workspaceModeUserSet,
+    ],
   );
 
   const refreshBranches = branchState.refresh;
