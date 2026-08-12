@@ -1,10 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 
-import { EMPTY_PI_EXTERNAL_CATALOG_STATE, reducePiExternalCatalog } from "./piNative.ts";
+import {
+  EMPTY_PI_EXTERNAL_CATALOG_STATE,
+  isPiExternalProjectId,
+  reducePiExternalCatalog,
+} from "./piNative.ts";
 import { mergeExternalCatalogShells } from "./snapshots.ts";
 
 describe("external pi catalog reducer", () => {
+  it("identifies catalog-only native Pi projects", () => {
+    expect(isPiExternalProjectId("external:pi-project:abc")).toBe(true);
+    expect(isPiExternalProjectId("project-abc")).toBe(false);
+  });
+
   it("replaces snapshots and marks synchronization", () => {
     const snapshot = {
       snapshotSequence: 4,

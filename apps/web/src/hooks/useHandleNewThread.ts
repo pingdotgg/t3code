@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   scopedProjectKey,
   scopeProjectRef,
@@ -13,7 +14,7 @@ import {
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
-import { newDraftId, newThreadId } from "../lib/utils";
+import { newDraftId, newProjectId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -22,13 +23,17 @@ import {
 } from "../logicalProject";
 import { readThreadShell, useProjects, useThread } from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import { resolveNewThreadProject } from "../lib/piExternalProjects";
 import { primaryServerSettingsAtom } from "../state/server";
+import { projectEnvironment } from "../state/projects";
+import { useAtomCommand } from "../state/use-atom-command";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 
 export function useNewThreadHandler() {
   const projects = useProjects();
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   // New-thread defaults are a user preference, and the settings UI only ever
   // edits the primary environment's settings.json. Reading the target
   // environment's own settings here would silently reset remote projects to
@@ -43,7 +48,7 @@ export function useNewThreadHandler() {
   }, [router]);
 
   return useCallback(
-    (
+    async (
       projectRef: ScopedProjectRef,
       options?: {
         branch?: string | null;
@@ -100,14 +105,31 @@ export function useNewThreadHandler() {
         carrySourceShell?.interactionMode ??
         carrySourceDraft?.interactionMode ??
         null;
-      const project = projects.find(
-        (candidate) =>
-          candidate.id === projectRef.projectId &&
-          candidate.environmentId === projectRef.environmentId,
-      );
+      const resolution = resolveNewThreadProject(projects, projectRef);
+      let project = resolution.kind === "missing" ? undefined : resolution.project;
+      let resolvedProjectRef = resolution.kind === "internal" ? resolution.projectRef : projectRef;
+      if (resolution.kind === "promote") {
+        const externalProject = resolution.project;
+        const projectId = newProjectId();
+        const result = await createProject({
+          environmentId: externalProject.environmentId,
+          input: {
+            projectId,
+            title: externalProject.title,
+            workspaceRoot: externalProject.workspaceRoot,
+            createWorkspaceRootIfMissing: false,
+            defaultModelSelection: externalProject.defaultModelSelection,
+          },
+        });
+        if (result._tag === "Failure") {
+          throw squashAtomCommandFailure(result);
+        }
+        resolvedProjectRef = scopeProjectRef(externalProject.environmentId, projectId);
+        project = { ...externalProject, id: projectId };
+      }
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
-        : scopedProjectKey(projectRef);
+        : scopedProjectKey(resolvedProjectRef);
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
@@ -186,7 +208,7 @@ export function useNewThreadHandler() {
           // would otherwise wipe branch/worktree, undoing the write above.
           setLogicalProjectDraftThreadId(
             logicalProjectKey,
-            projectRef,
+            resolvedProjectRef,
             reusableStoredDraftThread.draftId,
             {
               threadId: reusableStoredDraftThread.threadId,
@@ -228,16 +250,21 @@ export function useNewThreadHandler() {
             ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
           });
         }
-        setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
-          threadId: latestActiveDraftThread.threadId,
-          createdAt: latestActiveDraftThread.createdAt,
-          runtimeMode: latestActiveDraftThread.runtimeMode,
-          interactionMode: latestActiveDraftThread.interactionMode,
-          ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-          ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-          ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-          ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
-        });
+        setLogicalProjectDraftThreadId(
+          logicalProjectKey,
+          resolvedProjectRef,
+          currentRouteTarget.draftId,
+          {
+            threadId: latestActiveDraftThread.threadId,
+            createdAt: latestActiveDraftThread.createdAt,
+            runtimeMode: latestActiveDraftThread.runtimeMode,
+            interactionMode: latestActiveDraftThread.interactionMode,
+            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            ...(hasStartFromOriginOption ? { startFromOrigin: options?.startFromOrigin } : {}),
+          },
+        );
         return Promise.resolve();
       }
 
@@ -246,7 +273,7 @@ export function useNewThreadHandler() {
       const createdAt = new Date().toISOString();
       const initialEnvMode = options?.envMode ?? primaryServerSettings.defaultThreadEnvMode;
       return (async () => {
-        setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
+        setLogicalProjectDraftThreadId(logicalProjectKey, resolvedProjectRef, draftId, {
           threadId,
           createdAt,
           branch: options?.branch ?? null,
@@ -278,7 +305,14 @@ export function useNewThreadHandler() {
         });
       })();
     },
-    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, projects, router],
+    [
+      createProject,
+      getCurrentRouteTarget,
+      primaryServerSettings,
+      projectGroupingSettings,
+      projects,
+      router,
+    ],
   );
 }
 
