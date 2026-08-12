@@ -409,7 +409,7 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
       [
         readWindowsEnvironment(["PATH"], { loadProfile: false }),
         skipProfile
-          ? Effect.succeed({})
+          ? Effect.succeed<EnvironmentPatch>({})
           : readWindowsEnvironment(WINDOWS_PROFILE_ENV_NAMES, { loadProfile: true }),
       ],
       { concurrency: 2 },
