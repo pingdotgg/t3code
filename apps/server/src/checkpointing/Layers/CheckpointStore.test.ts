@@ -103,6 +103,35 @@ function replaceLine(contents: string, lineIndex: number, replacement: string): 
 }
 
 it.layer(TestLayer)("CheckpointStoreLive", (it) => {
+  describe("checkpointRefMatchesWorkspace", () => {
+    it.effect("rejects a baseline after the same worktree switches branches", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-checkpoint-store-branch-switch"),
+          0,
+        );
+
+        yield* git(tmp, ["checkout", "-b", "feature"]);
+        yield* writeTextFile(path.join(tmp, "feature.md"), "feature\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "feature"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+        yield* git(tmp, ["checkout", "-b", "replacement", "HEAD^"]);
+
+        expect(
+          yield* checkpointStore.checkpointRefMatchesWorkspace({
+            cwd: tmp,
+            checkpointRef,
+          }),
+        ).toBe(false);
+      }),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("excludes base movement that entered the workspace during the turn", () =>
       Effect.gen(function* () {

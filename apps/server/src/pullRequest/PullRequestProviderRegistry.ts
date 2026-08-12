@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { PullRequestProviderKind } from "@t3tools/contracts";
 
+import { GitHubCliLive } from "../git/Layers/GitHubCli.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
@@ -35,5 +36,5 @@ export const make = Effect.map(GitHubPullRequestProvider.make, (provider) =>
 );
 
 export const layer = Layer.effect(PullRequestProviderRegistry, make).pipe(
-  Layer.provide(GitHubPullRequestCli.layer),
+  Layer.provide(GitHubPullRequestCli.layer.pipe(Layer.provide(GitHubCliLive))),
 );

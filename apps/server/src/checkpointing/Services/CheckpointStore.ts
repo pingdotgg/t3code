@@ -77,7 +77,7 @@ export interface CheckpointStoreShape {
   ) => Effect.Effect<boolean, CheckpointStoreError>;
 
   /**
-   * Check whether a checkpoint ref was captured from the current Git worktree.
+   * Check whether a checkpoint ref was captured from the current Git worktree and HEAD.
    */
   readonly checkpointRefMatchesWorkspace: (
     input: CheckpointRefMatchesWorkspaceInput,

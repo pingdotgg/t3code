@@ -229,17 +229,24 @@ const makeCheckpointStore = Effect.gen(function* () {
       if (!checkpointCommit) {
         return false;
       }
-      const [worktreeRoot, commitMessage] = yield* Effect.all([
-        resolveWorktreeRoot(input.cwd),
-        git
-          .execute({
-            operation: "CheckpointStore.checkpointRefMatchesWorkspace",
-            cwd: input.cwd,
-            args: ["show", "-s", "--format=%B", checkpointCommit],
-          })
-          .pipe(Effect.map((result) => result.stdout)),
-      ]);
-      return commitMessage.includes(`t3-worktree=${worktreeRoot}\n`);
+      const [worktreeRoot, commitMessage, currentHead, checkpointHead] = yield* Effect.all(
+        [
+          resolveWorktreeRoot(input.cwd),
+          git
+            .execute({
+              operation: "CheckpointStore.checkpointRefMatchesWorkspace",
+              cwd: input.cwd,
+              args: ["show", "-s", "--format=%B", checkpointCommit],
+            })
+            .pipe(Effect.map((result) => result.stdout)),
+          resolveHeadCommit(input.cwd),
+          resolveCommitParent(input.cwd, checkpointCommit),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return (
+        commitMessage.includes(`t3-worktree=${worktreeRoot}\n`) && checkpointHead === currentHead
+      );
     });
 
   const normalizeDiffPaths = (input: {
