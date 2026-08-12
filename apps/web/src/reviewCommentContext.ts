@@ -2,6 +2,14 @@ import type { FileDiffMetadata, SelectedLineRange, SelectionSide } from "@pierre
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+const ReviewCommentSelectionSchema = Schema.Struct({
+  start: Schema.Number,
+  side: Schema.Literals(["additions", "deletions"]),
+  end: Schema.Number,
+  endSide: Schema.Literals(["additions", "deletions"]),
+});
+type ReviewCommentSelection = typeof ReviewCommentSelectionSchema.Type;
+
 export const ReviewCommentContextSchema = Schema.Struct({
   id: Schema.String,
   sectionId: Schema.String,
@@ -13,6 +21,7 @@ export const ReviewCommentContextSchema = Schema.Struct({
   text: Schema.String,
   diff: Schema.String,
   fenceLanguage: Schema.optional(Schema.String),
+  selection: Schema.optional(ReviewCommentSelectionSchema),
 });
 
 export interface ReviewCommentContext {
@@ -26,6 +35,7 @@ export interface ReviewCommentContext {
   readonly text: string;
   readonly diff: string;
   readonly fenceLanguage?: string | undefined;
+  readonly selection?: ReviewCommentSelection | undefined;
 }
 
 interface DiffReviewLine {
@@ -382,6 +392,8 @@ export function restoreDiffReviewCommentRange(
   fileDiff: FileDiffMetadata,
   comment: ReviewCommentContext,
 ): SelectedLineRange | null {
+  if (comment.selection) return comment.selection;
+
   const lines = buildDiffReviewLines(fileDiff);
   const startLine = lines[comment.startIndex];
   const endLine = lines[comment.endIndex];
@@ -511,6 +523,12 @@ export function buildDiffReviewComment(input: {
       ...selectedLines.map((line) => `${getDiffChangeMarker(line.change)}${line.content}`),
     ].join("\n"),
     fenceLanguage: "diff",
+    selection: {
+      start: input.range.start,
+      side: input.range.side ?? "additions",
+      end: input.range.end,
+      endSide: input.range.endSide ?? input.range.side ?? "additions",
+    },
   };
 }
 
