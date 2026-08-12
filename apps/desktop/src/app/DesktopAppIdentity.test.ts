@@ -31,6 +31,10 @@ type TestEnvironmentInput = Partial<DesktopEnvironment.MakeDesktopEnvironmentInp
 };
 
 interface ElectronAppCalls {
+  readonly appendCommandLineSwitch: Array<{
+    readonly name: string;
+    readonly value: string | undefined;
+  }>;
   readonly setAboutPanelOptions: Array<Electron.AboutPanelOptionsOptions>;
   readonly setDockIcon: string[];
   readonly setName: string[];
@@ -62,7 +66,10 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
       Effect.sync(() => {
         calls.setDockIcon.push(iconPath);
       }),
-    appendCommandLineSwitch: () => Effect.void,
+    appendCommandLineSwitch: (name, value) =>
+      Effect.sync(() => {
+        calls.appendCommandLineSwitch.push({ name, value });
+      }),
     onBeforeQuitForUpdate: () => Effect.void,
     removeCommandLineSwitch: () => Effect.void,
     on: () => Effect.void,
@@ -114,6 +121,7 @@ const withIdentity = <A, E, R>(
   } = {},
 ) => {
   const calls: ElectronAppCalls = input.calls ?? {
+    appendCommandLineSwitch: [],
     setAboutPanelOptions: [],
     setDockIcon: [],
     setName: [],
@@ -184,6 +192,7 @@ describe("DesktopAppIdentity", () => {
 
   it.effect("configures app identity from the environment commit override", () => {
     const calls: ElectronAppCalls = {
+      appendCommandLineSwitch: [],
       setAboutPanelOptions: [],
       setDockIcon: [],
       setName: [],
@@ -209,6 +218,25 @@ describe("DesktopAppIdentity", () => {
         },
         pngIconPath: Option.some("/icon.png"),
       },
+    );
+  });
+
+  it.effect("sets the Linux window class used by the packaged desktop entry", () => {
+    const calls: ElectronAppCalls = {
+      appendCommandLineSwitch: [],
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.deepEqual(calls.appendCommandLineSwitch, [{ name: "class", value: "t3code" }]);
+      }),
+      { calls, environment: { platform: "linux" } },
     );
   });
 });
