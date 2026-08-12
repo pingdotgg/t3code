@@ -74,6 +74,15 @@ describe("Codex file citations", () => {
     ).toEqual([]);
   });
 
+  it("accepts a directive written with spacing inside the braces", () => {
+    expect(extractCodexFileCitationPaths(':codex-file-citation{ path="/tmp/a.zip"}')).toEqual([
+      "/tmp/a.zip",
+    ]);
+    expect(
+      extractCodexFileCitationPaths(':codex-file-citation{ purpose="source" path="/tmp/b.zip"}'),
+    ).toEqual(["/tmp/b.zip"]);
+  });
+
   it("links an artifact written outside the workspace", () => {
     const html = renderMessage(':codex-file-citation{path="/tmp/export.zip" purpose="output"}');
 

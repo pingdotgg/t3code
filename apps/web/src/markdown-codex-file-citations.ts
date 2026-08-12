@@ -16,15 +16,21 @@
 
 import { resolveMarkdownFileLinkMeta } from "./markdown-links";
 
+// The directive body, up to the first brace. Known limitation: a `{`/`}` INSIDE a quoted path
+// terminates the scan early, so such a citation stays literal. A quote-aware scan can't fix this
+// without breaking the escaped-quote case: Markdown collapses `\"` to `"` in the parsed value, so
+// the value and the raw source carry different quote counts, and a quote-aware matcher pairs them
+// inconsistently. The brace-agnostic scan keeps that pairing sound.
 const CODEX_FILE_CITATION_PATTERN = /:codex-file-citation\{([^{}\r\n]*)\}/g;
 // Locates the opening quote of the `path` attribute; the value that follows is closed by scanning
 // (see readCitationPath), not by this pattern.
 const CITATION_PATH_ATTRIBUTE_START = /(?:^|\s)path="/;
 const PATH_ATTRIBUTE_KEYWORD = 'path="';
-// Everything before the `path` keyword must itself be a run of attributes: zero or more
-// ` key="value"` each closed and followed by whitespace. A malformed directive like
-// `purpose="x"junk path="…"` must stay literal text rather than resolve to a link.
-const CITATION_ATTRIBUTE_PREFIX_PATTERN = /^(?:[A-Za-z_][\w-]*="(?:\\"|[^"])*"\s+)*$/;
+// Everything before the `path` keyword must itself be a run of attributes: optional leading
+// whitespace (the directive may be written `{ path="…"}`), then zero or more ` key="value"` each
+// closed and followed by whitespace. A malformed directive like `purpose="x"junk path="…"` still
+// fails this gate and stays literal text rather than resolving to a link.
+const CITATION_ATTRIBUTE_PREFIX_PATTERN = /^\s*(?:[A-Za-z_][\w-]*="(?:\\"|[^"])*"\s+)*$/;
 // The directive escapes `"` inside a value as `\"`; every other backslash is a literal separator
 // (`C:\repo\.env`, `\\server\share\report.docx`). A trailing `\` right before the closing quote is
 // therefore byte-identical to an escaped quote, so the closer cannot be found by escape rules
@@ -160,7 +166,12 @@ export function remarkCodexFileCitations(options: RemarkCodexFileCitationsOption
       node.children = node.children.flatMap((child) => {
         if (child.type === "text" && typeof child.value === "string" && !childInsideLink) {
           // A text node another plugin produced has no position, and so no source to read the
-          // path from; it keeps its text.
+          // path from; it keeps its text. This is a deliberate limitation: reading the raw source
+          // by offset is what preserves backslashes, entities, and escaped quotes that Markdown
+          // would otherwise mangle, and a synthesized node cannot offer that. The known casualty is
+          // a citation inside an over-indented bullet, which CommonMark first parses as a code node
+          // and a later normalization plugin re-emits as position-less text; that directive stays
+          // literal rather than risk the source-read the common cases depend on.
           const start = child.position?.start?.offset;
           const end = child.position?.end?.offset;
           if (start === undefined || end === undefined) return child;
