@@ -10,12 +10,17 @@
  *
  * @module AccountLimits
  */
-import type { AccountLimitsSnapshot, AccountLimitsWindow } from "@t3tools/contracts";
+import type {
+  AccountLimitsSnapshot,
+  AccountLimitsWindow,
+  UsageProviderKind,
+} from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { useAccountLimits } from "../../state/accountLimits";
 import { formatAgo, formatResetAt } from "../../usage/limitsFormat";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
 /** Age past which a snapshot stops being "current" and earns a caption. */
@@ -40,6 +45,33 @@ function usageTone(usedPercent: number): string | undefined {
   return undefined;
 }
 
+function remainingTone(usedPercent: number): string {
+  if (usedPercent >= 95) return "text-red-400";
+  if (usedPercent >= 80) return "text-amber-400";
+  return "text-sidebar-foreground/70";
+}
+
+const sidebarResetFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function formatSidebarReset(resetsAt: string | null): string {
+  if (resetsAt === null) return "Reset time unavailable";
+  const reset = new Date(resetsAt);
+  if (Number.isNaN(reset.getTime())) return "Reset time unavailable";
+  return `Resets ${sidebarResetFormatter.format(reset)}`;
+}
+
+function compactWindowLabel(window: AccountLimitsWindow): string {
+  if (window.windowMinutes === null) return window.label;
+  if (window.windowMinutes % 1_440 === 0) return `${window.windowMinutes / 1_440}d`;
+  if (window.windowMinutes % 60 === 0) return `${window.windowMinutes / 60}h`;
+  return `${window.windowMinutes}m`;
+}
+
 function LimitMeter({ window, color }: { window: AccountLimitsWindow; color: string }) {
   return (
     <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
@@ -60,6 +92,104 @@ function SnapshotAge({ snapshot, nowMs }: { snapshot: AccountLimitsSnapshot; now
   if (!Number.isFinite(ageMs) || ageMs < STALE_AFTER_MS) return null;
   return (
     <span className="text-[10px] text-muted-foreground">{formatAgo(snapshot.asOf, nowMs)}</span>
+  );
+}
+
+/** Always-visible remaining capacity beside the sidebar's Usage label. */
+export function AccountLimitsSidebarGauges() {
+  const { snapshots } = useAccountLimits();
+
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-1.5 group-data-[collapsible=icon]:hidden">
+      {PROVIDER_ORDER.map((provider) => {
+        const snapshot = snapshots.get(provider);
+        if (snapshot === undefined || snapshot.windows.length === 0) return null;
+        return <AccountLimitsSidebarGauge key={provider} provider={provider} snapshot={snapshot} />;
+      })}
+    </span>
+  );
+}
+
+function AccountLimitsSidebarGauge({
+  provider,
+  snapshot,
+}: {
+  provider: UsageProviderKind;
+  snapshot: AccountLimitsSnapshot;
+}) {
+  const Mark = PROVIDER_MARK[provider];
+  const windows = snapshot.windows.slice(0, 2);
+  const ariaLabel = `${PROVIDER_LABEL[provider]}: ${windows
+    .map(
+      (window) =>
+        `${compactWindowLabel(window)} ${Math.round(100 - window.usedPercent)} percent remaining`,
+    )
+    .join(", ")}`;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={ariaLabel}
+            className="relative inline-flex size-7 shrink-0 items-center justify-center"
+            role="img"
+          />
+        }
+      >
+        <svg aria-hidden="true" className="absolute inset-0 size-7 -rotate-90" viewBox="0 0 32 32">
+          {windows.map((window, index) => {
+            const radius = index === 0 ? 13.5 : 10;
+            const remainingPercent = Math.min(100, Math.max(0, 100 - window.usedPercent));
+            return (
+              <g key={window.id}>
+                <circle
+                  className="text-sidebar-border/80"
+                  cx="16"
+                  cy="16"
+                  fill="none"
+                  pathLength="100"
+                  r={radius}
+                  stroke="currentColor"
+                  strokeWidth="2"
+                />
+                <circle
+                  className={remainingTone(window.usedPercent)}
+                  cx="16"
+                  cy="16"
+                  fill="none"
+                  pathLength="100"
+                  r={radius}
+                  stroke="currentColor"
+                  strokeDasharray={`${remainingPercent} ${100 - remainingPercent}`}
+                  strokeLinecap="round"
+                  strokeWidth="2"
+                />
+              </g>
+            );
+          })}
+        </svg>
+        <Mark className="relative size-2.5" />
+      </TooltipTrigger>
+      <TooltipPopup align="end" className="min-w-44" side="top" sideOffset={6}>
+        <div className="flex flex-col gap-1.5 py-1">
+          <div className="font-medium text-popover-foreground">{PROVIDER_LABEL[provider]}</div>
+          {windows.map((window, index) => (
+            <div key={window.id} className="grid grid-cols-[1fr_auto] gap-x-3">
+              <span className="text-muted-foreground">
+                {index === 0 ? "Outer" : "Inner"} · {compactWindowLabel(window)}
+              </span>
+              <span className={cn("font-medium tabular-nums", remainingTone(window.usedPercent))}>
+                {Math.round(100 - window.usedPercent)}%
+              </span>
+              <span className="col-span-2 text-[10px] text-muted-foreground/80">
+                {formatSidebarReset(window.resetsAt)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
