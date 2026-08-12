@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { describeCodexRuntimeMode } from "./StatusPage.logic";
+import {
+  codexPermissionsLabel,
+  codexRateLimitWindowLabel,
+  codexRemainingPercent,
+  describeCodexRuntimeMode,
+} from "./StatusPage.logic";
 
 describe("describeCodexRuntimeMode", () => {
   it("matches the read-only Codex policy", () => {
@@ -30,5 +35,20 @@ describe("describeCodexRuntimeMode", () => {
       sandbox: "danger-full-access",
       writableRoots: "all paths",
     });
+  });
+});
+
+describe("Codex status presentation", () => {
+  it("uses the CLI permission labels", () => {
+    expect(codexPermissionsLabel("approval-required")).toBe("Read Only");
+    expect(codexPermissionsLabel("auto-accept-edits")).toBe("Workspace Write");
+    expect(codexPermissionsLabel("full-access")).toBe("Full Access");
+  });
+
+  it("converts used rate-limit percentage into remaining percentage", () => {
+    expect(codexRemainingPercent(24)).toBe(76);
+    expect(codexRemainingPercent(-10)).toBe(100);
+    expect(codexRemainingPercent(120)).toBe(0);
+    expect(codexRateLimitWindowLabel(10_080)).toBe("Weekly limit");
   });
 });

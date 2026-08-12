@@ -19,6 +19,7 @@ import type {
   ServerProviderState,
   ModelCapabilities,
   ProviderOptionDescriptor,
+  ServerProviderCodexStatus,
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
@@ -45,6 +46,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -110,6 +112,47 @@ function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["accoun
 function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"]) {
   if (!account || account.type !== "chatgpt") return undefined;
   return account.email;
+}
+
+function mapCodexRateLimitWindow(
+  window: CodexSchema.V2GetAccountRateLimitsResponse["rateLimits"]["primary"],
+) {
+  if (window === undefined || window === null) return window;
+  return {
+    usedPercent: window.usedPercent,
+    ...(window.resetsAt !== undefined ? { resetsAt: window.resetsAt } : {}),
+    ...(window.windowDurationMins !== undefined
+      ? { windowDurationMins: window.windowDurationMins }
+      : {}),
+  };
+}
+
+function mapCodexStatus(snapshot: CodexAppServerProviderSnapshot): ServerProviderCodexStatus {
+  const account = snapshot.account.account;
+  const rateLimits = snapshot.rateLimits?.rateLimits;
+  const primary = rateLimits ? mapCodexRateLimitWindow(rateLimits.primary) : undefined;
+  const secondary = rateLimits ? mapCodexRateLimitWindow(rateLimits.secondary) : undefined;
+
+  return {
+    account:
+      account === undefined || account === null
+        ? null
+        : {
+            type: account.type,
+            ...(account.type === "chatgpt"
+              ? { email: account.email, planType: account.planType }
+              : {}),
+          },
+    ...(rateLimits
+      ? {
+          rateLimits: {
+            ...(rateLimits.limitName !== undefined ? { limitName: rateLimits.limitName } : {}),
+            ...(primary !== undefined ? { primary } : {}),
+            ...(secondary !== undefined ? { secondary } : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 export function mapCodexModelCapabilities(
@@ -395,18 +438,24 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      accountResponse.account
+        ? client
+            .request("account/rateLimits/read", undefined)
+            .pipe(Effect.catch(() => Effect.succeed(undefined)))
+        : Effect.succeed(undefined),
     ],
     { concurrency: "unbounded" },
   );
 
   return {
     account: accountResponse,
+    ...(rateLimits ? { rateLimits } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
@@ -606,6 +655,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       version: snapshot.version ?? null,
       status: accountStatus.status,
       auth: accountStatus.auth,
+      codexStatus: mapCodexStatus(snapshot),
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
     },
   });

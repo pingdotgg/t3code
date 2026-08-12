@@ -1,10 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import type {
+  ProviderSession,
+  ServerProvider,
+  ServerProviderCodexRateLimitWindow,
+} from "@t3tools/contracts";
+import { ExternalLinkIcon, RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
-import type { ServerProvider } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { isElectron } from "../../env";
 import {
@@ -12,9 +17,11 @@ import {
   formatContextWindowTokens,
 } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProjects, useThread, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import {
+  primaryCodexStatusAtom,
   primaryServerConfigAtom,
   primaryServerProvidersAtom,
   serverEnvironment,
@@ -28,11 +35,16 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
 import {
+  codexPermissionsLabel,
   codexProviderStatusLabel,
+  codexRateLimitWindowLabel,
+  codexRemainingPercent,
   describeCodexRuntimeMode,
   formatStatusTimestamp,
   isCodexSessionStatus,
 } from "./StatusPage.logic";
+
+const CODEX_USAGE_URL = "https://chatgpt.com/codex/settings/usage";
 
 function isCodexThread(
   thread: EnvironmentThreadShell,
@@ -50,26 +62,159 @@ function sortSessions(left: EnvironmentThreadShell, right: EnvironmentThreadShel
   return rightUpdatedAt.localeCompare(leftUpdatedAt);
 }
 
-function providerAuthLabel(provider: ServerProvider): string {
-  if (provider.auth.status === "authenticated") {
-    return provider.auth.label ?? provider.auth.type ?? "Authenticated";
+function providerPlanLabel(provider: ServerProvider): string | null {
+  const planType = provider.codexStatus?.account?.planType;
+  switch (planType) {
+    case "free":
+      return "Free";
+    case "go":
+      return "Go";
+    case "plus":
+      return "Plus";
+    case "pro":
+      return "Pro";
+    case "prolite":
+      return "Pro";
+    case "team":
+      return "Team";
+    case "self_serve_business_usage_based":
+    case "business":
+      return "Business";
+    case "enterprise_cbp_usage_based":
+    case "enterprise":
+      return "Enterprise";
+    case "edu":
+      return "Edu";
+    case "unknown":
+      return "ChatGPT";
+    default:
+      return null;
   }
-  if (provider.auth.status === "unauthenticated") return "Not authenticated";
-  return "Unknown";
 }
 
-function StatusMetric({ label, value }: { readonly label: string; readonly value: string }) {
+function providerAccountLabel(provider: ServerProvider): string {
+  const email = provider.codexStatus?.account?.email ?? provider.auth.email;
+  const plan = providerPlanLabel(provider);
+  if (email && plan) return `${email} (${plan})`;
+  if (email) return email;
+  if (plan) return plan;
+  if (provider.auth.status === "unauthenticated") return "Not authenticated";
+  return provider.auth.label ?? provider.auth.type ?? "Unknown";
+}
+
+function sessionForProvider(session: ProviderSession, provider: ServerProvider): boolean {
   return (
-    <div className="flex min-w-0 flex-col gap-1 rounded-lg border border-border/70 bg-background/35 px-3 py-2.5">
+    session.providerInstanceId === provider.instanceId ||
+    (session.providerInstanceId === undefined && session.provider === provider.driver)
+  );
+}
+
+function sandboxLabel(value: NonNullable<ProviderSession["codex"]>["sandbox"]): string {
+  switch (value) {
+    case "read-only":
+      return "Read Only";
+    case "workspace-write":
+      return "Workspace Write";
+    case "danger-full-access":
+      return "Full Access";
+    default:
+      return "Unknown";
+  }
+}
+
+function StatusRow({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+  return (
+    <div className="grid gap-1 border-b border-border/50 py-2.5 last:border-b-0 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="truncate text-sm text-foreground" title={value}>
-        {value}
-      </dd>
+      <dd className="min-w-0 break-words text-sm text-foreground">{children}</dd>
     </div>
   );
 }
 
-function ProviderStatusCard({ provider }: { readonly provider: ServerProvider }) {
+function formatResetTimestamp(timestamp: number | null | undefined): string | null {
+  if (timestamp == null) return null;
+  return formatStatusTimestamp(new Date(timestamp * 1000).toISOString());
+}
+
+function RateLimitRow({
+  window,
+  fallbackLabel,
+}: {
+  readonly window: ServerProviderCodexRateLimitWindow;
+  readonly fallbackLabel: string;
+}) {
+  const remaining = codexRemainingPercent(window.usedPercent);
+  const reset = formatResetTimestamp(window.resetsAt);
+  const label =
+    codexRateLimitWindowLabel(window.windowDurationMins) === "Rate limit"
+      ? fallbackLabel
+      : codexRateLimitWindowLabel(window.windowDurationMins);
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/35 px-3 py-3">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="tabular-nums text-foreground">{remaining}% left</span>
+      </div>
+      <div
+        aria-label={`${label}: ${remaining}% left`}
+        className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={remaining}
+      >
+        <div
+          className="h-full rounded-full bg-primary transition-[width]"
+          style={{ width: `${remaining}%` }}
+        />
+      </div>
+      {reset ? <p className="mt-2 text-[11px] text-muted-foreground">Resets {reset}</p> : null}
+    </div>
+  );
+}
+
+function CodexStatusCard({
+  provider,
+  thread,
+  session,
+  cwd,
+  contextWindow,
+}: {
+  readonly provider: ServerProvider;
+  readonly thread: EnvironmentThreadShell | null;
+  readonly session: ProviderSession | undefined;
+  readonly cwd: string;
+  readonly contextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
+}) {
+  const runtimeMode = thread?.runtimeMode ?? session?.runtimeMode ?? "full-access";
+  const runtimeStatus = describeCodexRuntimeMode(runtimeMode);
+  const model = session?.model ?? thread?.modelSelection.model ?? "Unknown";
+  const reasoningEffort =
+    session?.codex?.reasoningEffort ??
+    getModelSelectionStringOptionValue(thread?.modelSelection, "reasoningEffort");
+  const modelValue = reasoningEffort
+    ? `${model} (reasoning ${reasoningEffort}, summaries auto)`
+    : `${model} (summaries auto)`;
+  const directory = session?.cwd ?? thread?.worktreePath ?? cwd;
+  const permissions = session?.codex?.sandbox
+    ? sandboxLabel(session.codex.sandbox)
+    : codexPermissionsLabel(runtimeMode);
+  const approvalPolicy = session?.codex?.approvalPolicy ?? runtimeStatus.approvalPolicy;
+  const instructionSources = session?.codex?.instructionSources ?? [];
+  const collaborationMode = thread
+    ? thread.interactionMode === "plan"
+      ? "Plan"
+      : "Default"
+    : "Unknown";
+  const sessionId = session?.codex?.providerThreadId ?? "No active session";
+  const contextValue = contextWindow
+    ? contextWindow.maxTokens == null
+      ? `${formatContextWindowTokens(contextWindow.usedTokens)} used`
+      : `${formatContextWindowTokens(contextWindow.usedTokens)} / ${formatContextWindowTokens(contextWindow.maxTokens)}${contextWindow.usedPercentage === null ? "" : ` (${Math.round(contextWindow.usedPercentage)}%)`}`
+    : null;
+  const rateLimits = provider.codexStatus?.rateLimits;
+
   return (
     <Card className="gap-0 rounded-xl border-border/70 bg-card/35 p-4 shadow-none">
       <div className="flex items-start justify-between gap-4">
@@ -86,73 +231,63 @@ function ProviderStatusCard({ provider }: { readonly provider: ServerProvider })
                     : "bg-warning",
               )}
             />
-            <h2 className="truncate text-sm font-medium text-foreground">
-              {provider.displayName ?? "Codex"}
-            </h2>
+            <h2 className="truncate text-sm font-medium text-foreground">OpenAI Codex</h2>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">{codexProviderStatusLabel(provider)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {provider.displayName ?? "Codex"} · {codexProviderStatusLabel(provider)}
+          </p>
         </div>
         <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
           {provider.version ? `v${provider.version.replace(/^v/, "")}` : "Version unknown"}
         </span>
       </div>
 
-      <dl className="mt-4 grid gap-2 sm:grid-cols-2">
-        <StatusMetric label="Authentication" value={providerAuthLabel(provider)} />
-        <StatusMetric label="Checked" value={formatStatusTimestamp(provider.checkedAt)} />
-      </dl>
+      <div className="mt-4 rounded-lg border border-border/60 bg-background/25 px-3">
+        <dl>
+          <StatusRow label="Model">{modelValue}</StatusRow>
+          <StatusRow label="Directory">{directory}</StatusRow>
+          <StatusRow label="Permissions">
+            {permissions} <span className="text-muted-foreground">({approvalPolicy})</span>
+          </StatusRow>
+          <StatusRow label="AGENTS.md">
+            {instructionSources.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                {instructionSources.map((source) => (
+                  <span key={source}>{source}</span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-muted-foreground">Not reported by the active session</span>
+            )}
+          </StatusRow>
+          <StatusRow label="Account">{providerAccountLabel(provider)}</StatusRow>
+          <StatusRow label="Collaboration mode">{collaborationMode}</StatusRow>
+          <StatusRow label="Session id">
+            <span className="font-mono text-xs">{sessionId}</span>
+          </StatusRow>
+          {contextValue ? <StatusRow label="Context usage">{contextValue}</StatusRow> : null}
+        </dl>
+      </div>
+
+      {rateLimits?.primary || rateLimits?.secondary ? (
+        <div className="mt-4 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xs font-medium text-foreground">Rate limits</h3>
+            {rateLimits.limitName ? (
+              <span className="text-[11px] text-muted-foreground">{rateLimits.limitName}</span>
+            ) : null}
+          </div>
+          {rateLimits.primary ? (
+            <RateLimitRow window={rateLimits.primary} fallbackLabel="Primary limit" />
+          ) : null}
+          {rateLimits.secondary ? (
+            <RateLimitRow window={rateLimits.secondary} fallbackLabel="Secondary limit" />
+          ) : null}
+        </div>
+      ) : null}
 
       {provider.message ? (
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{provider.message}</p>
-      ) : null}
-    </Card>
-  );
-}
-
-function SessionStatusCard({
-  thread,
-  cwd,
-  contextWindow,
-}: {
-  readonly thread: EnvironmentThreadShell;
-  readonly cwd: string;
-  readonly contextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
-}) {
-  const runtimeMode = thread.session?.runtimeMode ?? thread.runtimeMode;
-  const runtimeStatus = describeCodexRuntimeMode(runtimeMode);
-  const sessionStatus = thread.session?.status ?? "idle";
-  const contextValue = contextWindow
-    ? contextWindow.maxTokens == null
-      ? `${formatContextWindowTokens(contextWindow.usedTokens)} used`
-      : `${formatContextWindowTokens(contextWindow.usedTokens)} / ${formatContextWindowTokens(contextWindow.maxTokens)}${contextWindow.usedPercentage === null ? "" : ` (${Math.round(contextWindow.usedPercentage)}%)`}`
-    : "Not available yet";
-
-  return (
-    <Card className="gap-0 rounded-xl border-border/70 bg-card/35 p-4 shadow-none">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <ShieldCheckIcon className="size-4 shrink-0 text-muted-foreground" />
-            <h2 className="truncate text-sm font-medium text-foreground">{thread.title}</h2>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">Codex session · {sessionStatus}</p>
-        </div>
-        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
-          {runtimeMode}
-        </span>
-      </div>
-
-      <dl className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        <StatusMetric label="Model" value={thread.modelSelection.model} />
-        <StatusMetric label="Approval policy" value={runtimeStatus.approvalPolicy} />
-        <StatusMetric label="Sandbox" value={runtimeStatus.sandbox} />
-        <StatusMetric label="Writable roots" value={runtimeStatus.writableRoots} />
-        <StatusMetric label="Working directory" value={cwd} />
-        <StatusMetric label="Context window" value={contextValue} />
-      </dl>
-
-      {thread.session?.lastError ? (
-        <p className="mt-3 text-xs leading-relaxed text-destructive">{thread.session.lastError}</p>
       ) : null}
     </Card>
   );
@@ -183,6 +318,7 @@ export function StatusPage() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const providers = useAtomValue(primaryServerProvidersAtom);
+  const codexStatus = useAtomValue(primaryCodexStatusAtom);
   const projects = useProjects();
   const threadShells = useThreadShells();
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -226,6 +362,47 @@ export function StatusPage() {
     () => new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project])),
     [projects],
   );
+  const threadById = useMemo(
+    () => new Map(codexSessions.map((thread) => [thread.id, thread])),
+    [codexSessions],
+  );
+
+  type StatusEntry = {
+    readonly provider: ServerProvider;
+    readonly session: ProviderSession | undefined;
+    readonly thread: EnvironmentThreadShell | null;
+  };
+  const statusEntries = useMemo<ReadonlyArray<StatusEntry>>(() => {
+    const sessions = codexStatus?.sessions ?? [];
+    const entries: StatusEntry[] = [];
+    for (const provider of codexProviders) {
+      const providerSessions = sessions.filter((session) => sessionForProvider(session, provider));
+      if (providerSessions.length > 0) {
+        entries.push(
+          ...providerSessions.map((session) => ({
+            provider,
+            session,
+            thread: threadById.get(session.threadId) ?? null,
+          })),
+        );
+        continue;
+      }
+
+      const providerThreads = codexSessions.filter(
+        (thread) =>
+          (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId) ===
+          provider.instanceId,
+      );
+      if (providerThreads.length > 0) {
+        entries.push(
+          ...providerThreads.map((thread) => ({ provider, session: undefined, thread })),
+        );
+      } else {
+        entries.push({ provider, session: undefined, thread: null });
+      }
+    }
+    return entries;
+  }, [codexProviders, codexSessions, codexStatus?.sessions, threadById]);
 
   const refresh = useCallback(async () => {
     if (!primaryEnvironmentId || isRefreshing) return;
@@ -237,6 +414,9 @@ export function StatusPage() {
           input: { instanceId: provider.instanceId },
         });
       }
+      appAtomRegistry.refresh(
+        serverEnvironment.codexStatus({ environmentId: primaryEnvironmentId, input: {} }),
+      );
     } finally {
       setIsRefreshing(false);
     }
@@ -245,7 +425,7 @@ export function StatusPage() {
   const fallbackCwd = serverConfig?.cwd ?? primaryEnvironment?.serverConfig?.cwd ?? "Unknown";
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
+    <SidebarInset className="isolate h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         {!isElectron ? (
           <header
@@ -272,13 +452,13 @@ export function StatusPage() {
         )}
 
         <ScrollArea className="min-h-0 flex-1">
-          <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-6 py-6">
+          <main className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <h1 className="text-lg font-semibold text-foreground">Codex status</h1>
                 <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-                  The current Codex provider and session settings, equivalent to the information
-                  shown by <code className="rounded bg-muted px-1 py-0.5 text-xs">/status</code>.
+                  The live session details reported by Codex app-server, matching the CLI{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 text-xs">/status</code> view.
                 </p>
               </div>
               <Button
@@ -299,60 +479,35 @@ export function StatusPage() {
               />
             ) : (
               <>
-                <section className="flex flex-col gap-3" aria-labelledby="codex-provider-heading">
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 id="codex-provider-heading" className="text-sm font-medium text-foreground">
-                      Provider
-                    </h2>
-                    <span className="text-xs text-muted-foreground">
-                      {codexProviders.length === 1
-                        ? "Codex installation and authentication"
-                        : `${codexProviders.length} Codex instances`}
-                    </span>
-                  </div>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    {codexProviders.map((provider) => (
-                      <ProviderStatusCard key={provider.instanceId} provider={provider} />
-                    ))}
-                  </div>
-                </section>
+                <div className="flex flex-col gap-3">
+                  {statusEntries.map(({ provider, session, thread }) => {
+                    const project = thread
+                      ? projectByKey.get(`${thread.environmentId}:${thread.projectId}`)
+                      : undefined;
+                    const cwd =
+                      session?.cwd ?? thread?.worktreePath ?? project?.workspaceRoot ?? fallbackCwd;
+                    return (
+                      <CodexStatusCard
+                        key={`${provider.instanceId}:${thread?.id ?? session?.threadId ?? "provider"}`}
+                        provider={provider}
+                        thread={thread}
+                        session={session}
+                        cwd={cwd}
+                        contextWindow={thread?.id === inspectedThread?.id ? contextWindow : null}
+                      />
+                    );
+                  })}
+                </div>
 
-                <section className="flex flex-col gap-3" aria-labelledby="codex-sessions-heading">
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 id="codex-sessions-heading" className="text-sm font-medium text-foreground">
-                      Sessions
-                    </h2>
-                    <span className="text-xs text-muted-foreground">
-                      {codexSessions.length === 0
-                        ? "No active sessions"
-                        : `${codexSessions.length} active session${codexSessions.length === 1 ? "" : "s"}`}
-                    </span>
-                  </div>
-
-                  {codexSessions.length === 0 ? (
-                    <StatusEmptyState
-                      title="No active Codex session"
-                      description="Start a Codex conversation to see its model, permissions, workspace, and context window here."
-                    />
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      {codexSessions.map((thread, index) => {
-                        const project = projectByKey.get(
-                          `${thread.environmentId}:${thread.projectId}`,
-                        );
-                        const cwd = thread.worktreePath ?? project?.workspaceRoot ?? fallbackCwd;
-                        return (
-                          <SessionStatusCard
-                            key={thread.id}
-                            thread={thread}
-                            cwd={cwd}
-                            contextWindow={index === 0 ? contextWindow : null}
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
+                <a
+                  className="inline-flex items-center gap-1.5 self-start text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                  href={CODEX_USAGE_URL}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  View up-to-date rate limits and credits
+                  <ExternalLinkIcon className="size-3" />
+                </a>
               </>
             )}
           </main>

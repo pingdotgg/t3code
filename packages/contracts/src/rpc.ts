@@ -151,6 +151,7 @@ import {
 import {
   ServerConfigStreamEvent,
   ServerConfig,
+  ServerCodexStatus,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerLifecycleStreamEvent,
@@ -251,6 +252,7 @@ export const WS_METHODS = {
   // Server meta
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
+  serverGetCodexStatus: "server.getCodexStatus",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
@@ -333,6 +335,12 @@ export const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: Schema.Struct({}),
   success: ServerConfig,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerGetCodexStatusRpc = Rpc.make(WS_METHODS.serverGetCodexStatus, {
+  payload: Schema.Struct({}),
+  success: ServerCodexStatus,
+  error: EnvironmentAuthorizationError,
 });
 
 export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, {
@@ -973,6 +981,7 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
+  WsServerGetCodexStatusRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsServerUpdateServerRpc,

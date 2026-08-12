@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -44,6 +45,20 @@ export const ProviderSession = Schema.Struct({
   threadId: ThreadId,
   resumeCursor: Schema.optional(Schema.Unknown),
   activeTurnId: Schema.optional(TurnId),
+  /** Exact Codex thread configuration reported by thread/start or thread/resume. */
+  codex: Schema.optionalKey(
+    Schema.Struct({
+      providerThreadId: Schema.optional(TrimmedNonEmptyString),
+      modelProvider: Schema.optional(TrimmedNonEmptyString),
+      reasoningEffort: Schema.optional(TrimmedNonEmptyString),
+      approvalPolicy: Schema.optional(ProviderApprovalPolicy),
+      sandbox: Schema.optional(ProviderSandboxMode),
+      instructionSources: Schema.Array(TrimmedNonEmptyString).pipe(
+        Schema.withDecodingDefault(Effect.succeed([])),
+      ),
+      serviceTier: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastError: Schema.optional(TrimmedNonEmptyString),

@@ -41,6 +41,32 @@ export function describeCodexRuntimeMode(runtimeMode: RuntimeMode): CodexRuntime
   }
 }
 
+export function codexPermissionsLabel(runtimeMode: RuntimeMode): string {
+  switch (runtimeMode) {
+    case "approval-required":
+      return "Read Only";
+    case "auto-accept-edits":
+      return "Workspace Write";
+    case "auto":
+      return "Auto";
+    case "full-access":
+    default:
+      return "Full Access";
+  }
+}
+
+export function codexRateLimitWindowLabel(windowDurationMins: number | null | undefined): string {
+  if (windowDurationMins == null) return "Rate limit";
+  if (windowDurationMins >= 10_000) return "Weekly limit";
+  if (windowDurationMins >= 1_000) return "Daily limit";
+  if (windowDurationMins >= 60) return `${Math.round(windowDurationMins / 60)}h limit`;
+  return `${windowDurationMins}m limit`;
+}
+
+export function codexRemainingPercent(usedPercent: number): number {
+  return Math.max(0, Math.min(100, 100 - usedPercent));
+}
+
 export function isCodexSessionStatus(status: OrchestrationSessionStatus): boolean {
   return status !== "stopped" && status !== "idle";
 }

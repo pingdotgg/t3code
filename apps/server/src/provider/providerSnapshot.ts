@@ -3,6 +3,7 @@ import type {
   ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
+  ServerProviderCodexStatus,
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
@@ -50,6 +51,7 @@ export interface ProviderProbeResult {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProviderAuth;
   readonly message?: string;
+  readonly codexStatus?: ServerProviderCodexStatus;
 }
 
 export interface ServerProviderPresentation {
@@ -240,6 +242,7 @@ export function buildServerProvider(input: {
     auth: input.probe.auth,
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
+    ...(input.probe.codexStatus ? { codexStatus: input.probe.codexStatus } : {}),
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],

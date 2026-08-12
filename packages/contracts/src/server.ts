@@ -19,6 +19,7 @@ import {
 } from "./keybindings.ts";
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
+import { ProviderSession } from "./provider.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
 
@@ -95,6 +96,39 @@ export const ServerProviderSkill = Schema.Struct({
   shortDescription: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
+
+/**
+ * The Codex app-server exposes these fields as part of its account/rate-limit
+ * response. Keep this projection provider-agnostic at the transport boundary
+ * so clients can render the same information as Codex's `/status` without
+ * depending on the generated app-server protocol package.
+ */
+export const ServerProviderCodexRateLimitWindow = Schema.Struct({
+  usedPercent: Schema.Int,
+  resetsAt: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  windowDurationMins: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+});
+export type ServerProviderCodexRateLimitWindow = typeof ServerProviderCodexRateLimitWindow.Type;
+
+export const ServerProviderCodexStatus = Schema.Struct({
+  account: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        type: TrimmedNonEmptyString,
+        email: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        planType: Schema.optionalKey(TrimmedNonEmptyString),
+      }),
+    ),
+  ),
+  rateLimits: Schema.optionalKey(
+    Schema.Struct({
+      limitName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+      primary: Schema.optionalKey(Schema.NullOr(ServerProviderCodexRateLimitWindow)),
+      secondary: Schema.optionalKey(Schema.NullOr(ServerProviderCodexRateLimitWindow)),
+    }),
+  ),
+});
+export type ServerProviderCodexStatus = typeof ServerProviderCodexStatus.Type;
 
 /**
  * Availability of a configured provider instance from the runtime's POV.
@@ -192,6 +226,8 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Live account and rate-limit data returned by Codex app-server. */
+  codexStatus: Schema.optionalKey(ServerProviderCodexStatus),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });
@@ -585,6 +621,11 @@ export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
 });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
+
+export const ServerCodexStatus = Schema.Struct({
+  sessions: Schema.Array(ProviderSession),
+});
+export type ServerCodexStatus = typeof ServerCodexStatus.Type;
 
 export const ServerProviderUpdateInput = Schema.Struct({
   provider: ProviderDriverKind,
