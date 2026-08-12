@@ -109,12 +109,14 @@ function mockHandle(result: {
   readonly stderr?: string;
   readonly code?: number;
   readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
+  readonly isRunning?: Effect.Effect<boolean>;
+  readonly kill?: () => Effect.Effect<void>;
 }) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
     exitCode: result.exitCode ?? Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
-    isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
+    isRunning: result.isRunning ?? Effect.succeed(false),
+    kill: result.kill ?? (() => Effect.void),
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
     stdout: Stream.make(encoder.encode(result.stdout ?? "")),
@@ -134,6 +136,8 @@ function mockSpawnerLayer(
     readonly stderr?: string;
     readonly code?: number;
     readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
+    readonly isRunning?: Effect.Effect<boolean>;
+    readonly kill?: () => Effect.Effect<void>;
   },
 ) {
   return Layer.succeed(
@@ -217,6 +221,33 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
   );
 
 describe("providerMaintenanceRunner", () => {
+  it.effect("does not kill an updater that already exited", () => {
+    let killCalls = 0;
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseCursorProvider);
+      const updater = yield* makeTestRunner(registry);
+
+      yield* updater.updateProvider(CURSOR_DRIVER);
+
+      assert.strictEqual(killCalls, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({
+            stdout: "updated",
+            isRunning: Effect.succeed(false),
+            kill: () =>
+              Effect.sync(() => {
+                killCalls += 1;
+              }),
+          })),
+        ),
+      ),
+    );
+  });
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
