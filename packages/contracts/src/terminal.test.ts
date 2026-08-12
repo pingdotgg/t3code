@@ -95,6 +95,17 @@ describe("TerminalOpenInput", () => {
     expect(parsed.worktreePath).toBe("/tmp/project/.t3/worktrees/feature-a");
   });
 
+  it("accepts an initial command", () => {
+    const parsed = decodeSync(TerminalOpenInput, {
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      cwd: "/tmp/project",
+      initialCommand: "npm run dev",
+    });
+
+    expect(parsed.initialCommand).toBe("npm run dev");
+  });
+
   it("rejects invalid env keys", () => {
     expect(
       decodes(TerminalOpenInput, {

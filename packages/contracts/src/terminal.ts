@@ -43,6 +43,10 @@ export const TerminalOpenInput = Schema.Struct({
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
+  /** Ask the server to run a command during shell startup when supported. */
+  initialCommand: Schema.optional(
+    Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
+  ),
 });
 export type TerminalOpenInput = Schema.Codec.Encoded<typeof TerminalOpenInput>;
 
@@ -107,6 +111,8 @@ export const TerminalSessionSnapshot = Schema.Struct({
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
   sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Present when terminal.open handled the requested initial command. */
+  initialCommandHandled: Schema.optional(Schema.Boolean),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 

@@ -349,6 +349,16 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
   };
 }
 
+function openSnapshot(
+  session: TerminalSessionState,
+  initialCommandHandled: boolean,
+): TerminalSessionSnapshot {
+  const current = snapshot(session);
+  return initialCommandHandled && session.status === "running"
+    ? { ...current, initialCommandHandled: true }
+    : current;
+}
+
 function summary(session: TerminalSessionState): TerminalSummary {
   return {
     threadId: session.threadId,
@@ -524,6 +534,33 @@ function windowsCmdPath(env: NodeJS.ProcessEnv): string {
 function formatShellCandidate(candidate: ShellCandidate): string {
   if (!candidate.args || candidate.args.length === 0) return candidate.shell;
   return `${candidate.shell} ${candidate.args.join(" ")}`;
+}
+
+function quotePosixShellArgument(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function posixShellCandidateWithInitialCommand(
+  candidate: ShellCandidate,
+  initialCommand: string,
+): ShellCandidate {
+  const baseArgs = candidate.args ?? [];
+  const reenterShell = [candidate.shell, ...baseArgs].map(quotePosixShellArgument).join(" ");
+  return {
+    shell: candidate.shell,
+    args: [...baseArgs, "-i", "-c", `trap ':' INT\n${initialCommand}\nexec ${reenterShell}`],
+  };
+}
+
+function supportsPosixInitialCommand(
+  candidates: ReadonlyArray<ShellCandidate>,
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === "win32") return false;
+  return candidates.every((candidate) => {
+    const shellName = basenameForPlatform(candidate.shell, platform).toLowerCase();
+    return shellName === "zsh" || shellName === "bash" || shellName === "sh";
+  });
 }
 
 function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellCandidate[] {
@@ -1862,12 +1899,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     let ptyProcess: PtyAdapter.PtyProcess | null = null;
     let startedShell: string | null = null;
+    let initialCommandHandled = false;
 
     const startResult = yield* Effect.result(
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+            const resolvedShellCandidates = resolveShellCandidates(
+              shellResolver,
+              platform,
+              baseEnv,
+            );
+            const initialCommand = input.initialCommand;
+            let shellCandidates = resolvedShellCandidates;
+            if (
+              initialCommand !== undefined &&
+              supportsPosixInitialCommand(resolvedShellCandidates, platform)
+            ) {
+              initialCommandHandled = true;
+              shellCandidates = resolvedShellCandidates.map((candidate) =>
+                posixShellCandidateWithInitialCommand(candidate, initialCommand),
+              );
+            }
             const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
@@ -1914,7 +1967,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (startResult._tag === "Success") {
-      return;
+      return initialCommandHandled;
     }
 
     {
@@ -1957,6 +2010,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         cause: error,
         ...(startedShell ? { shell: startedShell } : {}),
       });
+      return false;
     }
   });
 
@@ -2187,7 +2241,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       });
 
       yield* evictInactiveSessionsIfNeeded();
-      yield* startSession(
+      const initialCommandHandled = yield* startSession(
         session,
         {
           threadId: input.threadId,
@@ -2197,10 +2251,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols,
           rows,
           ...(input.env ? { env: input.env } : {}),
+          ...(input.initialCommand ? { initialCommand: input.initialCommand } : {}),
         },
         "started",
       );
-      return snapshot(session);
+      return openSnapshot(session, initialCommandHandled);
     }
 
     const liveSession = existing.value;
@@ -2239,7 +2294,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     if (!liveSession.process) {
-      yield* startSession(
+      const initialCommandHandled = yield* startSession(
         liveSession,
         {
           threadId: input.threadId,
@@ -2249,10 +2304,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols: targetCols,
           rows: targetRows,
           ...(input.env ? { env: input.env } : {}),
+          ...(input.initialCommand ? { initialCommand: input.initialCommand } : {}),
         },
         "started",
       );
-      return snapshot(liveSession);
+      return openSnapshot(liveSession, initialCommandHandled);
     }
 
     if (liveSession.cols !== targetCols || liveSession.rows !== targetRows) {
@@ -2262,7 +2318,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.updatedAt = yield* nowIso;
     }
 
-    return snapshot(liveSession);
+    return openSnapshot(liveSession, false);
   });
 
   const open: TerminalManager["Service"]["open"] = (input) =>

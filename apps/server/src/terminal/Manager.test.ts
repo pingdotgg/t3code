@@ -542,6 +542,18 @@ it.layer(
     }),
   );
 
+  it.effect("leaves an initial command unhandled for an existing shell", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const snapshot = yield* manager.open(openInput({ initialCommand: "npm run dev" }));
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(snapshot.initialCommandHandled).toBeUndefined();
+    }),
+  );
+
   it.effect("preserves structured context and causes for PTY I/O failures", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -724,9 +736,11 @@ it.layer(
     }),
   );
 
-  it.effect("restarts a running session when open is called with a different cwd", () =>
+  it.effect("handles an initial command when open restarts a running session", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, logsDir, baseDir } = yield* createManager();
+      const { manager, ptyAdapter, logsDir, baseDir } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
+      });
       const path = yield* Path.Path;
       const originalCwd = path.join(baseDir, "original");
       const differentCwd = path.join(baseDir, "different");
@@ -742,12 +756,22 @@ it.layer(
       const logPath = yield* historyLogPath(logsDir);
       yield* waitFor(pathExists(logPath));
 
-      const reopened = yield* manager.open(openInput({ cwd: differentCwd }));
+      const reopened = yield* manager.open(
+        openInput({ cwd: differentCwd, initialCommand: "npm run dev" }),
+      );
 
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      expect(ptyAdapter.spawnInputs[1]?.args).toEqual([
+        "-o",
+        "nopromptsp",
+        "-i",
+        "-c",
+        "trap ':' INT\nnpm run dev\nexec '/bin/zsh' '-o' 'nopromptsp'",
+      ]);
       assert.equal(firstProcess.killed, true);
       assert.equal(reopened.cwd, differentCwd);
       assert.equal(reopened.history, "");
+      expect(reopened.initialCommandHandled).toBe(true);
       yield* waitFor(Effect.map(readFileString(logPath), (text) => text === ""));
     }),
   );
@@ -1607,6 +1631,49 @@ it.layer(
       if (!spawnInput) return;
 
       expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
+    }),
+  );
+
+  it.effect("runs a fresh command and preserves interactive zsh after Ctrl+C", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
+      });
+
+      const snapshot = yield* manager.open(openInput({ initialCommand: "npm run dev" }));
+
+      expect(ptyAdapter.spawnInputs[0]?.args).toEqual([
+        "-o",
+        "nopromptsp",
+        "-i",
+        "-c",
+        "trap ':' INT\nnpm run dev\nexec '/bin/zsh' '-o' 'nopromptsp'",
+      ]);
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(snapshot.initialCommandHandled).toBe(true);
+    }),
+  );
+
+  it.effect("leaves fresh Windows shell startup unchanged for an initial command", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      const snapshot = yield* manager.open(openInput({ initialCommand: "npm run dev" }));
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(
+        expect.objectContaining({
+          shell: "pwsh.exe",
+          args: ["-NoLogo"],
+        }),
+      );
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(snapshot.initialCommandHandled).toBeUndefined();
     }),
   );
 
