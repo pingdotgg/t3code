@@ -247,3 +247,108 @@ describe("applyDevinAcpModelSelection", () => {
     }),
   );
 });
+
+describe("Devin reasoning variant synonyms", () => {
+  it.effect("maps no-thinking to the none variant", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: undefined,
+        requested: { familySlug: "glm-5-2", reasoningValue: "no-thinking" },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "adaptive",
+            options: [
+              { value: "adaptive", name: "Adaptive" },
+              { value: "glm-5-2", name: "GLM-5.2" },
+              { value: "glm-5-2-none", name: "GLM-5.2 No Thinking" },
+              { value: "glm-5-2-1m", name: "GLM-5.2 No Thinking 1M" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).toHaveBeenCalledWith("glm-5-2-none");
+      expect(setConfigOption).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("maps no-thinking-1m to the 1m variant", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: undefined,
+        requested: { familySlug: "glm-5-2", reasoningValue: "no-thinking-1m" },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "adaptive",
+            options: [
+              { value: "adaptive", name: "Adaptive" },
+              { value: "glm-5-2", name: "GLM-5.2" },
+              { value: "glm-5-2-none", name: "GLM-5.2 No Thinking" },
+              { value: "glm-5-2-1m", name: "GLM-5.2 No Thinking 1M" },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).toHaveBeenCalledWith("glm-5-2-1m");
+      expect(setConfigOption).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("maps lightning-medium to the lightning-medium variant", () =>
+    Effect.gen(function* () {
+      const setModel = vi.fn().mockReturnValue(Effect.succeed(undefined));
+      const setConfigOption = vi.fn().mockReturnValue(Effect.succeed({ configOptions: [] }));
+
+      yield* applyDevinAcpModelSelection({
+        runtime: { setModel, setConfigOption },
+        current: undefined,
+        requested: {
+          familySlug: "swe-1-7",
+          reasoningValue: "lightning-medium",
+        },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "adaptive",
+            options: [
+              { value: "adaptive", name: "Adaptive" },
+              { value: "swe-1-7", name: "SWE-1.7" },
+              { value: "swe-1-7-medium", name: "SWE-1.7 Medium" },
+              { value: "swe-1-7-lightning", name: "SWE-1.7 Lightning" },
+              {
+                value: "swe-1-7-lightning-medium",
+                name: "SWE-1.7 Lightning Medium",
+              },
+            ],
+          },
+        ],
+        mapError: (cause) => cause,
+      });
+
+      expect(setModel).toHaveBeenCalledWith("swe-1-7-lightning-medium");
+      expect(setConfigOption).not.toHaveBeenCalled();
+    }),
+  );
+});

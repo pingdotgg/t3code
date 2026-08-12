@@ -124,7 +124,10 @@ interface DevinSessionContext {
   currentReasoningValue: string | undefined;
   stopped: boolean;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
+  /** Last usage received from ACP (PromptResponse or UsageUpdated). */
   lastAcpUsage: EffectAcpSchema.Usage | undefined;
+  /** Last usage that was actually persisted to the Devin usage transcript. */
+  lastWrittenAcpUsage: EffectAcpSchema.Usage | undefined;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -270,6 +273,27 @@ function devinUsageDeltaTotals(
     outputTokens,
     reasoningTokens: Math.min(outputTokens, thoughtTokens),
   };
+}
+
+function usageFromUsageUpdate(
+  event: Extract<AcpParsedSessionEvent, { readonly _tag: "UsageUpdated" }>,
+): EffectAcpSchema.Usage {
+  return {
+    inputTokens: event.inputTokens ?? event.used,
+    outputTokens: event.outputTokens ?? 0,
+    totalTokens: event.used,
+    cachedReadTokens: event.cachedReadTokens ?? null,
+    cachedWriteTokens: null,
+    thoughtTokens: null,
+  };
+}
+
+function isAcpUsageGreaterOrNew(
+  current: EffectAcpSchema.Usage | undefined,
+  next: EffectAcpSchema.Usage,
+): boolean {
+  if (!current) return true;
+  return next.totalTokens > current.totalTokens;
 }
 
 interface DevinUsageTranscriptRecord {
@@ -931,6 +955,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             stopped: false,
             lastKnownTokenUsage: undefined,
             lastAcpUsage: undefined,
+            lastWrittenAcpUsage: undefined,
           };
 
           const nf = yield* Stream.runDrain(
@@ -1030,6 +1055,12 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                       return;
                     }
                     ctx.lastKnownTokenUsage = tokenUsage;
+
+                    const acpUsage = usageFromUsageUpdate(event);
+                    if (isAcpUsageGreaterOrNew(ctx.lastAcpUsage, acpUsage)) {
+                      ctx.lastAcpUsage = acpUsage;
+                    }
+
                     yield* offerRuntimeEvent({
                       type: "thread.token-usage.updated",
                       ...stamp,
@@ -1331,11 +1362,15 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
 
               appendPromptResultToTurn(ctx, prepared.turnId, prepared.promptParts, result);
 
-              const usage = result.usage;
-              const tokenUsage = usage
-                ? makeDevinTokenUsageSnapshot(usage, ctx.lastKnownTokenUsage)
+              const usage = result.usage ?? ctx.lastAcpUsage;
+              if (usage && isAcpUsageGreaterOrNew(ctx.lastAcpUsage, usage)) {
+                ctx.lastAcpUsage = usage;
+              }
+
+              const tokenUsage = result.usage
+                ? makeDevinTokenUsageSnapshot(result.usage, ctx.lastKnownTokenUsage)
                 : undefined;
-              if (tokenUsage && usage) {
+              if (tokenUsage && result.usage) {
                 ctx.lastKnownTokenUsage = tokenUsage;
                 yield* offerRuntimeEvent({
                   type: "thread.token-usage.updated",
@@ -1345,8 +1380,10 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                   turnId: prepared.turnId,
                   payload: { usage: tokenUsage },
                 });
+              }
 
-                const deltaTotals = devinUsageDeltaTotals(usage, ctx.lastAcpUsage);
+              if (usage) {
+                const deltaTotals = devinUsageDeltaTotals(usage, ctx.lastWrittenAcpUsage);
                 const totalDeltaTokens =
                   deltaTotals.uncachedInputTokens +
                   deltaTotals.cachedInputTokens +
@@ -1354,7 +1391,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
                   deltaTotals.outputTokens;
 
                 if (totalDeltaTokens > 0) {
-                  ctx.lastAcpUsage = usage;
+                  ctx.lastWrittenAcpUsage = usage;
                   const observedAt = yield* nowIso;
                   const usageModel = prepared.displayModel ?? ctx.session.model ?? "adaptive";
                   yield* writeDevinUsageTranscriptLine(devinSettings, {

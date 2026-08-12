@@ -103,6 +103,40 @@ export function resolveDevinAcpModelSelection(
   };
 }
 
+function normalizeDevinReasoningVariant(variant: string): string {
+  return variant
+    .toLowerCase()
+    .replace(/[.\/\s]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .replace(/-+/g, "-");
+}
+
+function expandDevinReasoningVariants(reasoningValue: string | undefined): ReadonlyArray<string> {
+  if (!reasoningValue) {
+    return [];
+  }
+  const normalized = normalizeDevinReasoningVariant(reasoningValue);
+  const variants = new Set<string>([normalized]);
+
+  // Common Devin reasoning labels do not always map 1:1 to ACP model slugs.
+  // Add synonyms so the picker can match the variant advertised by the agent.
+  if (normalized === "no-thinking" || normalized === "none") {
+    variants.add("none");
+    variants.add("no-thinking");
+  }
+  if (normalized === "no-thinking-1m" || normalized === "none-1m" || normalized === "1m") {
+    variants.add("1m");
+    variants.add("none-1m");
+    variants.add("no-thinking-1m");
+  }
+  if (normalized === "fast" || normalized === "priority") {
+    variants.add("fast");
+    variants.add("priority");
+  }
+
+  return Array.from(variants);
+}
+
 function normalizeConfigIdToken(value: string): string {
   return value.toLowerCase().replace(/[\s_-]+/g, "");
 }
@@ -225,17 +259,26 @@ export function applyDevinAcpModelSelection<E>(input: {
       const modelOption = findSessionConfigOption(input.configOptions, modelConfigId);
       const allowedModelValues = modelOption ? collectSessionConfigOptionValues(modelOption) : [];
 
-      const candidateModelValues = [requested.familySlug];
+      const variantCandidates: string[] = [];
       if (requestedReasoning !== undefined) {
-        candidateModelValues.push(`${requested.familySlug}-${requestedReasoning}`);
-        candidateModelValues.push(`${requested.familySlug}/${requestedReasoning}`);
+        for (const variant of expandDevinReasoningVariants(requestedReasoning)) {
+          variantCandidates.push(`${requested.familySlug}-${variant}`);
+          variantCandidates.push(`${requested.familySlug}/${variant}`);
+        }
       }
+      const baseCandidates = [requested.familySlug];
 
       const effectiveModel =
-        candidateModelValues.find((candidate) => allowedModelValues.includes(candidate)) ??
+        variantCandidates.find((candidate) => allowedModelValues.includes(candidate)) ??
         allowedModelValues.find((value) =>
-          candidateModelValues.some((candidate) => value.endsWith(`/${candidate}`)),
-        );
+          variantCandidates.some(
+            (candidate) =>
+              value.endsWith(`/${candidate}`) ||
+              value.endsWith(`-${candidate}`) ||
+              value === candidate,
+          ),
+        ) ??
+        baseCandidates.find((candidate) => allowedModelValues.includes(candidate));
 
       if (effectiveModel === undefined) {
         return yield* Effect.fail(
