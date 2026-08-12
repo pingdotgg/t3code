@@ -1233,7 +1233,11 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         }
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-            verticalDragStartOffset = scrollView.contentOffset.y
+            let velocity = scrollView.panGestureRecognizer.velocity(in: scrollView)
+            verticalDragStartOffset = TranscriptTimestampRevealGeometry.hasVerticalIntent(
+                velocityX: velocity.x,
+                velocityY: velocity.y
+            ) ? scrollView.contentOffset.y : nil
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -1280,6 +1284,10 @@ enum TranscriptTimestampRevealGeometry {
 
     static func width(translationX: CGFloat) -> CGFloat {
         min(maximumWidth, max(0, -translationX))
+    }
+
+    static func hasVerticalIntent(velocityX: CGFloat, velocityY: CGFloat) -> Bool {
+        abs(velocityY) > abs(velocityX)
     }
 }
 

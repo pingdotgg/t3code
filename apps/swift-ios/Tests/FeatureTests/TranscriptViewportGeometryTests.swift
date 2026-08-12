@@ -37,6 +37,22 @@ struct TranscriptViewportGeometryTests {
     }
 
     @Test
+    func keyboardDismissalTracksOnlyVerticalTranscriptPans() {
+        #expect(
+            TranscriptTimestampRevealGeometry.hasVerticalIntent(
+                velocityX: -40,
+                velocityY: 240
+            )
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.hasVerticalIntent(
+                velocityX: -240,
+                velocityY: 40
+            )
+        )
+    }
+
+    @Test
     func firstLoadedTranscriptAnchorsToLatestMessage() {
         let empty = TranscriptViewportGeometry(
             contentHeight: 0,
