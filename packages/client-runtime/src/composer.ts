@@ -1,8 +1,8 @@
 export type ComposerConversationKind = "new" | "existing";
 
 const CONVERSATION_PLACEHOLDERS = {
-  new: "Describe what you want to build or change",
-  existing: "Ask for changes, add more context, or attach images",
+  new: "Describe the task, tag @files, use $skills or /commands",
+  existing: "Ask for changes, add context, or attach images",
 } as const satisfies Record<ComposerConversationKind, string>;
 
 /** Returns the ordinary composer guidance shared by web, desktop, and mobile. */
