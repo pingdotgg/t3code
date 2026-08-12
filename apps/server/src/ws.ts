@@ -273,9 +273,11 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const portDiscovery = yield* PortDiscovery;
       const previewAutomationBroker = yield* PreviewAutomationBroker;
       const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
-      const withPullRequests = <A>(
-        operation: (service: PullRequestService.PullRequestService["Service"]) => Effect.Effect<A>,
-      ) =>
+      const withPullRequests = <A, E>(
+        operation: (
+          service: PullRequestService.PullRequestService["Service"],
+        ) => Effect.Effect<A, E>,
+      ): Effect.Effect<A, E | PullRequestUnavailableError> =>
         Option.match(pullRequests, {
           onNone: () =>
             Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" })),

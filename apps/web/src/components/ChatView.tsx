@@ -3353,6 +3353,9 @@ function ChatViewBody(
         ...(bootstrap ? { bootstrap } : {}),
         createdAt: messageCreatedAt,
       });
+      if (isLocalDraftThread) {
+        useComposerDraftStore.getState().markDraftThreadPromoting(composerDraftTarget);
+      }
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
       if (

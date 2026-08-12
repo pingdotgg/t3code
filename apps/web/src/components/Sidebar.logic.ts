@@ -24,6 +24,35 @@ type SidebarProject = {
 
 export type ThreadTraversalDirection = "previous" | "next";
 
+export function shouldRenderSidebarDraft(input: {
+  hasUserContent: boolean;
+  isPromoting: boolean;
+  serverThreadPublished: boolean;
+}): boolean {
+  return !input.serverThreadPublished && (input.hasUserContent || input.isPromoting);
+}
+
+export function resolveSidebarDraftPreview(input: {
+  draftPrompt: string | null;
+  draftAttachmentCount: number;
+  optimisticMessage: {
+    text: string;
+    attachments?: readonly unknown[];
+  } | null;
+}): string {
+  const promptPreview = input.draftPrompt?.trim().split("\n", 1)[0] ?? "";
+  if (promptPreview) {
+    return promptPreview;
+  }
+  const optimisticPreview = input.optimisticMessage?.text.trim().split("\n", 1)[0] ?? "";
+  if (optimisticPreview) {
+    return optimisticPreview;
+  }
+  const attachmentCount =
+    input.draftAttachmentCount + (input.optimisticMessage?.attachments?.length ?? 0);
+  return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
+}
+
 /**
  * How a status renders in the v1 sidebar:
  * - `label`: inline colored dot + text (actionable / transient states)
