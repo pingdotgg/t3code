@@ -650,7 +650,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
-  operatorParent: SidebarThreadSummary | null;
   variant: "card" | "slim";
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
@@ -722,7 +721,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     onUnsnooze,
     onUnpin,
     openPullRequestsInRightPanel,
-    operatorParent,
     renamingTitle,
     thread,
     variant,
@@ -733,13 +731,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
-  const operatorParentRef = useMemo(
-    () =>
-      operatorParent === null
-        ? null
-        : scopeThreadRef(operatorParent.environmentId, operatorParent.id),
-    [operatorParent],
-  );
+  const isOperatorChild = thread.operatorParentThreadId != null;
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -916,14 +908,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       onThreadClick(event, threadRef);
     },
     [onThreadClick, threadRef],
-  );
-  const handleOperatorParentClick = useCallback(
-    (event: ReactMouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (operatorParentRef !== null) onThreadActivate(operatorParentRef);
-    },
-    [onThreadActivate, operatorParentRef],
   );
   const handleAcknowledgeWokeClick = useCallback(
     (event: ReactMouseEvent) => {
@@ -1121,6 +1105,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {thread.title}
     </span>
   );
+  const operatorChildIcon = isOperatorChild ? (
+    <WorkflowIcon
+      data-testid="operator-child-icon"
+      role="img"
+      aria-label="Operator task"
+      className="size-3.5 shrink-0 text-violet-600/75 dark:text-violet-300/75"
+    />
+  ) : null;
 
   const prBadge =
     prStatus && pr ? (
@@ -1157,7 +1149,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
-        data-operator-role={operatorParent === null ? undefined : "child"}
+        data-operator-role={isOperatorChild ? "child" : undefined}
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
         <Tooltip>
@@ -1178,18 +1170,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           >
             {/* Settled history recedes: dimmed favicon at rest, restored on
               hover so the tail stays scannable when you're hunting. */}
-            {operatorParent === null ? null : (
-              <button
-                type="button"
-                data-testid="operator-parent-link"
-                aria-label={`Open coordinator ${operatorParent.title}`}
-                title={`Spawned from ${operatorParent.title}`}
-                onClick={handleOperatorParentClick}
-                className="inline-flex shrink-0 cursor-pointer items-center rounded-sm text-violet-600/75 outline-none hover:text-violet-600 focus-visible:ring-2 focus-visible:ring-ring dark:text-violet-300/75 dark:hover:text-violet-300"
-              >
-                <WorkflowIcon aria-hidden className="size-3.5" />
-              </button>
-            )}
             <span
               className={cn(
                 "shrink-0 transition-opacity",
@@ -1205,6 +1185,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 fallbackIcon={MessageSquareIcon}
               />
             </span>
+            {operatorChildIcon}
             {title}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -1318,7 +1299,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
         sortable?.isDragging && "z-20 opacity-80",
       )}
-      data-operator-role={operatorParent !== null ? "child" : undefined}
+      data-operator-role={isOperatorChild ? "child" : undefined}
     >
       <Tooltip>
         <TooltipTrigger
@@ -1486,7 +1467,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 flex min-w-0">
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              {operatorChildIcon}
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
@@ -1495,22 +1477,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {operatorParent !== null ? (
-                <button
-                  type="button"
-                  data-testid="operator-parent-link"
-                  aria-label={`Open coordinator ${operatorParent.title}`}
-                  title={`Spawned from ${operatorParent.title}`}
-                  onClick={handleOperatorParentClick}
-                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-sm text-left outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <WorkflowIcon
-                    aria-hidden
-                    className="size-3.5 shrink-0 text-violet-600/75 dark:text-violet-300/75"
-                  />
-                  <span className="min-w-0 truncate whitespace-nowrap">{operatorParent.title}</span>
-                </button>
-              ) : thread.branch ? (
+              {thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
                   <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
@@ -2054,16 +2021,6 @@ export default function Sidebar() {
     threads,
   ]);
 
-  const operatorThreadByKey = useMemo(
-    () =>
-      new Map(
-        threads.map(
-          (thread) =>
-            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
-        ),
-      ),
-    [threads],
-  );
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
@@ -3538,14 +3495,6 @@ export default function Sidebar() {
                     const threadKey = scopedThreadKey(
                       scopeThreadRef(thread.environmentId, thread.id),
                     );
-                    const operatorParent =
-                      thread.operatorParentThreadId == null
-                        ? null
-                        : (operatorThreadByKey.get(
-                            scopedThreadKey(
-                              scopeThreadRef(thread.environmentId, thread.operatorParentThreadId),
-                            ),
-                          ) ?? null);
                     // Settled and snoozed are the ONLY things that collapse a
                     // row: every other thread is a full card. Density comes
                     // from users (or the auto rules) actually parking work,
@@ -3562,7 +3511,6 @@ export default function Sidebar() {
                         // painted over text).
                         key={`${threadKey}:${rowVariant}`}
                         thread={thread}
-                        operatorParent={operatorParent}
                         variant={rowVariant}
                         // Snoozed rows wake; settled rows un-settle (explicit
                         // settles clear the override, auto-settled rows get

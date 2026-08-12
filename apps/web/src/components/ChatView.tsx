@@ -201,7 +201,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -1555,6 +1555,24 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [activeThreadEnvironmentId, activeThreadId],
   );
+  const activeOperatorParentRef = useMemo(
+    () =>
+      activeServerThread?.operatorParentThreadId == null
+        ? null
+        : scopeThreadRef(
+            activeServerThread.environmentId,
+            activeServerThread.operatorParentThreadId,
+          ),
+    [activeServerThread?.environmentId, activeServerThread?.operatorParentThreadId],
+  );
+  const activeOperatorParent = useThreadShell(activeOperatorParentRef);
+  const handleOpenOperatorParent = useCallback(() => {
+    if (activeOperatorParentRef === null) return;
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(activeOperatorParentRef),
+    });
+  }, [activeOperatorParentRef, navigate]);
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -6150,6 +6168,7 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
+            operatorParentTitle={activeOperatorParent?.title ?? null}
             isServerThread={isServerThread}
             changeRequestState={activeThreadPr?.state ?? null}
             activeProjectName={activeProject?.title}
@@ -6165,6 +6184,7 @@ function ChatViewContent(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
+            onOpenOperatorParent={handleOpenOperatorParent}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
