@@ -17,10 +17,11 @@ To go back to a plain background, use the reset control on the wallpaper row.
 
 ## What a wallpaper can be
 
-Any image the browser can paint, including SVG. Large images are scaled down and re-encoded to
-keep the preference small enough to store; anything that would still be too large after that, or
-that turns out not to be an image at all, is refused with a message on the row rather than being
-set.
+PNG, JPEG, GIF, WebP, AVIF, BMP, or SVG. Large images are scaled down and re-encoded to keep the
+preference small enough to store; anything that would still be too large after that, that has more
+pixels than the app will hold behind a window, or that turns out not to be an image at all, is
+refused with a message on the row rather than being set. A file whose format the app cannot size up
+front is refused as well, since measuring it would mean decoding it first.
 
 Animated images keep animating behind the app, which keeps the GPU busy for as long as it is set.
 Prefer a static image unless you want that.

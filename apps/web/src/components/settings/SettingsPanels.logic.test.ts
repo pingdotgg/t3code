@@ -272,6 +272,29 @@ describe("prepareWallpaperImage", () => {
     return bytes;
   }
 
+  /** An ftyp box and a meta box holding one ispe — an AVIF's stated extent. */
+  function avifHeader(width: number, height: number) {
+    const bytes = new Uint8Array(48);
+    const view = new DataView(bytes.buffer);
+    const write = (offset: number, type: string, size: number) => {
+      view.setUint32(offset, size);
+      for (let index = 0; index < 4; index += 1) {
+        bytes[offset + 4 + index] = type.charCodeAt(index);
+      }
+    };
+    write(0, "ftyp", 16);
+    bytes.set(
+      [..."avifavif"].map((character) => character.charCodeAt(0)),
+      8,
+    );
+    // meta is a full box, so four bytes of version and flags precede its children.
+    write(16, "meta", 32);
+    write(28, "ispe", 20);
+    view.setUint32(40, width);
+    view.setUint32(44, height);
+    return bytes;
+  }
+
   function base64Of(bytes: Uint8Array): string {
     return btoa(String.fromCharCode(...bytes));
   }
@@ -301,15 +324,41 @@ describe("prepareWallpaperImage", () => {
   });
 
   it("stores an under-budget image verbatim once it decodes", async () => {
+    const header = pngHeader(1920, 1080);
     const probed = stubImageDecoder(() => true);
 
     const result = await prepareWallpaperImage(
-      new File([new Uint8Array([1, 2, 3, 4])], "shot.png", { type: "image/png" }),
+      new File([header], "shot.png", { type: "image/png" }),
     );
 
     expect(result.ok).toBe(true);
-    expect(result.ok && result.dataUrl).toBe("data:image/png;base64,AQIDBA==");
-    expect(probed).toEqual(["data:image/png;base64,AQIDBA=="]);
+    expect(result.ok && result.dataUrl).toBe(`data:image/png;base64,${base64Of(header)}`);
+    expect(probed).toEqual([`data:image/png;base64,${base64Of(header)}`]);
+  });
+
+  it("accepts a format beyond PNG once its header states a size it can hold", async () => {
+    stubImageDecoder(() => true);
+
+    const result = await prepareWallpaperImage(
+      new File([avifHeader(4032, 3024)], "photo.avif", { type: "image/avif" }),
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses a raster whose format it cannot measure, without decoding it", async () => {
+    const probed = stubImageDecoder(() => true);
+
+    // A container this cannot read could declare any size at all, and finding out
+    // means decoding it — which is the cost the ceiling exists to refuse.
+    expect(
+      await prepareWallpaperImage(
+        new File([new Uint8Array([0x00, 0x01, 0x02, 0x03])], "exotic.img", {
+          type: "image/exotic",
+        }),
+      ),
+    ).toEqual({ ok: false, reason: "unreadable" });
+    expect(probed).toEqual([]);
   });
 
   it("accepts an SVG, which a background paints and a bitmap decoder would refuse", async () => {
@@ -325,15 +374,13 @@ describe("prepareWallpaperImage", () => {
     expect(result.ok && result.dataUrl.startsWith("data:image/svg+xml;base64,")).toBe(true);
   });
 
-  it("rejects an under-budget raster whose decoded dimensions would exhaust memory", async () => {
-    // A few bytes encoded, ~1 GB decoded — the verbatim path stores it untouched, so the
-    // dimension ceiling is the only thing standing between the picker and a frozen tab.
+  it("rejects a raster that decodes larger than its header claims", async () => {
+    // The backstop: a header understating its image gets past the pre-decode
+    // ceiling, and the size the browser reports still has to clear it.
     stubImageDecoder(() => true, { width: 16_384, height: 16_384 });
 
     expect(
-      await prepareWallpaperImage(
-        new File([new Uint8Array([1, 2, 3, 4])], "uniform.png", { type: "image/png" }),
-      ),
+      await prepareWallpaperImage(new File([pngHeader(8, 8)], "liar.png", { type: "image/png" })),
     ).toEqual({ ok: false, reason: "too-large" });
   });
 
@@ -385,6 +432,65 @@ describe("prepareWallpaperImage", () => {
         ),
       ),
     ).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  it("refuses an SVG that embeds an enormous raster without base64", async () => {
+    // Percent-encoding is the other way a data URI carries bytes, and it hides
+    // the raster from anything that only looks for `;base64,`.
+    const embedded = [...pngHeader(16_384, 16_384)]
+      .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+      .join("");
+    stubImageDecoder(() => true);
+
+    expect(
+      await prepareWallpaperImage(
+        new File(
+          [
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">` +
+              `<image href="data:image/png,${embedded}" width="8" height="8"/></svg>`,
+          ],
+          "encoded.svg",
+          { type: "image/svg+xml" },
+        ),
+      ),
+    ).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  it("refuses an SVG whose nested SVG embeds an enormous raster", async () => {
+    const inner =
+      `<svg xmlns="http://www.w3.org/2000/svg">` +
+      `<image href="data:image/png;base64,${base64Of(pngHeader(16_384, 16_384))}"/></svg>`;
+    stubImageDecoder(() => true);
+
+    expect(
+      await prepareWallpaperImage(
+        new File(
+          [
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">` +
+              `<image href="data:image/svg+xml;base64,${btoa(inner)}"/></svg>`,
+          ],
+          "nested.svg",
+          { type: "image/svg+xml" },
+        ),
+      ),
+    ).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  it("refuses an SVG embedding a raster it cannot measure", async () => {
+    stubImageDecoder(() => true);
+
+    expect(
+      await prepareWallpaperImage(
+        new File(
+          [
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8">` +
+              `<image href="data:image/exotic;base64,${base64Of(new Uint8Array([1, 2, 3, 4]))}"/></svg>`,
+          ],
+          "opaque.svg",
+          { type: "image/svg+xml" },
+        ),
+      ),
+    ).toEqual({ ok: false, reason: "unreadable" });
   });
 
   it("keeps an SVG that embeds a raster small enough to hold", async () => {
