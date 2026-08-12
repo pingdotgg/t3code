@@ -95,6 +95,10 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             snapshot.environments.first(where: { $0.id == "two" })?.connectionState,
             .connected
         )
+        XCTAssertEqual(
+            snapshot.environments.first(where: { $0.id == "two" })?.serverVersion,
+            "0.0.2"
+        )
 
         let detail = try await fixture.client.loadThread(id: remoteThread.id)
         XCTAssertEqual(detail.thread.environmentID, "two")
@@ -439,13 +443,23 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 id: "one",
                 label: "Left Book",
                 httpBaseURL: URL(string: "https://one.example")!,
-                webSocketBaseURL: URL(string: "wss://one.example")!
+                webSocketBaseURL: URL(string: "wss://one.example")!,
+                descriptor: multiEnvironmentDescriptor(
+                    environmentID: "one",
+                    label: "Left Book",
+                    serverVersion: "0.0.1"
+                )
             ),
             Environment(
                 id: "two",
                 label: "Steam Box",
                 httpBaseURL: URL(string: "https://two.example")!,
-                webSocketBaseURL: URL(string: "wss://two.example")!
+                webSocketBaseURL: URL(string: "wss://two.example")!,
+                descriptor: multiEnvironmentDescriptor(
+                    environmentID: "two",
+                    label: "Steam Box",
+                    serverVersion: "0.0.2"
+                )
             ),
         ]
         let store = EnvironmentStore(
@@ -499,6 +513,27 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             )
         )
     }
+}
+
+private func multiEnvironmentDescriptor(
+    environmentID: String,
+    label: String,
+    serverVersion: String
+) -> EnvironmentDescriptor {
+    try! JSONDecoder.t3.decode(
+        EnvironmentDescriptor.self,
+        from: Data(
+            """
+            {
+              "environmentId": "\(environmentID)",
+              "label": "\(label)",
+              "platform": {"os": "darwin", "arch": "arm64"},
+              "serverVersion": "\(serverVersion)",
+              "capabilities": {"repositoryIdentity": true}
+            }
+            """.utf8
+        )
+    )
 }
 
 private actor FailOnceAggregateEnvironmentLoader {
