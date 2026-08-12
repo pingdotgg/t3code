@@ -331,6 +331,31 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it("upgrades the actually-installed Homebrew formula, not the definition's default", () => {
+    expect(
+      packageToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/bin/package-tool",
+        resolvedCommandPath: "/opt/homebrew/bin/package-tool",
+        realCommandPath: "/opt/homebrew/Cellar/package-tool@latest/1.2.3/bin/package-tool",
+        env: {
+          PATH: "",
+        },
+      }),
+    ).toEqual({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      update: {
+        command: "brew upgrade package-tool@latest",
+
+        executable: "brew",
+
+        args: ["upgrade", "package-tool@latest"],
+
+        lockKey: "homebrew",
+      },
+    });
+  });
+
   it.effect(
     "switches native-package-tool to native updates when the binary resolves through the native installer",
     () =>
