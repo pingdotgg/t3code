@@ -145,6 +145,7 @@ export function makeCursorAdapter(
     defaultInstanceId: ProviderInstanceId.make("cursor"),
     displayName: "Cursor",
     settings: cursorSettings,
+    supportsRollback: true,
     ...(options ? { options } : {}),
     registerExtensions: registerCursorExtensions,
     userInputRequestMethod: "cursor/ask_question",

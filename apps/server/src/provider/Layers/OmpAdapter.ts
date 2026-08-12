@@ -24,6 +24,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
     defaultInstanceId: ProviderInstanceId.make("omp"),
     displayName: "OMP",
     settings: ompSettings,
+    supportsRollback: false,
     ...(options ? { options } : {}),
     makeRuntime: ({
       settings,

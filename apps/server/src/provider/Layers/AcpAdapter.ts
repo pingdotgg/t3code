@@ -133,6 +133,7 @@ export interface AcpProviderAdapterDefinition<Settings> {
     input: AcpProviderExtensionRegistrationInput,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly userInputRequestMethod?: string;
+  readonly supportsRollback?: boolean;
   readonly shouldAutoApprovePermission?: (input: {
     readonly runtimeMode: RuntimeMode;
     readonly permissionKind: string | "unknown";
@@ -1152,13 +1153,18 @@ export function makeAcpProviderAdapter<Settings>(
       numTurns,
     ) =>
       Effect.gen(function* () {
-        yield* requireSession(threadId);
+        const ctx = yield* requireSession(threadId);
         if (!Number.isInteger(numTurns) || numTurns < 1) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
             operation: "rollbackThread",
             issue: "numTurns must be an integer >= 1.",
           });
+        }
+        if (definition.supportsRollback) {
+          const nextLength = Math.max(0, ctx.turns.length - numTurns);
+          ctx.turns.splice(nextLength);
+          return { threadId, turns: ctx.turns };
         }
         // ACP has no rollback operation. Do not trim local history while the
         // provider retains the removed turns; return an explicit error instead.
