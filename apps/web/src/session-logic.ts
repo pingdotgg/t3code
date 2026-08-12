@@ -847,7 +847,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  if (detail) {
+  const imagePath = itemType === "image_view" ? extractImageViewPath(payload) : null;
+  if (imagePath) {
+    entry.detail = imagePath;
+  } else if (detail) {
     entry.detail = detail;
   }
   if (commandPreview.command) {
@@ -1441,6 +1444,17 @@ function stripTrailingExitCode(value: string): {
     output: normalizedOutput.length > 0 ? normalizedOutput : null,
     ...(Number.isInteger(exitCode) ? { exitCode } : {}),
   };
+}
+
+function extractImageViewPath(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const item = asRecord(data?.item);
+  for (const candidate of [item?.savedPath, item?.path, payload?.detail]) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return null;
 }
 
 function extractWorkLogItemType(

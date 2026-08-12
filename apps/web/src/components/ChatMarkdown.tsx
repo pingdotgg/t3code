@@ -14,6 +14,7 @@ import {
   WrapTextIcon,
 } from "lucide-react";
 import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -44,6 +45,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { ChatRemoteImage, ChatWorkspaceImage } from "./chat/ChatWorkspaceImage";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -157,6 +159,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    src: [...(defaultSchema.protocols?.src ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
@@ -1541,6 +1544,30 @@ function ChatMarkdown({
             }}
           />
         );
+      },
+      img({ src, alt }) {
+        const fileLinkMeta = src ? resolveMarkdownFileLinkMeta(src, cwd) : null;
+        if (
+          fileLinkMeta &&
+          isWorkspaceImagePreviewPath(fileLinkMeta.filePath) &&
+          threadRef
+        ) {
+          return (
+            <ChatWorkspaceImage
+              environmentId={threadRef.environmentId}
+              threadRef={threadRef}
+              path={fileLinkMeta.filePath}
+              alt={alt ?? fileLinkMeta.basename}
+            />
+          );
+        }
+        if (src && /^https?:\/\//i.test(src)) {
+          return <ChatRemoteImage src={src} alt={alt ?? ""} />;
+        }
+        if (fileLinkMeta) {
+          return fileLinkChip(fileLinkMeta, `![${alt ?? fileLinkMeta.basename}](${src})`);
+        }
+        return src ? <img src={src} alt={alt ?? ""} /> : null;
       },
       a({ node, href, children, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
