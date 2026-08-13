@@ -7,6 +7,7 @@ import { CableIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useEnvironments } from "../../state/environments";
+import { useServerConfigs } from "../../state/entities";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -48,9 +49,19 @@ export function DesktopPortForwardControl({
 }) {
   const bridge = window.desktopBridge?.portForward;
   const { environments } = useEnvironments();
+  const serverConfigs = useServerConfigs();
   const connectedEnvironments = useMemo(
     () => environments.filter((environment) => environment.connection.phase === "connected"),
     [environments],
+  );
+  const forwardableEnvironments = useMemo(
+    () =>
+      connectedEnvironments.filter(
+        (environment) =>
+          serverConfigs.get(environment.environmentId)?.environment.capabilities
+            .tcpPortForwarding === true,
+      ),
+    [connectedEnvironments, serverConfigs],
   );
   const environmentLabels = useMemo(
     () =>
@@ -71,7 +82,9 @@ export function DesktopPortForwardControl({
   const [stoppingId, setStoppingId] = useState<DesktopPortForwardId | null>(null);
 
   const selectedEnvironmentId = resolvePortForwardEnvironmentId({
-    connectedEnvironmentIds: connectedEnvironments.map((environment) => environment.environmentId),
+    connectedEnvironmentIds: forwardableEnvironments.map(
+      (environment) => environment.environmentId,
+    ),
     preferredEnvironmentId,
     selection: environmentSelection,
   });
@@ -179,6 +192,10 @@ export function DesktopPortForwardControl({
           <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
             Connect an environment before starting a port forward.
           </p>
+        ) : forwardableEnvironments.length === 0 ? (
+          <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            Update the connected T3 server before starting a port forward.
+          </p>
         ) : null}
         <div className="space-y-3">
           <label className="text-xs text-muted-foreground">
@@ -202,7 +219,7 @@ export function DesktopPortForwardControl({
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup alignItemWithTrigger={false} positionerClassName="z-70">
-                {connectedEnvironments.map((environment) => (
+                {forwardableEnvironments.map((environment) => (
                   <SelectItem
                     hideIndicator
                     key={environment.environmentId}
@@ -254,6 +271,9 @@ export function DesktopPortForwardControl({
                     127.0.0.1:{forward.remotePort}
                     {forward.activeConnections > 0 ? ` · ${forward.activeConnections} active` : ""}
                   </p>
+                  {forward.lastError === null ? null : (
+                    <p className="truncate text-destructive">{forward.lastError}</p>
+                  )}
                 </div>
                 <Button
                   size="xs"

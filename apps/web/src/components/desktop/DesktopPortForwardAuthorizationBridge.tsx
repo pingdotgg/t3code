@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import { useEffect } from "react";
 
 import { runtime } from "../../lib/runtime";
-import { readPreparedConnection } from "../../state/session";
+import { readCurrentPreparedConnection } from "../../state/session";
 
 export function DesktopPortForwardAuthorizationBridge() {
   useEffect(() => {
@@ -12,29 +12,39 @@ export function DesktopPortForwardAuthorizationBridge() {
     if (bridge === undefined) return;
 
     return bridge.onAuthorizationRequest((request) => {
-      const prepared = readPreparedConnection(request.environmentId);
-      if (prepared === null) {
-        void bridge.resolveAuthorization(request.requestId, null);
-        return;
-      }
-
-      void runtime
-        .runPromise(
-          Effect.gen(function* () {
-            const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-            return yield* resolveTcpPortForwardSocketUrl({
-              prepared,
-              signer,
-              remoteHost: request.remoteHost,
-              remotePort: request.remotePort,
-            });
-          }),
-        )
-        .then(
-          (socketUrl) => bridge.resolveAuthorization(request.requestId, socketUrl),
-          () => bridge.resolveAuthorization(request.requestId, null),
-        )
-        .catch(() => undefined);
+      void readCurrentPreparedConnection(request.environmentId)
+        .then((prepared) => {
+          if (prepared === null) {
+            // Authorization requests are broadcast to every desktop window.
+            // Only the renderer that owns a live connection should answer.
+            return;
+          }
+          return runtime.runPromise(
+            Effect.gen(function* () {
+              const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+              return yield* resolveTcpPortForwardSocketUrl({
+                prepared,
+                signer,
+                remoteHost: request.remoteHost,
+                remotePort: request.remotePort,
+              });
+            }),
+          );
+        })
+        .then((socketUrl) => {
+          if (socketUrl !== undefined) {
+            return bridge.resolveAuthorization(request.requestId, socketUrl);
+          }
+        })
+        .catch((cause) =>
+          bridge
+            .resolveAuthorization(
+              request.requestId,
+              null,
+              cause instanceof Error ? cause.message : String(cause),
+            )
+            .catch(() => undefined),
+        );
     });
   }, []);
 
