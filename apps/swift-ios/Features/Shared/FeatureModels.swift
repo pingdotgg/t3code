@@ -357,21 +357,17 @@ enum FeatureSettlementProjection {
         if input.sessionStatus == "starting" || input.sessionStatus == "running" { return false }
         if input.sessionStatus == "error" { return true }
         guard let rawMessageAt = input.latestUserMessageAt,
-              let messageAt = parseDate(rawMessageAt),
-              abs(now.timeIntervalSince(messageAt)) <= queuedTurnStartGrace else {
+              let messageAt = parseDate(rawMessageAt) else {
             return true
         }
-        let latestTurnDates = [
-            input.latestTurnRequestedAt,
-            input.latestTurnStartedAt,
-            input.latestTurnCompletedAt,
-        ]
-        let queued = latestTurnDates.allSatisfy { candidate in
-            guard let candidate else { return true }
-            guard let date = parseDate(candidate) else { return false }
-            return date < messageAt
+        let messageAge = now.timeIntervalSince(messageAt)
+        if messageAge < 0 { return false }
+        if messageAge > queuedTurnStartGrace { return true }
+        if let completedAt = input.latestTurnCompletedAt.flatMap(parseDate),
+           completedAt >= messageAt {
+            return true
         }
-        return !queued
+        return false
     }
 
     private static func parseDate(_ value: String) -> Date? {

@@ -207,6 +207,31 @@ struct DailyUXSidebarTests {
         #expect(!eligible)
     }
 
+    @Test
+    func queuedTurnAndFutureMessageBlockSettlementProjection() {
+        let queued = FeatureSettlementProjectionInput(
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            sessionStatus: nil,
+            latestUserMessageAt: now.addingTimeInterval(-30).ISO8601Format(),
+            latestTurnRequestedAt: now.addingTimeInterval(-20).ISO8601Format(),
+            latestTurnStartedAt: nil,
+            latestTurnCompletedAt: nil
+        )
+        let future = FeatureSettlementProjectionInput(
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            sessionStatus: nil,
+            latestUserMessageAt: now.addingTimeInterval(300).ISO8601Format(),
+            latestTurnRequestedAt: nil,
+            latestTurnStartedAt: nil,
+            latestTurnCompletedAt: nil
+        )
+
+        #expect(!FeatureSettlementProjection.canSettle(queued, now: now))
+        #expect(!FeatureSettlementProjection.canSettle(future, now: now))
+    }
+
     @Test(arguments: [FeatureThreadState.working, .monitoring])
     func backgroundOnlyShellsRemainSettlementEligible(state: FeatureThreadState) {
         let eligible = FeatureSettlementProjection.canSettle(
