@@ -226,7 +226,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5945174dc9e0681dd895b5a13e1534cd
  
  // appearance does not apply to the tvOS so we need to use lagacy customization
  #if TARGET_OS_TV
-@@ -637,10 +675,392 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -637,10 +675,394 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -319,8 +319,10 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5945174dc9e0681dd895b5a13e1534cd
 +  // capture its event emitter), the toolbar config values, and the host width
 +  // (the width constraint constant is resolved from it at build time).
 +  static char RNSAppliedMailSearchToolbarConfigKey;
-+  NSArray *mailSearchToolbarKey = mailSearchToolbarConfig != nil
-+      ? @[ @((uintptr_t)config), mailSearchToolbarConfig, @(chromeHostView.bounds.size.width) ]
++  NSMutableDictionary<NSString *, id> *mailSearchToolbarIdentity = [mailSearchToolbarConfig mutableCopy];
++  [mailSearchToolbarIdentity removeObjectForKey:@"searchText"];
++  NSArray *mailSearchToolbarKey = mailSearchToolbarIdentity != nil
++      ? @[ @((uintptr_t)config), mailSearchToolbarIdentity, @(chromeHostView.bounds.size.width) ]
 +      : nil;
 +  BOOL reuseMailSearchToolbar = existingMailSearchToolbar != nil && mailSearchToolbarKey != nil &&
 +      [objc_getAssociatedObject(existingMailSearchToolbar, &RNSAppliedMailSearchToolbarConfigKey)
