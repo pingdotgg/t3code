@@ -21,13 +21,14 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
     ]
 
     public let path: String
+    public let kind: FeatureFileKind
     public var id: String { path }
 
     public var entry: FeatureFileEntry {
         FeatureFileEntry(
             path: path,
             name: URL(fileURLWithPath: path).lastPathComponent,
-            kind: .file
+            kind: kind
         )
     }
 
@@ -65,6 +66,9 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         if usesWindowsPaths {
             destination.path = destination.path.replacingOccurrences(of: "\\", with: "/")
         }
+        let kind: FeatureFileKind = url.hasDirectoryPath || destination.path.hasSuffix("/")
+            ? .directory
+            : .file
 
         guard !destination.path.isEmpty,
               !Self.containsDisallowedColon(destination.path, usesWindowsPaths: usesWindowsPaths),
@@ -85,6 +89,7 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
                 return nil
             }
             path = relative
+            self.kind = kind
             return
         }
 
@@ -99,6 +104,7 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
 
         guard let relative = Self.relativePath(for: absolute, in: root) else { return nil }
         path = relative
+        self.kind = kind
     }
 
     public static func isWorkspaceDestination(_ url: URL) -> Bool {

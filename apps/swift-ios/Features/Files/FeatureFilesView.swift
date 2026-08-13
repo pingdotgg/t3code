@@ -17,7 +17,7 @@ public struct FeatureFilesView: View {
     }
 }
 
-private struct FeatureFileDirectoryView: View {
+struct FeatureFileDirectoryView: View {
     let client: any FeatureClient
     let threadID: String
     let path: String?

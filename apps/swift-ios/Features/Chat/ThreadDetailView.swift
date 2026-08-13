@@ -105,11 +105,7 @@ public struct ThreadDetailView: View {
         }
         .sheet(item: $linkedFile) { link in
             NavigationStack {
-                FeatureFilePreviewView(
-                    client: model.client,
-                    threadID: thread.id,
-                    entry: link.entry
-                )
+                linkedFileDestination(link)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Done") { linkedFile = nil }
@@ -136,6 +132,24 @@ public struct ThreadDetailView: View {
             Text(fileLinkFailureMessage ?? "This file is not inside the active workspace.")
         }
         .simultaneousGesture(edgeBackGesture)
+    }
+
+    @ViewBuilder
+    private func linkedFileDestination(_ link: FeatureWorkspaceFileLink) -> some View {
+        if link.kind == .directory {
+            FeatureFileDirectoryView(
+                client: model.client,
+                threadID: thread.id,
+                path: link.path,
+                title: link.entry.name
+            )
+        } else {
+            FeatureFilePreviewView(
+                client: model.client,
+                threadID: thread.id,
+                entry: link.entry
+            )
+        }
     }
 
     private var edgeBackGesture: some Gesture {

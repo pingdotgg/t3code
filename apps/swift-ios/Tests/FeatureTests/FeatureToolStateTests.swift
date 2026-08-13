@@ -157,6 +157,18 @@ struct FeatureToolStateTests {
     }
 
     @Test
+    func workspaceDirectoryLinksPreserveDirectoryKind() throws {
+        let directory = URL(fileURLWithPath: "/repo/Sources", isDirectory: true)
+        let link = try #require(
+            FeatureWorkspaceFileLink(url: directory, workspaceRoot: "/repo")
+        )
+
+        #expect(link.path == "Sources")
+        #expect(link.kind == .directory)
+        #expect(link.entry.kind == .directory)
+    }
+
+    @Test
     func workspaceFileLinksRejectEscapesAuthoritiesSchemesAndOutsidePaths() throws {
         let rejected = [
             try #require(URL(string: "../../secret.txt")),
