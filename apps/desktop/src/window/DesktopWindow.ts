@@ -530,7 +530,7 @@ export const make = Effect.gen(function* () {
       const y = Math.trunc(params.y / zoomFactor);
       void params.frame
         .executeJavaScript(
-          `document.elementFromPoint(${x}, ${y})?.closest("[data-composer-stash]") !== null`,
+          `Boolean(document.elementFromPoint(${x}, ${y})?.closest("[data-composer-stash]"))`,
         )
         .then(
           (isComposerTarget) => showContextMenu(isComposerTarget === true),

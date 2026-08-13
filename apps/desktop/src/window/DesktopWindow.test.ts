@@ -542,7 +542,7 @@ describe("DesktopWindow", () => {
 
         const { template } = yield* Deferred.await(composerPopup);
         assert.deepEqual(executeJavaScript.mock.calls, [
-          ['document.elementFromPoint(40, 60)?.closest("[data-composer-stash]") !== null'],
+          ['Boolean(document.elementFromPoint(40, 60)?.closest("[data-composer-stash]"))'],
         ]);
         assert.deepEqual(
           template.slice(0, 4).map((item) => item.role),
