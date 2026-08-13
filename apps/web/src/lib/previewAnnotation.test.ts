@@ -69,7 +69,7 @@ describe("preview annotations", () => {
     expect(result.promptText).toBe("Fix this");
     expect(result.annotation).toMatchObject({
       title: "Example",
-      targetSummary: "1 marked region, 1 drawing.",
+      targetSummary: "1 marked region · 1 drawing · 1 style change.",
       hasScreenshot: true,
     });
   });

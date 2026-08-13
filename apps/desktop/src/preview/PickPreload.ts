@@ -394,6 +394,13 @@ function startAnnotation(): void {
   toolbar.style.zIndex = String(CHROME_LAYER_Z_INDEX);
   root.appendChild(toolbar);
 
+  const hint = document.createElement("div");
+  hint.setAttribute(OVERLAY_ATTRIBUTE, "");
+  hint.className =
+    "pointer-events-none fixed top-12 left-1/2 max-w-[min(28rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-md border border-border/70 bg-popover/90 px-2 py-1 text-center font-sans text-[11px] text-muted-foreground shadow-sm backdrop-blur-xl";
+  hint.style.zIndex = String(CHROME_LAYER_Z_INDEX);
+  root.appendChild(hint);
+
   const editor = document.createElement("div");
   editor.setAttribute(OVERLAY_ATTRIBUTE, "");
   editor.className =
@@ -414,7 +421,7 @@ function startAnnotation(): void {
   composerRow.appendChild(adjust);
 
   const comment = document.createElement("textarea");
-  comment.placeholder = "Describe the change…";
+  comment.placeholder = "What should change?";
   comment.rows = 1;
   comment.className =
     "min-h-8 max-h-24 min-w-0 flex-1 resize-none overflow-y-hidden border-0 border-b border-b-transparent bg-transparent px-0 py-1.5 font-sans text-sm leading-5 text-foreground outline-none ring-0 placeholder:text-muted-foreground focus:border-b-primary focus:outline-none focus:ring-0";
@@ -428,7 +435,7 @@ function startAnnotation(): void {
     "hidden h-8 w-6 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground";
   composerRow.appendChild(dragHandle);
 
-  const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  const submit = createButton("Add to chat", "Add this mark to the chat (Enter)");
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -488,6 +495,13 @@ function startAnnotation(): void {
     if (tool !== "select") hoverOutline.style.display = "none";
     if (tool !== "marquee") marqueeBox.style.display = "none";
     document.documentElement.setAttribute("data-t3code-annotation-tool", tool);
+    const hints = {
+      select: "Click an element. Type what should change. Enter adds it to chat.",
+      marquee: "Drag a box around a region, or around several elements.",
+      draw: "Draw on the page. Enter adds the mark to chat.",
+      erase: "Click a mark to remove it.",
+    } as const;
+    hint.textContent = hints[tool];
   };
 
   const removeSelected = (target: SelectedElement): void => {

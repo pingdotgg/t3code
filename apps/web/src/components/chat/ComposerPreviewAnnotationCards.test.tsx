@@ -37,9 +37,9 @@ describe("ComposerPreviewAnnotationCards", () => {
     );
 
     expect(markup).toContain("Make this headline feel intentional.");
-    expect(markup).toContain('title="1 region"');
-    expect(markup).toContain('title="1 style change"');
-    expect(markup).not.toContain("Welcome");
+    expect(markup).toContain("Welcome");
+    expect(markup).toContain("1 marked region");
+    expect(markup).toContain("1 style change");
     expect(markup).not.toContain("localhost:3000");
     expect(markup).not.toContain("Preview annotation");
   });

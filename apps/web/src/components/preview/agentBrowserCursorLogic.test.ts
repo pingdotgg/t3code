@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { agentBrowserCursorOpacity } from "./agentBrowserCursorLogic";
+import { agentBrowserCursorLabel, agentBrowserCursorOpacity } from "./agentBrowserCursorLogic";
 
 describe("agentBrowserCursorOpacity", () => {
   it("keeps active movement fully visible", () => {
@@ -15,5 +15,13 @@ describe("agentBrowserCursorOpacity", () => {
 
   it("dims further while the human controls the page", () => {
     expect(agentBrowserCursorOpacity(false, "human")).toBe(0.18);
+  });
+});
+
+describe("agentBrowserCursorLabel", () => {
+  it("names a live move and a click, then hides when idle", () => {
+    expect(agentBrowserCursorLabel("move", true)).toBe("Agent");
+    expect(agentBrowserCursorLabel("click", true)).toBe("Click");
+    expect(agentBrowserCursorLabel("click", false)).toBeNull();
   });
 });

@@ -1,9 +1,9 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
-import { Frame, MousePointerClick, Paintbrush, PenLine, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { MousePointerClick, X } from "lucide-react";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
+import { summarizePreviewAnnotationTargets } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
 
 interface ComposerPreviewAnnotationCardsProps {
@@ -12,18 +12,6 @@ interface ComposerPreviewAnnotationCardsProps {
   onRemove: (annotationId: string) => void;
   onExpandImage: (imageId: string) => void;
   className?: string;
-}
-
-function TargetStat(props: { icon: ReactNode; count: number; label: string }) {
-  return (
-    <span
-      className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
-      title={`${props.count} ${props.label}${props.count === 1 ? "" : "s"}`}
-    >
-      {props.icon}
-      {props.count}
-    </span>
-  );
 }
 
 export function ComposerPreviewAnnotationCards({
@@ -68,65 +56,18 @@ export function ComposerPreviewAnnotationCards({
               </span>
             )}
             <div className="min-w-0 px-2.5 py-2 pr-8">
-              {annotation.comment.trim() ? (
-                <p className="max-w-80 truncate text-foreground text-xs font-medium">
-                  {annotation.comment.trim()}
-                </p>
-              ) : null}
-              <div
-                className={cn(
-                  "flex min-w-0 items-center gap-2",
-                  annotation.comment.trim() && "mt-1",
-                )}
-              >
-                {elementLabels.length > 0 ? (
-                  <div className="flex min-w-0 items-center gap-1">
-                    {elementLabels.slice(0, 2).map(({ id, label }) => (
-                      <span
-                        key={id}
-                        className="max-w-40 truncate font-mono text-secondary-label text-[10px]"
-                      >
-                        {label}
-                      </span>
-                    ))}
-                    {elementLabels.length > 2 ? (
-                      <span className="text-secondary-label text-[10px]">
-                        +{elementLabels.length - 2}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-                <div className="flex shrink-0 items-center gap-2">
-                  {annotation.elements.length > 0 ? (
-                    <TargetStat
-                      icon={<MousePointerClick className="size-3" />}
-                      count={annotation.elements.length}
-                      label="element"
-                    />
-                  ) : null}
-                  {annotation.regions.length > 0 ? (
-                    <TargetStat
-                      icon={<Frame className="size-3" />}
-                      count={annotation.regions.length}
-                      label="region"
-                    />
-                  ) : null}
-                  {annotation.strokes.length > 0 ? (
-                    <TargetStat
-                      icon={<PenLine className="size-3" />}
-                      count={annotation.strokes.length}
-                      label="drawing"
-                    />
-                  ) : null}
-                  {annotation.styleChanges.length > 0 ? (
-                    <TargetStat
-                      icon={<Paintbrush className="size-3" />}
-                      count={annotation.styleChanges.length}
-                      label="style change"
-                    />
-                  ) : null}
-                </div>
-              </div>
+              <p className="max-w-80 truncate text-foreground text-xs font-medium">
+                {annotation.comment.trim() || "Marked on the page"}
+              </p>
+              <p className="mt-0.5 max-w-80 truncate text-secondary-label text-[10px]">
+                {[
+                  annotation.pageTitle?.trim() || null,
+                  summarizePreviewAnnotationTargets(annotation) || null,
+                  elementLabels[0]?.label ?? null,
+                ]
+                  .filter((part): part is string => part !== null && part.length > 0)
+                  .join(" · ")}
+              </p>
             </div>
             <button
               type="button"
