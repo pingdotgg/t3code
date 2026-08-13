@@ -18,6 +18,14 @@ function isIpLiteral(host: string): boolean {
   }
 }
 
+function normalizePairingUrlInput(value: string): string {
+  if (value.startsWith("//")) return `https:${value}`;
+  if (value.includes("://")) return value;
+
+  const authority = value.split(/[/?#]/, 1)[0] ?? value;
+  return `${isIpLiteral(authority) ? "http" : "https"}://${value}`;
+}
+
 export class PairingQrPayloadEmptyError extends Schema.TaggedErrorClass<PairingQrPayloadEmptyError>()(
   "PairingQrPayloadEmptyError",
   {},
@@ -34,7 +42,7 @@ export function buildPairingUrl(host: string, code: string): string {
   if (!c) return h;
 
   try {
-    const url = new URL(h.includes("://") ? h : `${isIpLiteral(h) ? "http" : "https"}://${h}`);
+    const url = new URL(normalizePairingUrlInput(h));
     url.hash = new URLSearchParams([["token", c]]).toString();
     return url.toString();
   } catch {
@@ -47,7 +55,7 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
   if (!trimmed) return { host: "", code: "" };
 
   try {
-    const parsed = new URL(trimmed);
+    const parsed = new URL(normalizePairingUrlInput(trimmed));
     const hostedPairingRequest = readHostedPairingRequest(parsed);
     if (hostedPairingRequest) {
       return {
@@ -68,6 +76,11 @@ export function parsePairingUrl(url: string): { host: string; code: string } {
   } catch {
     return { host: trimmed, code: "" };
   }
+}
+
+export function parsePairingFields(host: string, code: string): { host: string; code: string } {
+  const parsed = parsePairingUrl(host);
+  return parsed.code.length > 0 ? parsed : { host, code };
 }
 
 export function extractPairingUrlFromQrPayload(payload: string): string {

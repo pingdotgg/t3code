@@ -13,7 +13,7 @@ import { ErrorBanner } from "../../components/ErrorBanner";
 import { ConnectionSheetButton } from "./ConnectionSheetButton";
 import { extractPairingUrlFromQrPayload } from "./pairing";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
-import { buildPairingUrl, parsePairingUrl } from "./pairing";
+import { buildPairingUrl, parsePairingFields, parsePairingUrl } from "./pairing";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -57,6 +57,13 @@ export function ConnectionsNewRouteScreen({
   const handleHostChange = useCallback((value: string) => {
     setHostInput(value);
   }, []);
+
+  const normalizePairingFields = useCallback(() => {
+    const parsed = parsePairingFields(hostInput, codeInput);
+    setHostInput(parsed.host);
+    setCodeInput(parsed.code);
+    return parsed;
+  }, [codeInput, hostInput]);
 
   const handleCodeChange = useCallback((value: string) => {
     setCodeInput(value);
@@ -119,7 +126,8 @@ export function ConnectionsNewRouteScreen({
   const handleSubmit = useCallback(async () => {
     setIsSubmitting(true);
 
-    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    const fields = normalizePairingFields();
+    const pairingUrl = buildPairingUrl(fields.host, fields.code);
     onChangeConnectionPairingUrl(pairingUrl);
     const result = await onConnectPress(pairingUrl);
     if (AsyncResult.isSuccess(result)) {
@@ -131,7 +139,7 @@ export function ConnectionsNewRouteScreen({
     } else {
       setIsSubmitting(false);
     }
-  }, [codeInput, hostInput, onChangeConnectionPairingUrl, onConnectPress, navigation]);
+  }, [normalizePairingFields, onChangeConnectionPairingUrl, onConnectPress, navigation]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -226,6 +234,7 @@ export function ConnectionsNewRouteScreen({
                   placeholder="192.168.1.100:8080"
                   value={hostInput}
                   onChangeText={handleHostChange}
+                  onBlur={normalizePairingFields}
                   className="rounded-[14px] border border-input-border bg-input px-4 py-3.5 text-base text-foreground"
                 />
               </View>
