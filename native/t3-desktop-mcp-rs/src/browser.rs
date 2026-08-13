@@ -213,7 +213,34 @@ fn describe(command: &str, result: &Value, args: &Value) -> String {
                 )
             }
         }
-        other => format!("{other} ok"),
+        // The remaining commands have no interesting payload, so the useful
+        // confirmation is what was done and where. Worded as the macOS server
+        // words it, so a model reads the same feedback on either platform.
+        other => {
+            let tab = args
+                .get("tab_id")
+                .and_then(Value::as_i64)
+                .or_else(|| args.get("index").and_then(Value::as_i64))
+                .unwrap_or(-1);
+            match other {
+                "click" => format!("clicked in tab {tab}"),
+                "type" => format!(
+                    "typed {} characters into tab {tab}",
+                    args.get("text").and_then(Value::as_str).unwrap_or("").chars().count()
+                ),
+                "press" => format!(
+                    "pressed {} in tab {tab}",
+                    args.get("key").and_then(Value::as_str).unwrap_or("?")
+                ),
+                "navigate" => format!(
+                    "navigated tab {tab} to {}",
+                    args.get("url").and_then(Value::as_str).unwrap_or("")
+                ),
+                "select_tab" => format!("switched the agent group to tab {tab}"),
+                "close_tab" => format!("closed tab {tab}"),
+                _ => format!("{other} ok"),
+            }
+        }
     }
 }
 
@@ -406,6 +433,27 @@ mod tests {
         assert!(rendered.contains("https://example.com"), "{rendered}");
         assert!(rendered.contains("tab_id=42"), "{rendered}");
         assert!(!rendered.contains("[]"), "empty url pair leaked: {rendered}");
+    }
+
+    #[test]
+    fn action_confirmations_name_the_tab_they_acted_on() {
+        // "click ok" tells a model nothing; these mirror the macOS wording.
+        let tab = json!({ "tab_id": 9 });
+        assert_eq!(describe("click", &json!({}), &tab), "clicked in tab 9");
+        assert_eq!(describe("select_tab", &json!({}), &tab), "switched the agent group to tab 9");
+        assert_eq!(describe("close_tab", &json!({}), &tab), "closed tab 9");
+        assert_eq!(
+            describe("press", &json!({}), &json!({ "tab_id": 9, "key": "Enter" })),
+            "pressed Enter in tab 9"
+        );
+        assert_eq!(
+            describe("type", &json!({}), &json!({ "tab_id": 9, "text": "hello" })),
+            "typed 5 characters into tab 9"
+        );
+        assert_eq!(
+            describe("navigate", &json!({}), &json!({ "tab_id": 9, "url": "https://a.test" })),
+            "navigated tab 9 to https://a.test"
+        );
     }
 
     #[test]
