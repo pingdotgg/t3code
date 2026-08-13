@@ -782,7 +782,7 @@ struct HomeThreadRowContext: Equatable {
             let configuredProvider = thread.providerID.flatMap { providerID in
                 environmentID.flatMap {
                     snapshot.providersByEnvironment?[$0]?.first(where: { $0.id == providerID })
-                }
+                } ?? snapshot.providers.first(where: { $0.id == providerID })
             }
             let providerName = (explicitProvider?.isEmpty == false ? explicitProvider : nil)
                 ?? configuredProvider?.name
