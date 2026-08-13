@@ -3,19 +3,29 @@ import {
   type ServerProvider,
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
-import { compareSemverVersions } from "@t3tools/shared/semver";
-import { resolveCommandPath } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { makeProviderInstallationCatalog } from "./maintenance/catalogs.ts";
+import type { InstallationContext, ResolvedInstallation } from "./maintenance/definition.ts";
+import { resolveInstallation } from "./maintenance/resolver.ts";
+import { compareMaintenanceVersions } from "./maintenance/version.ts";
 
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
+const MAINTENANCE_PROBE_TIMEOUT_MS = 10_000;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
@@ -36,11 +46,57 @@ const CommandLookupEnvConfig = Config.all({
 }).pipe(Config.map(compactEnv));
 
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
+const MAINTENANCE_PROBE_MAX_BYTES = 64_000;
+
+const runMaintenanceProbe = Effect.fn("runMaintenanceProbe")(function* (input: {
+  readonly executable: string;
+  readonly args: ReadonlyArray<string>;
+  readonly environment: NodeJS.ProcessEnv;
+}) {
+  yield* FileSystem.FileSystem;
+  yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const resolved = yield* resolveSpawnCommand(input.executable, input.args, {
+    env: input.environment,
+    extendEnv: true,
+  }).pipe(Effect.option);
+  if (Option.isNone(resolved)) return null;
+  const result = yield* Effect.gen(function* () {
+    const child = yield* spawner.spawn(
+      ChildProcess.make(resolved.value.command, resolved.value.args, {
+        env: input.environment,
+        extendEnv: true,
+        shell: resolved.value.shell,
+      }),
+    );
+    yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+    const [stdout, stderr, exitCode] = yield* Effect.all(
+      [
+        collectUint8StreamText({ stream: child.stdout, maxBytes: MAINTENANCE_PROBE_MAX_BYTES }),
+        collectUint8StreamText({ stream: child.stderr, maxBytes: MAINTENANCE_PROBE_MAX_BYTES }),
+        child.exitCode,
+      ],
+      { concurrency: "unbounded" },
+    );
+    return { stdout: stdout.text, stderr: stderr.text, exitCode: Number(exitCode) };
+  }).pipe(
+    Effect.scoped,
+    Effect.timeoutOption(Duration.millis(MAINTENANCE_PROBE_TIMEOUT_MS)),
+    Effect.catchCause(() => Effect.succeed(Option.none())),
+  );
+  return Option.getOrNull(result);
+});
 
 export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly update: ProviderMaintenanceCommandAction | null;
+  readonly identityKey?: string | null;
+  readonly installationLabel?: string | null;
+  readonly ownershipVerified?: boolean;
+  readonly currentVersion?: string | null;
+  readonly latestVersion?: string | null;
+  readonly instructionsUrl?: string | null;
 }
 
 export interface ProviderMaintenanceCommandAction {
@@ -48,6 +104,7 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 export interface ProviderMaintenanceCapabilityResolutionOptions {
@@ -61,18 +118,28 @@ export interface ProviderMaintenanceCapabilitiesResolver {
   readonly resolve: (
     options?: ProviderMaintenanceCapabilityResolutionOptions,
   ) => ProviderMaintenanceCapabilities;
+  readonly resolveInstallation?: (
+    context: InstallationContext,
+  ) => Effect.Effect<ResolvedInstallation>;
 }
 
-export interface PackageManagedProviderMaintenanceDefinition {
+export interface ProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
-  readonly npmPackageName: string;
+  readonly packageName: string;
   readonly homebrewFormula: string | null;
   readonly nativeUpdate: {
     readonly executable: string;
     readonly args: ReadonlyArray<string>;
     readonly lockKey: string;
     readonly isCommandPath: (commandPath: string) => boolean;
+    readonly environment?: (
+      executable: string,
+      environment: NodeJS.ProcessEnv,
+    ) => NodeJS.ProcessEnv;
   } | null;
+  readonly executableName?: string;
+  readonly instructionsUrl?: string;
+  readonly wingetPackageId?: string;
 }
 
 export interface ProviderVersionCacheEntry {
@@ -100,20 +167,37 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
+  readonly updateCommand?: string;
+  readonly updateEnvironment?: NodeJS.ProcessEnv;
+  readonly identityKey?: string | null;
+  readonly installationLabel?: string | null;
+  readonly ownershipVerified?: boolean;
+  readonly currentVersion?: string | null;
+  readonly latestVersion?: string | null;
+  readonly instructionsUrl?: string | null;
 }): ProviderMaintenanceCapabilities {
   const update =
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
-          command: [input.updateExecutable, ...input.updateArgs].join(" "),
+          command: input.updateCommand ?? [input.updateExecutable, ...input.updateArgs].join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
+          ...(input.updateEnvironment ? { environment: input.updateEnvironment } : {}),
         };
   return {
     provider: input.provider,
     packageName: input.packageName,
     update,
+    ...("identityKey" in input ? { identityKey: input.identityKey ?? null } : {}),
+    ...("installationLabel" in input ? { installationLabel: input.installationLabel ?? null } : {}),
+    ...("ownershipVerified" in input
+      ? { ownershipVerified: input.ownershipVerified ?? false }
+      : {}),
+    ...("currentVersion" in input ? { currentVersion: input.currentVersion ?? null } : {}),
+    ...("latestVersion" in input ? { latestVersion: input.latestVersion ?? null } : {}),
+    ...("instructionsUrl" in input ? { instructionsUrl: input.instructionsUrl ?? null } : {}),
   };
 }
 
@@ -131,11 +215,11 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
 }
 
 function makeNpmGlobalProviderMaintenanceCapabilities(
-  definition: PackageManagedProviderMaintenanceDefinition,
+  definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
-    packageName: definition.npmPackageName,
+    packageName: definition.packageName,
     updateExecutable: "npm",
     // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
     // and still exits 0, so a package whose postinstall finishes the install
@@ -145,62 +229,62 @@ function makeNpmGlobalProviderMaintenanceCapabilities(
     updateArgs: [
       "install",
       "-g",
-      `--allow-scripts=${definition.npmPackageName}`,
-      `${definition.npmPackageName}@latest`,
+      `--allow-scripts=${definition.packageName}`,
+      `${definition.packageName}@latest`,
     ],
     updateLockKey: "npm-global",
   });
 }
 
 function makeBunGlobalProviderMaintenanceCapabilities(
-  definition: PackageManagedProviderMaintenanceDefinition,
+  definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
-    packageName: definition.npmPackageName,
+    packageName: definition.packageName,
     updateExecutable: "bun",
-    updateArgs: ["i", "-g", `${definition.npmPackageName}@latest`],
+    updateArgs: ["i", "-g", `${definition.packageName}@latest`],
     updateLockKey: "bun-global",
   });
 }
 
 function makePnpmGlobalProviderMaintenanceCapabilities(
-  definition: PackageManagedProviderMaintenanceDefinition,
+  definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
-    packageName: definition.npmPackageName,
+    packageName: definition.packageName,
     updateExecutable: "pnpm",
-    updateArgs: ["add", "-g", `${definition.npmPackageName}@latest`],
+    updateArgs: ["add", "-g", `${definition.packageName}@latest`],
     updateLockKey: "pnpm-global",
   });
 }
 
 function makeVitePlusGlobalProviderMaintenanceCapabilities(
-  definition: PackageManagedProviderMaintenanceDefinition,
+  definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
-    packageName: definition.npmPackageName,
+    packageName: definition.packageName,
     updateExecutable: "vp",
-    updateArgs: ["i", "-g", definition.npmPackageName],
+    updateArgs: ["i", "-g", definition.packageName],
     updateLockKey: "vite-plus-global",
   });
 }
 
 function makeHomebrewProviderMaintenanceCapabilities(
-  definition: PackageManagedProviderMaintenanceDefinition,
+  definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilities {
   if (!definition.homebrewFormula) {
     return makeManualOnlyProviderMaintenanceCapabilities({
       provider: definition.provider,
-      packageName: definition.npmPackageName,
+      packageName: definition.packageName,
     });
   }
 
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
-    packageName: definition.npmPackageName,
+    packageName: definition.packageName,
     updateExecutable: "brew",
     updateArgs: ["upgrade", definition.homebrewFormula],
     updateLockKey: "homebrew",
@@ -208,7 +292,7 @@ function makeHomebrewProviderMaintenanceCapabilities(
 }
 
 function makeNativeProviderMaintenanceCapabilities(
-  definition: PackageManagedProviderMaintenanceDefinition,
+  definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilities | null {
   if (!definition.nativeUpdate) {
     return null;
@@ -216,7 +300,7 @@ function makeNativeProviderMaintenanceCapabilities(
 
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
-    packageName: definition.npmPackageName,
+    packageName: definition.packageName,
     updateExecutable: definition.nativeUpdate.executable,
     updateArgs: definition.nativeUpdate.args,
     updateLockKey: definition.nativeUpdate.lockKey,
@@ -273,8 +357,8 @@ function isHomebrewCommandPath(commandPath: string): boolean {
   );
 }
 
-export function resolvePackageManagedProviderMaintenance(
-  definition: PackageManagedProviderMaintenanceDefinition,
+function resolveLegacyProviderMaintenance(
+  definition: ProviderMaintenanceDefinition,
   options?: ProviderMaintenanceCapabilityResolutionOptions,
 ): ProviderMaintenanceCapabilities {
   const binaryPath = nonEmptyString(options?.binaryPath);
@@ -324,15 +408,47 @@ export function resolvePackageManagedProviderMaintenance(
 
   return makeManualOnlyProviderMaintenanceCapabilities({
     provider: definition.provider,
-    packageName: definition.npmPackageName,
+    packageName: definition.packageName,
   });
 }
 
-export function makePackageManagedProviderMaintenanceResolver(
-  definition: PackageManagedProviderMaintenanceDefinition,
+export function makeProviderMaintenanceResolver(
+  definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilitiesResolver {
+  const executableName =
+    definition.executableName ??
+    (definition.provider === ProviderDriverKind.make("claudeAgent")
+      ? "claude"
+      : definition.provider === ProviderDriverKind.make("opencode")
+        ? "opencode"
+        : "codex");
+  const catalog = makeProviderInstallationCatalog({
+    provider: definition.provider,
+    packageName: definition.packageName,
+    executableName,
+    homebrewFormula: definition.homebrewFormula,
+    native: definition.nativeUpdate
+      ? {
+          label: "Managed by native installer",
+          updateArgs: definition.nativeUpdate.args,
+          ownsPath: definition.nativeUpdate.isCommandPath,
+          ...(definition.nativeUpdate.environment
+            ? { environment: definition.nativeUpdate.environment }
+            : {}),
+        }
+      : definition.provider === ProviderDriverKind.make("codex")
+        ? {
+            label: "Managed by Codex standalone installer",
+            updateArgs: ["update"],
+            ownsPath: (path) => path.includes("/.codex/packages/standalone/releases/"),
+          }
+        : null,
+    instructionsUrl: definition.instructionsUrl ?? "https://t3.codes/docs/providers",
+    ...(definition.wingetPackageId ? { wingetPackageId: definition.wingetPackageId } : {}),
+  });
   return {
-    resolve: (options) => resolvePackageManagedProviderMaintenance(definition, options),
+    resolve: (options) => resolveLegacyProviderMaintenance(definition, options),
+    resolveInstallation: (context) => resolveInstallation(context, catalog),
   };
 }
 
@@ -342,6 +458,29 @@ export function makeStaticProviderMaintenanceResolver(
   return {
     resolve: () => capabilities,
   };
+}
+
+function capabilitiesFromInstallation(
+  provider: ProviderDriverKind,
+  installation: ResolvedInstallation,
+): ProviderMaintenanceCapabilities {
+  return makeProviderMaintenanceCapabilities({
+    provider,
+    packageName: installation.packageName,
+    updateExecutable: installation.update?.executable ?? null,
+    updateArgs: installation.update?.args ?? [],
+    updateLockKey: installation.update ? installation.lockKey : null,
+    ...(installation.update ? { updateCommand: installation.update.displayCommand } : {}),
+    ...(installation.update?.environment
+      ? { updateEnvironment: installation.update.environment }
+      : {}),
+    identityKey: installation.identityKey,
+    installationLabel: installation.label,
+    ownershipVerified: installation.ownershipVerified,
+    currentVersion: installation.currentVersion,
+    latestVersion: installation.latestVersion,
+    instructionsUrl: installation.instructionsUrl,
+  });
 }
 
 function makeManualProviderMaintenanceCapabilities(
@@ -374,15 +513,63 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   }
 
   const fileSystem = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const platform = yield* HostProcessPlatform;
   const realCommandPath = yield* fileSystem
     .realPath(resolvedCommandPath)
     .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
-  return resolver.resolve({
+  const resolutionOptions = {
     ...options,
     env,
     resolvedCommandPath,
     realCommandPath,
-  });
+  };
+  if (!resolver.resolveInstallation) {
+    return resolver.resolve(resolutionOptions);
+  }
+  const legacy = resolver.resolve(resolutionOptions);
+  const context: InstallationContext = {
+    provider: legacy.provider,
+    packageName: legacy.packageName ?? "",
+    binaryPath,
+    isBareCommand: !hasPathSeparator(binaryPath),
+    resolvedCommandPath,
+    realCommandPath,
+    environment: env,
+    platform,
+    readTextFile: (path) =>
+      path
+        ? fileSystem.readFileString(path).pipe(
+            Effect.map(Option.some),
+            Effect.orElseSucceed(() => Option.none()),
+            Effect.map(Option.getOrNull),
+          )
+        : Effect.succeed(null),
+    realPath: (path) => fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path)),
+    resolveCommand: (command) =>
+      resolveCommandPath(command, { env }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+        Effect.map(Option.some),
+        Effect.catchTags({ CommandResolutionError: () => Effect.succeed(Option.none()) }),
+        Effect.map(Option.getOrNull),
+      ),
+    run: (executable, args, environment = env) =>
+      runMaintenanceProbe({
+        executable,
+        args,
+        environment,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+      ),
+  };
+  return capabilitiesFromInstallation(
+    legacy.provider,
+    yield* resolver.resolveInstallation(context),
+  );
 });
 
 function deriveVersionAdvisory(input: {
@@ -395,7 +582,7 @@ function deriveVersionAdvisory(input: {
   if (!input.latestVersion) {
     return { status: "unknown", message: null };
   }
-  if (compareSemverVersions(input.currentVersion, input.latestVersion) < 0) {
+  if (compareMaintenanceVersions(input.currentVersion, input.latestVersion) === -1) {
     return {
       status: "behind_latest",
       message: PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
@@ -413,15 +600,17 @@ export function createProviderVersionAdvisory(input: {
 }): ServerProviderVersionAdvisory {
   const capabilities =
     input.maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(input.driver);
-  const latestVersion = input.latestVersion ?? null;
+  const latestVersion =
+    "latestVersion" in input ? (input.latestVersion ?? null) : (capabilities.latestVersion ?? null);
+  const currentVersion = capabilities.currentVersion ?? input.currentVersion;
   const advisory = deriveVersionAdvisory({
-    currentVersion: input.currentVersion,
+    currentVersion,
     latestVersion,
   });
 
   return {
     status: advisory.status,
-    currentVersion: input.currentVersion,
+    currentVersion,
     latestVersion,
     updateCommand: capabilities.update?.command ?? null,
     canUpdate: capabilities.update !== null,
@@ -456,6 +645,9 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
+  if (maintenanceCapabilities.latestVersion !== undefined) {
+    return maintenanceCapabilities.latestVersion;
+  }
   const packageName = maintenanceCapabilities.packageName;
   if (!packageName) {
     return null;
@@ -498,6 +690,7 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
       versionAdvisory: createProviderVersionAdvisory({
         driver: snapshot.driver,
         currentVersion: snapshot.version,
+        latestVersion: null,
         checkedAt: snapshot.checkedAt,
         maintenanceCapabilities: capabilities,
       }),
