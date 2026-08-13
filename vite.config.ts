@@ -22,7 +22,11 @@ export default defineConfig({
   },
   staged: {
     // Formatter only for now — no lint or typecheck on commit.
-    "*": "vp fmt",
+    //
+    // Matched to what oxfmt can parse rather than "*": handed only files it
+    // does not recognise it exits non-zero ("Expected at least one target
+    // file"), which failed every commit touching just native/ sources.
+    "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,md,css,html,yml,yaml}": "vp fmt",
   },
   fmt: {
     ignorePatterns: [
