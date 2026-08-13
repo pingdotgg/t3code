@@ -10,6 +10,9 @@ vi.mock("@expo/ui/swift-ui", () => ({
 }));
 
 vi.mock("@expo/ui/swift-ui/modifiers", () => ({
+  containerBackground: (color: unknown, container: unknown) => ({
+    containerBackground: { color, container },
+  }),
   font: (value: unknown) => value,
   foregroundStyle: (value: unknown) => value,
   frame: (value: unknown) => value,
@@ -22,6 +25,11 @@ vi.mock("@expo/ui/swift-ui/modifiers", () => ({
 
 vi.mock("expo-widgets", () => ({
   createLiveActivity: vi.fn((name: string, layout: unknown) => ({ layout, name })),
+  createWidget: vi.fn((name: string, layout: unknown) => ({
+    layout,
+    name,
+    updateSnapshot: vi.fn(),
+  })),
 }));
 
 import {
@@ -261,6 +269,47 @@ describe("AgentActivity widget layout", () => {
     expect(JSON.stringify(layout.compactTrailing)).toContain("Failed");
     expect(JSON.stringify(layout.expandedLeading)).toContain("Failed");
     expect(JSON.stringify(layout.minimal)).toContain("xmark.octagon.fill");
+  });
+
+  it("adopts containerBackground and returns a view for home-screen widgets", () => {
+    const medium = AgentActivity({ ...props, activities: [makeRow({})] }, {
+      ...environment,
+      widgetFamily: "systemMedium",
+    } as never);
+    const mediumJson = JSON.stringify(medium);
+    expect(medium).not.toHaveProperty("banner");
+    expect(mediumJson).toContain('"containerBackground":{"color":"clear","container":"widget"}');
+    expect(mediumJson).toContain('"all":14');
+
+    const small = AgentActivity({ ...props, activities: [makeRow({})] }, {
+      ...environment,
+      widgetFamily: "systemSmall",
+    } as never);
+    const smallJson = JSON.stringify(small);
+    expect(small).not.toHaveProperty("banner");
+    expect(smallJson).toContain('"containerBackground":{"color":"clear","container":"widget"}');
+    expect(smallJson).toContain('"all":10');
+    expect(smallJson).not.toContain('"all":14');
+  });
+
+  it("does not apply containerBackground to the Live Activity layout", () => {
+    const layout = AgentActivity({ ...props, activities: [makeRow({})] }, environment as never);
+    expect(layout).toHaveProperty("banner");
+    expect(JSON.stringify(layout)).not.toContain("containerBackground");
+  });
+
+  it("renders an idle home-screen widget when props are missing", () => {
+    const view = AgentActivity(
+      {} as AgentActivityProps,
+      {
+        ...environment,
+        widgetFamily: "systemMedium",
+      } as never,
+    );
+    const json = JSON.stringify(view);
+    expect(json).toContain("No active agents");
+    expect(json).toContain('"containerBackground":{"color":"clear","container":"widget"}');
+    expect(json).not.toContain("0 active");
   });
 
   it("renders up to five rows in the banner", () => {

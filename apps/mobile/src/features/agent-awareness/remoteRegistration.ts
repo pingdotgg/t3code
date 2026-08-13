@@ -29,7 +29,10 @@ import {
   loadPreferences,
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
-import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
+import AgentActivity, {
+  publishAgentActivityWidget,
+  type AgentActivityProps,
+} from "../../widgets/AgentActivity";
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
@@ -448,6 +451,35 @@ function unregisterDeviceWithRelay(input: {
   });
 }
 
+function publishHomeScreenWidget(props: AgentActivityProps): void {
+  if (typeof publishAgentActivityWidget !== "function") {
+    return;
+  }
+  publishAgentActivityWidget(props);
+}
+
+function widgetPropsFromAggregate(
+  aggregate: NonNullable<RelayAgentActivitySnapshotResponse["aggregate"]>,
+): AgentActivityProps {
+  return {
+    title: aggregate.title,
+    subtitle: aggregate.subtitle,
+    activeCount: aggregate.activeCount,
+    updatedAt: aggregate.updatedAt,
+    activities: aggregate.activities,
+  };
+}
+
+function idleWidgetProps(): AgentActivityProps {
+  return {
+    title: "T3 Code",
+    subtitle: "No active agents",
+    activeCount: 0,
+    updatedAt: new Date().toISOString(),
+    activities: [],
+  };
+}
+
 // Arms the lock-screen card the moment the user starts agent work from this
 // phone, while the app is still foregrounded and the fresh activity's token
 // can be registered immediately. The seeded row is a best-effort placeholder;
@@ -479,7 +511,7 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
       return;
     }
     const nowIso = new Date(Date.now()).toISOString();
-    const activity = AgentActivity.start({
+    const props: AgentActivityProps = {
       title: "T3 Code",
       subtitle: "Agent work in progress",
       activeCount: 1,
@@ -497,7 +529,9 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
           deepLink: "/",
         },
       ],
-    });
+    };
+    publishHomeScreenWidget(props);
+    const activity = AgentActivity.start(props);
     logRegistrationDebug("live activity card armed for local work", {
       threadTitle: input.threadTitle,
     });
@@ -1057,6 +1091,11 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
       // prime, so only an explicit false blocks it.
       if (preferences?.liveActivitiesEnabled !== false) {
         const snapshot = yield* readAgentActivitySnapshot();
+        if (snapshot) {
+          publishHomeScreenWidget(
+            snapshot.aggregate ? widgetPropsFromAggregate(snapshot.aggregate) : idleWidgetProps(),
+          );
+        }
         // The snapshot request yields; an arm-on-send may have created the
         // card in the meantime. Re-check so two cards are never started.
         const armedMeanwhile = yield* Effect.try({
@@ -1068,14 +1107,7 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
         } else if (snapshot?.aggregate && snapshot.aggregate.activeCount > 0) {
           const aggregate = snapshot.aggregate;
           const primed = yield* Effect.try({
-            try: () =>
-              AgentActivity.start({
-                title: aggregate.title,
-                subtitle: aggregate.subtitle,
-                activeCount: aggregate.activeCount,
-                updatedAt: aggregate.updatedAt,
-                activities: aggregate.activities,
-              }),
+            try: () => AgentActivity.start(widgetPropsFromAggregate(aggregate)),
             catch: (cause) =>
               new AgentAwarenessOperationError({
                 operation: "prime-live-activity",

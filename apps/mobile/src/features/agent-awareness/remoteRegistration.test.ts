@@ -78,6 +78,7 @@ vi.mock("../../widgets/AgentActivity", () => ({
   default: {
     getInstances: widgetMocks.getInstances,
   },
+  publishAgentActivityWidget: vi.fn(),
 }));
 
 vi.mock("expo-notifications", () => ({
