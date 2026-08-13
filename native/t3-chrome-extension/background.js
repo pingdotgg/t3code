@@ -98,7 +98,9 @@ async function openTab(url) {
 
 async function listTabs() {
   const out = [];
-  for (const tabId of [...ownedTabs]) {
+  // Snapshot first: the loop drops ids for tabs the user closed behind us.
+  const known = Array.from(ownedTabs);
+  for (const tabId of known) {
     try {
       const tab = await chrome.tabs.get(tabId);
       out.push({ tabId, title: tab.title, url: tab.url, active: tab.active });
