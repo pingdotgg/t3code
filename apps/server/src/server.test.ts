@@ -7907,6 +7907,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         exitCode: null,
         exitSignal: null,
         label: "Primary",
+        launch: { kind: "shell" as const },
         updatedAt: "2026-01-01T00:00:00.000Z",
       };
 
@@ -7919,6 +7920,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             clear: () => Effect.void,
             restart: () => Effect.succeed(snapshot),
             close: () => Effect.void,
+            listTmuxSessions: Effect.succeed({ status: "available" as const, sessions: [] }),
+            killTmuxSession: () => Effect.succeed({ status: "killed" as const }),
           },
         },
       });
@@ -7978,6 +7981,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.equal(restarted.terminalId, "default");
+
+      const tmuxDiscovery = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.terminalListTmuxSessions]({})),
+      );
+      assert.deepEqual(tmuxDiscovery, { status: "available", sessions: [] });
+
+      const tmuxKill = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.terminalKillTmuxSession]({ sessionName: "long-build" }),
+        ),
+      );
+      assert.deepEqual(tmuxKill, { status: "killed" });
 
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>

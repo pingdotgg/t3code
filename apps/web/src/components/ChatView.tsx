@@ -21,6 +21,7 @@ import {
   ProviderDriverKind,
   RuntimeMode,
   TerminalOpenInput,
+  type TmuxSession,
 } from "@t3tools/contracts";
 import {
   connectionStatusTitle,
@@ -101,6 +102,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useUiStateStore } from "../uiStateStore";
+import { notifyTmuxSessionsChanged } from "../terminal/tmuxSessionEvents";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -251,6 +253,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
+import { TmuxSessionStatusStrip } from "./chat/TmuxSessionStatusStrip";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -912,6 +915,50 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     openTerminal,
   ]);
 
+  const attachTmuxSession = useCallback(
+    (sessionName: string) => {
+      if (!cwd) return;
+      const terminalId = nextTerminalId(allocatableTerminalIds);
+      void (async () => {
+        const result = await openTerminal({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId,
+            terminalId,
+            cwd,
+            ...(effectiveWorktreePath != null ? { worktreePath: effectiveWorktreePath } : {}),
+            env: runtimeEnv,
+            launch: { kind: "tmux", sessionName },
+          },
+        });
+        if (result._tag !== "Success") return;
+        storeNewTerminal(threadRef, terminalId);
+        bumpFocusRequestId();
+      })();
+    },
+    [
+      allocatableTerminalIds,
+      bumpFocusRequestId,
+      cwd,
+      effectiveWorktreePath,
+      openTerminal,
+      runtimeEnv,
+      storeNewTerminal,
+      threadId,
+      threadRef,
+    ],
+  );
+
+  const tmuxTerminalIds = useMemo(
+    () =>
+      new Set(
+        knownTerminalSessions
+          .filter((session) => session.state.summary?.launch.kind === "tmux")
+          .map((session) => session.target.terminalId),
+      ),
+    [knownTerminalSessions],
+  );
+
   const activateTerminal = useCallback(
     (terminalId: string) => {
       storeSetActiveTerminal(threadRef, terminalId);
@@ -937,12 +984,19 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
             deleteHistory: true,
           },
         });
-        if (closeResult._tag === "Failure" && !isAtomCommandInterrupted(closeResult)) {
+        if (
+          closeResult._tag === "Failure" &&
+          !isAtomCommandInterrupted(closeResult) &&
+          !tmuxTerminalIds.has(terminalId)
+        ) {
           await fallbackExitWrite();
         }
       })();
 
       storeCloseTerminal(threadRef, terminalId);
+      if (tmuxTerminalIds.has(terminalId)) {
+        notifyTmuxSessionsChanged();
+      }
       bumpFocusRequestId();
     },
     [
@@ -951,6 +1005,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       threadId,
       threadRef,
       closeTerminalMutation,
+      tmuxTerminalIds,
       writeTerminal,
     ],
   );
@@ -988,6 +1043,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         onSplitTerminal={splitTerminal}
         onSplitTerminalVertical={splitTerminalVertical}
         onNewTerminal={createNewTerminal}
+        onAttachTmuxSession={attachTmuxSession}
         splitShortcutLabel={visible ? splitShortcutLabel : undefined}
         splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
         newShortcutLabel={visible ? newShortcutLabel : undefined}
@@ -997,6 +1053,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         onCloseTerminal={closeTerminal}
         onHeightChange={setTerminalHeight}
         onAddTerminalContext={handleAddTerminalContext}
+        forceTerminalSidebar={tmuxTerminalIds.size > 0}
         terminalLabelsById={terminalLabelsById}
         terminalLaunchLocationsById={terminalLaunchLocationsById}
       />
@@ -1014,6 +1071,7 @@ interface PersistentThreadTerminalPanelProps {
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
+  onAttachTmuxSession: (sessionName: string) => void;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   splitShortcutLabel?: string | undefined;
@@ -1032,6 +1090,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
+  onAttachTmuxSession,
   onActiveTerminalChange,
   onCloseTerminal,
   splitShortcutLabel,
@@ -1158,6 +1217,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       onSplitTerminal={onSplitTerminal}
       onSplitTerminalVertical={onSplitTerminalVertical}
       onNewTerminal={onNewTerminal}
+      onAttachTmuxSession={onAttachTmuxSession}
       splitShortcutLabel={splitShortcutLabel}
       splitVerticalShortcutLabel={splitVerticalShortcutLabel}
       newShortcutLabel={newShortcutLabel}
@@ -1572,6 +1632,15 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return labels;
   }, [activeThreadKnownSessions]);
+  const activeTmuxTerminalIds = useMemo(
+    () =>
+      new Set(
+        activeThreadKnownSessions
+          .filter((session) => session.state.summary?.launch.kind === "tmux")
+          .map((session) => session.target.terminalId),
+      ),
+    [activeThreadKnownSessions],
+  );
   const activeThreadRef = useMemo(
     () =>
       activeThreadEnvironmentId && activeThreadId
@@ -1628,6 +1697,15 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [rightPanelState.surfaces],
   );
+  const activeDrawerTmuxTerminalIdBySessionName = useMemo(() => {
+    const terminalIds = new Map<string, string>();
+    for (const session of activeThreadKnownSessions) {
+      const launch = session.state.summary?.launch;
+      if (launch?.kind !== "tmux" || panelTerminalIds.has(session.target.terminalId)) continue;
+      terminalIds.set(launch.sessionName, session.target.terminalId);
+    }
+    return terminalIds;
+  }, [activeThreadKnownSessions, panelTerminalIds]);
   const allocatableActiveTerminalIds = useMemo(
     () => [...new Set([...activeKnownTerminalIds, ...panelTerminalIds])],
     [activeKnownTerminalIds, panelTerminalIds],
@@ -2293,6 +2371,7 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const tmuxRefreshKey = isWorking ? "working" : `${activeLatestTurn?.turnId ?? "no-turn"}:settled`;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -2922,6 +3001,69 @@ function ChatViewContent(props: ChatViewProps) {
     gitCwd,
     storeNewTerminal,
   ]);
+  const openTmuxSessionsFromStatus = useCallback(
+    (sessions: ReadonlyArray<TmuxSession>) => {
+      if (!activeThreadRef || !activeThreadId || !activeProject) return;
+      const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+      if (!cwdForOpen) return;
+
+      storeSetTerminalOpen(activeThreadRef, true);
+      void (async () => {
+        const allocatedTerminalIds = [...allocatableActiveTerminalIds];
+        let activeTmuxTerminalId: string | null = null;
+
+        for (const session of sessions) {
+          const existingTerminalId = activeDrawerTmuxTerminalIdBySessionName.get(session.name);
+          if (existingTerminalId) {
+            storeNewTerminal(activeThreadRef, existingTerminalId);
+            activeTmuxTerminalId = existingTerminalId;
+            continue;
+          }
+
+          const terminalId = nextTerminalId(allocatedTerminalIds);
+          allocatedTerminalIds.push(terminalId);
+          const result = await openTerminal({
+            environmentId,
+            input: {
+              threadId: activeThreadId,
+              terminalId,
+              cwd: cwdForOpen,
+              ...(activeThreadWorktreePath != null
+                ? { worktreePath: activeThreadWorktreePath }
+                : {}),
+              env: projectScriptRuntimeEnv({
+                project: { cwd: activeProject.workspaceRoot },
+                worktreePath: activeThreadWorktreePath,
+              }),
+              launch: { kind: "tmux", sessionName: session.name },
+            },
+          });
+          if (result._tag !== "Success") continue;
+          storeNewTerminal(activeThreadRef, terminalId);
+          activeTmuxTerminalId = terminalId;
+        }
+
+        if (activeTmuxTerminalId) {
+          storeSetActiveTerminal(activeThreadRef, activeTmuxTerminalId);
+          setTerminalFocusRequestId((value) => value + 1);
+        }
+      })();
+    },
+    [
+      activeProject,
+      activeDrawerTmuxTerminalIdBySessionName,
+      activeThreadId,
+      activeThreadRef,
+      activeThreadWorktreePath,
+      allocatableActiveTerminalIds,
+      environmentId,
+      gitCwd,
+      openTerminal,
+      storeNewTerminal,
+      storeSetActiveTerminal,
+      storeSetTerminalOpen,
+    ],
+  );
   const closeTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadId || !activeThreadRef) return;
@@ -2939,16 +3081,24 @@ function ChatViewContent(props: ChatViewProps) {
             deleteHistory: true,
           },
         });
-        if (closeResult._tag === "Failure" && !isAtomCommandInterrupted(closeResult)) {
+        if (
+          closeResult._tag === "Failure" &&
+          !isAtomCommandInterrupted(closeResult) &&
+          !activeTmuxTerminalIds.has(terminalId)
+        ) {
           await fallbackExitWrite();
         }
       })();
       storeCloseTerminal(activeThreadRef, terminalId);
+      if (activeTmuxTerminalIds.has(terminalId)) {
+        notifyTmuxSessionsChanged();
+      }
       setTerminalFocusRequestId((value) => value + 1);
     },
     [
       activeThreadId,
       activeThreadRef,
+      activeTmuxTerminalIds,
       closeTerminalMutation,
       environmentId,
       storeCloseTerminal,
@@ -3348,6 +3498,41 @@ function ChatViewContent(props: ChatViewProps) {
     gitCwd,
     openTerminal,
   ]);
+  const attachTmuxSessionToPanel = useCallback(
+    (sessionName: string) => {
+      if (!activeThreadRef || !activeThreadId || !activeProject) return;
+      const cwd = gitCwd ?? activeProject.workspaceRoot;
+      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      void (async () => {
+        const result = await openTerminal({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            threadId: activeThreadId,
+            terminalId,
+            cwd,
+            ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+            env: projectScriptRuntimeEnv({
+              project: { cwd: activeProject.workspaceRoot },
+              worktreePath: activeThreadWorktreePath,
+            }),
+            launch: { kind: "tmux", sessionName },
+          },
+        });
+        if (result._tag !== "Success") return;
+        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
+        setTerminalFocusRequestId((value) => value + 1);
+      })();
+    },
+    [
+      activeProject,
+      activeThreadId,
+      activeThreadRef,
+      activeThreadWorktreePath,
+      allocatableActiveTerminalIds,
+      gitCwd,
+      openTerminal,
+    ],
+  );
   const splitPanelTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
       if (
@@ -6049,6 +6234,7 @@ function ChatViewContent(props: ChatViewProps) {
         onSplitTerminal={splitPanelTerminal}
         onSplitTerminalVertical={splitPanelTerminalVertical}
         onNewTerminal={addTerminalSurface}
+        onAttachTmuxSession={attachTmuxSessionToPanel}
         onActiveTerminalChange={activatePanelTerminal}
         onCloseTerminal={closePanelTerminal}
         splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
@@ -6315,6 +6501,13 @@ function ChatViewContent(props: ChatViewProps) {
                   )}
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
+                  ) : null}
+                  {!isDraftHeroState ? (
+                    <TmuxSessionStatusStrip
+                      environmentId={activeThread.environmentId}
+                      refreshKey={tmuxRefreshKey}
+                      onOpenSessions={openTmuxSessionsFromStatus}
+                    />
                   ) : null}
                   <div
                     className="relative"

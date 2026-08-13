@@ -126,6 +126,9 @@ import {
   TerminalRestartInput,
   TerminalSessionSnapshot,
   TerminalWriteInput,
+  TmuxSessionDiscovery,
+  TmuxSessionKillInput,
+  TmuxSessionKillResult,
 } from "./terminal.ts";
 import {
   DiscoveredLocalServerList,
@@ -235,6 +238,8 @@ export const WS_METHODS = {
   terminalClear: "terminal.clear",
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
+  terminalListTmuxSessions: "terminal.listTmuxSessions",
+  terminalKillTmuxSession: "terminal.killTmuxSession",
 
   // Preview methods
   previewOpen: "preview.open",
@@ -783,6 +788,18 @@ export const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   error: Schema.Union([TerminalError, EnvironmentAuthorizationError]),
 });
 
+export const WsTerminalListTmuxSessionsRpc = Rpc.make(WS_METHODS.terminalListTmuxSessions, {
+  payload: Schema.Struct({}),
+  success: TmuxSessionDiscovery,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsTerminalKillTmuxSessionRpc = Rpc.make(WS_METHODS.terminalKillTmuxSession, {
+  payload: TmuxSessionKillInput,
+  success: TmuxSessionKillResult,
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsPreviewOpenRpc = Rpc.make(WS_METHODS.previewOpen, {
   payload: PreviewOpenInput,
   success: PreviewSessionSnapshot,
@@ -1042,6 +1059,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalClearRpc,
   WsTerminalRestartRpc,
   WsTerminalCloseRpc,
+  WsTerminalListTmuxSessionsRpc,
+  WsTerminalKillTmuxSessionRpc,
   WsSubscribeTerminalEventsRpc,
   WsSubscribeTerminalMetadataRpc,
   WsPreviewOpenRpc,

@@ -105,6 +105,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.terminalClear]: AuthTerminalOperateScope,
   [WS_METHODS.terminalRestart]: AuthTerminalOperateScope,
   [WS_METHODS.terminalClose]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalListTmuxSessions]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalKillTmuxSession]: AuthTerminalOperateScope,
   [WS_METHODS.subscribeTerminalEvents]: AuthTerminalOperateScope,
   [WS_METHODS.subscribeTerminalMetadata]: AuthTerminalOperateScope,
   [WS_METHODS.previewOpen]: AuthOrchestrationOperateScope,

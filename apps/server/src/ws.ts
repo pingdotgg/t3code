@@ -2059,6 +2059,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",
           }),
+        [WS_METHODS.terminalListTmuxSessions]: (_input) =>
+          observeRpcEffect(WS_METHODS.terminalListTmuxSessions, terminalManager.listTmuxSessions, {
+            "rpc.aggregate": "terminal",
+          }),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalEvents,
@@ -2069,6 +2073,12 @@ const makeWsRpcLayer = (
               ),
             ),
             { "rpc.aggregate": "terminal" },
+          ),
+        [WS_METHODS.terminalKillTmuxSession]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.terminalKillTmuxSession,
+            terminalManager.killTmuxSession(input),
+            { input },
           ),
         [WS_METHODS.subscribeTerminalMetadata]: (_input) =>
           observeRpcStream(

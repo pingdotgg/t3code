@@ -6,6 +6,7 @@ import {
 import { type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
 import {
   Plus,
+  PanelsTopLeft,
   SquareSplitHorizontal,
   SquareSplitVertical,
   TerminalSquare,
@@ -16,6 +17,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
+  type TmuxSessionDiscovery,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
@@ -31,6 +33,28 @@ import {
   useState,
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "~/components/ui/menu";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "~/components/ui/alert-dialog";
+import { Button } from "~/components/ui/button";
+import { toastManager } from "~/components/ui/toast";
+import { notifyTmuxSessionsChanged } from "~/terminal/tmuxSessionEvents";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
@@ -881,6 +905,7 @@ interface ThreadTerminalDrawerProps {
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
+  onAttachTmuxSession: (sessionName: string) => void;
   splitShortcutLabel?: string | undefined;
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
@@ -890,10 +915,154 @@ interface ThreadTerminalDrawerProps {
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
+  /** Keep the right-hand session rail visible even when it contains one terminal. */
+  forceTerminalSidebar?: boolean;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
   /** Prefer per-session launch locations when the server already knows a terminal. */
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
+}
+
+interface TmuxSessionMenuProps {
+  className: string;
+  environmentId: ScopedThreadRef["environmentId"];
+  onAttach: (sessionName: string) => void;
+  showLabel?: boolean;
+}
+
+function TmuxSessionMenu({
+  className,
+  environmentId,
+  onAttach,
+  showLabel = false,
+}: TmuxSessionMenuProps) {
+  const listTmuxSessions = useAtomCommand(
+    terminalEnvironment.listTmuxSessions,
+    "tmux session discovery",
+  );
+  const killTmuxSession = useAtomCommand(terminalEnvironment.killTmuxSession, {
+    reportFailure: false,
+  });
+  const [discovery, setDiscovery] = useState<TmuxSessionDiscovery | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [pendingKillSessionName, setPendingKillSessionName] = useState<string | null>(null);
+  const [killInFlight, setKillInFlight] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const result = await listTmuxSessions({ environmentId, input: {} });
+    setDiscovery(
+      result._tag === "Success" ? result.value : { status: "unavailable", sessions: [] },
+    );
+    setLoading(false);
+  }, [environmentId, listTmuxSessions]);
+
+  const confirmKillSession = useCallback(async () => {
+    if (!pendingKillSessionName) return;
+    setKillInFlight(true);
+    const result = await killTmuxSession({
+      environmentId,
+      input: { sessionName: pendingKillSessionName },
+    });
+    setKillInFlight(false);
+    setPendingKillSessionName(null);
+    if (result._tag === "Success" && result.value.status === "killed") {
+      toastManager.add({ type: "success", title: `Stopped ${pendingKillSessionName}` });
+      notifyTmuxSessionsChanged();
+    } else if (result._tag === "Success" && result.value.status === "notFound") {
+      toastManager.add({
+        type: "warning",
+        title: `${pendingKillSessionName} is no longer running`,
+      });
+      notifyTmuxSessionsChanged();
+    } else if (!isAtomCommandInterrupted(result)) {
+      toastManager.add({ type: "error", title: `Could not stop ${pendingKillSessionName}` });
+    }
+    await refresh();
+  }, [environmentId, killTmuxSession, pendingKillSessionName, refresh]);
+
+  return (
+    <>
+      <Menu
+        onOpenChange={(open) => {
+          if (open) void refresh();
+        }}
+      >
+        <MenuTrigger className={className} aria-label="Attach tmux session">
+          <PanelsTopLeft className="size-3.25" />
+          {showLabel ? <span>Attach tmux session</span> : null}
+        </MenuTrigger>
+        <MenuPopup align="end" side="bottom" sideOffset={6} className="min-w-52">
+          {loading || discovery === null ? (
+            <MenuItem disabled>Looking for tmux sessions...</MenuItem>
+          ) : discovery.status === "unavailable" ? (
+            <MenuItem disabled>tmux is not installed</MenuItem>
+          ) : discovery.sessions.length === 0 ? (
+            <MenuItem disabled>No tmux sessions</MenuItem>
+          ) : (
+            <>
+              {discovery.sessions.map((session) => (
+                <MenuItem key={session.name} onClick={() => onAttach(session.name)}>
+                  <PanelsTopLeft />
+                  <span className="min-w-0 flex-1 truncate">{session.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {session.windows}w · {session.attachedClients}a
+                  </span>
+                </MenuItem>
+              ))}
+              <MenuSeparator />
+              <MenuSub>
+                <MenuSubTrigger>
+                  <Trash2 />
+                  Stop session
+                </MenuSubTrigger>
+                <MenuSubPopup>
+                  {discovery.sessions.map((session) => (
+                    <MenuItem
+                      key={session.name}
+                      variant="destructive"
+                      onClick={() => setPendingKillSessionName(session.name)}
+                    >
+                      <Trash2 />
+                      <span className="truncate">{session.name}</span>
+                    </MenuItem>
+                  ))}
+                </MenuSubPopup>
+              </MenuSub>
+            </>
+          )}
+        </MenuPopup>
+      </Menu>
+      <AlertDialog
+        open={pendingKillSessionName !== null}
+        onOpenChange={(open) => {
+          if (!open && !killInFlight) setPendingKillSessionName(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Stop tmux session “{pendingKillSessionName}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This terminates the session and every process running inside it. This cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" disabled={killInFlight} />}>
+              Cancel
+            </AlertDialogClose>
+            <Button
+              variant="destructive"
+              disabled={killInFlight}
+              onClick={() => void confirmKillSession()}
+            >
+              {killInFlight ? "Stopping..." : "Stop session"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
+    </>
+  );
 }
 
 interface TerminalActionButtonProps {
@@ -942,6 +1111,7 @@ export default function ThreadTerminalDrawer({
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
+  onAttachTmuxSession,
   splitShortcutLabel,
   splitVerticalShortcutLabel,
   newShortcutLabel,
@@ -951,6 +1121,7 @@ export default function ThreadTerminalDrawer({
   onHeightChange,
   onAddTerminalContext,
   keybindings,
+  forceTerminalSidebar = false,
   terminalLabelsById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
@@ -1103,7 +1274,7 @@ export default function ThreadTerminalDrawer({
     (normalizedTerminalIds.length > 0 ? [resolvedActiveTerminalId] : []);
   const splitDirection =
     resolvedTerminalGroups[resolvedActiveGroupIndex]?.splitDirection ?? "horizontal";
-  const hasTerminalSidebar = normalizedTerminalIds.length > 1;
+  const hasTerminalSidebar = forceTerminalSidebar || normalizedTerminalIds.length > 1;
   const isSplitView = visibleTerminalIds.length > 1;
   const showGroupHeaders =
     resolvedTerminalGroups.length > 1 ||
@@ -1279,13 +1450,21 @@ export default function ThreadTerminalDrawer({
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
           <p>No terminal sessions for this thread yet.</p>
-          <button
-            type="button"
-            className="rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-            onClick={onNewTerminalAction}
-          >
-            {newTerminalActionLabel}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+              onClick={onNewTerminalAction}
+            >
+              {newTerminalActionLabel}
+            </button>
+            <TmuxSessionMenu
+              className="inline-flex items-center gap-1.5 rounded-md border border-border/80 bg-background px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+              environmentId={threadRef.environmentId}
+              onAttach={onAttachTmuxSession}
+              showLabel
+            />
+          </div>
         </div>
       </aside>
     );
@@ -1346,6 +1525,12 @@ export default function ThreadTerminalDrawer({
             >
               <Plus className="size-3.25" />
             </TerminalActionButton>
+            <div className="h-4 w-px bg-border/80" />
+            <TmuxSessionMenu
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              environmentId={threadRef.environmentId}
+              onAttach={onAttachTmuxSession}
+            />
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               className="p-1 text-foreground/90 transition-colors hover:bg-accent"
@@ -1482,6 +1667,11 @@ export default function ThreadTerminalDrawer({
                   >
                     <Plus className="size-3.25" />
                   </TerminalActionButton>
+                  <TmuxSessionMenu
+                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    environmentId={threadRef.environmentId}
+                    onAttach={onAttachTmuxSession}
+                  />
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={() => onCloseTerminal(resolvedActiveTerminalId)}

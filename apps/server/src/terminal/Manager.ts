@@ -8,6 +8,7 @@
  */
 import {
   DEFAULT_TERMINAL_ID,
+  DEFAULT_TERMINAL_LAUNCH,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -30,7 +31,12 @@ import {
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
   type TerminalSummary,
+  type TerminalLaunch,
   type TerminalWriteInput,
+  type TmuxSession,
+  type TmuxSessionDiscovery,
+  type TmuxSessionKillInput,
+  type TmuxSessionKillResult,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -168,6 +174,12 @@ export class TerminalManager extends Context.Service<
      */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
 
+    /** Discover tmux sessions in the server environment without retaining them in T3 state. */
+    readonly listTmuxSessions: Effect.Effect<TmuxSessionDiscovery>;
+
+    /** Stop one exact tmux session in the server environment. */
+    readonly killTmuxSession: (input: TmuxSessionKillInput) => Effect.Effect<TmuxSessionKillResult>;
+
     /**
      * Subscribe to terminal runtime events with a direct callback.
      *
@@ -254,6 +266,7 @@ export interface TerminalSessionState {
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
+  launch: TerminalLaunch;
 }
 
 interface PersistHistoryRequest {
@@ -314,6 +327,9 @@ function normalizeChildCommandName(raw: string, platform: NodeJS.Platform): stri
 }
 
 function terminalWireLabel(session: TerminalSessionState): string {
+  if (session.launch.kind === "tmux") {
+    return truncateTerminalWireLabel(`tmux: ${session.launch.sessionName}`);
+  }
   if (session.hasRunningSubprocess && session.childCommandLabel) {
     const trimmed = session.childCommandLabel.trim();
     if (trimmed.length > 0) {
@@ -335,6 +351,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
+    launch: session.launch,
     updatedAt: session.updatedAt,
     sequence: session.eventSequence,
   };
@@ -352,6 +369,7 @@ function summary(session: TerminalSessionState): TerminalSummary {
     exitSignal: session.exitSignal,
     hasRunningSubprocess: session.hasRunningSubprocess,
     label: terminalWireLabel(session),
+    launch: session.launch,
     updatedAt: session.updatedAt,
   };
 }
@@ -562,6 +580,35 @@ function resolveShellCandidates(
     shellCandidateFromCommand("bash", platform),
     shellCandidateFromCommand("sh", platform),
   ]);
+}
+
+export function parseTmuxSessions(stdout: string): ReadonlyArray<TmuxSession> {
+  const sessions: TmuxSession[] = [];
+  for (const line of stdout.split(/\r?\n/g)) {
+    const [rawName, rawAttachedClients, rawWindows, ...extra] = line.split("\t");
+    const name = rawName?.trim() ?? "";
+    const attachedClients = Number(rawAttachedClients);
+    const windows = Number(rawWindows);
+    if (
+      extra.length > 0 ||
+      name.length === 0 ||
+      name.length > 128 ||
+      !Number.isInteger(attachedClients) ||
+      attachedClients < 0 ||
+      !Number.isInteger(windows) ||
+      windows < 0
+    ) {
+      continue;
+    }
+    sessions.push({ name, attachedClients, windows });
+  }
+  return sessions.toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+const TMUX_UNAVAILABLE: TmuxSessionDiscovery = { status: "unavailable", sessions: [] };
+
+function resolveTerminalLaunch(launch: TerminalLaunch | undefined): TerminalLaunch {
+  return launch ?? DEFAULT_TERMINAL_LAUNCH;
 }
 
 function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
@@ -1186,6 +1233,8 @@ interface TerminalManagerOptions {
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
+  tmuxSessionLister?: () => Effect.Effect<TmuxSessionDiscovery>;
+  tmuxSessionKiller?: (input: TmuxSessionKillInput) => Effect.Effect<TmuxSessionKillResult>;
   registerTerminalProcesses?: (input: {
     readonly threadId: string;
     readonly terminalId: string;
@@ -1227,6 +1276,75 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const tmuxSessionLister =
+    options.tmuxSessionLister ??
+    Effect.fn("terminal.listTmuxSessionsFromHost")(function* () {
+      const listResult = yield* processRunner
+        .run({
+          command: "tmux",
+          args: ["list-sessions", "-F", "#{session_name}\t#{session_attached}\t#{session_windows}"],
+          timeout: "2 seconds",
+          maxOutputBytes: 65_536,
+          outputMode: "truncate",
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(Effect.option);
+      if (Option.isSome(listResult) && listResult.value.code === 0 && !listResult.value.timedOut) {
+        return {
+          status: "available" as const,
+          sessions: parseTmuxSessions(listResult.value.stdout),
+        };
+      }
+
+      const versionResult = yield* processRunner
+        .run({
+          command: "tmux",
+          args: ["-V"],
+          timeout: "2 seconds",
+          maxOutputBytes: 8_192,
+          outputMode: "truncate",
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(Effect.option);
+      return Option.isSome(versionResult) &&
+        versionResult.value.code === 0 &&
+        !versionResult.value.timedOut
+        ? { status: "available" as const, sessions: [] }
+        : TMUX_UNAVAILABLE;
+    });
+  const tmuxSessionKiller =
+    options.tmuxSessionKiller ??
+    Effect.fn("terminal.killTmuxSessionOnHost")(function* (input: TmuxSessionKillInput) {
+      const killResult = yield* processRunner
+        .run({
+          command: "tmux",
+          args: ["kill-session", "-t", `=${input.sessionName}`],
+          timeout: "2 seconds",
+          maxOutputBytes: 8_192,
+          outputMode: "truncate",
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(Effect.option);
+      if (Option.isSome(killResult) && killResult.value.code === 0 && !killResult.value.timedOut) {
+        return { status: "killed" as const };
+      }
+
+      const versionResult = yield* processRunner
+        .run({
+          command: "tmux",
+          args: ["-V"],
+          timeout: "2 seconds",
+          maxOutputBytes: 8_192,
+          outputMode: "truncate",
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(Effect.option);
+      return Option.isSome(versionResult) &&
+        versionResult.value.code === 0 &&
+        !versionResult.value.timedOut
+        ? { status: "notFound" as const }
+        : { status: "unavailable" as const };
+    });
   const subprocessInspector =
     options.subprocessInspector ??
     ((terminalPid) =>
@@ -1906,6 +2024,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.exitSignal = null;
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
+      session.launch = resolveTerminalLaunch(input.launch);
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
       session.processEventDrainRunning = false;
@@ -1920,7 +2039,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+            const shellCandidates =
+              session.launch.kind === "tmux"
+                ? [
+                    {
+                      shell: "tmux",
+                      args: ["attach-session", "-t", `=${session.launch.sessionName}`],
+                    },
+                  ]
+                : resolveShellCandidates(shellResolver, platform, baseEnv);
             const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
             const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
             ptyProcess = spawnResult.process;
@@ -2215,6 +2342,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        launch: resolveTerminalLaunch(input.launch),
       };
 
       const createdSession = session;
@@ -2235,6 +2363,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols,
           rows,
           ...(input.env ? { env: input.env } : {}),
+          launch: session.launch,
         },
         "started",
       );
@@ -2243,6 +2372,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
     const liveSession = existing.value;
     const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
+    const nextLaunch = resolveTerminalLaunch(input.launch);
     const currentRuntimeEnv = liveSession.runtimeEnv;
     const targetCols = input.cols ?? liveSession.cols;
     const targetRows = input.rows ?? liveSession.rows;
@@ -2253,12 +2383,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.cwd !== input.cwd ||
       runtimeEnvChanged ||
       liveSession.worktreePath !== nextWorktreePath;
+    const launchChanged = !Equal.equals(liveSession.launch, nextLaunch);
 
-    if (launchContextChanged) {
+    if (launchContextChanged || launchChanged) {
       yield* stopProcess(liveSession);
       liveSession.cwd = input.cwd;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
+      liveSession.launch = nextLaunch;
       liveSession.history = "";
       liveSession.pendingHistoryControlSequence = "";
       liveSession.pendingProcessEvents = [];
@@ -2287,6 +2419,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols: targetCols,
           rows: targetRows,
           ...(input.env ? { env: input.env } : {}),
+          launch: liveSession.launch,
         },
         "started",
       );
@@ -2627,6 +2760,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             hasRunningSubprocess: false,
             childCommandLabel: null,
             runtimeEnv: normalizedRuntimeEnv(input.env),
+            launch: resolveTerminalLaunch(input.launch),
           };
           const createdSession = session;
           yield* modifyManagerState((state) => {
@@ -2641,6 +2775,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           session.cwd = input.cwd;
           session.worktreePath = input.worktreePath ?? null;
           session.runtimeEnv = normalizedRuntimeEnv(input.env);
+          session.launch = resolveTerminalLaunch(input.launch);
         }
 
         const cols = input.cols ?? session.cols;
@@ -2662,6 +2797,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             cols,
             rows,
             ...(input.env ? { env: input.env } : {}),
+            launch: session.launch,
           },
           "restarted",
         );
@@ -2691,6 +2827,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }),
     );
 
+  const listTmuxSessions: TerminalManager["Service"]["listTmuxSessions"] = tmuxSessionLister();
+  const killTmuxSession: TerminalManager["Service"]["killTmuxSession"] = (input) =>
+    tmuxSessionKiller(input);
+
   return TerminalManager.of({
     open,
     attachStream,
@@ -2699,6 +2839,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     clear,
     restart,
     close,
+    listTmuxSessions,
+    killTmuxSession,
     subscribe,
     subscribeMetadata,
   });

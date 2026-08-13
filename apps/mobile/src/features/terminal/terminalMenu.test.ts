@@ -53,6 +53,7 @@ function makeKnownSession(input: {
             exitSignal: null,
             hasRunningSubprocess: false,
             label: getTerminalLabel(input.terminalId),
+            launch: { kind: "shell" },
             updatedAt: input.updatedAt ?? "2026-04-15T20:00:00.000Z",
           }
         : null,

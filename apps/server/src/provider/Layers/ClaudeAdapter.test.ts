@@ -355,6 +355,13 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+      const systemPrompt = createInput?.options.systemPrompt;
+      assert.equal(typeof systemPrompt, "object");
+      if (systemPrompt && !Array.isArray(systemPrompt) && typeof systemPrompt !== "string") {
+        assert.equal(systemPrompt.type, "preset");
+        assert.equal(systemPrompt.preset, "claude_code");
+        assert.match(systemPrompt.append ?? "", /named detached tmux session/);
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

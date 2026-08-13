@@ -27,6 +27,7 @@ const BASE_SNAPSHOT: TerminalSessionSnapshot = {
   exitCode: null,
   exitSignal: null,
   label: "Terminal 1",
+  launch: { kind: "shell" },
   updatedAt: "2026-04-01T00:00:00.000Z",
 };
 
@@ -47,6 +48,7 @@ describe("terminal session reducers", () => {
           updatedAt: BASE_SNAPSHOT.updatedAt,
           hasRunningSubprocess: false,
           label: BASE_SNAPSHOT.label,
+          launch: BASE_SNAPSHOT.launch,
         },
       ],
     })[0]!;
@@ -80,6 +82,7 @@ describe("terminal session reducers", () => {
           updatedAt: BASE_SNAPSHOT.updatedAt,
           hasRunningSubprocess: false,
           label: BASE_SNAPSHOT.label,
+          launch: BASE_SNAPSHOT.launch,
         },
       ],
     })[0]!;
@@ -149,6 +152,7 @@ describe("terminal session reducers", () => {
           updatedAt: BASE_SNAPSHOT.updatedAt,
           hasRunningSubprocess: false,
           label: BASE_SNAPSHOT.label,
+          launch: BASE_SNAPSHOT.launch,
         },
       ],
     });

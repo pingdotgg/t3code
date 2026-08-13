@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Client-side id for the first shell opened on a thread. Ids are uniformly
@@ -23,6 +23,46 @@ const TerminalEnvValueSchema = Schema.String.check(Schema.isMaxLength(8_192));
 const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSchema).check(
   Schema.isMaxProperties(128),
 );
+const TmuxSessionNameSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
+
+export const TerminalLaunch = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("shell") }),
+  Schema.Struct({
+    kind: Schema.Literal("tmux"),
+    sessionName: TmuxSessionNameSchema,
+  }),
+]);
+export type TerminalLaunch = typeof TerminalLaunch.Type;
+export const DEFAULT_TERMINAL_LAUNCH: TerminalLaunch = { kind: "shell" };
+
+export const TmuxSession = Schema.Struct({
+  name: TmuxSessionNameSchema,
+  attachedClients: NonNegativeInt,
+  windows: NonNegativeInt,
+});
+export type TmuxSession = typeof TmuxSession.Type;
+
+export const TmuxSessionDiscovery = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("available"),
+    sessions: Schema.Array(TmuxSession),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("unavailable"),
+    sessions: Schema.Tuple([]),
+  }),
+]);
+export type TmuxSessionDiscovery = typeof TmuxSessionDiscovery.Type;
+
+export const TmuxSessionKillInput = Schema.Struct({
+  sessionName: TmuxSessionNameSchema,
+});
+export type TmuxSessionKillInput = typeof TmuxSessionKillInput.Type;
+
+export const TmuxSessionKillResult = Schema.Struct({
+  status: Schema.Literals(["killed", "notFound", "unavailable"]),
+});
+export type TmuxSessionKillResult = typeof TmuxSessionKillResult.Type;
 
 export const TerminalThreadInput = Schema.Struct({
   threadId: TrimmedNonEmptyStringSchema,
@@ -43,6 +83,7 @@ export const TerminalOpenInput = Schema.Struct({
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
   env: Schema.optional(TerminalEnvSchema),
+  launch: Schema.optional(TerminalLaunch),
 });
 export type TerminalOpenInput = Schema.Codec.Encoded<typeof TerminalOpenInput>;
 
@@ -80,6 +121,7 @@ export const TerminalRestartInput = Schema.Struct({
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
   env: Schema.optional(TerminalEnvSchema),
+  launch: Schema.optional(TerminalLaunch),
 });
 export type TerminalRestartInput = Schema.Codec.Encoded<typeof TerminalRestartInput>;
 
@@ -105,6 +147,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
   exitSignal: Schema.NullOr(Schema.Int),
   /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
+  launch: TerminalLaunch,
   updatedAt: Schema.String,
   sequence: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
@@ -122,6 +165,7 @@ export const TerminalSummary = Schema.Struct({
   hasRunningSubprocess: Schema.Boolean,
   /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
+  launch: TerminalLaunch,
   updatedAt: Schema.String,
 });
 export type TerminalSummary = typeof TerminalSummary.Type;

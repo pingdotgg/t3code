@@ -307,6 +307,19 @@ describe("T3 browser developer instructions", () => {
   });
 });
 
+describe("background terminal developer instructions", () => {
+  it("guides both collaboration modes to use named tmux sessions for long-running work", () => {
+    for (const instructions of [
+      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+    ]) {
+      NodeAssert.match(instructions, /named detached tmux session/);
+      NodeAssert.match(instructions, /one-off commands/);
+      NodeAssert.match(instructions, /Tell the user the session name/);
+    }
+  });
+});
+
 describe("hasConfiguredMcpServer", () => {
   it("detects inline Codex MCP configuration arguments", () => {
     NodeAssert.equal(hasConfiguredMcpServer(undefined), false);

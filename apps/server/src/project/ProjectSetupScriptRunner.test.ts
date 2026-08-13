@@ -57,6 +57,8 @@ const makeTerminalManagerLayer = (
     clear: () => Effect.void,
     restart: () => Effect.die(new Error("unused")),
     close: () => Effect.void,
+    listTmuxSessions: Effect.succeed({ status: "available" as const, sessions: [] }),
+    killTmuxSession: () => Effect.succeed({ status: "killed" as const }),
     subscribe: () => Effect.succeed(() => undefined),
     subscribeMetadata: () => Effect.succeed(() => undefined),
   });
@@ -105,6 +107,7 @@ describe("ProjectSetupScriptRunner", () => {
           exitCode: null,
           exitSignal: null,
           label: "setup-setup",
+          launch: { kind: "shell" as const },
           updatedAt: "2026-01-01T00:00:00.000Z",
         }),
       );

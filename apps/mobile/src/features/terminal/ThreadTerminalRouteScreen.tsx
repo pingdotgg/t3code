@@ -1,4 +1,9 @@
-import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_TERMINAL_ID,
+  EnvironmentId,
+  ThreadId,
+  type TmuxSessionDiscovery,
+} from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
@@ -165,6 +170,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
+  const listTmuxSessions = useAtomCommand(
+    terminalEnvironment.listTmuxSessions,
+    "tmux session discovery",
+  );
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
   const { state: workspaceState } = useWorkspaceState();
@@ -250,6 +259,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
   const [keyboardFocusRequest, setKeyboardFocusRequest] = useState(0);
   const [isAccessoryDismissed, setIsAccessoryDismissed] = useState(false);
+  const [tmuxDiscovery, setTmuxDiscovery] = useState<TmuxSessionDiscovery | null>(null);
   const bufferReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstNonEmptyBufferLoggedRef = useRef(false);
   const lastBufferReplayKeyRef = useRef<string | null>(null);
@@ -546,6 +556,23 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       terminalId,
     ],
   );
+
+  useEffect(() => {
+    if (!selectedThread || !isEnvironmentReady) return;
+    let active = true;
+    setTmuxDiscovery(null);
+    void listTmuxSessions({ environmentId: selectedThread.environmentId, input: {} }).then(
+      (result) => {
+        if (!active) return;
+        setTmuxDiscovery(
+          result._tag === "Success" ? result.value : { status: "unavailable", sessions: [] },
+        );
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [isEnvironmentReady, listTmuxSessions, selectedThread]);
 
   useEffect(() => {
     if (pendingLaunchEntry.key === launchTargetKey) {
@@ -918,6 +945,53 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     );
   }, [navigation, selectedThread, terminalId, terminalMenuSessions]);
 
+  const handleAttachTmuxSession = useCallback(
+    (sessionName: string) => {
+      if (!selectedThread || !selectedThreadProject?.workspaceRoot) return;
+      const nextTerminalId = nextOpenTerminalId({
+        listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
+        activeRouteTerminalId: terminalId,
+      });
+      const openLocation = launchLocation ?? {
+        cwd: selectedThreadProject.workspaceRoot,
+        worktreePath: selectedThread.worktreePath ?? null,
+      };
+      void (async () => {
+        const result = await openTerminal({
+          environmentId: selectedThread.environmentId,
+          input: {
+            threadId: selectedThread.id,
+            terminalId: nextTerminalId,
+            cwd: openLocation.cwd,
+            worktreePath: openLocation.worktreePath,
+            cols: lastGridSize.cols,
+            rows: lastGridSize.rows,
+            launch: { kind: "tmux", sessionName },
+          },
+        });
+        if (result._tag !== "Success") return;
+        navigation.dispatch(
+          StackActions.replace("ThreadTerminal", {
+            environmentId: String(selectedThread.environmentId),
+            threadId: String(selectedThread.id),
+            terminalId: nextTerminalId,
+          }),
+        );
+      })();
+    },
+    [
+      lastGridSize.cols,
+      lastGridSize.rows,
+      launchLocation,
+      navigation,
+      openTerminal,
+      selectedThread,
+      selectedThreadProject?.workspaceRoot,
+      terminalId,
+      terminalMenuSessions,
+    ],
+  );
+
   const handleDecreaseFontSize = useCallback(() => {
     setTerminalFontSize(stepTerminalFontSize(fontSize, -1));
   }, [fontSize, setTerminalFontSize]);
@@ -963,8 +1037,42 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         image: "plus",
         subtitle: `Start another shell in ${basename(selectedThreadProject?.workspaceRoot ?? null) ?? "this workspace"}`,
       },
+      {
+        id: "tmux-attach",
+        title: "Attach tmux session",
+        subactions:
+          tmuxDiscovery === null
+            ? [
+                {
+                  id: "tmux-status",
+                  title: "Looking for tmux sessions...",
+                  attributes: { disabled: true },
+                },
+              ]
+            : tmuxDiscovery.status === "unavailable"
+              ? [
+                  {
+                    id: "tmux-status",
+                    title: "tmux is not installed",
+                    attributes: { disabled: true },
+                  },
+                ]
+              : tmuxDiscovery.sessions.length === 0
+                ? [{ id: "tmux-status", title: "No tmux sessions", attributes: { disabled: true } }]
+                : tmuxDiscovery.sessions.map((session) => ({
+                    id: `tmux-session:${session.name}`,
+                    title: session.name,
+                    subtitle: `${session.windows} windows · ${session.attachedClients} attached`,
+                  })),
+      },
     ],
-    [fontSize, selectedThreadProject?.workspaceRoot, terminalId, terminalMenuSessions],
+    [
+      fontSize,
+      selectedThreadProject?.workspaceRoot,
+      terminalId,
+      terminalMenuSessions,
+      tmuxDiscovery,
+    ],
   );
 
   const handleAndroidTerminalMenuAction = useCallback(
@@ -984,9 +1092,19 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       }
       if (id.startsWith("terminal-session:")) {
         handleSelectTerminal(id.slice("terminal-session:".length));
+        return;
+      }
+      if (id.startsWith("tmux-session:")) {
+        handleAttachTmuxSession(id.slice("tmux-session:".length));
       }
     },
-    [handleDecreaseFontSize, handleIncreaseFontSize, handleOpenNewTerminal, handleSelectTerminal],
+    [
+      handleAttachTmuxSession,
+      handleDecreaseFontSize,
+      handleIncreaseFontSize,
+      handleOpenNewTerminal,
+      handleSelectTerminal,
+    ],
   );
 
   const handleClearTerminal = useCallback(() => {
@@ -1186,6 +1304,35 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 <NativeHeaderToolbar.Label>{session.displayLabel}</NativeHeaderToolbar.Label>
               </NativeHeaderToolbar.MenuAction>
             ))}
+            <NativeHeaderToolbar.Menu icon="rectangle.stack" inline title="Attach tmux session">
+              <NativeHeaderToolbar.Label>Attach tmux session</NativeHeaderToolbar.Label>
+              {tmuxDiscovery === null ? (
+                <NativeHeaderToolbar.MenuAction disabled>
+                  <NativeHeaderToolbar.Label>
+                    Looking for tmux sessions...
+                  </NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
+              ) : tmuxDiscovery.status === "unavailable" ? (
+                <NativeHeaderToolbar.MenuAction disabled>
+                  <NativeHeaderToolbar.Label>tmux is not installed</NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
+              ) : tmuxDiscovery.sessions.length === 0 ? (
+                <NativeHeaderToolbar.MenuAction disabled>
+                  <NativeHeaderToolbar.Label>No tmux sessions</NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
+              ) : (
+                tmuxDiscovery.sessions.map((session) => (
+                  <NativeHeaderToolbar.MenuAction
+                    key={session.name}
+                    icon="rectangle.stack"
+                    onPress={() => handleAttachTmuxSession(session.name)}
+                    subtitle={`${session.windows} windows · ${session.attachedClients} attached`}
+                  >
+                    <NativeHeaderToolbar.Label>{session.name}</NativeHeaderToolbar.Label>
+                  </NativeHeaderToolbar.MenuAction>
+                ))
+              )}
+            </NativeHeaderToolbar.Menu>
             <NativeHeaderToolbar.MenuAction
               icon="plus"
               onPress={handleOpenNewTerminal}

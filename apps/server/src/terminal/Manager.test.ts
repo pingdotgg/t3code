@@ -7,6 +7,9 @@ import {
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
+  type TmuxSessionDiscovery,
+  type TmuxSessionKillInput,
+  type TmuxSessionKillResult,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
@@ -213,6 +216,8 @@ interface CreateManagerOptions {
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
   ptyAdapter?: FakePtyAdapter;
+  tmuxSessionLister?: () => Effect.Effect<TmuxSessionDiscovery>;
+  tmuxSessionKiller?: (input: TmuxSessionKillInput) => Effect.Effect<TmuxSessionKillResult>;
 }
 
 interface ManagerFixture {
@@ -254,6 +259,12 @@ const createManager = (
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
           : {}),
+        ...(options.tmuxSessionLister !== undefined
+          ? { tmuxSessionLister: options.tmuxSessionLister }
+          : {}),
+        ...(options.tmuxSessionKiller !== undefined
+          ? { tmuxSessionKiller: options.tmuxSessionKiller }
+          : {}),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -279,6 +290,82 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it("parses, filters, and sorts tmux discovery rows", () => {
+    expect(
+      TerminalManager.parseTmuxSessions("zeta\t1\t2\ninvalid\nalpha\t0\t3\nnegative\t-1\t1\n"),
+    ).toEqual([
+      { name: "alpha", attachedClients: 0, windows: 3 },
+      { name: "zeta", attachedClients: 1, windows: 2 },
+    ]);
+  });
+
+  it.effect("returns discovered tmux sessions without retaining them as terminals", () =>
+    Effect.gen(function* () {
+      const discovery = {
+        status: "available" as const,
+        sessions: [{ name: "dev", attachedClients: 1, windows: 2 }],
+      };
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        tmuxSessionLister: () => Effect.succeed(discovery),
+      });
+
+      expect(yield* manager.listTmuxSessions).toEqual(discovery);
+      expect(ptyAdapter.spawnInputs).toHaveLength(0);
+    }),
+  );
+
+  it.effect("stops one exact tmux session through the injected host boundary", () =>
+    Effect.gen(function* () {
+      const killedNames = yield* Ref.make<ReadonlyArray<string>>([]);
+      const { manager } = yield* createManager(5, {
+        tmuxSessionKiller: (input) =>
+          Ref.update(killedNames, (names) => [...names, input.sessionName]).pipe(
+            Effect.as({ status: "killed" as const }),
+          ),
+      });
+
+      expect(yield* manager.killTmuxSession({ sessionName: "long-build" })).toEqual({
+        status: "killed",
+      });
+      expect(yield* Ref.get(killedNames)).toEqual(["long-build"]);
+    }),
+  );
+
+  it.effect("attaches to tmux directly and closes only the attach process", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const snapshot = yield* manager.open(
+        openInput({ launch: { kind: "tmux", sessionName: "long-build" } }),
+      );
+
+      expect(ptyAdapter.spawnInputs[0]).toMatchObject({
+        shell: "tmux",
+        args: ["attach-session", "-t", "=long-build"],
+      });
+      expect(snapshot.launch).toEqual({ kind: "tmux", sessionName: "long-build" });
+      expect(snapshot.label).toBe("tmux: long-build");
+
+      yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      expect(ptyAdapter.processes[0]?.killed).toBe(true);
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+    }),
+  );
+
+  it.effect("does not fall back to a shell when tmux attachment fails to spawn", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      ptyAdapter.spawnFailures.push(new Error("tmux not found"));
+      const { manager } = yield* createManager(5, { ptyAdapter });
+
+      const snapshot = yield* manager.open(
+        openInput({ launch: { kind: "tmux", sessionName: "missing" } }),
+      );
+      expect(snapshot.status).toBe("error");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("tmux");
+    }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

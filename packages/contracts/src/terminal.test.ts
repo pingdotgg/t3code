@@ -8,10 +8,14 @@ import {
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
+  TerminalLaunch,
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalThreadInput,
   TerminalWriteInput,
+  TmuxSessionDiscovery,
+  TmuxSessionKillInput,
+  TmuxSessionKillResult,
 } from "./terminal.ts";
 
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
@@ -95,6 +99,23 @@ describe("TerminalOpenInput", () => {
     expect(parsed.worktreePath).toBe("/tmp/project/.t3/worktrees/feature-a");
   });
 
+  it("accepts omitted shell launch and an explicit tmux launch", () => {
+    const shell = decodeSync(TerminalOpenInput, {
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      cwd: "/tmp/project",
+    });
+    const tmux = decodeSync(TerminalOpenInput, {
+      threadId: "thread-1",
+      terminalId: DEFAULT_TERMINAL_ID,
+      cwd: "/tmp/project",
+      launch: { kind: "tmux", sessionName: " long-build " },
+    });
+
+    expect(shell.launch).toBeUndefined();
+    expect(tmux.launch).toEqual({ kind: "tmux", sessionName: "long-build" });
+  });
+
   it("rejects invalid env keys", () => {
     expect(
       decodes(TerminalOpenInput, {
@@ -105,6 +126,38 @@ describe("TerminalOpenInput", () => {
         env: {
           "bad-key": "1",
         },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("tmux schemas", () => {
+  it("rejects blank and oversized tmux session names", () => {
+    expect(decodes(TerminalLaunch, { kind: "tmux", sessionName: "   " })).toBe(false);
+    expect(decodes(TerminalLaunch, { kind: "tmux", sessionName: "x".repeat(129) })).toBe(false);
+  });
+
+  it("decodes exact kill requests and structured outcomes", () => {
+    expect(decodeSync(TmuxSessionKillInput, { sessionName: " long-build " })).toEqual({
+      sessionName: "long-build",
+    });
+    for (const status of ["killed", "notFound", "unavailable"] as const) {
+      expect(decodes(TmuxSessionKillResult, { status })).toBe(true);
+    }
+  });
+
+  it("decodes available and unavailable discovery states", () => {
+    expect(
+      decodes(TmuxSessionDiscovery, {
+        status: "available",
+        sessions: [{ name: "dev", attachedClients: 1, windows: 2 }],
+      }),
+    ).toBe(true);
+    expect(decodes(TmuxSessionDiscovery, { status: "unavailable", sessions: [] })).toBe(true);
+    expect(
+      decodes(TmuxSessionDiscovery, {
+        status: "unavailable",
+        sessions: [{ name: "dev", attachedClients: 0, windows: 1 }],
       }),
     ).toBe(false);
   });
@@ -225,6 +278,7 @@ describe("TerminalSessionSnapshot", () => {
         exitCode: null,
         exitSignal: null,
         label: "Primary",
+        launch: { kind: "shell" },
         updatedAt: isoTimestamp,
       }),
     ).toBe(true);
@@ -296,6 +350,7 @@ describe("TerminalEvent", () => {
           exitCode: null,
           exitSignal: null,
           label: "Primary",
+          launch: { kind: "shell" },
           updatedAt: isoTimestamp,
         },
       }),

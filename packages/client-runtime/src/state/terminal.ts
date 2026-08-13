@@ -89,6 +89,14 @@ export function createTerminalEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    listTmuxSessions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:list-tmux-sessions",
+      tag: WS_METHODS.terminalListTmuxSessions,
+    }),
+    killTmuxSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:kill-tmux-session",
+      tag: WS_METHODS.terminalKillTmuxSession,
+    }),
   };
 }
 
