@@ -34,6 +34,7 @@ import {
   deriveThreadRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveThreadProviderSession } from "@t3tools/client-runtime/state/thread-workflows";
+import { shouldShowLoadEarlierControl } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadLastVisitedAt } from "./Sidebar.logic";
 import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import {
@@ -249,6 +250,7 @@ import {
   useProject,
   useProjects,
   useThreadProjection,
+  useThreadHistory,
   useThreadShell,
   useThreadRefs,
   useThreadVisibleTurnItems,
@@ -259,7 +261,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
-import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
@@ -1258,6 +1260,10 @@ function ChatViewContent(props: ChatViewProps) {
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
+  const loadEarlierThreadHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
+    label: "load earlier thread history",
+    reportFailure: false,
+  });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
     reportFailure: false,
   });
@@ -1304,6 +1310,23 @@ function ChatViewContent(props: ChatViewProps) {
     [serverProjection?.subagents],
   );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
+  const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
+  const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
+    if (routeThreadDetailRef === null || !shouldShowLoadEarlierControl(serverThreadHistory)) {
+      return undefined;
+    }
+    return {
+      hasMoreHistory: serverThreadHistory.hasMoreHistory,
+      loading: serverThreadHistory.loading,
+      error: serverThreadHistory.error,
+      onLoadEarlier: () => {
+        void loadEarlierThreadHistory({
+          environmentId: routeThreadDetailRef.environmentId,
+          input: { threadId: routeThreadDetailRef.threadId },
+        });
+      },
+    };
+  }, [loadEarlierThreadHistory, routeThreadDetailRef, serverThreadHistory]);
   const committedServerMessageIds = useMemo(
     () => deriveCommittedServerUserMessageIds(serverVisibleTurnItems),
     [serverVisibleTurnItems],
@@ -6564,6 +6587,9 @@ function ChatViewContent(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState}
                 topFadeEnabled={!hasTimelineTopBanner}
+                {...(threadHistoryControls === undefined
+                  ? {}
+                  : { historyControls: threadHistoryControls })}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}

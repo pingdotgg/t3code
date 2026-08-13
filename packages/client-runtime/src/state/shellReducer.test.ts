@@ -214,6 +214,30 @@ describe("applyShellStreamEvent", () => {
     expect(next.projects[0]?.repositoryIdentity).toEqual(repositoryIdentity);
   });
 
+  it("treats higher-sequence compact enrichment as metadata-only", () => {
+    const previous = {
+      ...v2ShellSnapshot,
+      snapshotSequence: 5,
+      projects: [{ ...v2Project, repositoryIdentity: null }],
+      threads: [{ ...v2ThreadShell, title: "Newest title" }],
+    };
+    const next = mergeShellSnapshotProjects(
+      previous,
+      {
+        ...v2ShellSnapshot,
+        snapshotSequence: 8,
+        projects: [{ ...v2Project, repositoryIdentity }],
+        threads: [],
+        archivedThreads: [],
+      },
+      { resolvedRepositoryIdentityRoots: [v2Project.workspaceRoot] },
+    );
+
+    expect(next.snapshotSequence).toBe(5);
+    expect(next.threads[0]?.title).toBe("Newest title");
+    expect(next.projects[0]?.repositoryIdentity).toEqual(repositoryIdentity);
+  });
+
   it("lower-sequence enrichment cannot resurrect empty structural state", () => {
     const previous = {
       ...v2ShellSnapshot,

@@ -33,7 +33,9 @@ import {
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
+  OrchestrationV2ThreadHistoryPage,
 } from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
 import {
@@ -65,6 +67,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_scope",
   "scope_not_granted",
   "invalid_command",
+  "invalid_history_cursor",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -94,6 +97,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "project_mutation_failed",
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
+  "orchestration_thread_bounded_snapshot_failed",
+  "orchestration_thread_history_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -497,6 +502,17 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
+  cursor: TrimmedNonEmptyString,
+});
+
+const EnvironmentOrchestrationThreadHistoryErrors = [
+  EnvironmentRequestInvalidError,
+  EnvironmentScopeRequiredError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentInternalError,
+] as const;
+
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
@@ -511,6 +527,23 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       params: EnvironmentOrchestrationThreadSnapshotParams,
       success: OrchestrationV2ThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadBoundedSnapshot", "/api/orchestration/threads/:threadId/bounded", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      success: OrchestrationV2ThreadBoundedSnapshot,
+      error: EnvironmentOrchestrationThreadSnapshotErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("threadHistoryPage", "/api/orchestration/threads/:threadId/history", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentOrchestrationThreadSnapshotParams,
+      query: EnvironmentOrchestrationThreadHistoryQuery,
+      success: OrchestrationV2ThreadHistoryPage,
+      error: EnvironmentOrchestrationThreadHistoryErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

@@ -5,6 +5,7 @@ import type {
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -16,6 +17,7 @@ import {
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
+  shellStreamItemsFromResumeSnapshot,
 } from "./ShellStream.ts";
 
 function project(sequence: number, id: string): ApplicationStoredEvent {
@@ -198,6 +200,35 @@ describe("shellStreamItemFromEnrichmentRefresh", () => {
 });
 
 describe("shellStreamItemsFromInitialSnapshot", () => {
+  it("keeps thread rows out of the metadata-only enrichment frame", () => {
+    const snapshot = {
+      ...emptyShellSnapshot,
+      projects: [
+        { id: "project-a", workspaceRoot: "/workspace/a" },
+        { id: "project-b", workspaceRoot: "/workspace/b" },
+      ],
+      threads: [shellFixture({})],
+      archivedThreads: [shellFixture({ id: ThreadId.make("thread-archived"), archivedAt: null })],
+    } as unknown as OrchestrationV2ShellSnapshot;
+
+    const items = shellStreamItemsFromInitialSnapshot({
+      snapshot,
+      resolvedRepositoryIdentityRoots: ["/workspace/a"],
+    });
+
+    expect(items[0]).toEqual({ kind: "snapshot", snapshot });
+    expect(items[1]).toMatchObject({
+      kind: "snapshot",
+      snapshot: {
+        projects: [{ id: "project-a", workspaceRoot: "/workspace/a" }],
+        threads: [],
+        archivedThreads: [],
+      },
+      resolvedRepositoryIdentityRoots: ["/workspace/a"],
+    });
+    expect(JSON.stringify(items[1]).length).toBeLessThan(JSON.stringify(items[0]).length);
+  });
+
   it("emits unmarked authoritative then same-sequence marked enrichment when roots resolved", () => {
     const snapshot = {
       ...emptyShellSnapshot,
@@ -226,6 +257,20 @@ describe("shellStreamItemsFromInitialSnapshot", () => {
         resolvedRepositoryIdentityRoots: [],
       }),
     ).toEqual([{ kind: "snapshot", snapshot: emptyShellSnapshot }]);
+  });
+});
+
+describe("shellStreamItemsFromResumeSnapshot", () => {
+  it("never repeats the authoritative shell snapshot", () => {
+    expect(
+      shellStreamItemsFromResumeSnapshot({
+        snapshot: {
+          ...emptyShellSnapshot,
+          threads: [shellFixture({})],
+        },
+        resolvedRepositoryIdentityRoots: [],
+      }),
+    ).toEqual([]);
   });
 });
 

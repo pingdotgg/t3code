@@ -195,6 +195,13 @@ const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 // Props (public API)
 // ---------------------------------------------------------------------------
 
+export interface MessagesTimelineHistoryControls {
+  readonly hasMoreHistory: boolean;
+  readonly loading: boolean;
+  readonly error: string | null;
+  readonly onLoadEarlier: () => void;
+}
+
 interface MessagesTimelineProps {
   isWorking: boolean;
   activeTurnInProgress: boolean;
@@ -249,6 +256,7 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
+  historyControls?: MessagesTimelineHistoryControls;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +299,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onManualNavigation,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
+  historyControls,
 }: MessagesTimelineProps) {
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(new Set());
   const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
@@ -590,10 +599,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [activeTurnInProgress, isRevertingCheckpoint, isWorking, latestRun?.runId],
   );
-  const listHeader = useMemo(
-    () =>
+  const listHeader = useMemo(() => {
+    const leadingContent =
       parentThreadLink === null ? (
-        TIMELINE_LIST_HEADER
+        topFadeEnabled ? (
+          TIMELINE_LIST_FADE_HEADER
+        ) : (
+          TIMELINE_LIST_HEADER
+        )
       ) : (
         <div className="messages-timeline-row-frame">
           <div className="chat-content-lane pt-1 sm:pt-2">
@@ -606,9 +619,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             />
           </div>
         </div>
-      ),
-    [onOpenThread, parentThreadLink],
-  );
+      );
+    return (
+      <>
+        {parentThreadLink === null ? leadingContent : null}
+        {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
+        {parentThreadLink !== null ? leadingContent : null}
+      </>
+    );
+  }, [historyControls, onOpenThread, parentThreadLink, topFadeEnabled]);
 
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
@@ -623,7 +642,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [],
   );
 
-  if (rows.length === 0 && !isWorking && parentThreadLink === null) {
+  if (
+    rows.length === 0 &&
+    !isWorking &&
+    parentThreadLink === null &&
+    historyControls === undefined
+  ) {
     if (hideEmptyPlaceholder) {
       return null;
     }
@@ -665,9 +689,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
               topFadeEnabled && "chat-timeline-scroll-fade",
             )}
-            ListHeaderComponent={
-              topFadeEnabled && parentThreadLink === null ? TIMELINE_LIST_FADE_HEADER : listHeader
-            }
+            ListHeaderComponent={listHeader}
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
           <TimelineMinimap
@@ -690,6 +712,35 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     </TimelineRowCtx>
   );
 });
+
+function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
+  if (!props.hasMoreHistory && props.error === null) {
+    return null;
+  }
+  return (
+    <div className="messages-timeline-row-frame">
+      <div className="chat-content-lane flex flex-col items-center gap-1.5 py-2">
+        {props.hasMoreHistory ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={props.loading}
+            aria-label="Load earlier activity"
+            onClick={props.onLoadEarlier}
+          >
+            <ChevronUpIcon />
+            {props.loading ? "Loading earlier activity…" : "Load earlier activity"}
+          </Button>
+        ) : null}
+        {props.error !== null ? (
+          <p role="status" className="text-center text-muted-foreground text-xs">
+            {props.error}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;

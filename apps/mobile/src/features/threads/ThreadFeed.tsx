@@ -55,14 +55,7 @@ import { FilePreviewModal, type FilePreviewSource } from "../../components/FileP
 import { isPdfFile } from "../../lib/filePreview";
 import { PresentationSource } from "../../components/NativePresentation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, {
-  FadeIn,
-  FadeInUp,
-  useSharedValue,
-  withTiming,
-  type LayoutAnimationsValues,
-  type SharedValue,
-} from "react-native-reanimated";
+import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -167,14 +160,6 @@ function formatMessageTime(input: string): string {
   return MESSAGE_TIME_FORMATTER.format(timestamp);
 }
 
-// Rows shift when content above them grows (streaming text, work-log folds);
-// animating the container position turns those jumps into slides. Applied
-// conditionally — see the gated transition in ThreadFeed: while browsing
-// history the animation must NOT run, or every estimate→actual size
-// correction plays as a visible slide against the instant scroll-offset
-// compensation from maintainVisibleContentPosition.
-const FEED_ITEM_LAYOUT_DURATION_MS = 180;
-
 // Pre-measurement heights for getFixedItemSize, mirroring renderFeedEntry's
 // classNames. The fold row's min-h-11 (44px) stays taller than its single
 // text-sm line at every supported base font size (26px at the 22pt maximum),
@@ -194,6 +179,13 @@ function isFreshTimestamp(input: string): boolean {
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ENTRY_WINDOW_MS;
 }
 
+export interface ThreadFeedHistoryControls {
+  readonly hasMoreHistory: boolean;
+  readonly loading: boolean;
+  readonly error: string | null;
+  readonly onLoadEarlier: () => void;
+}
+
 export interface ThreadFeedProps {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -210,6 +202,7 @@ export interface ThreadFeedProps {
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
+  readonly historyControls?: ThreadFeedHistoryControls;
   readonly topAccessory?: ReactNode;
   readonly contentMaxWidth?: number;
   readonly layoutVariant?: LayoutVariant;
@@ -1642,6 +1635,41 @@ function compactFileName(filePath: string): string {
   return lastSlashIndex >= 0 ? normalized.slice(lastSlashIndex + 1) : normalized;
 }
 
+function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
+  const mutedColor = useThemeColor("--color-icon-subtle");
+  const accentColor = useThemeColor("--color-primary");
+  if (!props.hasMoreHistory && props.error === null) {
+    return null;
+  }
+  return (
+    <View className="mb-3 items-center gap-1.5 px-2">
+      {props.hasMoreHistory ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Load earlier activity"
+          disabled={props.loading}
+          onPress={props.onLoadEarlier}
+          className="min-h-9 flex-row items-center justify-center gap-2 rounded-full border border-border/60 bg-surface/80 px-4 py-2 disabled:opacity-50"
+        >
+          {props.loading ? (
+            <ActivityIndicator size="small" color={accentColor} />
+          ) : (
+            <SymbolView name="chevron.up" size={12} tintColor={accentColor} type="monochrome" />
+          )}
+          <Text className="text-sm font-medium text-foreground">
+            {props.loading ? "Loading earlier activity…" : "Load earlier activity"}
+          </Text>
+        </Pressable>
+      ) : null}
+      {props.error !== null ? (
+        <Text className="text-center text-xs" style={{ color: mutedColor }}>
+          {props.error}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function ThreadFeedPlaceholder(props: {
   readonly bottomInset: number;
   readonly detail: string;
@@ -1891,11 +1919,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     },
     [props.onHeaderMaterialVisibilityChange],
   );
-  // True while the viewport sits within ~one screen of the list end — the
-  // only region where layout shifts should animate. Starts true because the
-  // list opens pinned to the end.
-  const nearListEnd = useSharedValue(true);
-
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       // anchorTopInset, not topContentInset: under automatic insets the list
@@ -1903,9 +1926,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // UIKit's adjustedContentInset, so topContentInset is 0 here). Add the
       // header height back or the material toggles a full header too late.
       reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
-      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-      nearListEnd.value =
-        contentSize.height - layoutMeasurement.height - contentOffset.y < layoutMeasurement.height;
       // LegendList recomputes its inset-aware end distance before invoking
       // this handler, so getState() is current. Only the actual end re-arms
       // follow: its broader maintain-scroll threshold is large enough for a
@@ -1921,13 +1941,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         });
       }
     },
-    [
-      reportHeaderMaterialVisibility,
-      anchorTopInset,
-      nearListEnd,
-      props.listRef,
-      transitionEndFollow,
-    ],
+    [reportHeaderMaterialVisibility, anchorTopInset, props.listRef, transitionEndFollow],
   );
   const clearUserScrollSettle = useCallback(() => {
     if (userScrollSettleTimerRef.current !== null) {
@@ -1999,33 +2013,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   }, [clearUserScrollSettle, props.anchorMessageId, transitionEndFollow]);
 
-  // Gated variant of the 180ms feed layout slide. Instant while browsing
-  // history: maintainVisibleContentPosition compensates the scroll offset in
-  // the same frame a row's measured size lands, so an instant reposition is
-  // invisible — animating it is exactly what made cold upward scrolls slide
-  // and jump. Near the end the slide stays on: streaming growth and sends
-  // shift rows at rest, where the animation is the thing preventing a hard
-  // visual snap.
-  const feedItemLayoutTransition = useMemo(() => {
-    return (values: LayoutAnimationsValues) => {
-      "worklet";
-      const duration = nearListEnd.value ? FEED_ITEM_LAYOUT_DURATION_MS : 0;
-      return {
-        initialValues: {
-          originX: values.currentOriginX,
-          originY: values.currentOriginY,
-          width: values.currentWidth,
-          height: values.currentHeight,
-        },
-        animations: {
-          originX: withTiming(values.targetOriginX, { duration }),
-          originY: withTiming(values.targetOriginY, { duration }),
-          width: withTiming(values.targetWidth, { duration }),
-          height: withTiming(values.targetHeight, { duration }),
-        },
-      };
-    };
-  }, [nearListEnd]);
   const handleViewportLayout = useCallback((event: LayoutChangeEvent) => {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
     const nextHeight = Math.round(event.nativeEvent.layout.height);
@@ -2378,7 +2365,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 }
               : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            itemLayoutAnimation={feedItemLayoutTransition}
             // Patched LegendList prop (patches/@legendapp__list@3.2.0.patch):
             // lets its scroll math clamp programmatic scrolls to -headerInset
             // instead of 0, so initialScrollAtEnd/maintainScrollAtEnd on short
@@ -2460,6 +2446,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {props.historyControls ? (
+                  <ThreadFeedLoadEarlierControl {...props.historyControls} />
+                ) : null}
                 {props.topAccessory}
               </>
             }

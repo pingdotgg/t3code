@@ -230,6 +230,45 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders progressive history controls ahead of the bounded timeline", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Recent activity")]}
+        historyControls={{
+          hasMoreHistory: true,
+          loading: false,
+          error: "Earlier activity could not be loaded.",
+          onLoadEarlier: () => {},
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Load earlier activity"');
+    expect(markup).toContain("Load earlier activity");
+    expect(markup).toContain("Earlier activity could not be loaded.");
+    expect(markup.indexOf("Load earlier activity")).toBeLessThan(markup.indexOf("Recent activity"));
+  });
+
+  it("keeps an empty bounded timeline actionable while earlier history loads", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[]}
+        historyControls={{
+          hasMoreHistory: true,
+          loading: true,
+          error: null,
+          onLoadEarlier: () => {},
+        }}
+      />,
+    );
+
+    expect(markup).toContain("Loading earlier activity…");
+    expect(markup).toContain("disabled");
+    expect(markup).not.toContain("Send a message to start the conversation.");
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 

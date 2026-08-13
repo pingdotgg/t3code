@@ -27,6 +27,7 @@
     "lint": "vp lint --report-unused-disable-directives",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
+    "test:perf:v2-wire": "vp test run apps/server/src/orchestration-v2/WireProjection.test.ts apps/server/src/orchestration-v2/threadHistoryPaging.test.ts apps/server/src/orchestration-v2/ThreadStream.test.ts apps/server/src/orchestration-v2/ShellStream.test.ts packages/contracts/src/environmentHttp.test.ts packages/contracts/src/orchestrationV2.test.ts packages/client-runtime/src/operations/commands.test.ts packages/client-runtime/src/state/boundedThreadSnapshotHttp.test.ts packages/client-runtime/src/state/threadHistoryController.test.ts packages/client-runtime/src/state/threadHistoryMerge.test.ts packages/client-runtime/src/state/threadDetail.test.ts packages/client-runtime/src/state/threads-sync.test.ts packages/client-runtime/src/state/shellReducer.test.ts",
     "test:resource-monitor": "cargo test --locked --manifest-path native/resource-monitor/Cargo.toml",
     "test:desktop-smoke": "vp run --filter @t3tools/desktop smoke-test",
     "fmt": "vp fmt",
