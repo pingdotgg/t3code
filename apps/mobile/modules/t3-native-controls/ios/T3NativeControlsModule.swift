@@ -87,16 +87,5 @@ public final class T3NativeControlsModule: Module {
       let readyPath = NSHomeDirectory() + "/Library/Caches/T3ShowcaseReadyScene"
       try? scene.write(toFile: readyPath, atomically: true, encoding: .utf8)
     }
-
-    View(T3HeaderButtonView.self) {
-      Prop("label") { (view: T3HeaderButtonView, label: String) in
-        view.setLabel(label)
-      }
-      Prop("systemImage") { (view: T3HeaderButtonView, systemImage: String) in
-        view.setSystemImage(systemImage)
-      }
-
-      Events("onTriggered")
-    }
   }
 }

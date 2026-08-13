@@ -32,16 +32,5 @@ class T3NativeControlsModule : Module() {
         ?.resolve("t3-showcase-ready")
         ?.writeText(scene)
     }
-
-    View(T3HeaderButtonView::class) {
-      Prop("label") { view: T3HeaderButtonView, label: String ->
-        view.setLabel(label)
-      }
-      Prop("systemImage") { view: T3HeaderButtonView, systemImage: String ->
-        view.setSystemImage(systemImage)
-      }
-
-      Events("onTriggered")
-    }
   }
 }
