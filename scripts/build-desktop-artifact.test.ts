@@ -44,10 +44,12 @@ import {
   resolveMockUpdateServerUrl,
   resolvePackageManagerUserAgent,
   stageLinuxIconSize,
+  stageWslNodePtyPrebuild,
   stageWslRuntimeArchive,
   STAGE_INSTALL_ARGS,
   WINDOWS_ASAR_UNPACK,
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCES,
+  WslNodePtyPrebuildRequiredError,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -596,6 +598,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "node_modules",
     ]);
   });
+  it.effect("rejects a Windows runtime archive without its Linux node-pty prebuild", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const stageAppDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-wsl-runtime-prebuild-test-",
+      });
+
+      const error = yield* stageWslNodePtyPrebuild({
+        stageAppDir,
+        arch: "x64",
+        prebuildPath: undefined,
+      }).pipe(Effect.flip);
+
+      assert.instanceOf(error, WslNodePtyPrebuildRequiredError);
+      assert.include(error.message, "--wsl-prebuild");
+      assert.include(error.message, "working WSL backend");
+    }).pipe(Effect.scoped),
+  );
   it.effect("stages the WSL runtime archive and its checksum", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

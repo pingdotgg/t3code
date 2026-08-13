@@ -442,6 +442,17 @@ export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslN
   }
 }
 
+export class WslNodePtyPrebuildRequiredError extends Schema.TaggedErrorClass<WslNodePtyPrebuildRequiredError>()(
+  "WslNodePtyPrebuildRequiredError",
+  {
+    arch: BuildArch,
+  },
+) {
+  override get message(): string {
+    return `Windows ${this.arch} artifacts require --wsl-prebuild <path-to-linux-pty.node> to ship a working WSL backend.`;
+  }
+}
+
 export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNodePtyManifestReadError>()(
   "WslNodePtyManifestReadError",
   {
@@ -1675,9 +1686,10 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
 // Linux CI job builds pty.node and hands it here. We drop it into the staged
 // node-pty's prebuilds/linux-<arch>/ with a t3code marker the WSL preflight
 // checks (arch + node-pty version; the binary is N-API, hence ABI-stable across
-// Node versions). A missing prebuild is a warning, not an error, so local and
-// non-Windows builds still succeed — they just won't ship a working WSL backend.
-const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (input: {
+// Node versions). This owner is called only for Windows artifacts, where a
+// missing prebuild must fail packaging rather than emit an installer whose WSL
+// backend cannot start.
+export const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (input: {
   readonly stageAppDir: string;
   readonly arch: typeof BuildArch.Type;
   readonly prebuildPath: string | undefined;
@@ -1686,10 +1698,7 @@ const stageWslNodePtyPrebuild = Effect.fn("stageWslNodePtyPrebuild")(function* (
   const path = yield* Path.Path;
 
   if (input.prebuildPath === undefined) {
-    yield* Effect.logWarning(
-      "[desktop-artifact] No WSL node-pty prebuild provided (--wsl-prebuild / T3CODE_DESKTOP_WSL_PREBUILD); the packaged WSL backend will not start until a Linux pty.node is bundled.",
-    );
-    return;
+    return yield* new WslNodePtyPrebuildRequiredError({ arch: input.arch });
   }
 
   // WSL runs the same CPU arch as the Windows host; universal is mac-only.
