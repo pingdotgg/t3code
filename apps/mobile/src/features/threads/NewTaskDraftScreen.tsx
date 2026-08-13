@@ -727,21 +727,24 @@ export function NewTaskDraftScreen(props: {
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
       ) ?? flow.selectedModel;
-    const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
-    const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
-    const selectedWorktreePath =
-      draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
+    // Resolve a startable workspace so the send is never blocked on a missing
+    // branch: a worktree with no branch picks the repo default (or falls back
+    // to a current-checkout thread when no branch is known).
+    const {
+      mode: workspaceMode,
+      branch: selectedBranchName,
+      worktreePath: selectedWorktreePath,
+    } = flow.resolveStartWorkspace({
+      mode: draft.workspaceSelection?.mode ?? flow.workspaceMode,
+      branch: draft.workspaceSelection?.branch ?? flow.selectedBranchName,
+      worktreePath: draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath,
+    });
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
     const interactionMode = draft.interactionMode ?? flow.interactionMode;
     const initialMessageText = draft.text.trim();
 
-    if (
-      !modelSelection ||
-      initialMessageText.length === 0 ||
-      flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
-    ) {
+    if (!modelSelection || initialMessageText.length === 0 || flow.submitting) {
       return;
     }
 
@@ -871,14 +874,18 @@ export function NewTaskDraftScreen(props: {
   // The settings sheet dismisses the keyboard, so its flag keeps the Android
   // draft composer expanded through the blur (mirrors ThreadComposer).
   const isExpanded = !isAndroid || isComposerFocused || settingsSheetPresentation.isActive;
+  // The send button is never disabled for configuration reasons: a worktree
+  // thread with no branch selected is resolved to a startable workspace at
+  // send time (see flow.resolveStartWorkspace), rather than dead-ending the
+  // button. It stays disabled only when there is nothing to send yet, no model
+  // is available, or an in-flight share import / submit is still settling.
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
     isIncomingShareReady &&
     !isImportingShare &&
-    !flow.submitting &&
-    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+    !flow.submitting;
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
