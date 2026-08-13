@@ -802,8 +802,8 @@ enum HomeThreadPullRequestResolution {
     private static let cacheLifetime: TimeInterval = 5 * 60
     private static let failureRetryDelay: TimeInterval = 10
 
-    private case resolved(HomeThreadPullRequestPresentation?, expiresAt: Date)
-    private case retryAfter(Date)
+    case resolved(HomeThreadPullRequestPresentation?, expiresAt: Date)
+    case retryAfter(Date)
 
     static func cached(_ presentation: HomeThreadPullRequestPresentation?, at date: Date) -> Self {
         .resolved(presentation, expiresAt: date.addingTimeInterval(cacheLifetime))
