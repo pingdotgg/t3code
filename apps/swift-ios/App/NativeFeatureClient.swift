@@ -2229,7 +2229,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func removeCachedApproval(id: String, threadID: String) {
         guard var detail = latestDetails[threadID] else { return }
-        detail.approvals.removeAll { $0.id == id }
+        if let cache = detailRenderCaches[threadID] {
+            cache.approvals.removeAll { $0.id == id }
+            detail.approvals = cache.approvals
+        } else {
+            detail.approvals.removeAll { $0.id == id }
+        }
         if detail.approvals.isEmpty, detail.thread.state == .waitingForApproval {
             detail.thread.state = detail.userInputs.isEmpty ? .idle : .waitingForInput
         }
@@ -2242,7 +2247,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func removeCachedInput(id: String, threadID: String) {
         guard var detail = latestDetails[threadID] else { return }
-        detail.userInputs.removeAll { $0.id == id }
+        if let cache = detailRenderCaches[threadID] {
+            cache.userInputs.removeAll { $0.id == id }
+            detail.userInputs = cache.userInputs
+        } else {
+            detail.userInputs.removeAll { $0.id == id }
+        }
         if detail.userInputs.isEmpty, detail.thread.state == .waitingForInput {
             detail.thread.state = detail.approvals.isEmpty ? .idle : .waitingForApproval
         }
@@ -3390,16 +3400,18 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let backgroundWorkIsActive = backgroundLiveness == .working
         let sessionIsLive = shellThread.session?.status == "starting"
             || shellThread.session?.status == "running"
+        let hasApprovals = shellThread.hasPendingApprovals || !detail.approvals.isEmpty
+        let hasUserInput = shellThread.hasPendingUserInput || !detail.userInputs.isEmpty
         detail.thread.state = Self.resolveThreadState(
             latestTurn: shellThread.latestTurn,
             session: shellThread.session,
-            hasApprovals: !detail.approvals.isEmpty,
-            hasUserInput: !detail.userInputs.isEmpty,
+            hasApprovals: hasApprovals,
+            hasUserInput: hasUserInput,
             backgroundLiveness: backgroundLiveness
         )
         detail.thread.settlementInput = FeatureSettlementProjectionInput(
-            hasPendingApprovals: !detail.approvals.isEmpty,
-            hasPendingUserInput: !detail.userInputs.isEmpty,
+            hasPendingApprovals: hasApprovals,
+            hasPendingUserInput: hasUserInput,
             sessionStatus: shellThread.session?.status,
             latestUserMessageAt: shellThread.latestUserMessageAt,
             latestTurnRequestedAt: shellThread.latestTurn?.requestedAt,
@@ -3965,16 +3977,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let backgroundWorkIsActive = backgroundLiveness == .working
         let sessionIsLive = thread.session?.status == "starting"
             || thread.session?.status == "running"
+        let shellThread = shellsByEnvironmentID[environment.id]?.threads
+            .first(where: { $0.id == thread.id })
+        let hasApprovals = shellThread?.hasPendingApprovals == true || !cache.approvals.isEmpty
+        let hasUserInput = shellThread?.hasPendingUserInput == true || !cache.userInputs.isEmpty
         mappedThread.state = Self.resolveThreadState(
             latestTurn: thread.latestTurn,
             session: thread.session,
-            hasApprovals: !cache.approvals.isEmpty,
-            hasUserInput: !cache.userInputs.isEmpty,
+            hasApprovals: hasApprovals,
+            hasUserInput: hasUserInput,
             backgroundLiveness: backgroundLiveness
         )
         mappedThread.settlementInput = mappedThread.settlementInput?.withPendingRequests(
-            approvals: !cache.approvals.isEmpty,
-            userInput: !cache.userInputs.isEmpty
+            approvals: hasApprovals,
+            userInput: hasUserInput
         )
         return FeatureThreadDetail(
             thread: mappedThread,

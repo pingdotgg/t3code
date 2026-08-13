@@ -137,6 +137,37 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testEmptyDetailPreservesShellPendingSettlementBlockers() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-one",
+                threadID: "thread-one",
+                title: "Pending work",
+                hasPendingApprovals: true,
+                hasPendingUserInput: true
+            ),
+            host: "one.example"
+        )
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(snapshot.threads.first(where: { $0.wireID == "thread-one" }))
+        XCTAssertFalse(thread.canSettle)
+
+        let detail = try await fixture.client.loadThread(id: thread.id)
+        XCTAssertEqual(detail.thread.state, .waitingForApproval)
+        XCTAssertFalse(detail.thread.canSettle)
+        XCTAssertFalse(
+            HomeThreadSwipeActions.allowsFullSwipe(
+                for: detail.thread,
+                isArchived: false,
+                now: .now
+            )
+        )
+        await fixture.client.disconnect()
+    }
+
     func testSnapshotKeepsRepositoryIdentityForCrossComputerProjectGrouping() async throws {
         let identity = RepositoryIdentity(
             canonicalKey: "github.com/t3/example",
@@ -812,7 +843,9 @@ private func multiEnvironmentShell(
     providerID: String = "codex",
     modelID: String = "gpt-5.6-sol",
     repositoryIdentity: RepositoryIdentity? = nil,
-    backgroundLiveness: OrchestrationBackgroundLiveness? = nil
+    backgroundLiveness: OrchestrationBackgroundLiveness? = nil,
+    hasPendingApprovals: Bool = false,
+    hasPendingUserInput: Bool = false
 ) -> OrchestrationShellSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     let model = ModelSelection(instanceId: providerID, model: modelID)
@@ -852,8 +885,8 @@ private func multiEnvironmentShell(
                 pinnedAt: nil,
                 session: nil,
                 latestUserMessageAt: nil,
-                hasPendingApprovals: false,
-                hasPendingUserInput: false,
+                hasPendingApprovals: hasPendingApprovals,
+                hasPendingUserInput: hasPendingUserInput,
                 hasActionableProposedPlan: false,
                 backgroundLiveness: backgroundLiveness
             ),
