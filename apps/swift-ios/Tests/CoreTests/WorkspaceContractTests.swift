@@ -8,6 +8,7 @@ final class WorkspaceContractTests: XCTestCase {
             """
             {
               "_tag": "snapshot",
+              "generation": 7,
               "local": {
                 "isRepo": true,
                 "sourceControlProvider": {
@@ -37,9 +38,10 @@ final class WorkspaceContractTests: XCTestCase {
         )
 
         let event = try JSONDecoder.t3.decode(VCSStatusEvent.self, from: data)
-        guard case let .snapshot(local, remote) = event else {
+        guard case let .snapshot(generation, local, remote) = event else {
             return XCTFail("Expected snapshot")
         }
+        XCTAssertEqual(generation, 7)
         XCTAssertEqual(local.refName, "feat/swift")
         XCTAssertEqual(local.workingTree.files.first?.insertions, 12)
         XCTAssertEqual(remote?.aheadCount, 1)

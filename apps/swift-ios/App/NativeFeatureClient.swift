@@ -1872,6 +1872,40 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {
         let route = try threadRoute(for: threadID)
         let context = try workspaceContext(route: route)
+        let cached = try await withThrowingTaskGroup(of: FeatureSourceControlStatus?.self) { group in
+            group.addTask {
+                let events = await route.client.vcsStatusEvents(cwd: context.cwd)
+                var accumulator = NativeSourceControlStatusAccumulator()
+                do {
+                    for try await event in events {
+                        if let status = accumulator.consume(event) { return status }
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    try Task.checkCancellation()
+                    return nil
+                }
+                try Task.checkCancellation()
+                return nil
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(2))
+                return nil
+            }
+
+            let result = try await group.next() ?? nil
+            group.cancelAll()
+            return result
+        }
+        if let cached { return cached }
+        try Task.checkCancellation()
+        return try await refreshSourceControlStatus(threadID: threadID)
+    }
+
+    func refreshSourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {
+        let route = try threadRoute(for: threadID)
+        let context = try workspaceContext(route: route)
         return NativeWorkspaceMapper.sourceControl(
             try await route.client.refreshVCSStatus(cwd: context.cwd)
         )

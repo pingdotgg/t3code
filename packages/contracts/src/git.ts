@@ -241,13 +241,16 @@ export type VcsStatusResult = typeof VcsStatusResult.Type;
 
 export const VcsStatusStreamEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
+    generation: NonNegativeInt,
     local: VcsStatusLocalResult,
     remote: Schema.NullOr(VcsStatusRemoteResult),
   }),
   Schema.TaggedStruct("localUpdated", {
+    generation: NonNegativeInt,
     local: VcsStatusLocalResult,
   }),
   Schema.TaggedStruct("remoteUpdated", {
+    generation: NonNegativeInt,
     remote: Schema.NullOr(VcsStatusRemoteResult),
   }),
 ]);

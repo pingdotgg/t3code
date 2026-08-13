@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsStatusStreamEvent,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +17,25 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeStatusStreamEvent = Schema.decodeUnknownSync(VcsStatusStreamEvent);
+
+describe("VcsStatusStreamEvent", () => {
+  it("requires a generation on status updates", () => {
+    expect(() =>
+      decodeStatusStreamEvent({
+        _tag: "remoteUpdated",
+        remote: null,
+      }),
+    ).toThrow();
+    expect(
+      decodeStatusStreamEvent({
+        _tag: "remoteUpdated",
+        generation: 3,
+        remote: null,
+      }),
+    ).toEqual({ _tag: "remoteUpdated", generation: 3, remote: null });
+  });
+});
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {

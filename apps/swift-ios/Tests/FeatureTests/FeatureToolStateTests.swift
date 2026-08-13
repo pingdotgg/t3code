@@ -3,6 +3,75 @@ import Testing
 
 @Suite("Thread tool state")
 struct FeatureToolStateTests {
+    private func vcsLocal(refName: String, hasPrimaryRemote: Bool = true) -> VCSLocalStatus {
+        VCSLocalStatus(
+            isRepo: true,
+            sourceControlProvider: nil,
+            hasPrimaryRemote: hasPrimaryRemote,
+            isDefaultRef: false,
+            refName: refName,
+            hasWorkingTreeChanges: false,
+            workingTree: VCSWorkingTree(files: [], insertions: 0, deletions: 0)
+        )
+    }
+
+    private func vcsRemote(aheadCount: Int) -> VCSRemoteStatus {
+        VCSRemoteStatus(
+            hasUpstream: true,
+            aheadCount: aheadCount,
+            behindCount: 0,
+            aheadOfDefaultCount: nil,
+            pr: nil
+        )
+    }
+
+    @Test
+    func cachedSourceControlWaitsForRemoteWhenRepositoryHasPrimaryRemote() {
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        let status = accumulator.consume(
+            .snapshot(generation: 1, local: vcsLocal(refName: "feature/a"), remote: nil)
+        )
+
+        #expect(status == nil)
+    }
+
+    @Test
+    func cachedSourceControlRejectsLateRemoteFromPreviousRef() {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                generation: 1,
+                local: vcsLocal(refName: "feature/a"),
+                remote: vcsRemote(aheadCount: 4)
+            )
+        )
+        _ = accumulator.consume(
+            .localUpdated(generation: 2, local: vcsLocal(refName: "feature/b"))
+        )
+
+        let status = accumulator.consume(
+            .remoteUpdated(generation: 1, remote: vcsRemote(aheadCount: 4))
+        )
+
+        #expect(status == nil)
+    }
+
+    @Test
+    func cachedSourceControlAcceptsRemoteForCurrentRefGeneration() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(generation: 2, local: vcsLocal(refName: "feature/b"), remote: nil)
+        )
+
+        let status = try #require(
+            accumulator.consume(.remoteUpdated(generation: 2, remote: vcsRemote(aheadCount: 2)))
+        )
+
+        #expect(status.branch == "feature/b")
+        #expect(status.aheadCount == 2)
+    }
+
     @Test
     func fileFilteringKeepsDirectoriesFirstAndHonorsHiddenFiles() {
         let entries = [

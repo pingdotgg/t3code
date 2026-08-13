@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  applyGitStatusStreamState,
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
@@ -110,7 +111,9 @@ describe("applyGitStatusStreamEvent", () => {
       pr: null,
     };
 
-    expect(applyGitStatusStreamEvent(null, { _tag: "remoteUpdated", remote })).toEqual({
+    expect(
+      applyGitStatusStreamEvent(null, { _tag: "remoteUpdated", generation: 0, remote }),
+    ).toEqual({
       isRepo: true,
       hasPrimaryRemote: false,
       isDefaultRef: false,
@@ -154,12 +157,83 @@ describe("applyGitStatusStreamEvent", () => {
       pr: null,
     };
 
-    expect(applyGitStatusStreamEvent(current, { _tag: "remoteUpdated", remote })).toEqual({
+    expect(
+      applyGitStatusStreamEvent(current, { _tag: "remoteUpdated", generation: 0, remote }),
+    ).toEqual({
       ...current,
       hasUpstream: true,
       aheadCount: 2,
       behindCount: 1,
       pr: null,
     });
+  });
+});
+
+describe("applyGitStatusStreamState", () => {
+  const local = {
+    isRepo: true,
+    hasPrimaryRemote: true,
+    isDefaultRef: false,
+    refName: "feature/new-ref",
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+  } as const;
+  const remote: VcsStatusRemoteResult = {
+    hasUpstream: true,
+    aheadCount: 2,
+    behindCount: 1,
+    pr: null,
+  };
+
+  it("clears remote state when a newer local generation arrives", () => {
+    const initial = applyGitStatusStreamState(null, {
+      _tag: "snapshot",
+      generation: 1,
+      local: { ...local, refName: "feature/old-ref" },
+      remote,
+    });
+    const updated = applyGitStatusStreamState(initial, {
+      _tag: "localUpdated",
+      generation: 2,
+      local,
+    });
+
+    expect(updated?.status.refName).toBe("feature/new-ref");
+    expect(updated?.status.aheadCount).toBe(0);
+    expect(updated?.status.pr).toBeNull();
+  });
+
+  it("rejects a late remote update from an older generation", () => {
+    const current = applyGitStatusStreamState(null, {
+      _tag: "snapshot",
+      generation: 2,
+      local,
+      remote: null,
+    });
+
+    expect(
+      applyGitStatusStreamState(current, {
+        _tag: "remoteUpdated",
+        generation: 1,
+        remote,
+      }),
+    ).toEqual(current);
+  });
+
+  it("accepts a remote update for the current generation", () => {
+    const current = applyGitStatusStreamState(null, {
+      _tag: "snapshot",
+      generation: 2,
+      local,
+      remote: null,
+    });
+    const updated = applyGitStatusStreamState(current, {
+      _tag: "remoteUpdated",
+      generation: 2,
+      remote,
+    });
+
+    expect(updated?.status.aheadCount).toBe(2);
+    expect(updated?.status.behindCount).toBe(1);
   });
 });

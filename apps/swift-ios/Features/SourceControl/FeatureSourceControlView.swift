@@ -41,7 +41,9 @@ public struct FeatureSourceControlView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
+                Button { Task { await load(refresh: true) } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
                     .disabled(isLoading || isRunningAction)
                     .accessibilityLabel("Reload source control")
             }
@@ -60,7 +62,7 @@ public struct FeatureSourceControlView: View {
             }
             .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .task { await load() }
+        .task { await load(refresh: false) }
     }
 
     private func statusList(_ status: FeatureSourceControlStatus) -> some View {
@@ -131,7 +133,7 @@ public struct FeatureSourceControlView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .refreshable { await load() }
+        .refreshable { await load(refresh: true) }
         .overlay {
             if isRunningAction {
                 ProgressView()
@@ -150,11 +152,15 @@ public struct FeatureSourceControlView: View {
         }
     }
 
-    private func load() async {
+    private func load(refresh: Bool) async {
         isLoading = true
         defer { isLoading = false }
         do {
-            status = try await client.sourceControlStatus(threadID: threadID)
+            status = if refresh {
+                try await client.refreshSourceControlStatus(threadID: threadID)
+            } else {
+                try await client.sourceControlStatus(threadID: threadID)
+            }
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

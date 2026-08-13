@@ -358,11 +358,11 @@ public struct VCSStatus: Codable, Equatable, Sendable {
 }
 
 public enum VCSStatusEvent: Decodable, Sendable {
-    case snapshot(local: VCSLocalStatus, remote: VCSRemoteStatus?)
-    case localUpdated(VCSLocalStatus)
-    case remoteUpdated(VCSRemoteStatus?)
+    case snapshot(generation: Int, local: VCSLocalStatus, remote: VCSRemoteStatus?)
+    case localUpdated(generation: Int, local: VCSLocalStatus)
+    case remoteUpdated(generation: Int, remote: VCSRemoteStatus?)
 
-    private enum CodingKeys: String, CodingKey { case _tag, local, remote }
+    private enum CodingKeys: String, CodingKey { case _tag, generation, local, remote }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -370,14 +370,19 @@ public enum VCSStatusEvent: Decodable, Sendable {
         switch tag {
         case "snapshot":
             self = .snapshot(
+                generation: try container.decode(Int.self, forKey: .generation),
                 local: try container.decode(VCSLocalStatus.self, forKey: .local),
                 remote: try container.decodeIfPresent(VCSRemoteStatus.self, forKey: .remote)
             )
         case "localUpdated":
-            self = .localUpdated(try container.decode(VCSLocalStatus.self, forKey: .local))
+            self = .localUpdated(
+                generation: try container.decode(Int.self, forKey: .generation),
+                local: try container.decode(VCSLocalStatus.self, forKey: .local)
+            )
         case "remoteUpdated":
             self = .remoteUpdated(
-                try container.decodeIfPresent(VCSRemoteStatus.self, forKey: .remote)
+                generation: try container.decode(Int.self, forKey: .generation),
+                remote: try container.decodeIfPresent(VCSRemoteStatus.self, forKey: .remote)
             )
         default:
             throw DecodingError.dataCorruptedError(

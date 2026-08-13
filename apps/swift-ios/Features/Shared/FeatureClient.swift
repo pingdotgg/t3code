@@ -116,6 +116,7 @@ public protocol FeatureClient: AnyObject {
     ) async throws -> FeatureReviewFileContents?
 
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus
+    func refreshSourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus
     func performSourceControlAction(
         threadID: String,
         action: FeatureSourceControlAction,
@@ -328,6 +329,10 @@ public extension FeatureClient {
 
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {
         throw FeatureCapabilityUnavailable("Source control")
+    }
+
+    func refreshSourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus {
+        try await sourceControlStatus(threadID: threadID)
     }
 
     func performSourceControlAction(

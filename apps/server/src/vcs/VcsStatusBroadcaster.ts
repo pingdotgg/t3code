@@ -124,9 +124,14 @@ interface CachedValue<T> {
   readonly value: T;
 }
 
+interface CachedRemoteStatus extends CachedValue<VcsStatusRemoteResult | null> {
+  readonly generation: number;
+}
+
 interface CachedVcsStatus {
+  readonly generation: number;
   readonly local: CachedValue<VcsStatusLocalResult> | null;
-  readonly remote: CachedValue<VcsStatusRemoteResult | null> | null;
+  readonly remote: CachedRemoteStatus | null;
 }
 
 interface ActiveRemotePoller {
@@ -174,6 +179,10 @@ function fingerprintStatusPart(status: unknown): string {
   return JSON.stringify(status);
 }
 
+function localStatusIdentity(status: VcsStatusLocalResult): string {
+  return JSON.stringify({ isRepo: status.isRepo, refName: status.refName });
+}
+
 const normalizeCwd = (cwd: string) =>
   Effect.service(FileSystem.FileSystem).pipe(
     Effect.flatMap((fs) => fs.realPath(cwd)),
@@ -206,21 +215,39 @@ export const make = Effect.gen(function* () {
         fingerprint: fingerprintStatusPart(local),
         value: local,
       } satisfies CachedValue<VcsStatusLocalResult>;
-      const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
-        const previous = cache.get(cwd) ?? { local: null, remote: null };
+      const update = yield* Ref.modify(cacheRef, (cache) => {
+        const previous = cache.get(cwd) ?? { generation: 0, local: null, remote: null };
+        const refChanged =
+          previous.local !== null &&
+          localStatusIdentity(previous.local.value) !== localStatusIdentity(local);
+        const generation = previous.generation + (refChanged ? 1 : 0);
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
+          generation,
           local: nextLocal,
+          remote: refChanged ? null : previous.remote,
         });
-        return [previous.local?.fingerprint !== nextLocal.fingerprint, nextCache] as const;
+        return [
+          {
+            generation,
+            refChanged,
+            shouldPublish: previous.local?.fingerprint !== nextLocal.fingerprint,
+          },
+          nextCache,
+        ] as const;
       });
 
-      if (options?.publish && shouldPublish) {
+      if (update.refChanged) {
+        yield* workflow.invalidateRemoteStatus(cwd);
+      }
+
+      if (options?.publish && update.shouldPublish) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
           event: {
             _tag: "localUpdated",
+            generation: update.generation,
             local,
           },
         });
@@ -231,32 +258,50 @@ export const make = Effect.gen(function* () {
   );
 
   const updateCachedRemoteStatus = Effect.fn("VcsStatusBroadcaster.updateCachedRemoteStatus")(
-    function* (cwd: string, remote: VcsStatusRemoteResult | null, options?: { publish?: boolean }) {
+    function* (
+      cwd: string,
+      remote: VcsStatusRemoteResult | null,
+      generation: number,
+      options?: { publish?: boolean },
+    ) {
       const nextRemote = {
+        generation,
         fingerprint: fingerprintStatusPart(remote),
         value: remote,
-      } satisfies CachedValue<VcsStatusRemoteResult | null>;
-      const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
-        const previous = cache.get(cwd) ?? { local: null, remote: null };
+      } satisfies CachedRemoteStatus;
+      const update = yield* Ref.modify(cacheRef, (cache) => {
+        const previous = cache.get(cwd) ?? { generation: 0, local: null, remote: null };
+        if (previous.local === null || previous.generation !== generation) {
+          return [{ accepted: false, shouldPublish: false }, cache] as const;
+        }
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
           remote: nextRemote,
         });
-        return [previous.remote?.fingerprint !== nextRemote.fingerprint, nextCache] as const;
+        return [
+          {
+            accepted: true,
+            shouldPublish:
+              previous.remote?.generation !== generation ||
+              previous.remote.fingerprint !== nextRemote.fingerprint,
+          },
+          nextCache,
+        ] as const;
       });
 
-      if (options?.publish && shouldPublish) {
+      if (options?.publish && update.shouldPublish) {
         yield* PubSub.publish(changesPubSub, {
           cwd,
           event: {
             _tag: "remoteUpdated",
+            generation,
             remote,
           },
         });
       }
 
-      return remote;
+      return update.accepted;
     },
   );
 
@@ -270,29 +315,41 @@ export const make = Effect.gen(function* () {
       fingerprint: fingerprintStatusPart(local),
       value: local,
     } satisfies CachedValue<VcsStatusLocalResult>;
-    const nextRemote = {
-      fingerprint: fingerprintStatusPart(remote),
-      value: remote,
-    } satisfies CachedValue<VcsStatusRemoteResult | null>;
-    const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
-      const previous = cache.get(cwd) ?? { local: null, remote: null };
+    const update = yield* Ref.modify(cacheRef, (cache) => {
+      const previous = cache.get(cwd) ?? { generation: 0, local: null, remote: null };
+      const refChanged =
+        previous.local !== null &&
+        localStatusIdentity(previous.local.value) !== localStatusIdentity(local);
+      const generation = previous.generation + (refChanged ? 1 : 0);
+      const nextRemote = {
+        generation,
+        fingerprint: fingerprintStatusPart(remote),
+        value: remote,
+      } satisfies CachedRemoteStatus;
       const nextCache = new Map(cache);
       nextCache.set(cwd, {
+        generation,
         local: nextLocal,
         remote: nextRemote,
       });
       return [
-        previous.local?.fingerprint !== nextLocal.fingerprint ||
-          previous.remote?.fingerprint !== nextRemote.fingerprint,
+        {
+          generation,
+          shouldPublish:
+            previous.local?.fingerprint !== nextLocal.fingerprint ||
+            previous.remote?.generation !== generation ||
+            previous.remote.fingerprint !== nextRemote.fingerprint,
+        },
         nextCache,
       ] as const;
     });
 
-    if (options?.publish && shouldPublish) {
+    if (options?.publish && update.shouldPublish) {
       yield* PubSub.publish(changesPubSub, {
         cwd,
         event: {
           _tag: "snapshot",
+          generation: update.generation,
           local,
           remote,
         },
@@ -326,7 +383,7 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
     const cached = yield* getCachedStatus(cwd);
-    if (cached?.local && cached.remote) {
+    if (cached?.local && cached.remote?.generation === cached.generation) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
     const [local, remote] = yield* Effect.all(
@@ -361,8 +418,11 @@ export const make = Effect.gen(function* () {
     if (options?.refreshUpstream !== false) {
       yield* workflow.invalidateRemoteStatus(cwd);
     }
+    yield* getOrLoadLocalStatus(cwd);
+    const generation = (yield* getCachedStatus(cwd))?.generation ?? 0;
     const remote = yield* workflow.remoteStatus({ cwd }, options);
-    return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+    yield* updateCachedRemoteStatus(cwd, remote, generation, { publish: true });
+    return remote;
   });
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
@@ -560,7 +620,9 @@ export const make = Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
-        const initialRemote = cachedStatus?.remote?.value ?? null;
+        const generation = cachedStatus?.generation ?? 0;
+        const initialRemote =
+          cachedStatus?.remote?.generation === generation ? cachedStatus.remote.value : null;
         yield* retainRemotePoller(
           cwd,
           input.cwd,
@@ -574,6 +636,7 @@ export const make = Effect.gen(function* () {
         return Stream.concat(
           Stream.make({
             _tag: "snapshot" as const,
+            generation,
             local: initialLocal,
             remote: initialRemote,
           }),

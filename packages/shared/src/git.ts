@@ -283,3 +283,43 @@ export function applyGitStatusStreamEvent(
       return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
   }
 }
+
+export interface GitStatusStreamState {
+  readonly generation: number;
+  readonly status: VcsStatusResult;
+}
+
+export function applyGitStatusStreamState(
+  current: GitStatusStreamState | null,
+  event: VcsStatusStreamEvent,
+): GitStatusStreamState | null {
+  if (current !== null && event.generation < current.generation) {
+    return current;
+  }
+
+  switch (event._tag) {
+    case "snapshot":
+      return {
+        generation: event.generation,
+        status: mergeGitStatusParts(event.local, event.remote),
+      };
+    case "localUpdated": {
+      const remote =
+        current !== null && current.generation === event.generation
+          ? toRemoteStatusPart(current.status)
+          : null;
+      return {
+        generation: event.generation,
+        status: mergeGitStatusParts(event.local, remote),
+      };
+    }
+    case "remoteUpdated":
+      if (current === null || current.generation !== event.generation) {
+        return current;
+      }
+      return {
+        generation: event.generation,
+        status: mergeGitStatusParts(toLocalStatusPart(current.status), event.remote),
+      };
+  }
+}

@@ -90,6 +90,30 @@ enum NativeWorkspaceMapper {
         )
     }
 
+    static func sourceControl(
+        local: VCSLocalStatus,
+        remote: VCSRemoteStatus?
+    ) -> FeatureSourceControlStatus? {
+        guard !local.hasPrimaryRemote || remote != nil else { return nil }
+        return FeatureSourceControlStatus(
+            isRepository: local.isRepo,
+            branch: local.refName,
+            aheadCount: remote?.aheadCount ?? 0,
+            behindCount: remote?.behindCount ?? 0,
+            files: local.workingTree.files.map {
+                FeatureSourceControlFile(path: $0.path, state: .modified, isStaged: false)
+            },
+            pullRequest: remote?.pr.map {
+                FeaturePullRequest(
+                    number: $0.number,
+                    title: $0.title,
+                    state: $0.state,
+                    url: URL(string: $0.url)
+                )
+            }
+        )
+    }
+
     static func gitAction(_ action: FeatureSourceControlAction) -> GitStackedAction {
         switch action {
         case .commit: .commit
@@ -340,5 +364,32 @@ enum NativeWorkspaceMapper {
                 .first
                 ?? ""
         )
+    }
+}
+
+struct NativeSourceControlStatusAccumulator {
+    private var generation: Int?
+    private var local: VCSLocalStatus?
+    private var remote: VCSRemoteStatus?
+
+    mutating func consume(_ event: VCSStatusEvent) -> FeatureSourceControlStatus? {
+        switch event {
+        case let .snapshot(nextGeneration, nextLocal, nextRemote):
+            if let generation, nextGeneration < generation { break }
+            generation = nextGeneration
+            local = nextLocal
+            remote = nextRemote
+        case let .localUpdated(nextGeneration, nextLocal):
+            if let generation, nextGeneration < generation { break }
+            if generation != nextGeneration { remote = nil }
+            generation = nextGeneration
+            local = nextLocal
+        case let .remoteUpdated(nextGeneration, nextRemote):
+            guard generation == nextGeneration else { break }
+            remote = nextRemote
+        }
+
+        guard let local else { return nil }
+        return NativeWorkspaceMapper.sourceControl(local: local, remote: remote)
     }
 }
