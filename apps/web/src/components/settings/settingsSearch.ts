@@ -104,6 +104,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "auto-settle-merged-threads",
+    title: "Auto-settle merged threads",
+    to: "/settings/general",
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
