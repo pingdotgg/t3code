@@ -524,8 +524,10 @@ export const make = Effect.gen(function* () {
         return;
       }
 
-      const x = Math.trunc(params.x);
-      const y = Math.trunc(params.y);
+      // Electron reports window coordinates; DOM hit-testing expects zoom-adjusted CSS pixels.
+      const zoomFactor = window.webContents.getZoomFactor();
+      const x = Math.trunc(params.x / zoomFactor);
+      const y = Math.trunc(params.y / zoomFactor);
       void params.frame
         .executeJavaScript(
           `document.elementFromPoint(${x}, ${y})?.closest("[data-composer-stash]") !== null`,

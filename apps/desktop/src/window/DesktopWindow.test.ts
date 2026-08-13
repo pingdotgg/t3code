@@ -64,6 +64,7 @@ function makeFakeBrowserWindow() {
   const webContents = {
     copyImageAt: vi.fn(),
     getURL: vi.fn(() => "t3code-dev://app/"),
+    getZoomFactor: vi.fn(() => 1),
     isLoadingMainFrame: vi.fn(() => false),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
@@ -107,6 +108,7 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
+    getZoomFactor: webContents.getZoomFactor,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
     isMaximized: window.isMaximized,
@@ -519,9 +521,10 @@ describe("DesktopWindow", () => {
         }
 
         const executeJavaScript = vi.fn(() => Promise.resolve(true));
+        fakeWindow.getZoomFactor.mockReturnValue(1.5);
         const params = {
-          x: 40,
-          y: 60,
+          x: 60,
+          y: 90,
           frame: { executeJavaScript },
           isEditable: true,
           misspelledWord: "",
