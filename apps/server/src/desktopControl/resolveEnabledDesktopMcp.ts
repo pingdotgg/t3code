@@ -15,6 +15,32 @@ export type DesktopMcpLaunch = {
   readonly env: ReadonlyArray<{ readonly name: string; readonly value: string }>;
 };
 
+type DesktopControlFlags = {
+  readonly enabled: boolean;
+  readonly agentCursorEnabled: boolean;
+  readonly browserControlEnabled: boolean;
+};
+
+const disabledDesktopControl = {
+  enabled: false,
+  agentCursorEnabled: false,
+  browserControlEnabled: false,
+} as const satisfies DesktopControlFlags;
+
+/**
+ * Always acquire `ServerSettingsService` from the Effect environment (never
+ * `Effect.serviceOption`). Callers that need R=never session methods should use
+ * `makeResolveEnabledDesktopMcp` instead of yielding this effect directly.
+ */
+const readDesktopControlFlags = Effect.fn("desktopControl.readDesktopControlFlags")(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  return yield* settings.getSettings.pipe(
+    Effect.map((snapshot): DesktopControlFlags => snapshot.desktopControl),
+    // Fail closed: never inject desktop MCP when we cannot confirm enablement.
+    Effect.orElseSucceed((): DesktopControlFlags => disabledDesktopControl),
+  );
+});
+
 export const resolveEnabledDesktopMcp = Effect.fn("desktopControl.resolveEnabledDesktopMcp")(
   function* () {
     const path = yield* resolveDesktopMcpPath();
@@ -22,18 +48,7 @@ export const resolveEnabledDesktopMcp = Effect.fn("desktopControl.resolveEnabled
       return undefined;
     }
 
-    const settings = yield* ServerSettings.ServerSettingsService;
-    const desktopControl = yield* settings.getSettings.pipe(
-      Effect.map((snapshot) => snapshot.desktopControl),
-      // Fail closed: never inject desktop MCP when we cannot confirm the user
-      // still has Computer Use enabled.
-      Effect.orElseSucceed(() => ({
-        enabled: false,
-        agentCursorEnabled: false,
-        browserControlEnabled: false,
-      })),
-    );
-
+    const desktopControl = yield* readDesktopControlFlags();
     if (!desktopControl.enabled) {
       return undefined;
     }
