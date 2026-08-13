@@ -70,7 +70,10 @@ import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
 } from "./ThreadSettingsSheet";
-import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
+import {
+  useThreadSettingsSheetPresentation,
+  type NavigationWithFinishTransitioning,
+} from "./use-thread-settings-sheet-presentation";
 
 /**
  * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
@@ -273,7 +276,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: inputRef,
     isEditorFocused: isFocused,
-    keepEditorFocused: true,
   });
   const settingsRoutePresentation = useExistingThreadSettingsRoutePresentation();
   const settingsRoutePresentedRef = useRef(false);
@@ -633,8 +635,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         props.onUpdateModelSelection({ ...currentModelSelection, options }),
       runtimeMode: currentRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
-      onDismissalStart: settingsSheetPresentation.beginDismissalFocusRestore,
-      onDismissalCancel: settingsSheetPresentation.cancelDismissalFocusRestore,
     }),
     [
       currentModelSelection,
@@ -643,8 +643,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.onUpdateRuntimeMode,
       providerOptionDescriptors,
       settingsOwnerId,
-      settingsSheetPresentation.beginDismissalFocusRestore,
-      settingsSheetPresentation.cancelDismissalFocusRestore,
       threadProviderGroups,
     ],
   );
@@ -678,6 +676,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       settingsSheetPresentation.onDismissed();
       settingsRoutePresentation.clear(settingsOwnerId);
     }, [settingsOwnerId, settingsRoutePresentation.clear, settingsSheetPresentation.onDismissed]),
+  );
+
+  useEffect(
+    () =>
+      // UIKit's completion callback for the sheet dismissal, surfaced by the
+      // native-stack patch. This is when the queued keyboard restore runs.
+      (navigation as unknown as NavigationWithFinishTransitioning).addListener(
+        "finishTransitioning",
+        settingsSheetPresentation.onStackTransitionsFinished,
+      ),
+    [navigation, settingsSheetPresentation.onStackTransitionsFinished],
   );
 
   return (

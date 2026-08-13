@@ -34,7 +34,10 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ComposerSurface } from "./ThreadComposer";
-import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
+import {
+  useThreadSettingsSheetPresentation,
+  type NavigationWithFinishTransitioning,
+} from "./use-thread-settings-sheet-presentation";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { convertPastedImagesToAttachments, pickComposerImages } from "../../lib/composerImages";
@@ -53,7 +56,6 @@ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/re
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
-import { useNewTaskSettingsTransition } from "./new-task-settings-transition";
 import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import {
@@ -96,7 +98,6 @@ export function NewTaskDraftScreen(props: {
   const createProjectThread = useCreateProjectThread();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
-  const settingsTransition = useNewTaskSettingsTransition();
   const {
     consumeShare,
     getShare,
@@ -125,7 +126,6 @@ export function NewTaskDraftScreen(props: {
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: promptInputRef,
     isEditorFocused: isComposerFocused,
-    keepEditorFocused: true,
   });
   useEffect(() => {
     if (Platform.OS !== "ios") {
@@ -150,18 +150,6 @@ export function NewTaskDraftScreen(props: {
     settingsRoutePresentedRef.current = true;
     navigation.dispatch(StackActions.push("ThreadSettings"));
   }, [navigation, settingsSheetPresentation.isVisible]);
-  useEffect(
-    () =>
-      settingsTransition.registerHandlers({
-        onDismissalStart: settingsSheetPresentation.beginDismissalFocusRestore,
-        onDismissalCancel: settingsSheetPresentation.cancelDismissalFocusRestore,
-      }),
-    [
-      settingsTransition,
-      settingsSheetPresentation.beginDismissalFocusRestore,
-      settingsSheetPresentation.cancelDismissalFocusRestore,
-    ],
-  );
   useFocusEffect(
     useCallback(() => {
       if (!settingsRoutePresentedRef.current) {
@@ -171,6 +159,16 @@ export function NewTaskDraftScreen(props: {
       settingsRoutePresentedRef.current = false;
       settingsSheetPresentation.onDismissed();
     }, [settingsSheetPresentation.onDismissed]),
+  );
+  useEffect(
+    () =>
+      // UIKit's completion callback for the sheet dismissal, surfaced by the
+      // native-stack patch. This is when the queued keyboard restore runs.
+      (navigation as unknown as NavigationWithFinishTransitioning).addListener(
+        "finishTransitioning",
+        settingsSheetPresentation.onStackTransitionsFinished,
+      ),
+    [navigation, settingsSheetPresentation.onStackTransitionsFinished],
   );
   const [importingShareKey, setImportingShareKey] = useState<string | null>(null);
   const [isCancellingShareImport, setIsCancellingShareImport] = useState(false);
@@ -1035,7 +1033,6 @@ export function NewTaskDraftScreen(props: {
         {heroViewport}
 
         <KeyboardStickyView
-          enabled={isKeyboardVisible}
           style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
           offset={{ closed: 0, opened: keyboardOpenedOffset }}
         >
@@ -1064,7 +1061,6 @@ export function NewTaskDraftScreen(props: {
 
       {heroViewport}
       <KeyboardStickyView
-        enabled={isKeyboardVisible}
         style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
         offset={{ closed: 0, opened: keyboardOpenedOffset }}
       >

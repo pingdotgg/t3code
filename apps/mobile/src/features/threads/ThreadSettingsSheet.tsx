@@ -51,7 +51,6 @@ import {
   NATIVE_SHEET_SURFACE_CONTENT_STYLE,
 } from "../../native/sheet-surface";
 import { useNewTaskFlow } from "./new-task-flow-provider";
-import { useNewTaskSettingsTransition } from "./new-task-settings-transition";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
@@ -296,8 +295,6 @@ type ThreadSettingsSessionProps = {
 
 export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
   readonly ownerId: string;
-  readonly onDismissalStart: () => void;
-  readonly onDismissalCancel: () => void;
 };
 
 type ExistingThreadSettingsRouteContextValue = {
@@ -1196,35 +1193,11 @@ export function ExistingThreadSettingsRouteScreen() {
     navigation.goBack();
   }, [navigation, session]);
 
-  useEffect(() => {
-    if (!session) {
-      return;
-    }
-
-    const removeTransitionStart = navigation.addListener("transitionStart", (event) => {
-      if (event.data.closing) {
-        session.onDismissalStart();
-      }
-    });
-    const removeGestureCancel = navigation.addListener("gestureCancel", () => {
-      session.onDismissalCancel();
-    });
-    return () => {
-      removeTransitionStart();
-      removeGestureCancel();
-    };
-  }, [navigation, session]);
-
   if (!session) {
     return <View className="flex-1 bg-sheet" />;
   }
 
-  const {
-    ownerId: _ownerId,
-    onDismissalStart: _onDismissalStart,
-    onDismissalCancel: _onDismissalCancel,
-    ...settings
-  } = session;
+  const { ownerId: _ownerId, ...settings } = session;
 
   return (
     <ThreadSettingsSessionProvider {...settings}>
@@ -1241,7 +1214,6 @@ export function ExistingThreadSettingsRouteScreen() {
 export function NewTaskThreadSettingsRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
-  const transition = useNewTaskSettingsTransition();
   const optionDescriptors = useMemo(
     () =>
       resolveProviderOptionDescriptors({
@@ -1250,20 +1222,6 @@ export function NewTaskThreadSettingsRouteScreen() {
       }),
     [flow.selectedModel?.options, flow.selectedModelOption?.capabilities],
   );
-  useEffect(() => {
-    const removeTransitionStart = navigation.addListener("transitionStart", (event) => {
-      if (event.data.closing) {
-        transition.notifyDismissalStart();
-      }
-    });
-    const removeGestureCancel = navigation.addListener("gestureCancel", () => {
-      transition.notifyDismissalCancel();
-    });
-    return () => {
-      removeTransitionStart();
-      removeGestureCancel();
-    };
-  }, [navigation, transition]);
 
   return (
     <ThreadSettingsSessionProvider
