@@ -173,6 +173,25 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
+  it("decorates known skill references inside blockquotes", () => {
+    const node: MarkdownNode = {
+      type: "blockquote",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "Use $ui for this." }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toContainEqual({
+      text: "$ui",
+      role: "body",
+      skillName: "ui",
+      skillLabel: "UI",
+    });
+  });
+
   it("leaves unknown skill-like text unchanged", () => {
     const node: MarkdownNode = {
       type: "document",
