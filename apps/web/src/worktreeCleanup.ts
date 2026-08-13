@@ -61,18 +61,6 @@ export function getOrphanedWorktreesForThread(
   );
 }
 
-/**
- * Back-compat single-path accessor: the thread's first exclusively-owned
- * worktree path, or null. Prefer {@link getOrphanedWorktreesForThread} to clean
- * up every root.
- */
-export function getOrphanedWorktreePathForThread(
-  threads: ReadonlyArray<WorktreeOwningThread>,
-  threadId: ThreadShell["id"],
-): string | null {
-  return getOrphanedWorktreesForThread(threads, threadId)[0]?.worktreePath ?? null;
-}
-
 export function formatWorktreePathForDisplay(worktreePath: string): string {
   const trimmed = worktreePath.trim();
   if (!trimmed) {

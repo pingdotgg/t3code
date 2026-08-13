@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 
-import { resolveThreadRepoRoots, resolveThreadWorkspaceCwd } from "./Utils.ts";
+import { resolveThreadRepoRoots, resolveThreadWorkspaceCwd } from "./WorkspaceRoots.ts";
 
 describe("resolveThreadRepoRoots", () => {
   it("returns all repo roots in order for a multi-repo project", () => {
@@ -14,7 +14,17 @@ describe("resolveThreadRepoRoots", () => {
     ).toEqual(["/work/backend", "/work/frontend"]);
   });
 
-  it("falls back to [workspaceRoot] when no repo roots are recorded", () => {
+  it("deduplicates repeated repo roots", () => {
+    expect(
+      resolveThreadRepoRoots({
+        worktreePath: null,
+        repoRoots: ["/work/backend", "/work/backend"],
+        workspaceRoot: "/work",
+      }),
+    ).toEqual(["/work/backend"]);
+  });
+
+  it("falls back to the workspace root", () => {
     expect(
       resolveThreadRepoRoots({
         worktreePath: null,
@@ -24,7 +34,7 @@ describe("resolveThreadRepoRoots", () => {
     ).toEqual(["/work/solo"]);
   });
 
-  it("uses the legacy single worktree path in isolated mode, ignoring repo roots", () => {
+  it("uses the legacy single worktree path", () => {
     expect(
       resolveThreadRepoRoots({
         worktreePath: "/worktrees/p/t/backend",
@@ -34,7 +44,7 @@ describe("resolveThreadRepoRoots", () => {
     ).toEqual(["/worktrees/p/t/backend"]);
   });
 
-  it("fans out to every per-root worktree in isolated multi-repo mode", () => {
+  it("fans out to every per-root worktree", () => {
     expect(
       resolveThreadRepoRoots({
         worktreePath: "/worktrees/p/t/backend",
@@ -53,7 +63,7 @@ describe("resolveThreadWorkspaceCwd", () => {
   const projectId = ProjectId.make("project-1");
   const projects = [{ id: projectId, workspaceRoot: "/work", repoRoots: ["/work/backend"] }];
 
-  it("anchors on the workspace-root worktree in isolated multi-repo mode", () => {
+  it("anchors on the workspace-root worktree", () => {
     expect(
       resolveThreadWorkspaceCwd({
         thread: {
@@ -69,7 +79,7 @@ describe("resolveThreadWorkspaceCwd", () => {
     ).toBe("/worktrees/p/t/anchor");
   });
 
-  it("falls back to the first worktree when none matches the workspace root", () => {
+  it("falls back to the first worktree", () => {
     expect(
       resolveThreadWorkspaceCwd({
         thread: {
@@ -85,7 +95,7 @@ describe("resolveThreadWorkspaceCwd", () => {
     ).toBe("/worktrees/p/t/backend");
   });
 
-  it("falls back to the first repo root when no worktrees are recorded", () => {
+  it("falls back to the first repo root", () => {
     expect(
       resolveThreadWorkspaceCwd({
         thread: { projectId, worktreePath: null, worktrees: [] },

@@ -29,19 +29,6 @@ interface ProjectQueryState<A> {
   readonly refresh: () => void;
 }
 
-export function getProjectEntriesQueryAtom(
-  environmentId: EnvironmentId,
-  cwd: string,
-  roots?: readonly string[],
-) {
-  // Multi-repo workspaces (#923): when `roots` are provided, the listing spans
-  // the union of those repo roots. Absent/empty keeps the single-root listing.
-  return projectEnvironment.listEntries({
-    environmentId,
-    input: { cwd, ...(roots && roots.length > 0 ? { roots } : {}) },
-  });
-}
-
 export function getProjectFileQueryAtom(
   environmentId: EnvironmentId,
   cwd: string,
@@ -135,7 +122,10 @@ export function useProjectEntriesQuery(
   cwd: string,
   roots?: readonly string[],
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd, roots);
+  const atom = projectEnvironment.listEntries({
+    environmentId,
+    input: { cwd, ...(roots && roots.length > 0 ? { roots } : {}) },
+  });
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);

@@ -293,12 +293,12 @@ export function useProjectPathSearch(
         })
       : null,
   );
+  const targetIsCurrent = areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget);
 
   return {
-    entries: result.data?.entries ?? [],
-    error: result.error,
-    isPending:
-      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
+    entries: targetIsCurrent ? (result.data?.entries ?? []) : [],
+    error: targetIsCurrent ? result.error : null,
+    isPending: !targetIsCurrent || result.isPending,
     searchedQuery: debouncedTarget.query ?? "",
     refresh: result.refresh,
   };

@@ -35,7 +35,7 @@ export interface CreatedThreadWorktree {
   readonly createdBranch: string | null;
 }
 
-export interface CreateThreadWorktreesInput {
+interface CreateThreadWorktreesInput {
   readonly worktreesDir: string;
   readonly projectId: string;
   readonly threadId: string;

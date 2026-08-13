@@ -30,7 +30,8 @@ import {
   CheckpointWorkspacePathMissingError,
 } from "./Errors.ts";
 import type { CheckpointServiceError } from "./Errors.ts";
-import { checkpointRefForThreadTurn, resolveThreadRepoRoots } from "./Utils.ts";
+import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { resolveThreadRepoRoots } from "../workspace/WorkspaceRoots.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 /** Service tag for checkpoint diff queries. */

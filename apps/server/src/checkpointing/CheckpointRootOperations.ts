@@ -14,7 +14,7 @@ import type {
 import * as Effect from "effect/Effect";
 
 import { isGitRepository } from "../git/Utils.ts";
-import { resolveThreadRepoRoots } from "./Utils.ts";
+import { resolveThreadRepoRoots } from "../workspace/WorkspaceRoots.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 interface CheckpointThreadRootConfig {

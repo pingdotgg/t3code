@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import type { VcsStatusTarget } from "@t3tools/client-runtime/state/vcs";
 import type { EnvironmentId, VcsStatusResult } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -25,24 +26,18 @@ export interface VcsStatusState {
   readonly isPending: boolean;
 }
 
-/** A single repo: an environment + a cwd (repo root / worktree path). */
-export interface VcsStatusTarget {
-  readonly environmentId: EnvironmentId | null;
-  readonly cwd: string | null;
-}
-
 /**
  * A workspace-level target: a set of repo roots (absolute paths) under one
  * environment. Used to fan VCS status out over the roots of a multi-repo
  * `.code-workspace` project and group the results per repo.
  */
-export interface VcsStatusGroupTarget {
+interface VcsStatusGroupTarget {
   readonly environmentId: EnvironmentId | null;
   readonly repoRoots: ReadonlyArray<string> | null;
 }
 
 /** One repo root's status within a grouped (multi-repo) result. */
-export interface VcsStatusGroupEntry {
+interface VcsStatusGroupEntry {
   readonly repoRoot: string;
   /** Display label for the root (its basename). */
   readonly displayName: string;
@@ -51,7 +46,7 @@ export interface VcsStatusGroupEntry {
 
 /* ─── Constants ─────────────────────────────────────────────────────── */
 
-export const EMPTY_VCS_STATUS_STATE: VcsStatusState = Object.freeze({
+const EMPTY_VCS_STATUS_STATE: VcsStatusState = Object.freeze({
   targetKey: null,
   data: null,
   error: null,
@@ -61,13 +56,6 @@ export const EMPTY_VCS_STATUS_STATE: VcsStatusState = Object.freeze({
 const EMPTY_VCS_STATUS_GROUP: ReadonlyArray<VcsStatusGroupEntry> = Object.freeze([]);
 
 /* ─── Helpers ───────────────────────────────────────────────────────── */
-
-function getVcsStatusTargetKey(target: VcsStatusTarget): string | null {
-  if (target.environmentId === null || target.cwd === null) {
-    return null;
-  }
-  return `${target.environmentId}:${target.cwd}`;
-}
 
 const REPO_ROOT_KEY_SEPARATOR = "\0";
 
@@ -97,26 +85,7 @@ function toVcsStatusState(
   return { targetKey, data, error, isPending: result.waiting };
 }
 
-/* ─── Snapshot + refresh (imperative) ───────────────────────────────── */
-
-/**
- * Synchronously read the current VCS status for a single target from the app
- * atom registry. Returns {@link EMPTY_VCS_STATUS_STATE} when the target is
- * incomplete or no status has been fetched yet.
- */
-export function getVcsStatusSnapshot(target: VcsStatusTarget): VcsStatusState {
-  const targetKey = getVcsStatusTargetKey(target);
-  if (targetKey === null || target.environmentId === null || target.cwd === null) {
-    return EMPTY_VCS_STATUS_STATE;
-  }
-  const result = appAtomRegistry.get(
-    vcsEnvironment.status({
-      environmentId: target.environmentId,
-      input: { cwd: target.cwd },
-    }),
-  );
-  return toVcsStatusState(targetKey, result);
-}
+/* ─── Refresh (imperative) ──────────────────────────────────────────── */
 
 /**
  * Trigger a one-shot `refreshStatus` RPC for a single target. The server-side

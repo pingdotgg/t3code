@@ -1,4 +1,3 @@
-import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -7,8 +6,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { expandHomePath } from "../pathExpansion.ts";
 
-export class WorkspaceFileError extends Schema.TaggedErrorClass<WorkspaceFileError>()(
+class WorkspaceFileError extends Schema.TaggedErrorClass<WorkspaceFileError>()(
   "WorkspaceFileError",
   {
     workspaceFilePath: Schema.String,
@@ -21,7 +21,7 @@ export class WorkspaceFileError extends Schema.TaggedErrorClass<WorkspaceFileErr
   }
 }
 
-export interface ResolvedWorkspaceFolder {
+interface ResolvedWorkspaceFolder {
   /** The `path` exactly as written in the file (relative, absolute, or `~`-prefixed). */
   readonly rawPath: string;
   /** Display name — the explicit `name` field if present, else the resolved basename. */
@@ -34,7 +34,7 @@ export interface ResolvedWorkspaceFolder {
   readonly isGit: boolean;
 }
 
-export interface ResolvedWorkspaceFile {
+interface ResolvedWorkspaceFile {
   /** Absolute, normalized path to the `.code-workspace` file. */
   readonly workspaceFilePath: string;
   /** Directory containing the file. */
@@ -70,13 +70,6 @@ const CodeWorkspaceFolder = Schema.Struct({
 const decodeDocument = Schema.decodeUnknownEffect(fromLenientJson(Schema.Unknown));
 const decodeFolders = Schema.decodeUnknownEffect(Schema.Array(CodeWorkspaceFolder));
 
-function expandHomePath(input: string, path: Path.Path): string {
-  if (input === "~") return NodeOS.homedir();
-  if (input.startsWith("~/") || input.startsWith("~\\"))
-    return path.join(NodeOS.homedir(), input.slice(2));
-  return input;
-}
-
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -95,7 +88,7 @@ export const make = Effect.gen(function* () {
 
   const read: WorkspaceFile["Service"]["read"] = Effect.fn("WorkspaceFile.read")(
     function* (workspaceFilePath) {
-      const absoluteFilePath = path.resolve(expandHomePath(workspaceFilePath.trim(), path));
+      const absoluteFilePath = path.resolve(expandHomePath(workspaceFilePath.trim()));
       const anchorDir = path.dirname(absoluteFilePath);
 
       const raw = yield* fileSystem.readFileString(absoluteFilePath).pipe(
@@ -140,7 +133,7 @@ export const make = Effect.gen(function* () {
         folderEntries,
         (entry) =>
           Effect.gen(function* () {
-            const expanded = expandHomePath(entry.path.trim(), path);
+            const expanded = expandHomePath(entry.path.trim());
             const absolutePath = path.isAbsolute(expanded)
               ? path.resolve(expanded)
               : path.resolve(anchorDir, expanded);

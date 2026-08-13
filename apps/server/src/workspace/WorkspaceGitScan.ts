@@ -1,4 +1,3 @@
-import * as NodeOS from "node:os";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -8,8 +7,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import type { FilesystemScanGitReposInput, FilesystemScanGitReposResult } from "@t3tools/contracts";
+import { expandHomePath } from "../pathExpansion.ts";
 
-export class WorkspaceGitScanStatFailedError extends Schema.TaggedErrorClass<WorkspaceGitScanStatFailedError>()(
+class WorkspaceGitScanStatFailedError extends Schema.TaggedErrorClass<WorkspaceGitScanStatFailedError>()(
   "WorkspaceGitScanStatFailedError",
   {
     parentPath: Schema.String,
@@ -22,7 +22,7 @@ export class WorkspaceGitScanStatFailedError extends Schema.TaggedErrorClass<Wor
   }
 }
 
-export class WorkspaceGitScanNotDirectoryError extends Schema.TaggedErrorClass<WorkspaceGitScanNotDirectoryError>()(
+class WorkspaceGitScanNotDirectoryError extends Schema.TaggedErrorClass<WorkspaceGitScanNotDirectoryError>()(
   "WorkspaceGitScanNotDirectoryError",
   {
     parentPath: Schema.String,
@@ -34,7 +34,7 @@ export class WorkspaceGitScanNotDirectoryError extends Schema.TaggedErrorClass<W
   }
 }
 
-export class WorkspaceGitScanReadDirectoryFailedError extends Schema.TaggedErrorClass<WorkspaceGitScanReadDirectoryFailedError>()(
+class WorkspaceGitScanReadDirectoryFailedError extends Schema.TaggedErrorClass<WorkspaceGitScanReadDirectoryFailedError>()(
   "WorkspaceGitScanReadDirectoryFailedError",
   {
     parentPath: Schema.String,
@@ -47,7 +47,7 @@ export class WorkspaceGitScanReadDirectoryFailedError extends Schema.TaggedError
   }
 }
 
-export type WorkspaceGitScanError =
+type WorkspaceGitScanError =
   | WorkspaceGitScanStatFailedError
   | WorkspaceGitScanNotDirectoryError
   | WorkspaceGitScanReadDirectoryFailedError;
@@ -63,13 +63,6 @@ export class WorkspaceGitScan extends Context.Service<
 
 const SCAN_CONCURRENCY = 32;
 
-function expandHomePath(input: string, path: Path.Path): string {
-  if (input === "~") return NodeOS.homedir();
-  if (input.startsWith("~/") || input.startsWith("~\\"))
-    return path.join(NodeOS.homedir(), input.slice(2));
-  return input;
-}
-
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -82,7 +75,7 @@ export const make = Effect.gen(function* () {
 
   const scan: WorkspaceGitScan["Service"]["scan"] = Effect.fn("WorkspaceGitScan.scan")(
     function* (input) {
-      const normalizedParent = path.resolve(expandHomePath(input.parentPath.trim(), path));
+      const normalizedParent = path.resolve(expandHomePath(input.parentPath.trim()));
 
       const stat = yield* fileSystem.stat(normalizedParent).pipe(
         Effect.mapError(

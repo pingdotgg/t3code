@@ -3,7 +3,7 @@ import type { GitStackedAction, VcsStatusResult } from "@t3tools/contracts";
 import { requiresDefaultBranchConfirmation, resolveQuickAction } from "../GitActionsControl.logic";
 
 /** Rolled-up status across every repo root of a multi-repo workspace. */
-export interface MultiRepoAggregate {
+interface MultiRepoAggregate {
   /** Number of repos in the group. */
   readonly repoCount: number;
   /** Repos with uncommitted changes or commits to sync (ahead/behind). */
@@ -59,7 +59,7 @@ export function summarizeRepoStatus(data: VcsStatusResult | null, isLoading: boo
 
 /* ─── "Sync all" planning ────────────────────────────────────────────── */
 
-export interface SyncAllGroupInput {
+interface SyncAllGroupInput {
   readonly repoRoot: string;
   readonly displayName: string;
   readonly data: VcsStatusResult | null;
@@ -77,13 +77,13 @@ export type SyncAllStep =
   | { readonly kind: "pull"; readonly repoRoot: string; readonly displayName: string };
 
 /** A pending repo that "Sync all" cannot auto-handle (needs an interactive step). */
-export interface SyncAllSkip {
+interface SyncAllSkip {
   readonly repoRoot: string;
   readonly displayName: string;
   readonly reason: string;
 }
 
-export interface SyncAllPlan {
+interface SyncAllPlan {
   /** Repos with an action the batch can run unattended, in group order. */
   readonly steps: ReadonlyArray<SyncAllStep>;
   /** Pending repos requiring a manual step (publishing, etc.). */

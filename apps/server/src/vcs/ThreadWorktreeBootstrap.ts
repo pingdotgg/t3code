@@ -4,20 +4,9 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { resolveAnchorRepoRoot } from "@t3tools/shared/git";
-import {
-  createThreadWorktrees,
-  type CreatedThreadWorktree,
-  type WorktreeFanoutTarget,
-} from "./WorktreeFanout.ts";
+import { createThreadWorktrees, type WorktreeFanoutTarget } from "./WorktreeFanout.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-
-export interface ThreadWorktreeBootstrapResult {
-  readonly created: ReadonlyArray<CreatedThreadWorktree>;
-  readonly worktrees: ReadonlyArray<{ readonly repoRoot: string; readonly worktreePath: string }>;
-  readonly worktreePath: string | null;
-  readonly branch: string;
-}
 
 interface ThreadWorktreeBootstrapInput {
   readonly worktreesDir: string;

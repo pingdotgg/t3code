@@ -25,8 +25,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
-import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { buildWorkspaceManifest, manifestExtraRoots } from "../../workspace/WorkspaceManifest.ts";
+import {
+  resolveThreadRepoRoots,
+  resolveThreadWorkspaceCwd,
+} from "../../workspace/WorkspaceRoots.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
@@ -635,23 +637,18 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
-    // Multi-repo workspaces launch in the primary repository and hand every
-    // secondary repository to the provider as an additional visible root.
-    const manifest = project
-      ? buildWorkspaceManifest({
+    const effectiveCwd = resolveThreadWorkspaceCwd({
+      thread,
+      projects: project ? [project] : [],
+    });
+    const additionalRoots = project
+      ? resolveThreadRepoRoots({
           worktreePath: thread.worktreePath ?? null,
           worktrees: thread.worktrees,
           workspaceRoot: project.workspaceRoot,
           repoRoots: project.repoRoots ?? [],
-        })
-      : undefined;
-    const effectiveCwd =
-      manifest?.anchor ??
-      resolveThreadWorkspaceCwd({
-        thread,
-        projects: project ? [project] : [],
-      });
-    const additionalRoots = manifest ? manifestExtraRoots(manifest) : [];
+        }).filter((root) => root !== effectiveCwd)
+      : [];
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
