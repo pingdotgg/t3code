@@ -512,6 +512,7 @@ function formatOutgoingPrompt(params: {
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+const RIGHT_PANEL_EXIT_DURATION_MS = 200;
 
 type ChatViewProps =
   | {
@@ -972,12 +973,20 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [onAddTerminalContext, visible],
   );
 
-  if (!project || !terminalUiState.terminalOpen || !cwd) {
+  if (!project || !cwd) {
     return null;
   }
 
   return (
-    <div className={visible ? undefined : "hidden"}>
+    <div
+      className={cn(
+        "shrink-0 overflow-hidden transition-[height,opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
+        !visible && "pointer-events-none translate-y-2 opacity-0",
+      )}
+      style={{ height: visible ? `${terminalUiState.terminalHeight}px` : 0 }}
+      aria-hidden={!visible ? true : undefined}
+      inert={!visible ? true : undefined}
+    >
       <ThreadTerminalDrawer
         threadRef={threadRef}
         threadId={threadId}
@@ -1014,6 +1023,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 interface PersistentThreadTerminalPanelProps {
   threadRef: ScopedThreadRef;
   surface: Extract<RightPanelSurface, { kind: "terminal" }>;
+  visible: boolean;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   keybindings: ResolvedKeybindingsConfig;
@@ -1032,6 +1042,7 @@ interface PersistentThreadTerminalPanelProps {
 const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
   threadRef,
   surface,
+  visible,
   launchContext,
   focusRequestId,
   keybindings,
@@ -1150,6 +1161,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       cwd={cwd}
       worktreePath={worktreePath}
       runtimeEnv={runtimeEnv}
+      visible={visible}
       height={0}
       terminalIds={surface.terminalIds}
       activeTerminalId={surface.activeTerminalId}
@@ -1654,6 +1666,20 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const rightPanelOpen = rightPanelState.isOpen;
+  const [retainClosedRightPanelContent, setRetainClosedRightPanelContent] =
+    useState(rightPanelOpen);
+  useEffect(() => {
+    if (rightPanelOpen) {
+      setRetainClosedRightPanelContent(true);
+      return;
+    }
+
+    const timeout = window.setTimeout(
+      () => setRetainClosedRightPanelContent(false),
+      RIGHT_PANEL_EXIT_DURATION_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [rightPanelOpen]);
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
@@ -1713,7 +1739,10 @@ function ChatViewContent(props: ChatViewProps) {
         currentThreadIds,
         openThreadIds: existingOpenTerminalThreadKeys,
         activeThreadId: activeThreadKey,
-        activeThreadTerminalOpen: Boolean(activeThreadKey && terminalUiState.terminalOpen),
+        activeThreadTerminalMounted: Boolean(
+          activeThreadKey &&
+          (terminalUiState.terminalOpen || currentThreadIds.includes(activeThreadKey)),
+        ),
         maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
       });
       return currentThreadIds.length === nextThreadIds.length &&
@@ -6090,7 +6119,7 @@ function ChatViewContent(props: ChatViewProps) {
           threadRef={activeThreadRef}
           tabId={activeRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
-          visible
+          visible={rightPanelOpen}
           onSendAnnotation={(annotation, image) => {
             void onSend(undefined, { annotation, image });
           }}
@@ -6100,6 +6129,7 @@ function ChatViewContent(props: ChatViewProps) {
       <PersistentThreadTerminalPanel
         threadRef={activeThreadRef}
         surface={activeRightPanelSurface}
+        visible={rightPanelOpen}
         launchContext={activeTerminalLaunchContext ?? null}
         focusRequestId={terminalFocusRequestId}
         keybindings={keybindings}
@@ -6205,7 +6235,7 @@ function ChatViewContent(props: ChatViewProps) {
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
-          "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
+          "flex min-h-0 min-w-0 flex-col overflow-hidden",
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
@@ -6214,7 +6244,7 @@ function ChatViewContent(props: ChatViewProps) {
         <header
           data-chat-header
           className={cn(
-            "bg-background transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none",
+            "bg-background transition-[padding-left] duration-[240ms] ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
             isElectron
               ? cn(
                   "drag-region relative flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
@@ -6343,7 +6373,7 @@ function ChatViewContent(props: ChatViewProps) {
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
               {showScrollToBottom && (
                 <div
-                  className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
+                  className="chat-floating-pill-transition pointer-events-none absolute left-1/2 z-30 flex justify-center py-1.5"
                   style={{ bottom: composerOverlayHeight + 4 }}
                 >
                   <Button
@@ -6619,10 +6649,11 @@ function ChatViewContent(props: ChatViewProps) {
         ))}
       </div>
 
-      {!shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
+      {!shouldUseRightPanelSheet && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
           maximized={rightPanelMaximized}
+          visible={rightPanelOpen}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
@@ -6650,7 +6681,7 @@ function ChatViewContent(props: ChatViewProps) {
           pullRequestStatuses={pullRequestTabStatuses}
           liveAgentCount={agentPanelModel.liveCount}
         >
-          {rightPanelContent}
+          {rightPanelOpen || retainClosedRightPanelContent ? rightPanelContent : null}
         </RightPanelTabs>
       ) : null}
       {shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (

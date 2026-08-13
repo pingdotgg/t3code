@@ -61,10 +61,12 @@ export function PreviewPanelShell(props: {
   widthStorageKey?: string;
   /** Overrides the initial width (px) before the user has resized the panel. */
   defaultWidth?: number;
+  visible?: boolean;
   children: ReactNode;
 }) {
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
+  const visible = props.visible ?? true;
   const hostRef = useRef<HTMLDivElement | null>(null);
   // Only inline non-maximized mode applies `width`/`maxWidth`; skip the
   // container measurement (and its re-renders) everywhere else.
@@ -84,17 +86,33 @@ export function PreviewPanelShell(props: {
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline
           ? props.maximized
-            ? "flex-1 border-l border-border"
-            : "shrink-0 border-l border-border"
+            ? cn(
+                "flex-1 border-l border-border transition-[opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
+                !visible && "pointer-events-none translate-x-3 opacity-0",
+              )
+            : cn(
+                "shrink-0 overflow-hidden border-l border-border transition-[width,opacity,translate] duration-200 ease-[var(--motion-ease-drawer)] motion-reduce:transition-none",
+                !visible && "pointer-events-none translate-x-3 border-l-transparent opacity-0",
+              )
           : "w-full",
       )}
-      style={isInline && !props.maximized ? { width: `${width}px` } : undefined}
+      style={isInline && !props.maximized ? { width: visible ? `${width}px` : 0 } : undefined}
+      aria-hidden={isInline && !visible ? true : undefined}
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={props.maximized ? "true" : "false"}
+      inert={isInline && !visible ? true : undefined}
     >
-      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
-      {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
-      {props.children}
+      <div
+        className={cn(
+          "relative flex h-full min-h-0 min-w-0 flex-col [contain:layout_paint]",
+          isInline && !props.maximized ? "shrink-0" : "w-full",
+        )}
+        style={isInline && !props.maximized ? { width: `${width}px` } : undefined}
+      >
+        {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
+        {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
+        {props.children}
+      </div>
     </div>
   );
 }
