@@ -41,7 +41,6 @@ export interface ExecuteGitInput {
   readonly stdin?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
-  /** Null disables the default command timeout. */
   readonly timeoutMs?: number | null;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;

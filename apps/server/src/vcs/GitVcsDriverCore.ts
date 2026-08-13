@@ -911,14 +911,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     args: readonly string[],
     allowNonZeroExit = false,
   ): Effect.Effect<void, GitCommandError> =>
-    executeGit(operation, cwd, args, { allowNonZeroExit }).pipe(Effect.asVoid);
-
-  const runPush = (
-    operation: string,
-    cwd: string,
-    args: readonly string[],
-  ): Effect.Effect<void, GitCommandError> =>
-    executeGit(operation, cwd, args, { timeoutMs: null }).pipe(Effect.asVoid);
+    executeGit(operation, cwd, args, {
+      allowNonZeroExit,
+      ...(args[0] === "push" ? { timeoutMs: null } : {}),
+    }).pipe(Effect.asVoid);
 
   const runGitStdout = (
     operation: string,
@@ -1916,7 +1912,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runPush("GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote", cwd, [
+      yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote", cwd, [
         "push",
         "-u",
         requestedRemoteName,
@@ -1979,7 +1975,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         });
       }
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runPush("GitVcsDriver.pushCurrentBranch.pushWithUpstream", cwd, [
+      yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithUpstream", cwd, [
         "push",
         "-u",
         publishRemoteName,
@@ -1997,7 +1993,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => null),
     );
     if (currentUpstream) {
-      yield* runPush("GitVcsDriver.pushCurrentBranch.pushUpstream", cwd, [
+      yield* runGit("GitVcsDriver.pushCurrentBranch.pushUpstream", cwd, [
         "push",
         currentUpstream.remoteName,
         `HEAD:refs/heads/${currentUpstream.branchName}`,
@@ -2010,7 +2006,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    yield* runPush("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"]);
+    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"]);
     return {
       status: "pushed" as const,
       branch,
