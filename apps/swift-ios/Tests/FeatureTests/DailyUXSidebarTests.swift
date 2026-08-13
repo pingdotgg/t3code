@@ -103,6 +103,29 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func settlementActionUsesEffectiveStateAcrossAllEntryPoints() {
+        let settled = thread(
+            id: "settled",
+            created: -20,
+            updated: -10,
+            isSettled: true
+        )
+        let settledButWorking = thread(
+            id: "settled-working",
+            created: -20,
+            updated: -10,
+            state: .working,
+            isSettled: true
+        )
+
+        #expect(HomeThreadSwipeActionPlan.settlementAction(for: settled, now: now) == .reopen)
+        #expect(
+            HomeThreadSwipeActionPlan.settlementAction(for: settledButWorking, now: now)
+                == .settle
+        )
+    }
+
+    @Test
     func settleUndoPreservesStateThatRepinningWouldClear() {
         let snoozeUntil = now.addingTimeInterval(300)
         let pinnedAndSnoozed = thread(
@@ -373,6 +396,7 @@ struct DailyUXSidebarTests {
             HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
+                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -380,6 +404,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: false,
                 didSucceed: true,
+                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -387,6 +412,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: false,
+                previousWasSettled: false,
                 updatedThread: settled
             )
         )
@@ -394,6 +420,7 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
+                previousWasSettled: false,
                 updatedThread: active
             )
         )
@@ -401,7 +428,38 @@ struct DailyUXSidebarTests {
             !HomeThreadSettleUndoState.shouldPresent(
                 afterRequesting: true,
                 didSucceed: true,
+                previousWasSettled: false,
                 updatedThread: nil
+            )
+        )
+        #expect(
+            !HomeThreadSettleUndoState.shouldPresent(
+                afterRequesting: true,
+                didSucceed: true,
+                previousWasSettled: true,
+                updatedThread: settled
+            )
+        )
+    }
+
+    @Test
+    func settleUndoAnnouncementFollowsSidebarVisibility() {
+        #expect(
+            HomeThreadSettleUndoState.shouldAnnounce(
+                isRegularWidth: true,
+                isDetailPreferred: true
+            )
+        )
+        #expect(
+            HomeThreadSettleUndoState.shouldAnnounce(
+                isRegularWidth: false,
+                isDetailPreferred: false
+            )
+        )
+        #expect(
+            !HomeThreadSettleUndoState.shouldAnnounce(
+                isRegularWidth: false,
+                isDetailPreferred: true
             )
         )
     }

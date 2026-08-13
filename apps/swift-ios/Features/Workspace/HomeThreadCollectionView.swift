@@ -25,9 +25,7 @@ struct HomeThreadSwipeActionPlan: Equatable, Sendable {
         } else if thread.pinnedAt != nil, thread.canTogglePin {
             primary = .unpin
         } else if thread.canToggleSettlement {
-            primary = thread.isEffectivelySettled(at: now)
-                ? .reopen
-                : .settle
+            primary = settlementAction(for: thread, now: now)
         } else {
             primary = .archive
         }
@@ -35,6 +33,13 @@ struct HomeThreadSwipeActionPlan: Equatable, Sendable {
             actions: [primary, .delete],
             performsFirstActionWithFullSwipe: primary == .settle || primary == .reopen
         )
+    }
+
+    static func settlementAction(
+        for thread: FeatureThread,
+        now: Date
+    ) -> HomeThreadSwipeActionKind {
+        thread.isEffectivelySettled(at: now) ? .reopen : .settle
     }
 }
 
@@ -460,7 +465,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     )
                 }
                 if thread.canToggleSettlement {
-                    let wasSettled = thread.isSettled || thread.isEffectivelySettled(at: .now)
+                    let settlementAction = HomeThreadSwipeActionPlan.settlementAction(
+                        for: thread,
+                        now: .now
+                    )
+                    let wasSettled = settlementAction == .reopen
                     actions.append(
                         UIAction(
                             title: wasSettled ? "Reopen" : "Settle",

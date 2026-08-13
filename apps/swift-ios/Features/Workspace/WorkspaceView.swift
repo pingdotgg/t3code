@@ -132,11 +132,20 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
     static func shouldPresent(
         afterRequesting settled: Bool,
         didSucceed: Bool,
+        previousWasSettled: Bool,
         updatedThread: FeatureThread?
     ) -> Bool {
         settled
             && didSucceed
+            && !previousWasSettled
             && updatedThread?.isSettled == true
+    }
+
+    static func shouldAnnounce(
+        isRegularWidth: Bool,
+        isDetailPreferred: Bool
+    ) -> Bool {
+        isRegularWidth || !isDetailPreferred
     }
 
     static func targetIsValid(
@@ -176,6 +185,7 @@ struct HomeThreadDeleteConfirmation: Equatable, Sendable {
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Bindable var model: FeatureRootModel
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
@@ -463,6 +473,7 @@ public struct WorkspaceView: View {
                         guard HomeThreadSettleUndoState.shouldPresent(
                             afterRequesting: settled,
                             didSucceed: didSucceed,
+                            previousWasSettled: thread.isSettled,
                             updatedThread: updatedThread
                         ), let requestID else { return }
                         let notice = withAnimation(
@@ -477,7 +488,10 @@ public struct WorkspaceView: View {
                             )
                         }
                         guard notice != nil else { return }
-                        if preferredCompactColumn != .detail {
+                        if HomeThreadSettleUndoState.shouldAnnounce(
+                            isRegularWidth: horizontalSizeClass == .regular,
+                            isDetailPreferred: preferredCompactColumn == .detail
+                        ) {
                             var announcement = AttributedString(
                                 "\(updatedThread?.title ?? thread.title) settled. Undo available."
                             )
