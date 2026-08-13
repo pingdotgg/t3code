@@ -1,11 +1,13 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
+import { createModelSelection } from "@t3tools/shared/model";
 import { deriveProviderInstanceEntries } from "./providerInstances";
 import {
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
+  withoutPlanAgentSelection,
 } from "./modelSelection";
 
 function provider(input: {
@@ -319,5 +321,35 @@ describe("instance-scoped model selection", () => {
       instanceId: ProviderInstanceId.make("claude_openrouter"),
       model: "openai/gpt-5.5",
     });
+  });
+});
+
+describe("withoutPlanAgentSelection", () => {
+  const instance = ProviderInstanceId.make("opencode");
+  const model = "opencode/gpt-5.4";
+
+  it("drops a stored plan agent option", () => {
+    const selection = createModelSelection(instance, model, [
+      { id: "variant", value: "high" },
+      { id: "agent", value: "plan" },
+    ]);
+    expect(withoutPlanAgentSelection(selection)).toEqual(
+      createModelSelection(instance, model, [{ id: "variant", value: "high" }]),
+    );
+  });
+
+  it("keeps non-plan agent options", () => {
+    const selection = createModelSelection(instance, model, [{ id: "agent", value: "build" }]);
+    expect(withoutPlanAgentSelection(selection)).toBe(selection);
+  });
+
+  it("omits options entirely when plan was the only stored option", () => {
+    const selection = createModelSelection(instance, model, [{ id: "agent", value: "plan" }]);
+    expect(withoutPlanAgentSelection(selection)).toEqual({ instanceId: instance, model });
+  });
+
+  it("returns null and undefined selections unchanged", () => {
+    expect(withoutPlanAgentSelection(null)).toBeNull();
+    expect(withoutPlanAgentSelection(undefined)).toBeUndefined();
   });
 });

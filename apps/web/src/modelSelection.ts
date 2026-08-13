@@ -277,6 +277,26 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
+/**
+ * Drop the opencode "plan" agent option from a stored model selection.
+ * Used when legacy plan mode is turned off so server-side text-generation
+ * tasks (title, branch, PR) cannot keep dispatching the plan agent.
+ */
+export function withoutPlanAgentSelection(
+  selection: ModelSelection | null | undefined,
+): ModelSelection | null | undefined {
+  if (!selection?.options) {
+    return selection;
+  }
+  const options = selection.options.filter(
+    (option) => !(option.id === "agent" && option.value === "plan"),
+  );
+  if (options.length === selection.options.length) {
+    return selection;
+  }
+  return createModelSelection(selection.instanceId, selection.model, options);
+}
+
 export function resolveAppModelSelectionState(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
