@@ -44,7 +44,7 @@ describe("StyledDiffCodeView", () => {
         diffHeaderHeight: 32,
         hunkSeparatorHeight: 24,
         paddingTop: 0,
-        paddingBottom: 0,
+        paddingBottom: 8,
       },
       layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
     });
