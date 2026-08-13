@@ -81,9 +81,28 @@ export function getProviderModelCapabilities(
   models: ReadonlyArray<ServerProviderModel>,
   model: string | null | undefined,
   provider: ProviderDriverKind,
+  planModeEnabled = true,
 ): ModelCapabilities {
   const slug = normalizeModelSlug(model, provider);
-  return models.find((candidate) => candidate.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES;
+  const caps =
+    models.find((candidate) => candidate.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES;
+  if (planModeEnabled) {
+    return caps;
+  }
+  return withoutPlanAgentOption(caps);
+}
+
+// The opencode "plan" agent is only reachable while legacy plan mode is on.
+// With it off, drop the option so it cannot be selected or dispatched.
+function withoutPlanAgentOption(caps: ModelCapabilities): ModelCapabilities {
+  return {
+    ...caps,
+    optionDescriptors: (caps.optionDescriptors ?? []).map((descriptor) =>
+      descriptor.type === "select" && descriptor.id === "agent"
+        ? { ...descriptor, options: descriptor.options.filter((option) => option.id !== "plan") }
+        : descriptor,
+    ),
+  };
 }
 
 export function getDefaultServerModel(

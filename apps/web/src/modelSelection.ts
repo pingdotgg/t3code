@@ -308,6 +308,7 @@ export function resolveAppModelSelectionState(
       model,
       models: entry.models,
       modelOptions: selectedEntry ? selection.options : undefined,
+      planModeEnabled: settings.planModeEnabled,
     });
 
     return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);
@@ -325,6 +326,7 @@ export function resolveAppModelSelectionState(
     model,
     models: getProviderModels(providers, provider),
     modelOptions: keptSelectedProvider ? selection.options : undefined,
+    planModeEnabled: settings.planModeEnabled,
   });
 
   return createModelSelection(defaultInstanceIdForDriver(provider), model, modelOptionsForDispatch);
