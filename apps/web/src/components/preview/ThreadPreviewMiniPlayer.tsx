@@ -17,6 +17,7 @@ import {
   clampPreviewMiniPlayerPosition,
   clampPreviewMiniPlayerSize,
   PREVIEW_MINI_PLAYER_DEFAULT_SIZE,
+  PREVIEW_MINI_PLAYER_EDGE_GAP,
 } from "./previewMiniPlayerLayout";
 
 interface DragState {
@@ -91,8 +92,9 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         bottomInset,
       );
       usePreviewMiniPlayerStore.getState().resize(threadRef, tabId, nextSize);
+      if (!position) return;
       const next = clampPreviewMiniPlayerPosition(
-        position ?? { x: root.offsetLeft, y: root.offsetTop },
+        position,
         { width: parent.clientWidth, height: parent.clientHeight },
         nextSize,
         bottomInset,
@@ -193,8 +195,9 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
       bottomInset,
     );
     usePreviewMiniPlayerStore.getState().resize(threadRef, tabId, nextSize);
+    if (!position) return;
     const nextPosition = clampPreviewMiniPlayerPosition(
-      position ?? { x: root.offsetLeft, y: root.offsetTop },
+      position,
       { width: parent.clientWidth, height: parent.clientHeight },
       nextSize,
       bottomInset,
@@ -222,8 +225,8 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         position
           ? { left: position.x, top: position.y, width: size.width, height: size.height }
           : {
-              right: 16,
-              top: 16,
+              right: PREVIEW_MINI_PLAYER_EDGE_GAP,
+              top: PREVIEW_MINI_PLAYER_EDGE_GAP,
               width: size.width,
               height: size.height,
             }
