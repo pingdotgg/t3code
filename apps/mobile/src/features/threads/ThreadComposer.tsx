@@ -286,6 +286,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [contentHeight, setContentHeight] = useState(80);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   // Opening and closing count as active so the composer stays expanded while
   // focus moves between its native editor and the settings modal.
@@ -784,6 +785,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onFocus={handleFocus}
               onBlur={handleBlur}
               onSubmit={handleSend}
+              onContentSizeChange={(width, height) => setContentHeight(height)}
               scrollEnabled={isExpanded}
               // Android: collapsed single line centers natively (gravity) in
               // a pill-height box matching the send button; iOS keeps insets.
@@ -792,6 +794,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               style={
                 isExpanded
                   ? {
+                      height: Math.min(Math.max(contentHeight, 80), 160),
                       minHeight: 80,
                       maxHeight: 160,
                       paddingHorizontal: 4,
