@@ -7,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -418,6 +419,140 @@ describe("VcsStatusBroadcaster", () => {
       yield* Effect.yieldNow;
 
       assert.isTrue(Option.isNone(yield* Deferred.poll(remoteUpdateSeen)));
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("does not let a stale full refresh overwrite a newer local generation", () => {
+    let currentLocal = baseLocalStatus;
+    let delayRemote = false;
+    let delayedRemote: Deferred.Deferred<VcsStatusRemoteResult | null> | null = null;
+    let staleLocalRead: Deferred.Deferred<void> | null = null;
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () =>
+            Effect.sync(() => currentLocal).pipe(
+              Effect.tap(() =>
+                delayRemote && staleLocalRead
+                  ? Deferred.succeed(staleLocalRead, undefined).pipe(Effect.ignore)
+                  : Effect.void,
+              ),
+            ),
+          remoteStatus: () =>
+            Effect.suspend(() => {
+              if (!delayRemote) return Effect.succeed(baseRemoteStatus);
+              return delayedRemote
+                ? Deferred.await(delayedRemote)
+                : Effect.die("delayed remote is not initialized");
+            }),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      delayedRemote = yield* Deferred.make<VcsStatusRemoteResult | null>();
+      staleLocalRead = yield* Deferred.make<void>();
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      delayRemote = true;
+      const staleRefresh = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(staleLocalRead);
+
+      currentLocal = { ...baseLocalStatus, refName: "feature/new-ref" };
+      yield* broadcaster.refreshLocalStatus("/repo");
+      yield* Deferred.succeed(delayedRemote, baseRemoteStatus);
+      const refreshResult = yield* Fiber.join(staleRefresh);
+
+      assert.equal(refreshResult.refName, "feature/new-ref");
+      assert.equal(refreshResult.aheadCount, 0);
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("builds the initial snapshot from one cached generation", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const snapshot = yield* Stream.runHead(
+        broadcaster.streamStatus(
+          { cwd: "/repo" },
+          {
+            automaticRemoteRefreshInterval: Effect.succeed(Duration.zero),
+            beforeInitialSnapshot: Effect.suspend(() => {
+              state.currentLocalStatus = { ...baseLocalStatus, refName: "feature/new-ref" };
+              return broadcaster.refreshLocalStatus("/repo").pipe(Effect.asVoid);
+            }),
+          },
+        ),
+      );
+
+      assert.isTrue(Option.isSome(snapshot));
+      if (Option.isSome(snapshot) && snapshot.value._tag === "snapshot") {
+        assert.equal(snapshot.value.generation, 1);
+        assert.equal(snapshot.value.local.refName, "feature/new-ref");
+        assert.isNull(snapshot.value.remote);
+      }
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("publishes a new local generation before awaiting remote invalidation", () => {
+    let currentLocal = baseLocalStatus;
+    let invalidationGate: Deferred.Deferred<void> | null = null;
+    const events: VcsStatusStreamEvent[] = [];
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () => Effect.succeed(currentLocal),
+          remoteStatus: () => Effect.succeed(baseRemoteStatus),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () =>
+            invalidationGate ? Deferred.await(invalidationGate) : Effect.void,
+          invalidateStatus: () => Effect.void,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      const scope = yield* Scope.make();
+      const initialSeen = yield* Deferred.make<void>();
+      const localSeen = yield* Deferred.make<void>();
+      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
+        events.push(event);
+        if (event._tag === "snapshot") {
+          return Deferred.succeed(initialSeen, undefined).pipe(Effect.ignore);
+        }
+        if (event._tag === "localUpdated") {
+          return Deferred.succeed(localSeen, undefined).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkIn(scope));
+      yield* Deferred.await(initialSeen);
+
+      invalidationGate = yield* Deferred.make<void>();
+      currentLocal = { ...baseLocalStatus, refName: "feature/new-ref" };
+      const refresh = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(localSeen);
+
+      assert.equal(events.at(-1)?._tag, "localUpdated");
+      yield* Deferred.succeed(invalidationGate, undefined);
+      yield* Fiber.join(refresh);
       yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.provide(testLayer));
   });
