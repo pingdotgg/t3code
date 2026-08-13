@@ -10,6 +10,7 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateDownloadPercent,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -83,6 +84,38 @@ function SidebarUpdateReleaseNotesTooltip({
   );
 }
 
+export function SidebarUpdateDownloadProgress({ percent }: { readonly percent: number }) {
+  return (
+    <span className="relative flex size-full items-center justify-center">
+      <svg aria-hidden="true" className="absolute inset-0 size-full -rotate-90" viewBox="0 0 32 32">
+        <circle
+          cx="16"
+          cy="16"
+          r="14"
+          fill="none"
+          stroke="currentColor"
+          strokeOpacity="0.22"
+          strokeWidth="1.5"
+        />
+        <circle
+          cx="16"
+          cy="16"
+          r="14"
+          fill="none"
+          pathLength="100"
+          stroke="currentColor"
+          strokeDasharray="100"
+          strokeDashoffset={100 - percent}
+          strokeLinecap="round"
+          strokeWidth="1.5"
+          className="transition-[stroke-dashoffset] duration-300 ease-out motion-reduce:transition-none"
+        />
+      </svg>
+      <DownloadIcon className="size-3.5" />
+    </span>
+  );
+}
+
 export function SidebarUpdateArchitectureWarning() {
   return isElectron ? <SidebarUpdateArchitectureWarningContent /> : null;
 }
@@ -113,6 +146,7 @@ function SidebarUpdateControl() {
 
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const isDownloading = state?.status === "downloading";
+  const downloadPercent = state ? getDesktopUpdateDownloadPercent(state) : null;
   const isUpdateState = action !== "none" || isDownloading;
   const tooltip = isUpdateState
     ? state
@@ -243,17 +277,22 @@ function SidebarUpdateControl() {
               type="button"
               aria-label={tooltip}
               aria-disabled={disabled || isActionPending || undefined}
-              disabled={disabled || isActionPending}
+              disabled={isActionPending && !isDownloading}
               className={cn(
-                "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors enabled:cursor-pointer focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60",
-                isUpdateState
-                  ? "bg-update-surface text-update-foreground enabled:hover:bg-update/12"
-                  : "text-[var(--sidebar-icon-color)] enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground",
+                "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60",
+                isDownloading ? "cursor-default" : "cursor-pointer",
+                isDownloading
+                  ? "bg-transparent text-update-foreground hover:bg-update/8"
+                  : isUpdateState
+                    ? "bg-update-surface text-update-foreground hover:bg-update/12"
+                    : "text-[var(--sidebar-icon-color)] hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
               )}
               onClick={handleAction}
             >
               {action === "install" ? (
                 <RotateCwIcon className="size-4" />
+              ) : isDownloading ? (
+                <SidebarUpdateDownloadProgress percent={downloadPercent ?? 0} />
               ) : isUpdateState ? (
                 <DownloadIcon className="size-4" />
               ) : (

@@ -56,6 +56,16 @@ export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null):
   return state?.status === "downloading";
 }
 
+export function getDesktopUpdateDownloadPercent(state: DesktopUpdateState): number | null {
+  if (state.status !== "downloading" || typeof state.downloadPercent !== "number") {
+    return null;
+  }
+  if (!Number.isFinite(state.downloadPercent)) {
+    return null;
+  }
+  return Math.min(100, Math.max(0, Math.floor(state.downloadPercent)));
+}
+
 export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState): string {
   if (!shouldShowArm64IntelBuildWarning(state)) {
     return "This install is using the correct architecture.";
@@ -76,8 +86,8 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     return `Update ${state.availableVersion ?? "available"} ready to download`;
   }
   if (state.status === "downloading") {
-    const progress =
-      typeof state.downloadPercent === "number" ? ` (${Math.floor(state.downloadPercent)}%)` : "";
+    const percent = getDesktopUpdateDownloadPercent(state);
+    const progress = percent === null ? "" : ` (${percent}%)`;
     return `Downloading update${progress}`;
   }
   if (state.status === "downloaded") {

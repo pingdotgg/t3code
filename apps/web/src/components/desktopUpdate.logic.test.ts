@@ -6,6 +6,7 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateDownloadPercent,
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
@@ -333,5 +334,18 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
     );
+  });
+
+  it("uses the same bounded whole percentage shown by the progress control", () => {
+    const downloading = (downloadPercent: number): DesktopUpdateState => ({
+      ...baseState,
+      status: "downloading",
+      downloadPercent,
+    });
+
+    expect(getDesktopUpdateDownloadPercent(downloading(42.9))).toBe(42);
+    expect(getDesktopUpdateButtonTooltip(downloading(42.9))).toBe("Downloading update (42%)");
+    expect(getDesktopUpdateDownloadPercent(downloading(-5))).toBe(0);
+    expect(getDesktopUpdateDownloadPercent(downloading(105))).toBe(100);
   });
 });
