@@ -1,10 +1,12 @@
-import { DownloadIcon, RotateCwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { DownloadIcon, RefreshCwIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 import { isElectron } from "../../env";
+import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
+  canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
@@ -12,12 +14,12 @@ import {
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
-  shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Separator } from "../ui/separator";
+import { SidebarMenuItem } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function keyReleaseNoteItems(items: ReadonlyArray<string>) {
@@ -41,16 +43,29 @@ function SidebarUpdateReleaseNotesTooltip({
   }
 
   return (
-    <div className="w-120 max-w-[calc(100vw-2rem)] text-left">
+    <div className="w-fit max-w-[min(24rem,calc(100vw-2rem))] text-left">
       <div className="px-1">
-        <div className="text-sm leading-5 font-medium">{tooltip}</div>
+        {state.status === "available" ? (
+          <div>
+            <div className="whitespace-nowrap text-sm leading-5 font-medium">
+              Update ready to download
+            </div>
+            {state.availableVersion ? (
+              <div className="mt-0.5 text-xs leading-4 text-update-foreground">
+                {state.availableVersion}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="text-sm leading-5 font-medium">{tooltip}</div>
+        )}
       </div>
       <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => (
           <div key={releaseNote.version}>
             {index > 0 && <Separator className="my-3 bg-border/60" />}
             <section>
-              <h3 className="text-muted-foreground text-xs leading-4 font-semibold">
+              <h3 className="text-foreground text-xs leading-4 font-semibold">
                 {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
               </h3>
               <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
@@ -68,24 +83,50 @@ function SidebarUpdateReleaseNotesTooltip({
   );
 }
 
-export function SidebarUpdatePill() {
+export function SidebarUpdateArchitectureWarning() {
+  return isElectron ? <SidebarUpdateArchitectureWarningContent /> : null;
+}
+
+function SidebarUpdateArchitectureWarningContent() {
   const state = useDesktopUpdateState();
-  const [dismissed, setDismissed] = useState(false);
+  const visible = shouldShowArm64IntelBuildWarning(state);
+  const description = state && visible ? getArm64IntelBuildWarningDescription(state) : null;
+
+  if (!visible || !description) return null;
+
+  return (
+    <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8 text-xs">
+      <TriangleAlertIcon />
+      <AlertTitle>Intel build on Apple Silicon</AlertTitle>
+      <AlertDescription>{description}</AlertDescription>
+    </Alert>
+  );
+}
+
+export function SidebarUpdatePill() {
+  return isElectron ? <SidebarUpdateControl /> : null;
+}
+
+function SidebarUpdateControl() {
+  const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
 
-  const visible = isElectron && shouldShowDesktopUpdateButton(state) && !dismissed;
-  const tooltip = state ? getDesktopUpdateButtonTooltip(state) : "Update available";
-  const disabled = isDesktopUpdateButtonDisabled(state);
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
-
-  const showArm64Warning = isElectron && shouldShowArm64IntelBuildWarning(state);
-  const arm64Description =
-    state && showArm64Warning ? getArm64IntelBuildWarningDescription(state) : null;
+  const isDownloading = state?.status === "downloading";
+  const isUpdateState = action !== "none" || isDownloading;
+  const tooltip = isUpdateState
+    ? state
+      ? getDesktopUpdateButtonTooltip(state)
+      : "Update available"
+    : state?.status === "checking"
+      ? "Checking for updates…"
+      : "Check for updates";
+  const disabled = isUpdateState ? isDesktopUpdateButtonDisabled(state) : !canCheckForUpdate(state);
 
   const handleAction = useCallback(async () => {
     const bridge = window.desktopBridge;
     if (!bridge || !state) return;
-    if (disabled || action === "none" || isActionPending) return;
+    if (disabled || isActionPending) return;
 
     setIsActionPending(true);
 
@@ -165,99 +206,92 @@ export function SidebarUpdatePill() {
           );
         })
         .finally(() => setIsActionPending(false));
+      return;
     }
+
+    void bridge
+      .checkForUpdate()
+      .then((result) => {
+        if (result.checked) return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not check for updates",
+            description:
+              result.state.message ?? "Automatic updates are not available in this build.",
+          }),
+        );
+      })
+      .catch((error) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not check for updates",
+            description: error instanceof Error ? error.message : "Update check failed.",
+          }),
+        );
+      })
+      .finally(() => setIsActionPending(false));
   }, [action, disabled, isActionPending, state]);
 
-  if (!visible && !showArm64Warning) return null;
-
   return (
-    <div className="flex flex-col gap-1">
-      {showArm64Warning && arm64Description && (
-        <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8 text-xs">
-          <TriangleAlertIcon />
-          <AlertTitle>Intel build on Apple Silicon</AlertTitle>
-          <AlertDescription>{arm64Description}</AlertDescription>
-        </Alert>
-      )}
-      {visible && (
-        <div
-          className={`group/update relative flex h-7 w-full items-center rounded-lg bg-update-surface text-xs font-medium text-update-foreground ${
-            disabled ? " cursor-not-allowed opacity-60" : ""
-          }`}
-        >
-          <div className="pointer-events-none absolute inset-0 rounded-lg transition-colors group-has-[button.update-main:hover]/update:bg-update/12" />
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={tooltip}
-                  aria-disabled={disabled || isActionPending || undefined}
-                  disabled={disabled || isActionPending}
-                  className="update-main relative flex h-full flex-1 items-center gap-2 px-2 enabled:cursor-pointer"
-                  onClick={handleAction}
-                >
-                  {action === "install" ? (
-                    <>
-                      <RotateCwIcon className="size-3.5" />
-                      <span>Restart to update</span>
-                    </>
-                  ) : state?.status === "downloading" ? (
-                    <>
-                      <DownloadIcon className="size-3.5" />
-                      <span>
-                        Downloading
-                        {typeof state.downloadPercent === "number"
-                          ? ` (${Math.floor(state.downloadPercent)}%)`
-                          : "…"}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <DownloadIcon className="size-3.5" />
-                      <span>Update available</span>
-                    </>
-                  )}
-                </button>
-              }
-            />
-            <TooltipPopup
-              align="start"
-              className={
-                state?.channel === "nightly" && state.releaseNotes.length > 0
-                  ? // pointer-events-auto overrides the positioner's pointer-events-none so the
-                    // release notes stay open (and scrollable) when the cursor moves into them.
-                    "pointer-events-auto max-w-none text-balance"
-                  : undefined
-              }
-              side="top"
-            >
-              {state ? (
-                <SidebarUpdateReleaseNotesTooltip state={state} tooltip={tooltip} />
-              ) : (
-                tooltip
+    <SidebarMenuItem className="ml-auto shrink-0">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={tooltip}
+              aria-disabled={disabled || isActionPending || undefined}
+              disabled={disabled || isActionPending}
+              className={cn(
+                "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors enabled:cursor-pointer focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60",
+                isUpdateState
+                  ? "bg-update-surface text-update-foreground enabled:hover:bg-update/12"
+                  : "text-[var(--sidebar-icon-color)] enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground",
               )}
-            </TooltipPopup>
-          </Tooltip>
-          {action === "download" && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label="Dismiss update"
-                    className="mr-1 inline-flex size-5 items-center justify-center rounded-md text-update-foreground transition-colors"
-                    onClick={() => setDismissed(true)}
-                  >
-                    <XIcon className="size-3.5" />
-                  </button>
+              onClick={handleAction}
+            >
+              {action === "install" ? (
+                <RotateCwIcon className="size-4" />
+              ) : isUpdateState ? (
+                <DownloadIcon className="size-4" />
+              ) : (
+                <RefreshCwIcon
+                  className={cn("size-4", state?.status === "checking" && "animate-spin")}
+                />
+              )}
+            </button>
+          }
+        />
+        <TooltipPopup
+          align="center"
+          className={
+            isUpdateState && state?.channel === "nightly" && state.releaseNotes.length > 0
+              ? // pointer-events-auto overrides the positioner's pointer-events-none so the
+                // release notes stay open (and scrollable) when the cursor moves into them.
+                "pointer-events-auto max-w-none text-balance"
+              : undefined
+          }
+          side="top"
+          style={
+            isUpdateState
+              ? {
+                  background:
+                    "color-mix(in srgb, var(--update) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity), transparent))",
+                  borderColor: "var(--update-foreground)",
                 }
-              />
-              <TooltipPopup side="top">Dismiss until next launch</TooltipPopup>
-            </Tooltip>
+              : undefined
+          }
+          variant={isUpdateState ? "glass" : "default"}
+        >
+          {isUpdateState && state ? (
+            <SidebarUpdateReleaseNotesTooltip state={state} tooltip={tooltip} />
+          ) : (
+            tooltip
           )}
-        </div>
-      )}
-    </div>
+        </TooltipPopup>
+      </Tooltip>
+    </SidebarMenuItem>
   );
 }
