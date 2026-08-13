@@ -8,6 +8,21 @@ use xcap::{Monitor, Window};
 
 use crate::platform::{DesktopError, Result};
 
+/// Run a capture call that may panic inside `xcap`.
+///
+/// `xcap` panics rather than erroring on unsupported compositors and protocol
+/// versions. Those are ordinary conditions for us — a headless box, an old
+/// Wayland — so they become tool errors instead of killing the process.
+fn guarded<T>(what: &str, call: impl FnOnce() -> Result<T>) -> Result<T> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)) {
+        Ok(result) => result,
+        Err(_) => Err(DesktopError::new(format!(
+            "{what} is not supported by this display server — on Wayland, try an X11/XWayland \
+             session, or use the accessibility tools instead of screenshots"
+        ))),
+    }
+}
+
 /// Matches the macOS server's default, which keeps a full-screen capture around
 /// 200-400 KB of base64 — large enough to read UI text, small enough to not
 /// dominate a model's context window.
@@ -36,6 +51,10 @@ fn encode_png(image: RgbaImage, max_width: u32) -> Result<Vec<u8>> {
 }
 
 pub fn list_displays() -> Result<String> {
+    guarded("display enumeration", list_displays_inner)
+}
+
+fn list_displays_inner() -> Result<String> {
     let monitors = Monitor::all()
         .map_err(|error| DesktopError::new(format!("failed to enumerate displays: {error}")))?;
     if monitors.is_empty() {
@@ -59,6 +78,10 @@ pub fn list_displays() -> Result<String> {
 }
 
 pub fn capture_display(index: usize, max_width: u32) -> Result<Vec<u8>> {
+    guarded("display capture", || capture_display_inner(index, max_width))
+}
+
+fn capture_display_inner(index: usize, max_width: u32) -> Result<Vec<u8>> {
     let monitors = Monitor::all()
         .map_err(|error| DesktopError::new(format!("failed to enumerate displays: {error}")))?;
     let monitor = monitors.get(index).ok_or_else(|| {
@@ -80,6 +103,10 @@ pub fn capture_display(index: usize, max_width: u32) -> Result<Vec<u8>> {
 /// model means. Returns the window title alongside the PNG so the tool text can
 /// name what it captured.
 pub fn capture_app_window(pid: u32, max_width: u32) -> Result<(Vec<u8>, String)> {
+    guarded("window capture", || capture_app_window_inner(pid, max_width))
+}
+
+fn capture_app_window_inner(pid: u32, max_width: u32) -> Result<(Vec<u8>, String)> {
     let windows = Window::all()
         .map_err(|error| DesktopError::new(format!("failed to enumerate windows: {error}")))?;
 
