@@ -150,11 +150,7 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
             style={{ stopColor: "var(--stage-night-glow-secondary)" }}
             stopOpacity="0.16"
           />
-          <stop
-            offset="1"
-            style={{ stopColor: "var(--stage-night-glow-bottom)" }}
-            stopOpacity="0"
-          />
+          <stop offset="1" style={{ stopColor: "var(--stage-night-bottom)" }} stopOpacity="0" />
         </radialGradient>
         <linearGradient id={cloudId} x1="0" y1="60" x2="288" y2="96" gradientUnits="userSpaceOnUse">
           <stop style={{ stopColor: "var(--stage-night-highlight)" }} stopOpacity="0.5" />
@@ -262,13 +258,13 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
           gradientTransform="translate(216 14) rotate(137) scale(120 84)"
           gradientUnits="userSpaceOnUse"
         >
-          <stop style={{ stopColor: "var(--stage-art-glow-highlight)" }} stopOpacity="0.4" />
+          <stop style={{ stopColor: "var(--stage-art-highlight)" }} stopOpacity="0.4" />
           <stop
             offset="0.52"
-            style={{ stopColor: "var(--stage-art-glow-secondary)" }}
+            style={{ stopColor: "var(--stage-art-secondary)" }}
             stopOpacity="0.16"
           />
-          <stop offset="1" style={{ stopColor: "var(--stage-art-glow-bottom)" }} stopOpacity="0" />
+          <stop offset="1" style={{ stopColor: "var(--stage-art-bottom)" }} stopOpacity="0" />
         </radialGradient>
         <radialGradient
           id={celesteGlowId}
@@ -284,11 +280,7 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
             style={{ stopColor: "var(--stage-art-celeste-secondary)" }}
             stopOpacity="0.18"
           />
-          <stop
-            offset="1"
-            style={{ stopColor: "var(--stage-art-celeste-bottom)" }}
-            stopOpacity="0"
-          />
+          <stop offset="1" style={{ stopColor: "var(--stage-art-bottom)" }} stopOpacity="0" />
         </radialGradient>
         <radialGradient
           id={violetGlowId}
@@ -301,14 +293,10 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
           <stop style={{ stopColor: "var(--stage-art-violet-highlight)" }} stopOpacity="0.3" />
           <stop
             offset="0.52"
-            style={{ stopColor: "var(--stage-art-violet-secondary)" }}
+            style={{ stopColor: "var(--stage-art-tertiary)" }}
             stopOpacity="0.14"
           />
-          <stop
-            offset="1"
-            style={{ stopColor: "var(--stage-art-violet-bottom)" }}
-            stopOpacity="0"
-          />
+          <stop offset="1" style={{ stopColor: "var(--stage-art-bottom)" }} stopOpacity="0" />
         </radialGradient>
         <pattern id={minorGridId} width="8" height="8" patternUnits="userSpaceOnUse">
           <path

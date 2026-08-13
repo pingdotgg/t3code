@@ -275,15 +275,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-art-secondary: oklch(0.794668 0.12136 235.46);
     --stage-art-tertiary: oklch(0.678991 0.170261 275.365);
     --stage-art-line: oklch(0.959666 0.029238 218.179);
-    --stage-art-glow-highlight: oklch(0.951597 0.037289 215.482);
-    --stage-art-glow-secondary: oklch(0.794668 0.12136 235.46);
-    --stage-art-glow-bottom: oklch(0.565116 0.214215 262.182);
     --stage-art-celeste-highlight: oklch(0.968763 0.045822 196.42);
     --stage-art-celeste-secondary: oklch(0.827395 0.126071 211.26);
-    --stage-art-celeste-bottom: oklch(0.605817 0.191005 257.378);
     --stage-art-violet-highlight: oklch(0.895381 0.053248 286.447);
-    --stage-art-violet-secondary: oklch(0.678991 0.170261 275.365);
-    --stage-art-violet-bottom: oklch(0.513658 0.213542 266.954);
     --stage-art-grid-line: oklch(0.966822 0.01757 239.99);
     --stage-night-top: oklch(0.283792 0.117327 297.201);
     --stage-night-mid: oklch(0.227147 0.086086 277.99);
@@ -294,7 +288,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-night-line: oklch(0.938794 0.029114 273.103);
     --stage-night-glow-highlight: oklch(0.553749 0.176543 271.958);
     --stage-night-glow-secondary: oklch(0.345571 0.117466 273.568);
-    --stage-night-glow-bottom: oklch(0.215296 0.060604 273.351);
     --stage-night-sparkle: oklch(0.880867 0.057747 269.011);
   }
 
@@ -541,19 +534,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     html[data-theme-id="ember"],
     html[data-theme-id="iris"]
   ) {
-    --stage-art-glow-highlight: var(--stage-art-highlight);
-    --stage-art-glow-secondary: var(--stage-art-secondary);
-    --stage-art-glow-bottom: var(--stage-art-bottom);
     --stage-art-celeste-highlight: var(--stage-art-highlight);
     --stage-art-celeste-secondary: var(--stage-art-secondary);
-    --stage-art-celeste-bottom: var(--stage-art-bottom);
     --stage-art-violet-highlight: var(--stage-art-highlight);
-    --stage-art-violet-secondary: var(--stage-art-tertiary);
-    --stage-art-violet-bottom: var(--stage-art-bottom);
     --stage-art-grid-line: var(--stage-art-line);
     --stage-night-glow-highlight: var(--stage-night-highlight);
     --stage-night-glow-secondary: var(--stage-night-secondary);
-    --stage-night-glow-bottom: var(--stage-night-bottom);
     --stage-night-sparkle: var(--stage-night-line);
   }
 
