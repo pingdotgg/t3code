@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
+import {
+  createEnvironmentSessionAtoms,
+  currentPreparedConnection,
+} from "@t3tools/client-runtime/state/session";
+import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -25,6 +30,19 @@ export function readPreparedConnection(environmentId: EnvironmentId) {
   return Option.getOrNull(
     appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
   );
+}
+
+const readCurrentPreparedConnectionCommand = createRuntimeCommand(connectionAtomRuntime, {
+  label: "environment-prepared-connection:read-current",
+  execute: currentPreparedConnection,
+});
+
+export async function readCurrentPreparedConnection(environmentId: EnvironmentId) {
+  const result = await readCurrentPreparedConnectionCommand.run(appAtomRegistry, environmentId);
+  if (result._tag === "Failure") {
+    throw Cause.squash(result.cause);
+  }
+  return Option.getOrNull(result.value);
 }
 
 /**

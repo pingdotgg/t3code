@@ -6,6 +6,7 @@ import type {
 import { useEffect, useMemo, useState } from "react";
 
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
+import { useServerConfigs } from "../../state/entities";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -19,6 +20,7 @@ function parsePort(value: string): number | null {
 export function DesktopPortForwardsSettings() {
   const bridge = window.desktopBridge?.portForward;
   const { environments } = useEnvironments();
+  const serverConfigs = useServerConfigs();
   const primaryEnvironment = usePrimaryEnvironment();
   const [environmentId, setEnvironmentId] = useState<EnvironmentId | null>(null);
   const [remotePort, setRemotePort] = useState("3000");
@@ -31,22 +33,31 @@ export function DesktopPortForwardsSettings() {
     () => environments.filter((environment) => environment.connection.phase === "connected"),
     [environments],
   );
+  const forwardableEnvironments = useMemo(
+    () =>
+      connectedEnvironments.filter(
+        (environment) =>
+          serverConfigs.get(environment.environmentId)?.environment.capabilities
+            .tcpPortForwarding === true,
+      ),
+    [connectedEnvironments, serverConfigs],
+  );
 
   useEffect(() => {
     if (
       environmentId !== null &&
-      connectedEnvironments.some((environment) => environment.environmentId === environmentId)
+      forwardableEnvironments.some((environment) => environment.environmentId === environmentId)
     ) {
       return;
     }
-    const primaryConnected = connectedEnvironments.some(
+    const primaryConnected = forwardableEnvironments.some(
       (environment) => environment.environmentId === primaryEnvironment?.environmentId,
     );
     const fallback = primaryConnected
       ? (primaryEnvironment?.environmentId ?? null)
-      : (connectedEnvironments[0]?.environmentId ?? null);
+      : (forwardableEnvironments[0]?.environmentId ?? null);
     setEnvironmentId(fallback);
-  }, [connectedEnvironments, environmentId, primaryEnvironment?.environmentId]);
+  }, [environmentId, forwardableEnvironments, primaryEnvironment?.environmentId]);
 
   useEffect(() => {
     if (bridge === undefined) return;
@@ -137,7 +148,7 @@ export function DesktopPortForwardsSettings() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup alignItemWithTrigger={false}>
-                {connectedEnvironments.map((environment) => (
+                {forwardableEnvironments.map((environment) => (
                   <SelectItem
                     hideIndicator
                     key={environment.environmentId}
@@ -151,6 +162,10 @@ export function DesktopPortForwardsSettings() {
             {connectedEnvironments.length === 0 ? (
               <span className="block pt-1 text-[11px] text-muted-foreground">
                 Connect an environment to start forwarding ports.
+              </span>
+            ) : forwardableEnvironments.length === 0 ? (
+              <span className="block pt-1 text-[11px] text-muted-foreground">
+                Update the connected T3 server to enable port forwarding.
               </span>
             ) : null}
           </label>

@@ -73,8 +73,9 @@ export const resolvePortForwardAuthorization = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.portForward.resolveAuthorization")(function* ({
     requestId,
     socketUrl,
+    error,
   }) {
     const manager = yield* DesktopPortForwardManager.DesktopPortForwardManager;
-    yield* manager.resolveAuthorization(requestId, socketUrl);
+    yield* manager.resolveAuthorization(requestId, socketUrl, error);
   }),
 });

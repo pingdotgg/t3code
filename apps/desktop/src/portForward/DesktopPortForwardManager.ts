@@ -44,10 +44,11 @@ interface ManagedForward {
 
 export class DesktopPortForwardError extends Schema.TaggedErrorClass<DesktopPortForwardError>()(
   "DesktopPortForwardError",
-  { operation: Schema.String, cause: Schema.Defect() },
+  { operation: Schema.String, cause: Schema.Defect(), detail: Schema.optionalKey(Schema.String) },
 ) {
   override get message(): string {
-    return `Desktop port forward ${this.operation} failed.`;
+    const suffix = this.detail === undefined ? "" : `: ${this.detail}`;
+    return `Desktop port forward ${this.operation} failed${suffix}.`;
   }
 }
 
@@ -341,6 +342,7 @@ export class DesktopPortForwardManager extends Context.Service<
     readonly resolveAuthorization: (
       requestId: string,
       socketUrl: string | null,
+      error?: string,
     ) => Effect.Effect<void>;
     readonly subscribeStateChanges: (
       listener: StateListener,
@@ -549,6 +551,7 @@ export const make = Effect.gen(function* () {
   const resolveAuthorization: DesktopPortForwardManager["Service"]["resolveAuthorization"] = (
     requestId,
     socketUrl,
+    error,
   ) =>
     Effect.gen(function* () {
       const current = yield* Ref.get(pendingAuthorizations);
@@ -559,7 +562,8 @@ export const make = Effect.gen(function* () {
           deferred,
           new DesktopPortForwardError({
             operation: "authorize",
-            cause: "The environment could not authorize this connection.",
+            cause: error ?? "The environment could not authorize this connection.",
+            ...(error === undefined ? {} : { detail: error }),
           }),
         );
       } else {

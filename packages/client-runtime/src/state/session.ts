@@ -30,6 +30,23 @@ export function initialConfigOption<E>(
   );
 }
 
+/**
+ * Reads the supervisor's current prepared connection directly. Unlike the
+ * reactive value atom, this does not require a mounted subscriber to have
+ * observed the supervisor stream first.
+ */
+export const currentPreparedConnection = Effect.fn("clientRuntime.state.currentPreparedConnection")(
+  function* (environmentId: EnvironmentId) {
+    const registry = yield* EnvironmentRegistry;
+    return yield* registry.run(
+      environmentId,
+      EnvironmentSupervisor.pipe(
+        Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.prepared)),
+      ),
+    );
+  },
+);
+
 // Bounded like the snapshot fetches: a wedged environment must not pin the
 // permissions check (and with it the settings UI) in a loading state for long.
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;

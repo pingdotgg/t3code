@@ -69,6 +69,7 @@ export type DesktopPortForwardAuthorizationRequest =
 export const DesktopPortForwardAuthorizationResolution = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   socketUrl: Schema.NullOr(Schema.String),
+  error: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type DesktopPortForwardAuthorizationResolution =
   typeof DesktopPortForwardAuthorizationResolution.Type;
@@ -87,7 +88,11 @@ export interface DesktopPortForwardBridge {
   list: () => Promise<ReadonlyArray<DesktopPortForwardSnapshot>>;
   stop: (id: DesktopPortForwardId) => Promise<void>;
   stopEnvironment: (environmentId: EnvironmentId) => Promise<void>;
-  resolveAuthorization: (requestId: string, socketUrl: string | null) => Promise<void>;
+  resolveAuthorization: (
+    requestId: string,
+    socketUrl: string | null,
+    error?: string,
+  ) => Promise<void>;
   onStateChange: (
     listener: (forwards: ReadonlyArray<DesktopPortForwardSnapshot>) => void,
   ) => () => void;

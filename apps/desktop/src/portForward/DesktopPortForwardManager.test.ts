@@ -6,6 +6,18 @@ import * as Effect from "effect/Effect";
 import * as DesktopPortForwardManager from "./DesktopPortForwardManager.ts";
 
 it.layer(NodeServices.layer)("DesktopPortForwardManager", (it) => {
+  it("preserves renderer authorization failures for the forward status", () => {
+    const error = new DesktopPortForwardManager.DesktopPortForwardError({
+      operation: "authorize",
+      cause: "Remote environment returned 404.",
+      detail: "Remote environment returned 404",
+    });
+
+    expect(error.message).toBe(
+      "Desktop port forward authorize failed: Remote environment returned 404.",
+    );
+  });
+
   it.effect("atomically allocates and stops a desktop loopback listener", () =>
     Effect.gen(function* () {
       const manager = yield* DesktopPortForwardManager.DesktopPortForwardManager;
