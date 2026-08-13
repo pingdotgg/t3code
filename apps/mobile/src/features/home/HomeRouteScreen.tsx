@@ -108,13 +108,20 @@ export function HomeRouteScreen() {
           options={{ title: "", headerTitle: "", unstable_headerLeftItems: () => [] }}
         />
         <WorkspaceSidebarToolbar
-          afterSidebarButton={
+          afterSidebarButton={[
             <NativeHeaderToolbar.Button
+              key="pull-requests"
+              accessibilityLabel="Open pull requests"
+              icon="arrow.triangle.pull"
+              onPress={() => navigation.navigate("PullRequests")}
+            />,
+            <NativeHeaderToolbar.Button
+              key="new-task"
               accessibilityLabel="New task"
               icon="square.and.pencil"
               onPress={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-            />
-          }
+            />,
+          ]}
         />
         <WorkspaceEmptyDetail
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
@@ -157,6 +164,7 @@ export function HomeRouteScreen() {
               params: { screen: "SettingsEnvironments" },
             })
           }
+          onOpenPullRequests={() => navigation.navigate("PullRequests")}
           onOpenSettings={() =>
             navigation.navigate("SettingsSheet", {
               screen: "SettingsContent",

@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, View, useColorScheme } from "react-native";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 export interface SidebarHeaderActionsProps {
+  readonly onOpenPullRequests: () => void;
   readonly onOpenSettings: () => void;
   /** Rendered inside a shared capsule group — buttons drop their own chrome. */
   readonly grouped?: boolean;
@@ -11,7 +12,7 @@ export interface SidebarHeaderActionsProps {
 
 function FallbackHeaderButton(props: {
   readonly accessibilityLabel: string;
-  readonly icon: "gearshape" | "square.and.pencil";
+  readonly icon: "arrow.triangle.pull" | "gearshape" | "square.and.pencil";
   readonly grouped?: boolean;
   readonly onPress: () => void;
 }) {
@@ -47,6 +48,12 @@ function FallbackHeaderButton(props: {
 export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
   return (
     <View className="flex-row items-center gap-0.5">
+      <FallbackHeaderButton
+        accessibilityLabel="Open pull requests"
+        grouped={props.grouped}
+        icon="arrow.triangle.pull"
+        onPress={props.onOpenPullRequests}
+      />
       <FallbackHeaderButton
         accessibilityLabel="Open settings"
         grouped={props.grouped}

@@ -7,7 +7,7 @@ import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanim
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { useOpenNativePullRequest } from "../pull-requests/useOpenNativePullRequest";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 
@@ -19,6 +19,7 @@ export function GitActionProgressOverlay(props: {
   readonly onDismiss: () => void;
 }) {
   const { progress, onDismiss } = props;
+  const openNativePullRequest = useOpenNativePullRequest();
   const insets = useSafeAreaInsets();
   const prevPhaseRef = useRef(progress.phase);
 
@@ -35,13 +36,13 @@ export function GitActionProgressOverlay(props: {
 
   const handlePress = useCallback(() => {
     if (progress.prUrl) {
-      void tryOpenExternalUrl(progress.prUrl, "pull-request");
+      void openNativePullRequest({ url: progress.prUrl });
       return;
     }
     if (progress.phase === "success" || progress.phase === "error") {
       onDismiss();
     }
-  }, [onDismiss, progress.phase, progress.prUrl]);
+  }, [onDismiss, openNativePullRequest, progress.phase, progress.prUrl]);
 
   if (progress.phase === "idle") {
     return null;

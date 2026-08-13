@@ -13,8 +13,7 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useCallback, useMemo } from "react";
-import { Alert } from "react-native";
-import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { useOpenNativePullRequest } from "../pull-requests/useOpenNativePullRequest";
 import {
   basename,
   getTerminalStatusLabel,
@@ -146,16 +145,15 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     return "arrow.up.right.circle";
   })();
 
+  const openNativePullRequest = useOpenNativePullRequest();
+
   const openExistingPr = useCallback(async () => {
-    const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
-    if (!prUrl) {
-      Alert.alert("No open PR", "This branch does not have an open pull request.");
-      return;
-    }
-    if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
-      Alert.alert("Unable to open PR", "The pull request could not be opened.");
-    }
-  }, [gitStatus]);
+    const pr = gitStatus?.pr?.state === "open" ? gitStatus.pr : null;
+    await openNativePullRequest({
+      url: pr?.url,
+      number: pr?.number,
+    });
+  }, [gitStatus, openNativePullRequest]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {

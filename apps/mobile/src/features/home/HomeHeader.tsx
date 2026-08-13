@@ -49,6 +49,7 @@ export function HomeHeader(props: {
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   readonly onOpenEnvironments: () => void;
+  readonly onOpenPullRequests: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
 }) {
@@ -257,6 +258,19 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
                 match exactly (ControlPill sizes via Tailwind classes and
                 resolves to a different box). */}
             <Pressable
+              accessibilityLabel="Open pull requests"
+              accessibilityRole="button"
+              onPress={props.onOpenPullRequests}
+              className="size-11 items-center justify-center rounded-full bg-subtle"
+            >
+              <SymbolView
+                name="arrow.triangle.pull"
+                size={18}
+                tintColor={iconColor}
+                type="monochrome"
+              />
+            </Pressable>
+            <Pressable
               accessibilityLabel="Open settings"
               accessibilityRole="button"
               onPress={props.onOpenSettings}
@@ -329,6 +343,14 @@ function IosHomeHeader(props: HomeHeaderProps) {
           unstable_headerRightItems:
             Platform.OS === "ios"
               ? () => [
+                  withNativeGlassHeaderItem({
+                    accessibilityLabel: "Open pull requests",
+                    icon: { name: "arrow.triangle.pull", type: "sfSymbol" } as const,
+                    identifier: "home-pull-requests",
+                    label: "",
+                    onPress: props.onOpenPullRequests,
+                    type: "button",
+                  }),
                   withNativeGlassHeaderItem({
                     accessibilityLabel: "Open settings",
                     icon: { name: "ellipsis", type: "sfSymbol" } as const,
