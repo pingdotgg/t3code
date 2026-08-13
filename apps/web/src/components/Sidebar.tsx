@@ -3096,18 +3096,20 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
       >
         <button
           type="button"
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left outline-none"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left leading-tight outline-none"
           onClick={() => props.onNavigate(draftId)}
         >
+          <span aria-hidden="true" className="size-3.5 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-[length:var(--app-sidebar-font-size)] text-foreground/90">
             {preview}
           </span>
           <span
-            className={`shrink-0 text-xs ${
+            className={`shrink-0 ${
               hasPendingTurn || isPromoting
                 ? "font-medium text-sky-600 dark:text-sky-400"
                 : "text-muted-foreground/50"
             }`}
+            style={{ fontSize: "var(--app-sidebar-meta-font-size)" }}
           >
             {hasPendingTurn || isPromoting ? "Working" : "Draft"}
           </span>
