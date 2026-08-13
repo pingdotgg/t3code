@@ -562,6 +562,7 @@ describe("partitioning with the hosts' own priority reads", () => {
 });
 
 describe("the list snapshot across a reload", () => {
+  const NOW = Date.parse("2026-08-13T12:00:00Z");
   const makeStorage = () => {
     const held = new Map<string, string>();
     return {
@@ -577,27 +578,49 @@ describe("the list snapshot across a reload", () => {
     truncated: true,
     nextCursors: { "pingdotgg/t3code": "cursor-1" },
   } as never;
+  const readSnapshot = (
+    storage: ReturnType<typeof makeStorage> | undefined,
+    environmentKey: string,
+    viewers: Record<string, string> = { "github.com": "Bilal" },
+    now = NOW,
+  ) => readPullRequestListSnapshot(storage, environmentKey, { viewers, now });
 
   it("hydrates the retained rows so ghosts never replace them", () => {
     const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "env-1:open:all::", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
+    writePullRequestListSnapshot(storage, "env-1", { scope: "env-1:open:all::", data }, NOW);
+    const snapshot = readSnapshot(storage, "env-1");
     expect(snapshot?.scope).toBe("env-1:open:all::");
     expect(snapshot?.data.entries.map((item) => item.number)).toEqual([1]);
   });
 
   it("carries neither stale failures nor stale cursors", () => {
     const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+    const snapshot = readSnapshot(storage, "env-1");
     expect(snapshot?.data.errors).toEqual([]);
     expect(snapshot?.data.nextCursors).toEqual({});
   });
 
   it("answers nothing for another environment", () => {
     const storage = makeStorage();
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data });
-    expect(readPullRequestListSnapshot(storage, "env-2")).toBeNull();
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+    expect(readSnapshot(storage, "env-2")).toBeNull();
+  });
+
+  it("rejects snapshots from another host account", () => {
+    const storage = makeStorage();
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+
+    expect(readSnapshot(storage, "env-1", { "github.com": "Octocat" })).toBeNull();
+  });
+
+  it("rejects snapshots after their short reload window", () => {
+    const storage = makeStorage();
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data }, NOW);
+
+    expect(
+      readSnapshot(storage, "env-1", { "github.com": "Bilal" }, NOW + 5 * 60 * 1_000 + 1),
+    ).toBeNull();
   });
 
   it("rejects a snapshot whose rows do not decode as entries", () => {
@@ -606,19 +629,19 @@ describe("the list snapshot across a reload", () => {
       "t3.pullRequests.list:env-1",
       JSON.stringify({ scope: "s", data: { entries: [null] } }),
     );
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
+    expect(readSnapshot(storage, "env-1")).toBeNull();
     storage.setItem(
       "t3.pullRequests.list:env-1",
       JSON.stringify({ scope: "s", data: { entries: [{ host: "github.com" }] } }),
     );
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
+    expect(readSnapshot(storage, "env-1")).toBeNull();
   });
 
   it("shrugs off corrupt storage and no storage at all", () => {
     const storage = makeStorage();
     storage.setItem("t3.pullRequests.list:env-1", "{not json");
-    expect(readPullRequestListSnapshot(storage, "env-1")).toBeNull();
-    expect(readPullRequestListSnapshot(undefined, "env-1")).toBeNull();
+    expect(readSnapshot(storage, "env-1")).toBeNull();
+    expect(readSnapshot(undefined, "env-1")).toBeNull();
   });
 
   it("caps the accumulated rows but keeps the whole host set", () => {
@@ -654,8 +677,8 @@ describe("the list snapshot across a reload", () => {
       truncated: true,
       nextCursors: {},
     } as never;
-    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated });
-    const snapshot = readPullRequestListSnapshot(storage, "env-1");
+    writePullRequestListSnapshot(storage, "env-1", { scope: "s", data: accumulated }, NOW);
+    const snapshot = readSnapshot(storage, "env-1", viewers);
     expect(snapshot?.data.entries).toHaveLength(99);
     expect(snapshot?.data.viewers).toEqual(viewers);
     expect(snapshot?.data.providers).toEqual(providers);

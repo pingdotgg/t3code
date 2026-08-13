@@ -746,10 +746,12 @@ function PullRequestsRouteView() {
   // A reload recreates the registry the queries live in, so with nothing held the page would
   // cold-start into skeletons even though almost every row is unchanged. The last answer for
   // this set of environments is kept across reloads and hydrated here as the carried rows: they
-  // render at once — narrowed to the current filters like any carried answer — and the live read
-  // reconciles them in place by key rather than replacing them with ghosts.
+  // render once the current host identities are known — narrowed to the current filters like any
+  // carried answer — and the live read reconciles them in place by key rather than replacing them
+  // with ghosts. Waiting for identity prevents one CLI account from seeing another's stored rows.
   useEffect(() => {
-    if (environmentKey.length === 0) return;
+    const baseline = baselineQuery.data;
+    if (environmentKey.length === 0 || baseline === null) return;
     setLoaded((current) => {
       // Rows read from a different set of environments cannot even be narrowed — one of them may
       // no longer be connected at all — so that set's own snapshot beats holding them.
@@ -757,6 +759,7 @@ function PullRequestsRouteView() {
       const snapshot = readPullRequestListSnapshot(
         typeof window === "undefined" ? undefined : window.localStorage,
         environmentKey,
+        { viewers: baseline.viewers },
       );
       if (snapshot === null) return null;
       return {
@@ -767,7 +770,7 @@ function PullRequestsRouteView() {
         ...(snapshot.partitions === undefined ? {} : { partitions: snapshot.partitions }),
       };
     });
-  }, [environmentKey]);
+  }, [baselineQuery.data, environmentKey]);
   useEffect(() => {
     // Only once this query has settled. While a search is being swapped in or out the text has
     // already changed and the data has not, so recording them together would file the previous
