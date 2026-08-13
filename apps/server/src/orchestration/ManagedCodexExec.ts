@@ -3,6 +3,8 @@ import {
   ManagedAgentRunError,
   ProviderDriverKind,
   RuntimeTaskId,
+  ThreadId,
+  TrimmedNonEmptyString,
   type ManagedAgentCancelInput,
   type ManagedCodexExecLaunchInput,
   type ProviderRuntimeEvent,
@@ -31,17 +33,43 @@ interface ManagedRun {
   cancelled: boolean;
 }
 
+export class ManagedCodexExecInternalError extends Schema.TaggedErrorClass<ManagedCodexExecInternalError>()(
+  "ManagedCodexExecInternalError",
+  {
+    reason: Schema.Literals(["thread-not-found", "spawn-failed", "not-owned"]),
+    threadId: Schema.optional(ThreadId),
+    agentId: Schema.optional(TrimmedNonEmptyString),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const target = this.agentId ?? this.threadId ?? "managed agent";
+    return `Managed Codex exec internal failure (${this.reason}): ${target}`;
+  }
+}
+
+type ManagedCodexExecError = ManagedAgentRunError | ManagedCodexExecInternalError;
+
 export class ManagedCodexExec extends Context.Service<
   ManagedCodexExec,
   {
     readonly launch: (
       input: ManagedCodexExecLaunchInput,
-    ) => Effect.Effect<{ readonly agentId: string }, ManagedAgentRunError>;
+    ) => Effect.Effect<{ readonly agentId: string }, ManagedCodexExecError>;
     readonly cancel: (
       input: ManagedAgentCancelInput,
-    ) => Effect.Effect<{ readonly cancelled: boolean }, ManagedAgentRunError>;
+    ) => Effect.Effect<{ readonly cancelled: boolean }, ManagedCodexExecError>;
   }
 >()("t3/orchestration/ManagedCodexExec") {}
+
+export function toManagedAgentRunError(error: ManagedCodexExecError): ManagedAgentRunError {
+  if (error._tag === "ManagedAgentRunError") return error;
+  return new ManagedAgentRunError({
+    reason: error.reason,
+    ...(error.threadId !== undefined ? { threadId: error.threadId } : {}),
+    ...(error.agentId !== undefined ? { agentId: error.agentId } : {}),
+  });
+}
 
 function outputSummary(line: string): string | undefined {
   const trimmed = line.trim();
@@ -94,10 +122,11 @@ export const make = Effect.gen(function* () {
     function* (input) {
       const threadOption = yield* snapshots.getThreadDetailById(input.threadId).pipe(
         Effect.mapError(
-          () =>
-            new ManagedAgentRunError({
+          (cause) =>
+            new ManagedCodexExecInternalError({
               reason: "thread-not-found",
               threadId: input.threadId,
+              cause,
             }),
         ),
       );
@@ -110,10 +139,11 @@ export const make = Effect.gen(function* () {
       }
       const projectOption = yield* snapshots.getProjectShellById(thread.projectId).pipe(
         Effect.mapError(
-          () =>
-            new ManagedAgentRunError({
+          (cause) =>
+            new ManagedCodexExecInternalError({
               reason: "thread-not-found",
               threadId: input.threadId,
+              cause,
             }),
         ),
       );
@@ -127,10 +157,11 @@ export const make = Effect.gen(function* () {
 
       const runUuid = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError(
-          () =>
-            new ManagedAgentRunError({
+          (cause) =>
+            new ManagedCodexExecInternalError({
               reason: "spawn-failed",
               threadId: input.threadId,
+              cause,
             }),
         ),
       );
@@ -161,10 +192,11 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.provideService(Scope.Scope, scope),
           Effect.mapError(
-            () =>
-              new ManagedAgentRunError({
+            (cause) =>
+              new ManagedCodexExecInternalError({
                 reason: "spawn-failed",
                 threadId: input.threadId,
+                cause,
               }),
           ),
         );
@@ -193,7 +225,7 @@ export const make = Effect.gen(function* () {
         ...linkage,
         description: input.title,
       }).pipe(
-        Effect.catch(() =>
+        Effect.catch((cause) =>
           child.kill().pipe(
             Effect.ignore,
             Effect.andThen(
@@ -202,10 +234,11 @@ export const make = Effect.gen(function* () {
               }),
             ),
             Effect.andThen(
-              new ManagedAgentRunError({
+              new ManagedCodexExecInternalError({
                 reason: "spawn-failed",
                 threadId: input.threadId,
                 agentId,
+                cause,
               }),
             ),
           ),
@@ -292,11 +325,12 @@ export const make = Effect.gen(function* () {
           }
           yield* run.child.kill({ killSignal: "SIGTERM", forceKillAfter: "3 seconds" }).pipe(
             Effect.mapError(
-              () =>
-                new ManagedAgentRunError({
+              (cause) =>
+                new ManagedCodexExecInternalError({
                   reason: "not-owned",
                   threadId: input.threadId,
                   agentId: input.agentId,
+                  cause,
                 }),
             ),
           );

@@ -21,7 +21,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 
-import { ManagedCodexExec, layer } from "./ManagedCodexExec.ts";
+import * as ManagedCodexExec from "./ManagedCodexExec.ts";
 import {
   ProviderRuntimeIngestionService,
   type ProviderRuntimeIngestionShape,
@@ -39,7 +39,7 @@ const encodeManagedCodexLaunchExit = Schema.encodeEffect(
 
 describe("ManagedCodexExec", () => {
   it("exposes runtime ingestion as a layer composition requirement", () => {
-    type Requirements = Layer.Services<typeof layer>;
+    type Requirements = Layer.Services<typeof ManagedCodexExec.layer>;
     const requiresRuntimeIngestion: unknown extends Requirements
       ? false
       : ProviderRuntimeIngestionService extends Requirements
@@ -164,8 +164,8 @@ describe("ManagedCodexExec", () => {
         Layer.succeed(ProviderRuntimeIngestionService, ingestion),
       );
 
-      const context = yield* Layer.build(layer.pipe(Layer.provide(dependencies)));
-      const manager = yield* ManagedCodexExec.pipe(Effect.provide(context));
+      const context = yield* Layer.build(ManagedCodexExec.layer.pipe(Layer.provide(dependencies)));
+      const manager = yield* ManagedCodexExec.ManagedCodexExec.pipe(Effect.provide(context));
       const launched = yield* manager.launch({
         threadId: ThreadId.make("thread-1"),
         prompt: "Review the implementation",
@@ -297,8 +297,8 @@ describe("ManagedCodexExec", () => {
         }),
       );
 
-      const context = yield* Layer.build(layer.pipe(Layer.provide(dependencies)));
-      const manager = yield* ManagedCodexExec.pipe(Effect.provide(context));
+      const context = yield* Layer.build(ManagedCodexExec.layer.pipe(Layer.provide(dependencies)));
+      const manager = yield* ManagedCodexExec.ManagedCodexExec.pipe(Effect.provide(context));
       const result = yield* Effect.result(
         manager.launch({
           threadId: ThreadId.make("thread-1"),
@@ -313,16 +313,24 @@ describe("ManagedCodexExec", () => {
       }
 
       const error = result.failure;
-      expect(error).toBeInstanceOf(ManagedAgentRunError);
+      expect(error).toBeInstanceOf(ManagedCodexExec.ManagedCodexExecInternalError);
       expect(error).toMatchObject({
         reason: "spawn-failed",
         threadId: ThreadId.make("thread-1"),
       });
-      expect(error.message).toBe("Managed agent run failed (spawn-failed): thread-1");
+      expect(error.cause).toBe(spawnCause);
+      expect((error.cause as Error).stack).toBe(spawnCause.stack);
+      expect(error.message).toBe("Managed Codex exec internal failure (spawn-failed): thread-1");
       expect(error.message).not.toContain(prompt);
       expect(String(error)).not.toContain(prompt);
 
-      const wirePayload = yield* encodeManagedCodexLaunchExit(Exit.fail(error));
+      const publicError = ManagedCodexExec.toManagedAgentRunError(error);
+      expect(publicError).toBeInstanceOf(ManagedAgentRunError);
+      expect(publicError).not.toHaveProperty("cause");
+      const domainError = new ManagedAgentRunError({ reason: "run-not-found" });
+      expect(ManagedCodexExec.toManagedAgentRunError(domainError)).toBe(domainError);
+      expect(domainError).not.toHaveProperty("cause");
+      const wirePayload = yield* encodeManagedCodexLaunchExit(Exit.fail(publicError));
       expect(wirePayload).toContain("spawn-failed");
       expect(wirePayload).toContain("thread-1");
       expect(wirePayload).not.toContain(prompt);

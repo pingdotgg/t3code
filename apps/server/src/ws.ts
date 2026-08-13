@@ -1038,13 +1038,17 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.launchManagedCodexExec]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.launchManagedCodexExec,
-            managedCodexExec.launch(input),
+            managedCodexExec
+              .launch(input)
+              .pipe(Effect.mapError(ManagedCodexExec.toManagedAgentRunError)),
             { "rpc.aggregate": "thread", threadId: input.threadId },
           ),
         [ORCHESTRATION_WS_METHODS.cancelManagedAgent]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.cancelManagedAgent,
-            managedCodexExec.cancel(input),
+            managedCodexExec
+              .cancel(input)
+              .pipe(Effect.mapError(ManagedCodexExec.toManagedAgentRunError)),
             { "rpc.aggregate": "thread", threadId: input.threadId },
           ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
