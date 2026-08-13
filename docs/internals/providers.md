@@ -39,6 +39,25 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+## Cursor skill discovery
+
+The composer `$` picker reads `ServerProvider.skills`. Claude fills that array with a filesystem
+scan (`Drivers/ClaudeSkills.ts`). Cursor historically left it empty, so project and user Cursor
+skills never appeared even when `SKILL.md` files existed.
+
+Cursor now uses the same snapshot path via `Drivers/CursorSkills.ts`. The scan is best-effort and
+later-write-wins:
+
+1. `~/.agents/skills` (user, Agent Skills standard)
+2. `~/.cursor/skills-cursor` (Cursor-bundled skills)
+3. `~/.cursor/skills` (user Cursor skills)
+4. `<project>/.agents/skills` then `<project>/.cursor/skills` for the server cwd and any projected
+   project workspace roots
+
+Project beats user. `.cursor` beats `.agents`. The skill name is the directory name. Unusable cwds
+such as `/` (packaged desktop app) are skipped so discovery falls through to user skills and open
+project roots instead of scanning the filesystem root.
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method

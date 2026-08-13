@@ -6,6 +6,7 @@ import type {
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
+  ServerProviderSkill,
   ServerProviderState,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -30,6 +31,8 @@ import {
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
+import { discoverCursorSkills } from "../Drivers/CursorSkills.ts";
 import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
@@ -622,12 +625,29 @@ function buildCursorCliCommandMissingMessage(binaryPath: string): string {
   ].join(" ");
 }
 
+const listProjectedCursorSkillProjectCwds = Effect.fn("listProjectedCursorSkillProjectCwds")(
+  function* () {
+    const repository = yield* Effect.serviceOption(ProjectionProjectRepository);
+    return yield* Option.match(repository, {
+      onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
+      onSome: (projects) =>
+        projects.listAll().pipe(
+          Effect.map((rows) =>
+            rows.filter((row) => row.deletedAt === null).map((row) => row.workspaceRoot),
+          ),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
+        ),
+    });
+  },
+);
+
 export function buildCursorProviderSnapshot(input: {
   readonly checkedAt: string;
   readonly cursorSettings: CursorSettings;
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
   readonly discoveryWarning?: string;
+  readonly skills?: ReadonlyArray<ServerProviderSkill>;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
@@ -639,6 +659,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    skills: input.skills ?? [],
     probe: {
       installed: true,
       version: input.parsed.version,
@@ -987,6 +1008,7 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
+  cwd?: string,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -994,6 +1016,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
+  const extraProjectCwds = yield* listProjectedCursorSkillProjectCwds();
+  const skills = yield* discoverCursorSkills({ cwd, extraProjectCwds });
 
   if (!cursorSettings.enabled) {
     return buildServerProvider({
@@ -1001,6 +1025,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: false,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: false,
         version: null,
@@ -1027,6 +1052,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -1045,6 +1071,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: true,
         version: null,
@@ -1068,6 +1095,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: true,
         version: parsed.version,
@@ -1109,6 +1137,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       Option.filter(discoveredModels, (models) => models.length > 0),
       () => [] as const,
     ),
+    skills,
     ...(discoveryWarning ? { discoveryWarning } : {}),
   });
 });
