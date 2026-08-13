@@ -374,7 +374,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 } catch {
                     guard let self, pullRequestTasks[key]?.token == token else { return }
                     pullRequestTasks[key] = nil
-                    pullRequestResolutions[key] = .failed(at: .now)
+                    pullRequestResolutions[key] = .failed(
+                        at: .now,
+                        preserving: pullRequestResolutions[key]?.presentation
+                    )
                     reconfigureThreadRows(matching: key)
                     return
                 }
@@ -803,25 +806,33 @@ enum HomeThreadPullRequestResolution {
     private static let failureRetryDelay: TimeInterval = 10
 
     case resolved(HomeThreadPullRequestPresentation?, expiresAt: Date)
-    case retryAfter(Date)
+    case retryAfter(Date, previous: HomeThreadPullRequestPresentation?)
 
     static func cached(_ presentation: HomeThreadPullRequestPresentation?, at date: Date) -> Self {
         .resolved(presentation, expiresAt: date.addingTimeInterval(cacheLifetime))
     }
 
-    static func failed(at date: Date) -> Self {
-        .retryAfter(date.addingTimeInterval(failureRetryDelay))
+    static func failed(
+        at date: Date,
+        preserving presentation: HomeThreadPullRequestPresentation? = nil
+    ) -> Self {
+        .retryAfter(
+            date.addingTimeInterval(failureRetryDelay),
+            previous: presentation
+        )
     }
 
     var presentation: HomeThreadPullRequestPresentation? {
-        guard case let .resolved(presentation, _) = self else { return nil }
-        return presentation
+        switch self {
+        case let .resolved(presentation, _), let .retryAfter(_, presentation):
+            return presentation
+        }
     }
 
     func needsLoad(at date: Date) -> Bool {
         switch self {
         case let .resolved(_, expiresAt): expiresAt <= date
-        case let .retryAfter(retryAfter): retryAfter <= date
+        case let .retryAfter(retryAfter, _): retryAfter <= date
         }
     }
 }

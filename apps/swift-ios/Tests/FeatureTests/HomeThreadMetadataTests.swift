@@ -348,7 +348,7 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
-    func pullRequestLookupCacheExpiresResultsAndThrottlesFailures() {
+    func pullRequestLookupCacheExpiresResultsAndThrottlesFailures() throws {
         let now = Date(timeIntervalSince1970: 1_000)
         let cachedMissingPullRequest = HomeThreadPullRequestResolution.cached(nil, at: now)
         let failedLookup = HomeThreadPullRequestResolution.failed(at: now)
@@ -360,6 +360,25 @@ struct HomeThreadMetadataTests {
         #expect(cachedMissingPullRequest.needsLoad(at: now.addingTimeInterval(5 * 60)))
         #expect(failedLookup.needsLoad(at: now.addingTimeInterval(9)) == false)
         #expect(failedLookup.needsLoad(at: now.addingTimeInterval(10)))
+
+        let presentation = try #require(HomeThreadPullRequestPresentation(
+            thread: pullRequestThread(branch: "feature/cache"),
+            status: FeatureSourceControlStatus(
+                branch: "feature/cache",
+                pullRequest: FeaturePullRequest(
+                    number: 42,
+                    title: "Keep visible",
+                    state: "OPEN",
+                    url: URL(string: "https://github.com/example/repo/pull/42")!
+                )
+            )
+        ))
+        let failedRefresh = HomeThreadPullRequestResolution.failed(
+            at: now,
+            preserving: presentation
+        )
+        #expect(failedRefresh.presentation == presentation)
+        #expect(!failedRefresh.needsLoad(at: now.addingTimeInterval(9)))
     }
 
     @Test
@@ -395,5 +414,37 @@ struct HomeThreadMetadataTests {
             branch: branch,
             worktreePath: worktreePath
         )
+    }
+
+    @Test
+    func environmentCatalogMissDoesNotUseLegacyProviders() throws {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Use provider",
+            providerID: "shared-id"
+        )
+        let snapshot = FeatureSnapshot(
+            projects: [
+                FeatureProject(
+                    id: "project",
+                    environmentID: "remote",
+                    name: "Remote",
+                    path: "/remote"
+                ),
+            ],
+            threads: [thread],
+            providers: [
+                FeatureProvider(id: "shared-id", name: "Wrong environment", driver: "codex"),
+            ],
+            providersByEnvironment: ["local": [
+                FeatureProvider(id: "shared-id", name: "Local only", driver: "codex"),
+            ]]
+        )
+
+        #expect(thread.homeProviderLabel(in: snapshot) == "shared-id")
+        let context = try #require(HomeThreadRowContext.index(snapshot: snapshot)[thread.id])
+        #expect(context.providerName == "shared-id")
+        #expect(context.providerDriver == "shared-id")
     }
 }
