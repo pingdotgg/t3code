@@ -1,0 +1,143 @@
+//! Screen and window capture, shared by every non-macOS backend.
+//!
+//! `xcap` already abstracts Windows' DXGI/GDI path and Linux's X11 path, so the
+//! only platform-aware part left is which window belongs to which pid.
+
+use image::{ImageEncoder, RgbaImage, codecs::png::PngEncoder, imageops::FilterType};
+use xcap::{Monitor, Window};
+
+use crate::platform::{DesktopError, Result};
+
+/// Matches the macOS server's default, which keeps a full-screen capture around
+/// 200-400 KB of base64 — large enough to read UI text, small enough to not
+/// dominate a model's context window.
+pub const DEFAULT_MAX_WIDTH: u32 = 1400;
+
+fn encode_png(image: RgbaImage, max_width: u32) -> Result<Vec<u8>> {
+    let image = if max_width > 0 && image.width() > max_width {
+        let height = ((image.height() as f64) * (max_width as f64) / (image.width() as f64))
+            .round()
+            .max(1.0) as u32;
+        image::imageops::resize(&image, max_width, height, FilterType::Triangle)
+    } else {
+        image
+    };
+
+    let mut buffer = Vec::new();
+    PngEncoder::new(&mut buffer)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|error| DesktopError::new(format!("failed to encode PNG: {error}")))?;
+    Ok(buffer)
+}
+
+pub fn list_displays() -> Result<String> {
+    let monitors = Monitor::all()
+        .map_err(|error| DesktopError::new(format!("failed to enumerate displays: {error}")))?;
+    if monitors.is_empty() {
+        return Ok("no displays detected".to_string());
+    }
+
+    let mut lines = Vec::new();
+    for (index, monitor) in monitors.iter().enumerate() {
+        let name = monitor.name().unwrap_or_else(|_| format!("display {index}"));
+        let width = monitor.width().unwrap_or(0);
+        let height = monitor.height().unwrap_or(0);
+        let x = monitor.x().unwrap_or(0);
+        let y = monitor.y().unwrap_or(0);
+        let primary = monitor.is_primary().unwrap_or(false);
+        lines.push(format!(
+            "[{index}] {name}  {width}x{height}  at ({x},{y}){}",
+            if primary { "  PRIMARY" } else { "" }
+        ));
+    }
+    Ok(lines.join("\n"))
+}
+
+pub fn capture_display(index: usize, max_width: u32) -> Result<Vec<u8>> {
+    let monitors = Monitor::all()
+        .map_err(|error| DesktopError::new(format!("failed to enumerate displays: {error}")))?;
+    let monitor = monitors.get(index).ok_or_else(|| {
+        DesktopError::new(format!(
+            "display {index} does not exist — call list_displays ({} attached)",
+            monitors.len()
+        ))
+    })?;
+    let image = monitor
+        .capture_image()
+        .map_err(|error| DesktopError::new(format!("failed to capture display: {error}")))?;
+    encode_png(image, max_width)
+}
+
+/// Capture the largest window owned by `pid`.
+///
+/// Largest rather than frontmost: a foreground app often also owns tooltips and
+/// tiny helper windows, and the biggest one is reliably the document window the
+/// model means. Returns the window title alongside the PNG so the tool text can
+/// name what it captured.
+pub fn capture_app_window(pid: u32, max_width: u32) -> Result<(Vec<u8>, String)> {
+    let windows = Window::all()
+        .map_err(|error| DesktopError::new(format!("failed to enumerate windows: {error}")))?;
+
+    let mut best: Option<(u32, &Window)> = None;
+    for window in &windows {
+        if window.pid().unwrap_or(0) != pid || window.is_minimized().unwrap_or(false) {
+            continue;
+        }
+        let area = window.width().unwrap_or(0).saturating_mul(window.height().unwrap_or(0));
+        if area == 0 {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(best_area, _)| area > *best_area) {
+            best = Some((area, window));
+        }
+    }
+
+    let (_, window) = best.ok_or_else(|| {
+        DesktopError::new(format!(
+            "pid {pid} has no capturable window — it may be minimized or have no UI"
+        ))
+    })?;
+    let title = window.title().unwrap_or_default();
+    let image = window
+        .capture_image()
+        .map_err(|error| DesktopError::new(format!("failed to capture window: {error}")))?;
+    Ok((encode_png(image, max_width)?, title))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_MAX_WIDTH, encode_png};
+    use image::RgbaImage;
+
+    #[test]
+    fn encodes_a_png_signature() {
+        let png = encode_png(RgbaImage::new(4, 4), DEFAULT_MAX_WIDTH).expect("encodes");
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn downscales_only_when_wider_than_the_limit() {
+        // Narrower than the cap: dimensions must survive untouched, since
+        // upscaling would waste tokens without adding detail.
+        let small = encode_png(RgbaImage::new(100, 50), 400).expect("encodes");
+        let decoded = image::load_from_memory(&small).expect("decodes");
+        assert_eq!((decoded.width(), decoded.height()), (100, 50));
+
+        // Wider than the cap: scaled down, aspect ratio preserved.
+        let large = encode_png(RgbaImage::new(1000, 500), 400).expect("encodes");
+        let decoded = image::load_from_memory(&large).expect("decodes");
+        assert_eq!((decoded.width(), decoded.height()), (400, 200));
+    }
+
+    #[test]
+    fn a_zero_max_width_disables_downscaling() {
+        let png = encode_png(RgbaImage::new(80, 20), 0).expect("encodes");
+        let decoded = image::load_from_memory(&png).expect("decodes");
+        assert_eq!((decoded.width(), decoded.height()), (80, 20));
+    }
+}

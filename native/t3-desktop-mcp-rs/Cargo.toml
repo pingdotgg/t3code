@@ -1,0 +1,48 @@
+[package]
+name = "t3-desktop-mcp-rs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# The macOS server is a separate Swift package that talks to the Accessibility
+# API. This crate covers the platforms Swift cannot reach, and ships the same
+# binary name so the server's resolver treats all three identically.
+[[bin]]
+name = "t3-desktop-mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+base64 = "0.22.1"
+# Window capture on both targets; encodes to PNG through `image`.
+xcap = "0.9.8"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+# Friendly wrapper over the UI Automation COM API. Raw `windows` bindings would
+# put several hundred lines of COM plumbing between us and every tool call.
+uiautomation = "0.25.0"
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Threading",
+  "Win32_Graphics_Gdi",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# AT-SPI is the only general accessibility surface on Linux. It is async-first,
+# so tool handlers block on a tiny executor rather than dragging tokio in.
+atspi = { version = "0.30.0", default-features = false, features = ["connection", "proxies"] }
+futures-lite = "2.6.1"
+# XTEST for synthetic input. Wayland deliberately refuses this, which
+# `platform::linux` reports as an actionable error rather than a silent no-op.
+x11rb = { version = "0.14.0", features = ["xtest"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true
