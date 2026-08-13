@@ -320,14 +320,14 @@ struct DailyUXSidebarTests {
 
     @Test
     func pinnedBlockedThreadCanFullSwipeToUnpin() {
-        let pinned = thread(
+        var pinned = thread(
             id: "pinned-blocked",
             created: -20,
             updated: -10,
             state: .queued,
-            pinned: -5,
             settlementEligible: false
         )
+        pinned.pinnedAt = now.addingTimeInterval(-5)
 
         #expect(
             HomeThreadSwipeActions.kinds(for: pinned, isArchived: false, now: now).first

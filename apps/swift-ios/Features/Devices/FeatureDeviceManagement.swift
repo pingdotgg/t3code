@@ -129,7 +129,8 @@ final class EmptyFeatureDeviceManager: FeatureDeviceManaging {
 enum DeviceManagementErrorCopy {
     static func message(for error: Error) -> String {
         let value = error.localizedDescription.lowercased()
-        if value.contains("scope") || value.contains("403") || value.contains("forbidden") {
+        if value.contains("scope") || value.contains("403") || value.contains("forbidden")
+            || value.contains("permission") {
             return "This connection does not have permission to manage devices."
         }
         if value.contains("offline") || value.contains("network")

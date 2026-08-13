@@ -157,6 +157,22 @@ public actor EnvironmentStore {
         try save(document)
     }
 
+    @discardableResult
+    public func setEnabled(id: String, enabled: Bool) throws -> [Environment] {
+        var document = try loadDocument()
+        guard let index = document.environments.firstIndex(where: { $0.id == id }) else {
+            return document.environments
+        }
+        document.environments[index].isEnabled = enabled
+        if !enabled, document.activeEnvironmentID == id {
+            document.activeEnvironmentID = document.environments.first {
+                $0.isEnabled && $0.id != id
+            }?.id
+        }
+        try save(document)
+        return document.environments
+    }
+
     public func save(_ environments: [Environment]) throws {
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
@@ -184,7 +200,7 @@ public actor EnvironmentStore {
         var document = try loadDocument()
         document.environments.removeAll { $0.id == id }
         if document.activeEnvironmentID == id {
-            document.activeEnvironmentID = document.environments.first?.id
+            document.activeEnvironmentID = document.environments.first(where: \.isEnabled)?.id
         }
         try save(document)
         return document.environments

@@ -42,8 +42,16 @@ public struct T3ConnectCloudEnvironment: Identifiable, Equatable, Sendable {
 }
 
 @MainActor
+protocol T3ConnectDeviceManaging: AnyObject {
+    var hasActiveAccount: Bool { get }
+    var currentRegisteredDeviceID: String? { get }
+    func registeredDevices() async throws -> [T3ConnectRelayDevice]
+    func unregisterDevice(id: String) async throws
+}
+
+@MainActor
 @Observable
-public final class T3ConnectController {
+public final class T3ConnectController: T3ConnectDeviceManaging {
     private static let logger = Logger(
         subsystem: "codes.t3.swift-ios",
         category: "T3Connect"
@@ -132,6 +140,9 @@ public final class T3ConnectController {
         guard case let .unavailable(reason) = resolution else { return nil }
         return reason
     }
+
+    public var currentRegisteredDeviceID: String? { registeredDeviceID }
+    var hasActiveAccount: Bool { account != nil }
 
     var clerk: Clerk? { auth?.client }
 
@@ -364,6 +375,38 @@ public final class T3ConnectController {
             throw T3ConnectAuthError.noSession
         }
         registeredDeviceID = registration.deviceId
+    }
+
+    public func registeredDevices() async throws -> [T3ConnectRelayDevice] {
+        guard let auth, let relay else {
+            throw T3ConnectRelayError.invalidConfiguration(
+                unavailableReason ?? "T3 Connect is unavailable in this build."
+            )
+        }
+        let token = try await loadedRelayToken(auth)
+        let generation = authorizationGeneration
+        try beginAuthorizationOperation(generation)
+        defer { endAuthorizationOperation() }
+        let devices = try await relay.listDevices(clerkToken: token)
+        try requireCurrentAuthorization(generation)
+        return devices
+    }
+
+    public func unregisterDevice(id: String) async throws {
+        guard let auth, let relay else {
+            throw T3ConnectRelayError.invalidConfiguration(
+                unavailableReason ?? "T3 Connect is unavailable in this build."
+            )
+        }
+        let token = try await loadedRelayToken(auth)
+        let generation = authorizationGeneration
+        try beginAuthorizationOperation(generation)
+        defer { endAuthorizationOperation() }
+        try await relay.unregisterDevice(deviceID: id, clerkToken: token)
+        try requireCurrentAuthorization(generation)
+        if registeredDeviceID == id {
+            registeredDeviceID = nil
+        }
     }
 
     func rememberRegisteredDevice(id: String) {

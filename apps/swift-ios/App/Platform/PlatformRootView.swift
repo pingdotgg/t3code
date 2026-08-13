@@ -236,12 +236,12 @@ struct PlatformRootView: View {
                 )
             }
         case let .environment(id):
-            guard await activateEnvironmentIfNeeded(id) else { return }
+            guard await enableEnvironmentIfNeeded(id) else { return }
             PlatformHapticEngine.shared.selection(
                 enabled: model.snapshot.settings.hapticsEnabled
             )
         case let .thread(environmentID, threadID):
-            guard await activateEnvironmentIfNeeded(environmentID),
+            guard await enableEnvironmentIfNeeded(environmentID),
                   let thread = PlatformRouteResolver.thread(
                       in: model.snapshot,
                       environmentID: environmentID,
@@ -258,7 +258,7 @@ struct PlatformRootView: View {
                 enabled: model.snapshot.settings.hapticsEnabled
             )
         case let .project(environmentID, projectID):
-            guard await activateEnvironmentIfNeeded(environmentID),
+            guard await enableEnvironmentIfNeeded(environmentID),
                   let project = PlatformRouteResolver.project(
                       in: model.snapshot,
                       environmentID: environmentID,
@@ -275,7 +275,7 @@ struct PlatformRootView: View {
                 enabled: model.snapshot.settings.hapticsEnabled
             )
         case let .newTask(environmentID, projectID):
-            guard await activateEnvironmentIfNeeded(environmentID) else { return }
+            guard await enableEnvironmentIfNeeded(environmentID) else { return }
             let resolvedProject = projectID.flatMap {
                 PlatformRouteResolver.project(
                     in: model.snapshot,
@@ -297,14 +297,14 @@ struct PlatformRootView: View {
     }
 
     @MainActor
-    private func activateEnvironmentIfNeeded(_ id: String?) async -> Bool {
+    private func enableEnvironmentIfNeeded(_ id: String?) async -> Bool {
         guard let id else { return true }
         guard let environment = model.snapshot.environments.first(where: { $0.id == id }) else {
             model.errorMessage = "That environment is not saved on this device."
             return false
         }
-        guard !environment.isActive else { return true }
-        return await model.activateEnvironment(id)
+        guard !environment.isEnabled else { return true }
+        return await model.setEnvironmentEnabled(id, enabled: true)
     }
 
     /// Home revisions are coalesced by FeatureRootModel, so this performs one

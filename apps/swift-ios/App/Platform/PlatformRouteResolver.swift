@@ -6,19 +6,12 @@ enum PlatformRouteResolver {
         environmentID: String?,
         id: String
     ) -> FeatureThread? {
-        let activeID = snapshot.environments.first(where: \.isActive)?.id
-        return snapshot.threads
-            .filter { thread in
+        let matches = snapshot.threads.filter { thread in
                 (environmentID == nil || thread.environmentID == environmentID)
                     && (thread.id == id || thread.wireID == id)
             }
-            .sorted { lhs, rhs in
-                let lhsIsActive = lhs.environmentID == activeID
-                let rhsIsActive = rhs.environmentID == activeID
-                if lhsIsActive != rhsIsActive { return lhsIsActive }
-                return lhs.updatedAt > rhs.updatedAt
-            }
-            .first
+        guard environmentID != nil || matches.count == 1 else { return nil }
+        return matches.max { $0.updatedAt < $1.updatedAt }
     }
 
     static func project(
@@ -26,18 +19,11 @@ enum PlatformRouteResolver {
         environmentID: String?,
         id: String
     ) -> FeatureProject? {
-        let activeID = snapshot.environments.first(where: \.isActive)?.id
-        return snapshot.projects
-            .filter { project in
+        let matches = snapshot.projects.filter { project in
                 (environmentID == nil || project.environmentID == environmentID)
                     && (project.id == id || project.wireID == id)
             }
-            .sorted { lhs, rhs in
-                let lhsIsActive = lhs.environmentID == activeID
-                let rhsIsActive = rhs.environmentID == activeID
-                if lhsIsActive != rhsIsActive { return lhsIsActive }
-                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-            }
-            .first
+        guard environmentID != nil || matches.count == 1 else { return nil }
+        return matches.first
     }
 }

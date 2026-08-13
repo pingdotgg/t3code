@@ -129,8 +129,8 @@ public enum FeatureOutboxPolicy {
         pendingCreationThreadIDs: Set<String> = []
     ) -> FeatureOutboxDeliveryDecision {
         let environment = snapshot.environments.first { $0.id == submission.environmentID }
-        let isConnected = environment?.connectionState == .connected
-            || (environment?.isActive == true && snapshot.connection.state == .connected)
+        let isConnected = environment?.isEnabled == true
+            && environment?.connectionState == .connected
         let thread = snapshot.threads.first { $0.id == submission.threadID }
 
         if submission.creation != nil {

@@ -134,10 +134,9 @@ public struct AddProjectView: View {
     }
 
     private var environments: [FeatureEnvironment] {
-        model.snapshot.environments.sorted { lhs, rhs in
-            if lhs.isActive != rhs.isActive { return lhs.isActive }
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-        }
+        model.snapshot.environments
+            .filter(\.isEnabled)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     private var selectedEnvironment: FeatureEnvironment? {
@@ -572,10 +571,7 @@ public struct AddProjectView: View {
     }
 
     private func canCreateProject(in environment: FeatureEnvironment) -> Bool {
-        let state = environment.isActive
-            ? model.snapshot.connection.state
-            : environment.connectionState
-        return state != .disconnected
+        environment.isEnabled && environment.connectionState != .disconnected
     }
 
     private func selectEnvironmentIfNeeded() {
@@ -729,7 +725,7 @@ public struct AddProjectView: View {
                     path: validated
                 )
                 dismiss()
-            } else if environment.isActive, await model.addProject(path: validated) {
+            } else if environments.count == 1, await model.addProject(path: validated) {
                 dismiss()
             } else {
                 errorMessage = model.errorMessage ?? "The project could not be added."
