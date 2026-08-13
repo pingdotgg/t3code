@@ -10,7 +10,7 @@
  *
  *  2. **Many drivers, one registry** — the "all drivers slice" describe
  *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`) in a single
+ *     (`codex`, `claudeAgent`, `copilot`, `cursor`, `grok`, `opencode`) in a single
  *     `ProviderInstanceConfigMap` and asserts the registry boots them all
  *     without cross-contamination. This proves the driver SPI is uniform
  *     across every provider — any driver plugs into the registry through
@@ -18,7 +18,7 @@
  *
  * Every instance in these tests is configured with `enabled: false` so the
  * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `opencode`
+ * without trying to spawn real `codex` / `claude` / `copilot` / `agent` / `grok` / `opencode`
  * binaries. That keeps the assertions focused on registry routing
  * behaviour rather than the runtime details of each provider.
  */
@@ -27,6 +27,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type ClaudeSettings,
   type CodexSettings,
+  type CopilotSettings,
   type CursorSettings,
   type GrokSettings,
   type OpenCodeSettings,
@@ -46,6 +47,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
+import { CopilotDriver } from "../Drivers/CopilotDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
@@ -117,6 +119,13 @@ const makeCursorConfig = (overrides: Partial<CursorSettings>): CursorSettings =>
   ...overrides,
 });
 
+const makeCopilotConfig = (overrides: Partial<CopilotSettings>): CopilotSettings => ({
+  enabled: false,
+  binaryPath: "copilot",
+  customModels: [],
+  ...overrides,
+});
+
 const makeGrokConfig = (overrides: Partial<GrokSettings>): GrokSettings => ({
   enabled: false,
   binaryPath: "grok",
@@ -146,7 +155,6 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   );
   const testLayer = ProviderOrchestrationAdapterInfrastructureLive.pipe(
@@ -289,7 +297,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(TestHttpClientLive),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   );
   const testLayer = ProviderOrchestrationAdapterInfrastructureLive.pipe(
@@ -301,12 +308,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const codexId = ProviderInstanceId.make("codex_default");
       const claudeId = ProviderInstanceId.make("claude_default");
       const cursorId = ProviderInstanceId.make("cursor_default");
+      const copilotId = ProviderInstanceId.make("copilot_default");
       const grokId = ProviderInstanceId.make("grok_default");
       const openCodeId = ProviderInstanceId.make("opencode_default");
 
       const codexDriverKind = ProviderDriverKind.make("codex");
       const claudeDriverKind = ProviderDriverKind.make("claudeAgent");
       const cursorDriverKind = ProviderDriverKind.make("cursor");
+      const copilotDriverKind = ProviderDriverKind.make("copilot");
       const grokDriverKind = ProviderDriverKind.make("grok");
       const openCodeDriverKind = ProviderDriverKind.make("opencode");
 
@@ -332,6 +341,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
           enabled: false,
           config: makeCursorConfig({}),
         },
+        [copilotId]: {
+          driver: copilotDriverKind,
+          displayName: "GitHub Copilot",
+          enabled: false,
+          config: makeCopilotConfig({}),
+        },
         [grokId]: {
           driver: grokDriverKind,
           displayName: "Grok",
@@ -347,7 +362,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       };
 
       const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
-        drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
+        drivers: [
+          CodexDriver,
+          ClaudeDriver,
+          CopilotDriver,
+          CursorDriver,
+          GrokDriver,
+          OpenCodeDriver,
+        ],
         configMap,
       });
 
@@ -357,9 +379,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(unavailable).toEqual([]);
 
       const instances = yield* registry.listInstances;
-      expect(instances).toHaveLength(5);
+      expect(instances).toHaveLength(6);
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
-        [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
+        [codexId, claudeId, copilotId, cursorId, grokId, openCodeId].toSorted(),
       );
 
       // Instance lookup by id resolves each instance to its own bundle —
@@ -368,16 +390,19 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       const codex = yield* registry.getInstance(codexId);
       const claude = yield* registry.getInstance(claudeId);
       const cursor = yield* registry.getInstance(cursorId);
+      const copilot = yield* registry.getInstance(copilotId);
       const grok = yield* registry.getInstance(grokId);
       const openCode = yield* registry.getInstance(openCodeId);
       expect(codex?.driverKind).toBe(codexDriverKind);
       expect(claude?.driverKind).toBe(claudeDriverKind);
       expect(cursor?.driverKind).toBe(cursorDriverKind);
+      expect(copilot?.driverKind).toBe(copilotDriverKind);
       expect(grok?.driverKind).toBe(grokDriverKind);
       expect(openCode?.driverKind).toBe(openCodeDriverKind);
       expect(codex?.displayName).toBe("Codex");
       expect(claude?.displayName).toBe("Claude");
       expect(cursor?.displayName).toBe("Cursor");
+      expect(copilot?.displayName).toBe("GitHub Copilot");
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
 
@@ -390,6 +415,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         codex!.orchestrationAdapter,
         claude!.orchestrationAdapter,
         cursor!.orchestrationAdapter,
+        copilot!.orchestrationAdapter,
         grok!.orchestrationAdapter,
         openCode!.orchestrationAdapter,
       ];
@@ -398,6 +424,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         codex!.textGeneration,
         claude!.textGeneration,
         cursor!.textGeneration,
+        copilot!.textGeneration,
         grok!.textGeneration,
         openCode!.textGeneration,
       ];
@@ -406,6 +433,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         codex!.snapshot,
         claude!.snapshot,
         cursor!.snapshot,
+        copilot!.snapshot,
         grok!.snapshot,
         openCode!.snapshot,
       ];
@@ -435,6 +463,14 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(cursorSnapshot.enabled).toBe(false);
       expect(cursorSnapshot.continuation?.groupKey).toBe(
         `${cursorDriverKind}:instance:${cursorId}`,
+      );
+
+      const copilotSnapshot = yield* copilot!.snapshot.getSnapshot;
+      expect(copilotSnapshot.instanceId).toBe(copilotId);
+      expect(copilotSnapshot.driver).toBe(copilotDriverKind);
+      expect(copilotSnapshot.enabled).toBe(false);
+      expect(copilotSnapshot.continuation?.groupKey).toBe(
+        `${copilotDriverKind}:instance:${copilotId}`,
       );
 
       const grokSnapshot = yield* grok!.snapshot.getSnapshot;

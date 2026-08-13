@@ -74,10 +74,11 @@ const permissionOptionIds = {
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
   rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
 };
+const permissionToolKind = process.env.T3_ACP_PERMISSION_TOOL_KIND === "edit" ? "edit" : "execute";
 const sessionId = "mock-session-1";
 
 let currentModeId = "ask";
-let currentModelId = "default";
+let currentModelId = process.env.T3_ACP_INITIAL_MODEL_ID?.trim() || "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -982,7 +983,7 @@ const program = Effect.gen(function* () {
             sessionUpdate: "tool_call",
             toolCallId,
             title: "Terminal",
-            kind: "execute",
+            kind: permissionToolKind,
             status: "pending",
             rawInput: {
               command: ["cat", "server/package.json"],
@@ -1004,7 +1005,7 @@ const program = Effect.gen(function* () {
           toolCall: {
             toolCallId,
             title: "`cat server/package.json`",
-            kind: "execute",
+            kind: permissionToolKind,
             status: "pending",
             content: [
               {
@@ -1041,7 +1042,7 @@ const program = Effect.gen(function* () {
             sessionUpdate: "tool_call_update",
             toolCallId,
             title: "Terminal",
-            kind: "execute",
+            kind: permissionToolKind,
             status: "completed",
             rawOutput: {
               exitCode: 0,

@@ -202,6 +202,12 @@ export interface AcpAdapterV2Flavor {
     Crypto.Crypto | Scope.Scope
   >;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
+  readonly configureSession?: (input: {
+    readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+    readonly startResult: AcpSessionRuntimeStartResult;
+    readonly modelSelection: ModelSelection;
+    readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  }) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
@@ -4597,6 +4603,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           modelSelection: ModelSelection,
           runtimePolicy: ProviderAdapterV2RuntimePolicy,
         ) {
+          if (flavor.configureSession !== undefined) {
+            return yield* flavor.configureSession({
+              runtime,
+              startResult,
+              modelSelection,
+              runtimePolicy,
+            });
+          }
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           if (
             requestedModel.length > 0 &&
