@@ -1025,6 +1025,51 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("ignores reasoning_summary_text deltas so two streams never share one activity", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-summary-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-summary-only"),
+      payload: {
+        streamKind: "reasoning_summary_text",
+        delta: "Summary prose",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-raw-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-raw"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Raw reasoning",
+      },
+    });
+
+    // Events project in order: once the raw item's activity exists, the
+    // summary delta has already been processed and must have produced nothing.
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "reasoning:thread-1:item-raw",
+      ),
+    );
+    expect(
+      thread.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "reasoning:thread-1:item-summary-only",
+      ),
+    ).toBe(false);
+  });
+
   it("merges streamed reasoning into one persisted activity and settles it", async () => {
     const harness = await createHarness();
 

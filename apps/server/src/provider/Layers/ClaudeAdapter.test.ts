@@ -1193,6 +1193,20 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
+      // A subagent's stop shares the parent's block index; it must not close
+      // the parent's reasoning block (the deepEqual below would gain an early
+      // item.completed if it did).
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-tool-streams",
+        uuid: "stream-subagent-stop",
+        parent_tool_use_id: "task-subagent-1",
+        event: {
+          type: "content_block_stop",
+          index: 0,
+        },
+      } as unknown as SDKMessage);
+
       harness.query.emit({
         type: "stream_event",
         session_id: "sdk-session-tool-streams",

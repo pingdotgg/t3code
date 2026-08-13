@@ -2816,6 +2816,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (event.type === "content_block_stop") {
+      // Subagent stops share block indices with the parent stream; without this
+      // guard they would close (and delete) the parent's block at that index.
+      // Nothing else in this branch applies to a subagent: tool settlement rides
+      // tool_result, and subagent text/thinking blocks are never tracked here.
+      const stopParentToolUseId = (message as { parent_tool_use_id?: string | null })
+        .parent_tool_use_id;
+      if (stopParentToolUseId !== null && stopParentToolUseId !== undefined) {
+        return;
+      }
       const { index } = event;
       const assistantBlock = context.turnState?.assistantTextBlocks.get(index);
       if (assistantBlock) {

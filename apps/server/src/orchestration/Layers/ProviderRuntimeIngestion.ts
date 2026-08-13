@@ -375,11 +375,10 @@ export function runtimeEventToActivities(
   })();
   switch (event.type) {
     case "content.delta": {
-      if (
-        (event.payload.streamKind !== "reasoning_text" &&
-          event.payload.streamKind !== "reasoning_summary_text") ||
-        event.payload.delta.length === 0
-      ) {
+      // Only the raw reasoning stream feeds the activity. Accepting
+      // reasoning_summary_text too would interleave two streams under one
+      // reasoningActivityId when a provider (codex) emits both for one item.
+      if (event.payload.streamKind !== "reasoning_text" || event.payload.delta.length === 0) {
         return [];
       }
       return [
