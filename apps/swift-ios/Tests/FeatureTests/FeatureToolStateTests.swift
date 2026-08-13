@@ -135,8 +135,15 @@ struct FeatureToolStateTests {
         #expect(FeatureWorkspaceFileLink(url: otherShare, workspaceRoot: root) == nil)
         #expect(FeatureWorkspaceFileLink(url: otherServer, workspaceRoot: root) == nil)
         #expect(FeatureWorkspaceFileLink(url: traversal, workspaceRoot: root) == nil)
-        // UNC links are accepted in serialized path form; file URL authorities remain external.
+        // UNC links are accepted in serialized path form; file URL authorities fail closed.
         #expect(FeatureWorkspaceFileLink(url: authority, workspaceRoot: root) == nil)
+        #expect(FeatureWorkspaceFileLink.isWorkspaceDestination(authority))
+        #expect(
+            FeatureWorkspaceFileLinkRoute.resolve(url: authority, workspaceRoot: root)
+                == .rejectedWorkspaceDestination
+        )
+        let web = try #require(URL(string: "https://example.com/App.swift"))
+        #expect(FeatureWorkspaceFileLinkRoute.resolve(url: web, workspaceRoot: root) == .external)
     }
 
     @Test

@@ -408,15 +408,18 @@ public struct ThreadDetailView: View {
     }
 
     private func openURL(_ url: URL) -> Bool {
-        guard let link = FeatureWorkspaceFileLink(url: url, workspaceRoot: workspaceRoot) else {
-            guard FeatureWorkspaceFileLink.isWorkspaceDestination(url) else { return false }
+        switch FeatureWorkspaceFileLinkRoute.resolve(url: url, workspaceRoot: workspaceRoot) {
+        case let .open(link):
+            linkedFile = link
+            return true
+        case .rejectedWorkspaceDestination:
             fileLinkFailureMessage = workspaceRoot == nil
                 ? "The active workspace is not available for this thread."
                 : "This file is not inside the active workspace."
             return true
+        case .external:
+            return false
         }
-        linkedFile = link
-        return true
     }
 
     private var composerKeyboardDismissGesture: some Gesture {

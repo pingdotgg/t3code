@@ -102,10 +102,10 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
     }
 
     public static func isWorkspaceDestination(_ url: URL) -> Bool {
+        if url.scheme?.lowercased() == "file" { return true }
         guard url.host == nil, url.user == nil, url.password == nil, url.port == nil else {
             return false
         }
-        if url.scheme?.lowercased() == "file" { return true }
         if positionedWindowsAbsoluteDestination(from: url) != nil { return true }
         if url.scheme == nil {
             return url.path.hasPrefix("/")
@@ -311,5 +311,20 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         let relative = String(absolutePath.dropFirst(prefix.count))
         guard !relative.isEmpty, relative != ".", !relative.hasPrefix("../") else { return nil }
         return relative
+    }
+}
+
+enum FeatureWorkspaceFileLinkRoute: Equatable {
+    case open(FeatureWorkspaceFileLink)
+    case rejectedWorkspaceDestination
+    case external
+
+    static func resolve(url: URL, workspaceRoot: String?) -> Self {
+        if let link = FeatureWorkspaceFileLink(url: url, workspaceRoot: workspaceRoot) {
+            return .open(link)
+        }
+        return FeatureWorkspaceFileLink.isWorkspaceDestination(url)
+            ? .rejectedWorkspaceDestination
+            : .external
     }
 }
