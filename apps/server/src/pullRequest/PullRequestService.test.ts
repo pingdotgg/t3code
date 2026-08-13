@@ -610,6 +610,25 @@ it.effect("calls a transient viewer failure a failed operation, not a signed-out
   }),
 );
 
+it.effect("reads snapshot viewer identity freshly after the host account changes", () =>
+  Effect.gen(function* () {
+    let viewer = "Bilal";
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [fakeProvider("github", { getViewer: () => Effect.succeed(viewer) })],
+    });
+
+    const listing = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(listing.viewers, { "github.com": "Bilal" });
+
+    viewer = "Octocat";
+    const identity = yield* service.viewers({});
+    assert.deepStrictEqual(identity.viewers, { "github.com": "Octocat" });
+  }),
+);
+
 it.effect("reports an unusable host over a merely failing one", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

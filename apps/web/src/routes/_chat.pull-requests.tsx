@@ -93,6 +93,7 @@ import {
   pullRequestEnvironment,
   usePullRequestList,
   usePullRequestListStats,
+  usePullRequestViewers,
   type EnvironmentQueryTarget,
 } from "../state/pullRequests";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -620,6 +621,22 @@ function PullRequestsRouteView() {
   );
   const listQuery = usePullRequestList(listTargets);
 
+  // Verify the account independently of the slower repository listing. This is deliberately a
+  // fresh server read: the host CLI account can change outside T3 between two page loads.
+  const viewerTargets = useMemo(
+    () =>
+      environmentQueries.map(({ environmentId, projectIds }) => ({
+        environmentId,
+        input: {
+          ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+          ...(projectIds ? { projectIds } : {}),
+          ...(search.host ? { host: search.host } : {}),
+        },
+      })),
+    [environmentQueries, scopedProjectId, search.host],
+  );
+  const viewerQuery = usePullRequestViewers(viewerTargets);
+
   /**
    * The same filters with nothing typed, read whether or not anything is. It is the same atom the
    * list itself uses while no search is on, so it costs nothing then; while one is, it is what the
@@ -750,8 +767,8 @@ function PullRequestsRouteView() {
   // carried answer — and the live read reconciles them in place by key rather than replacing them
   // with ghosts. Waiting for identity prevents one CLI account from seeing another's stored rows.
   useEffect(() => {
-    const baseline = baselineQuery.data;
-    if (environmentKey.length === 0 || baseline === null) return;
+    const viewers = viewerQuery.viewers;
+    if (environmentKey.length === 0 || viewers === null || viewerQuery.isPending) return;
     setLoaded((current) => {
       // Rows read from a different set of environments cannot even be narrowed — one of them may
       // no longer be connected at all — so that set's own snapshot beats holding them.
@@ -759,7 +776,7 @@ function PullRequestsRouteView() {
       const snapshot = readPullRequestListSnapshot(
         typeof window === "undefined" ? undefined : window.localStorage,
         environmentKey,
-        { viewers: baseline.viewers },
+        { viewers },
       );
       if (snapshot === null) return null;
       return {
@@ -770,7 +787,7 @@ function PullRequestsRouteView() {
         ...(snapshot.partitions === undefined ? {} : { partitions: snapshot.partitions }),
       };
     });
-  }, [baselineQuery.data, environmentKey]);
+  }, [environmentKey, viewerQuery.isPending, viewerQuery.viewers]);
   useEffect(() => {
     // Only once this query has settled. While a search is being swapped in or out the text has
     // already changed and the data has not, so recording them together would file the previous

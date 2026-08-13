@@ -41,6 +41,8 @@ import {
   type PullRequestThreadReplyInput,
   type PullRequestThreadResolutionInput,
   type PullRequestUpdateInput,
+  type PullRequestViewerInput,
+  type PullRequestViewerResult,
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -122,6 +124,9 @@ export type PullRequestError = PullRequestUnavailableError | PullRequestOperatio
 export class PullRequestService extends Context.Service<
   PullRequestService,
   {
+    readonly viewers: (
+      input: PullRequestViewerInput,
+    ) => Effect.Effect<PullRequestViewerResult, PullRequestError>;
     readonly list: (
       input: PullRequestListInput,
     ) => Effect.Effect<PullRequestListResult, PullRequestError>;
@@ -603,13 +608,18 @@ export const make = Effect.gen(function* () {
   const resolveViewers = (
     projects: ReadonlyArray<SupportedProject>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
+    options: { readonly fresh?: boolean } = {},
   ) =>
     Effect.forEach(
       [...new Set(projects.map(({ host }) => host))],
       (host) =>
         Effect.flatMap(Clock.currentTimeMillis, (now): Effect.Effect<ResolvedViewer> => {
           const held = viewersByHost.get(host);
-          if (held !== undefined && now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)) {
+          if (
+            options.fresh !== true &&
+            held !== undefined &&
+            now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)
+          ) {
             return Effect.succeed(held.result);
           }
           const forHost = projects.filter((project) => project.host === host);
@@ -632,6 +642,23 @@ export const make = Effect.gen(function* () {
           );
         }),
       { concurrency: REPOSITORY_CONCURRENCY },
+    );
+
+  // Snapshot hydration needs identity before the slower repository listing has answered. This
+  // read deliberately bypasses the viewer cache: an account can be switched outside T3, and a
+  // cached identity must never authorize rows persisted for the previous account.
+  const viewers: PullRequestService["Service"]["viewers"] = (input) =>
+    listWorkspaceProjects(input).pipe(
+      Effect.flatMap(({ supported, viewerRoots }) =>
+        resolveViewers(supported, viewerRoots, { fresh: true }),
+      ),
+      Effect.map((results) => ({
+        viewers: Object.fromEntries(
+          results.flatMap((result) =>
+            result.viewer === null ? [] : [[result.host, result.viewer] as const],
+          ),
+        ),
+      })),
     );
 
   /**
@@ -1989,6 +2016,7 @@ export const make = Effect.gen(function* () {
       );
 
   return PullRequestService.of({
+    viewers,
     list,
     listStats,
     detail,

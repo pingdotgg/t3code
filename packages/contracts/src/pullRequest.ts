@@ -524,6 +524,24 @@ export const PullRequestListInput = Schema.Struct({
 export type PullRequestListInput = typeof PullRequestListInput.Type;
 
 /**
+ * The project and host scope whose signed-in identities a client needs before it can safely
+ * hydrate a persisted listing. Kept separate from the listing so account verification does not
+ * wait for every repository to be read.
+ */
+export const PullRequestViewerInput = Schema.Struct({
+  projectId: Schema.optional(ProjectId),
+  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  host: Schema.optional(TrimmedNonEmptyString),
+});
+export type PullRequestViewerInput = typeof PullRequestViewerInput.Type;
+
+export const PullRequestViewerResult = Schema.Struct({
+  /** The currently signed-in account per host. Unreadable hosts are absent. */
+  viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
+});
+export type PullRequestViewerResult = typeof PullRequestViewerResult.Type;
+
+/**
  * A host the workspace has projects on, and whether it can be read right now. Drives the host
  * switcher and explains projects the list leaves out.
  *
