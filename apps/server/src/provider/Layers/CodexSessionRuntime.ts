@@ -18,7 +18,6 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -40,10 +39,6 @@ import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
-import {
-  type CodexComputerUseBridgeConfig,
-  makeCodexComputerUseBridge,
-} from "../CodexComputerUseBridge.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
@@ -71,24 +66,8 @@ const ComputerUseMcpApprovalMeta = Schema.Struct({
 const McpToolApprovalMeta = Schema.Struct({
   codex_approval_kind: Schema.Literal("mcp_tool_call"),
 });
-const CodexNodeReplMcpConfig = Schema.StructWithRest(
-  Schema.Struct({
-    command: Schema.String,
-    env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-  }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
-);
-const CodexConfigWithNodeRepl = Schema.StructWithRest(
-  Schema.Struct({
-    mcp_servers: Schema.StructWithRest(Schema.Struct({ node_repl: CodexNodeReplMcpConfig }), [
-      Schema.Record(Schema.String, Schema.Unknown),
-    ]),
-  }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
-);
 const isComputerUseApprovalMeta = Schema.is(ComputerUseMcpApprovalMeta);
 const isMcpToolApprovalMeta = Schema.is(McpToolApprovalMeta);
-const isCodexConfigWithNodeRepl = Schema.is(CodexConfigWithNodeRepl);
 
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
@@ -225,51 +204,6 @@ export function buildMcpApprovalResponse(
     case "cancel":
       return { action: "cancel" };
   }
-}
-
-export function buildDirectComputerUseThreadConfig(
-  config: EffectCodexSchema.V2ConfigReadResponse["config"],
-  platform: NodeJS.Platform,
-  bridge?: CodexComputerUseBridgeConfig,
-): Record<string, unknown> | undefined {
-  if (platform !== "win32" || !isCodexConfigWithNodeRepl(config)) {
-    return undefined;
-  }
-
-  const nodeRepl = config.mcp_servers.node_repl;
-  const {
-    SKY_CUA_NATIVE_PIPE: _nativePipe,
-    SKY_CUA_NATIVE_PIPE_DIRECTORY: _nativePipeDirectory,
-    ...env
-  } = nodeRepl.env ?? {};
-  const {
-    startup_timeout_sec: startupTimeoutSec,
-    tool_timeout_sec: toolTimeoutSec,
-    ...nodeReplConfig
-  } = nodeRepl;
-
-  return {
-    "mcp_servers.node_repl": {
-      ...nodeReplConfig,
-      ...(typeof startupTimeoutSec === "number" ? { startup_timeout_sec: startupTimeoutSec } : {}),
-      ...(typeof toolTimeoutSec === "number" ? { tool_timeout_sec: toolTimeoutSec } : {}),
-      env: bridge
-        ? {
-            ...env,
-            NODE_REPL_NODE_MODULE_DIRS: [bridge.nodeModulesRoot, env.NODE_REPL_NODE_MODULE_DIRS]
-              .filter((value): value is string => typeof value === "string" && value.length > 0)
-              .join(";"),
-            NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S: [
-              env.NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S,
-              bridge.trustedModuleSha256,
-            ]
-              .filter((value): value is string => typeof value === "string" && value.length > 0)
-              .join(","),
-            T3_CODEX_COMPUTER_USE_PIPE_PATH: bridge.pipePath,
-          }
-        : env,
-    },
-  };
 }
 
 export type CodexSessionRuntimeError =
@@ -421,7 +355,6 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
-  readonly config: Record<string, unknown> | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -431,7 +364,6 @@ function buildThreadStartParams(input: {
     approvalsReviewer: config.approvalsReviewer,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
-    ...(input.config ? { config: input.config } : {}),
   };
 }
 
@@ -583,7 +515,6 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
-  readonly config?: Record<string, unknown>;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -591,7 +522,6 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
-    config: input.config,
   });
 
   if (resumeThreadId === undefined) {
@@ -970,7 +900,6 @@ export const makeCodexSessionRuntime = (
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const hostPlatform = yield* HostProcessPlatform;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
     const events = yield* Queue.unbounded<ProviderEvent>();
@@ -1916,50 +1845,6 @@ export const makeCodexSessionRuntime = (
       yield* client.notify("initialized", undefined);
 
       const requestedModel = normalizeCodexModelSlug(options.model);
-      // config/read only feeds the Windows Computer Use bridge; older App
-      // Servers may not implement it, so a failure must not block the session.
-      const config =
-        hostPlatform === "win32"
-          ? yield* client
-              .request("config/read", {
-                cwd: options.cwd,
-                includeLayers: false,
-              })
-              .pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning(
-                    "config/read failed; continuing without the Computer Use bridge.",
-                    { cause },
-                  ).pipe(Effect.as(undefined)),
-                ),
-              )
-          : undefined;
-      const nodeReplConfig =
-        config && isCodexConfigWithNodeRepl(config.config)
-          ? config.config.mcp_servers.node_repl
-          : undefined;
-      const nodeReplEnvironment = nodeReplConfig?.env ?? {};
-      const codexHome =
-        nodeReplEnvironment.CODEX_HOME ??
-        (options.homePath ? expandHomePath(options.homePath) : undefined);
-      const nodeModuleRoots = (nodeReplEnvironment.NODE_REPL_NODE_MODULE_DIRS ?? "")
-        .split(";")
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0);
-      const computerUseBridge =
-        hostPlatform === "win32" && codexHome && nodeModuleRoots.length > 0
-          ? yield* makeCodexComputerUseBridge({ codexHome, nodeModuleRoots }).pipe(
-              Effect.provideService(Scope.Scope, runtimeScope),
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to start the Windows Computer Use bridge.", {
-                  cause,
-                }).pipe(Effect.as(undefined)),
-              ),
-            )
-          : undefined;
-      const directComputerUseConfig = config
-        ? buildDirectComputerUseThreadConfig(config.config, hostPlatform, computerUseBridge?.config)
-        : undefined;
 
       const opened = yield* openCodexThread({
         client,
@@ -1969,7 +1854,6 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
-        ...(directComputerUseConfig ? { config: directComputerUseConfig } : {}),
       });
 
       const providerThreadId = opened.thread.id;

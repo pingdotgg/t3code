@@ -16,7 +16,6 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildMcpApprovalResponse,
-  buildDirectComputerUseThreadConfig,
   buildPermissionsApprovalResponse,
   buildTurnStartParams,
   hasConfiguredMcpServer,
@@ -360,73 +359,6 @@ describe("MCP tool approval", () => {
     NodeAssert.deepStrictEqual(buildMcpApprovalResponse("decline"), { action: "decline" });
     NodeAssert.deepStrictEqual(buildMcpApprovalResponse("cancel"), { action: "cancel" });
   });
-
-  it("builds a Windows thread override without Desktop's native pipe", () => {
-    const config = {
-      mcp_servers: {
-        node_repl: {
-          command: "node_repl.exe",
-          args: [],
-          startup_timeout_sec: 120,
-          tool_timeout_sec: "",
-          env: {
-            NODE_REPL_NODE_PATH: "node.exe",
-            SKY_CUA_NATIVE_PIPE: "1",
-            SKY_CUA_NATIVE_PIPE_DIRECTORY: "desktop-owned-pipe",
-          },
-        },
-      },
-    };
-
-    NodeAssert.deepStrictEqual(buildDirectComputerUseThreadConfig(config, "win32"), {
-      "mcp_servers.node_repl": {
-        command: "node_repl.exe",
-        args: [],
-        startup_timeout_sec: 120,
-        env: {
-          NODE_REPL_NODE_PATH: "node.exe",
-        },
-      },
-    });
-    NodeAssert.equal(buildDirectComputerUseThreadConfig(config, "linux"), undefined);
-  });
-
-  it("prepends the trusted T3 Computer Use shim without replacing configured roots or hashes", () => {
-    const config = {
-      mcp_servers: {
-        node_repl: {
-          command: "node_repl.exe",
-          env: {
-            NODE_REPL_NODE_MODULE_DIRS: "C:\\original\\node_modules",
-            NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S: "existing-hash",
-            SKY_CUA_NATIVE_PIPE: "1",
-          },
-        },
-      },
-    };
-
-    NodeAssert.deepStrictEqual(
-      buildDirectComputerUseThreadConfig(config, "win32", {
-        nodeModulesRoot: "C:\\shim\\node_modules",
-        pipePath: "\\\\.\\pipe\\t3code-cua-test",
-        trustedModuleSha256: "shim-hash",
-      }),
-      {
-        "mcp_servers.node_repl": {
-          command: "node_repl.exe",
-          env: {
-            NODE_REPL_NODE_MODULE_DIRS: "C:\\shim\\node_modules;C:\\original\\node_modules",
-            NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S: "existing-hash,shim-hash",
-            T3_CODEX_COMPUTER_USE_PIPE_PATH: "\\\\.\\pipe\\t3code-cua-test",
-          },
-        },
-      },
-    );
-  });
-
-  it("does not create an incomplete node_repl transport", () => {
-    NodeAssert.equal(buildDirectComputerUseThreadConfig({}, "win32"), undefined);
-  });
 });
 
 describe("buildCodexDeveloperInstructions", () => {
@@ -606,12 +538,6 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
-        config: {
-          "mcp_servers.node_repl": {
-            command: "node_repl.exe",
-            env: { NODE_REPL_NODE_PATH: "node.exe" },
-          },
-        },
       });
 
       NodeAssert.equal(opened.thread.id, "fresh-thread");
@@ -619,14 +545,6 @@ describe("openCodexThread", () => {
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
       );
-      for (const call of calls) {
-        NodeAssert.deepStrictEqual((call.payload as { config?: unknown }).config, {
-          "mcp_servers.node_repl": {
-            command: "node_repl.exe",
-            env: { NODE_REPL_NODE_PATH: "node.exe" },
-          },
-        });
-      }
     }),
   );
 
