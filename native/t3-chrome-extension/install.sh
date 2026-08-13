@@ -11,14 +11,23 @@ EXTENSION_ID="kgdolgnijopbghhomnblabjkmjhnoage"
 HOST_NAME="com.t3tools.t3code.desktop"
 
 here=$(cd "$(dirname "$0")" && pwd)
-binary="${T3CODE_DESKTOP_MCP_PATH:-$here/../t3-desktop-mcp/.build/apple/Products/Release/t3-desktop-mcp}"
+# macOS builds the Swift package; Linux builds the Rust crate that also covers
+# Windows. Either way the binary is called t3-desktop-mcp.
+case "$(uname -s)" in
+  Darwin) default_binary="$here/../t3-desktop-mcp/.build/apple/Products/Release/t3-desktop-mcp" ;;
+  *)      default_binary="$here/../t3-desktop-mcp-rs/target/release/t3-desktop-mcp" ;;
+esac
+binary="${T3CODE_DESKTOP_MCP_PATH:-$default_binary}"
 if [ ! -x "$binary" ]; then
   echo "desktop server binary not found at: $binary" >&2
   echo "build it first:  pnpm build:desktop-mcp" >&2
   exit 1
 fi
 
-support="$HOME/Library/Application Support/t3-desktop-mcp"
+case "$(uname -s)" in
+  Darwin) support="$HOME/Library/Application Support/t3-desktop-mcp" ;;
+  *)      support="${XDG_DATA_HOME:-$HOME/.local/share}/t3-desktop-mcp" ;;
+esac
 mkdir -p "$support"
 wrapper="$support/native-host"
 cat > "$wrapper" <<EOF
@@ -28,12 +37,26 @@ EOF
 chmod +x "$wrapper"
 
 # Chrome, Chrome Beta/Canary and Chromium each read their own directory.
+case "$(uname -s)" in
+  Darwin)
+    set -- \
+      "$HOME/Library/Application Support/Google/Chrome" \
+      "$HOME/Library/Application Support/Google/Chrome Beta" \
+      "$HOME/Library/Application Support/Google/Chrome Canary" \
+      "$HOME/Library/Application Support/Chromium"
+    ;;
+  *)
+    config="${XDG_CONFIG_HOME:-$HOME/.config}"
+    set -- \
+      "$config/google-chrome" \
+      "$config/google-chrome-beta" \
+      "$config/google-chrome-unstable" \
+      "$config/chromium"
+    ;;
+esac
+
 installed=0
-for profile in \
-  "$HOME/Library/Application Support/Google/Chrome" \
-  "$HOME/Library/Application Support/Google/Chrome Beta" \
-  "$HOME/Library/Application Support/Google/Chrome Canary" \
-  "$HOME/Library/Application Support/Chromium"; do
+for profile in "$@"; do
   [ -d "$profile" ] || continue
   dir="$profile/NativeMessagingHosts"
   mkdir -p "$dir"
