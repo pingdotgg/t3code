@@ -179,6 +179,32 @@ function describeRawElement(element: Element): string {
   return `${tag}${id}${classes}`;
 }
 
+function accessibleName(element: Element): string | null {
+  if (!(element instanceof HTMLElement)) return null;
+  const aria = element.getAttribute("aria-label")?.trim();
+  if (aria) return aria.slice(0, 32);
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    const named = element.placeholder.trim() || element.name.trim();
+    return named.length > 0 ? named.slice(0, 32) : null;
+  }
+  if (element instanceof HTMLImageElement) {
+    const alt = element.alt.trim();
+    return alt.length > 0 ? alt.slice(0, 32) : null;
+  }
+  const tag = element.tagName;
+  if (tag === "BUTTON" || tag === "A" || tag === "SUMMARY" || tag === "LABEL") {
+    const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+    return text.length > 0 ? text.slice(0, 32) : null;
+  }
+  return null;
+}
+
+function describeElement(element: Element): string {
+  const name = accessibleName(element);
+  const raw = describeRawElement(element);
+  return name ? `${name} · ${raw}` : raw;
+}
+
 function createBox(color: string, fill: string): HTMLDivElement {
   const node = document.createElement("div");
   node.setAttribute(OVERLAY_ATTRIBUTE, "");
@@ -225,7 +251,7 @@ function updateSelectedVisual(target: SelectedElement): void {
   }
   const rect = target.element.getBoundingClientRect();
   positionBox(target.outline, rectFromDomRect(rect));
-  target.label.textContent = describeRawElement(target.element);
+  target.label.textContent = describeElement(target.element);
   target.label.style.display = "block";
   target.label.style.transform = `translate(${Math.max(4, rect.left)}px, ${Math.max(4, rect.top - 22)}px)`;
 }
@@ -474,6 +500,7 @@ function startAnnotation(): void {
   const updateStatus = (): void => {
     const hasTargets = selected.size > 0 || regions.length > 0 || strokes.length > 0;
     editor.style.display = hasTargets ? "flex" : "none";
+    hint.style.display = hasTargets ? "none" : "block";
     submit.disabled = !hasTargets;
     submit.style.opacity = hasTargets ? "1" : "0.45";
     adjust.disabled = !hasTargets;
