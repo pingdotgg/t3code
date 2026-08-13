@@ -684,7 +684,7 @@ function mapClaudeUsageRateLimitWindow(
 
   return {
     usedPercent: Math.max(0, Math.min(100, Math.floor(window.utilization))),
-    ...(window.resets_at !== null ? { resetsAt: window.resets_at } : {}),
+    ...(window.resets_at != null ? { resetsAt: window.resets_at } : {}),
   };
 }
 

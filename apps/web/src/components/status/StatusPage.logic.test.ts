@@ -6,6 +6,7 @@ import {
   codexRemainingPercent,
   describeCodexRuntimeMode,
   formatStatusTimestampWithTimeZone,
+  isCodexSessionStatus,
 } from "./StatusPage.logic";
 
 describe("describeCodexRuntimeMode", () => {
@@ -51,6 +52,16 @@ describe("Codex status presentation", () => {
     expect(codexRemainingPercent(-10)).toBe(100);
     expect(codexRemainingPercent(120)).toBe(0);
     expect(codexRateLimitWindowLabel(10_080)).toBe("Weekly limit");
+  });
+
+  it("does not count terminal Codex sessions as active", () => {
+    expect(isCodexSessionStatus("starting")).toBe(true);
+    expect(isCodexSessionStatus("running")).toBe(true);
+    expect(isCodexSessionStatus("ready")).toBe(true);
+    expect(isCodexSessionStatus("idle")).toBe(false);
+    expect(isCodexSessionStatus("interrupted")).toBe(false);
+    expect(isCodexSessionStatus("stopped")).toBe(false);
+    expect(isCodexSessionStatus("error")).toBe(false);
   });
 
   it("adds the local timezone to status timestamps", () => {

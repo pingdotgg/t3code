@@ -118,6 +118,60 @@ it("maps Claude Code plan windows to the status snapshot", () => {
   );
 });
 
+it("omits a Claude reset timestamp when the SDK does not provide one", () => {
+  const usage = {
+    session: {
+      total_cost_usd: 0,
+      total_api_duration_ms: 0,
+      total_duration_ms: 0,
+      total_lines_added: 0,
+      total_lines_removed: 0,
+      model_usage: {},
+    },
+    subscription_type: "pro",
+    rate_limits_available: true,
+    rate_limits: {
+      five_hour: {
+        utilization: 10,
+        // Older SDK responses can omit this field even though the current
+        // generated type declares it as required.
+        resets_at: undefined as unknown as string,
+      },
+      seven_day: {
+        utilization: 20,
+        resets_at: null,
+      },
+    },
+    behaviors: {
+      day: {
+        request_count: 0,
+        session_count: 0,
+        behaviors: [],
+        agents: [],
+        skills: [],
+        plugins: [],
+        mcp_servers: [],
+      },
+      week: {
+        request_count: 0,
+        session_count: 0,
+        behaviors: [],
+        agents: [],
+        skills: [],
+        plugins: [],
+        mcp_servers: [],
+      },
+    },
+  };
+
+  assert.deepEqual(mapClaudeUsageToStatus(usage), {
+    rateLimits: {
+      currentSession: { usedPercent: 10 },
+      currentWeek: { usedPercent: 20 },
+    },
+  });
+});
+
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
   it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>
     Effect.gen(function* () {

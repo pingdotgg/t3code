@@ -127,7 +127,9 @@ function mapCodexRateLimitWindow(
   };
 }
 
-function mapCodexStatus(snapshot: CodexAppServerProviderSnapshot): ServerProviderCodexStatus {
+export function mapCodexStatus(
+  snapshot: CodexAppServerProviderSnapshot,
+): ServerProviderCodexStatus {
   const account = snapshot.account.account;
   const rateLimits = snapshot.rateLimits?.rateLimits;
   const primary = rateLimits ? mapCodexRateLimitWindow(rateLimits.primary) : undefined;

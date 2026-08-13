@@ -68,7 +68,9 @@ export function codexRemainingPercent(usedPercent: number): number {
 }
 
 export function isCodexSessionStatus(status: OrchestrationSessionStatus): boolean {
-  return status !== "stopped" && status !== "idle";
+  return (
+    status !== "stopped" && status !== "idle" && status !== "interrupted" && status !== "error"
+  );
 }
 
 export function codexProviderStatusLabel(provider: ServerProvider): string {

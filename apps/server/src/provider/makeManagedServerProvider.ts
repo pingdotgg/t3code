@@ -33,6 +33,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
+  /** Run immediately before a manual or periodic refresh check. */
+  readonly beforeRefresh?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
     readonly snapshot: ServerProvider;
@@ -143,6 +145,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
+    yield* input.beforeRefresh ?? Effect.void;
     const nextSettings = yield* input.getSettings;
     return yield* applySnapshot(nextSettings, { forceRefresh: true });
   });

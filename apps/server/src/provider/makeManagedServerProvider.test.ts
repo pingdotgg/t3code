@@ -192,6 +192,40 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
+  it.effect("runs the refresh hook before an explicit provider refresh", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<Array<"beforeRefresh" | "check">>([]);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.update(
+            events,
+            (previous) => [...previous, "check"] as Array<"beforeRefresh" | "check">,
+          ).pipe(
+            Effect.tap(() => Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)),
+            Effect.as(refreshedSnapshot),
+          ),
+          beforeRefresh: Ref.update(
+            events,
+            (previous) => [...previous, "beforeRefresh"] as Array<"beforeRefresh" | "check">,
+          ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        yield* Ref.set(events, []);
+        yield* provider.refresh;
+
+        assert.deepStrictEqual(yield* Ref.get(events), ["beforeRefresh", "check"]);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
     Effect.scoped(
       Effect.gen(function* () {

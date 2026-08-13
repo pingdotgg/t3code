@@ -1,4 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type {
   ServerProvider,
   ServerProviderClaudeRateLimitWindow,
@@ -19,6 +24,7 @@ import { Card } from "../ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   codexRateLimitWindowLabel,
   codexRemainingPercent,
@@ -243,14 +249,28 @@ export function StatusPage() {
     if (!primaryEnvironmentId || isRefreshing) return;
     setIsRefreshing(true);
     try {
-      await Promise.all(
-        statusProviders.map((provider) =>
-          refreshProviders({
-            environmentId: primaryEnvironmentId,
-            input: { instanceId: provider.instanceId },
+      const result = await refreshProviders({
+        environmentId: primaryEnvironmentId,
+        input: {},
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        console.warn("Failed to refresh status providers", {
+          operation: "refresh-status-providers",
+          environmentId: primaryEnvironmentId,
+          ...safeErrorLogAttributes(error),
+        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not refresh provider status",
+            description:
+              error instanceof Error
+                ? error.message
+                : "The provider refresh command could not be completed.",
           }),
-        ),
-      );
+        );
+      }
     } finally {
       setIsRefreshing(false);
     }
@@ -342,7 +362,7 @@ export function StatusPage() {
               <div>
                 <h2 className="text-base font-medium text-foreground">Claude</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Current rate-limit windows and remaining credits.
+                  Current usage windows and percentage used.
                 </p>
               </div>
               {claudeProviders.length === 0 ? (
@@ -368,7 +388,7 @@ export function StatusPage() {
                 rel="noreferrer"
                 target="_blank"
               >
-                View up-to-date rate limits and credits
+                View up-to-date usage and rate limits
                 <ExternalLinkIcon className="size-3" />
               </a>
             </section>

@@ -3,7 +3,9 @@ import { assert, it } from "@effect/vitest";
 import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
+  mapCodexStatus,
   mapCodexModelCapabilities,
+  type CodexAppServerProviderSnapshot,
 } from "./CodexProvider.ts";
 
 it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
@@ -19,6 +21,58 @@ it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
       ["gpt-5.4", true],
     ],
   );
+});
+
+it("projects Codex account and rate-limit snapshots into provider status", () => {
+  const snapshot = {
+    account: {
+      account: {
+        type: "chatgpt",
+        email: "dev@example.com",
+        planType: "plus",
+      },
+      requiresOpenaiAuth: false,
+    },
+    rateLimits: {
+      rateLimits: {
+        limitName: "codex",
+        primary: {
+          usedPercent: 24,
+          resetsAt: 1_781_654_400,
+          windowDurationMins: 300,
+        },
+        secondary: {
+          usedPercent: 12,
+          resetsAt: null,
+          windowDurationMins: null,
+        },
+      },
+    },
+    version: "1.0.0",
+    models: [],
+    skills: [],
+  } satisfies CodexAppServerProviderSnapshot;
+
+  assert.deepStrictEqual(mapCodexStatus(snapshot), {
+    account: {
+      type: "chatgpt",
+      email: "dev@example.com",
+      planType: "plus",
+    },
+    rateLimits: {
+      limitName: "codex",
+      primary: {
+        usedPercent: 24,
+        resetsAt: 1_781_654_400,
+        windowDurationMins: 300,
+      },
+      secondary: {
+        usedPercent: 12,
+        resetsAt: null,
+        windowDurationMins: null,
+      },
+    },
+  });
 });
 
 it("maps current Codex model capability fields", () => {
