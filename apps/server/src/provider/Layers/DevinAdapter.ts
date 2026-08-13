@@ -350,7 +350,7 @@ function writeDevinUsageTranscriptLine(
   );
 }
 
-function makeDevinTokenUsageSnapshot(
+export function makeDevinTokenUsageSnapshot(
   usage: EffectAcpSchema.Usage | null | undefined,
   previous: ThreadTokenUsageSnapshot | undefined,
 ): ThreadTokenUsageSnapshot | undefined {
@@ -373,17 +373,28 @@ function makeDevinTokenUsageSnapshot(
   const cachedReadTokens = finiteNonNegativeInteger(usage.cachedReadTokens);
   const thoughtTokens = finiteNonNegativeInteger(usage.thoughtTokens);
 
-  return buildThreadTokenUsageSnapshot({
-    usedTokens,
-    inputTokens,
-    outputTokens,
-    cachedReadTokens,
-    thoughtTokens,
-    previous,
-  });
+  const contextUsedTokens = previous?.usedTokens ?? usedTokens;
+  const contextMaxTokens = previous?.maxTokens;
+  const previousTotalProcessed = previous?.totalProcessedTokens ?? 0;
+  const lastUsedTokens = Math.max(0, usedTokens - previousTotalProcessed);
+
+  return {
+    usedTokens: contextUsedTokens,
+    totalProcessedTokens: usedTokens,
+    ...(contextMaxTokens !== undefined ? { maxTokens: contextMaxTokens } : {}),
+    lastUsedTokens,
+    ...(inputTokens !== undefined && inputTokens > 0 ? { inputTokens } : {}),
+    ...(outputTokens !== undefined && outputTokens > 0 ? { outputTokens } : {}),
+    ...(cachedReadTokens !== undefined && cachedReadTokens > 0
+      ? { cachedInputTokens: cachedReadTokens }
+      : {}),
+    ...(thoughtTokens !== undefined && thoughtTokens > 0
+      ? { reasoningOutputTokens: thoughtTokens }
+      : {}),
+  };
 }
 
-function makeDevinTokenUsageSnapshotFromUsageUpdate(
+export function makeDevinTokenUsageSnapshotFromUsageUpdate(
   usage: Extract<AcpParsedSessionEvent, { readonly _tag: "UsageUpdated" }>,
   previous: ThreadTokenUsageSnapshot | undefined,
 ): ThreadTokenUsageSnapshot | undefined {
@@ -394,8 +405,11 @@ function makeDevinTokenUsageSnapshotFromUsageUpdate(
     return undefined;
   }
 
+  const maxTokens = usage.size > 0 ? usage.size : undefined;
+
   return buildThreadTokenUsageSnapshot({
     usedTokens,
+    maxTokens,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     cachedReadTokens: usage.cachedReadTokens,
@@ -406,6 +420,8 @@ function makeDevinTokenUsageSnapshotFromUsageUpdate(
 
 function buildThreadTokenUsageSnapshot(input: {
   readonly usedTokens: number;
+  readonly maxTokens?: number | undefined;
+  readonly totalProcessedTokens?: number | undefined;
   readonly inputTokens: number | undefined;
   readonly outputTokens: number | undefined;
   readonly cachedReadTokens: number | undefined;
@@ -413,40 +429,48 @@ function buildThreadTokenUsageSnapshot(input: {
   readonly previous: ThreadTokenUsageSnapshot | undefined;
 }): ThreadTokenUsageSnapshot {
   const previousUsedTokens = input.previous?.usedTokens ?? 0;
-  const previousInputTokens = input.previous?.inputTokens ?? 0;
-  const previousOutputTokens = input.previous?.outputTokens ?? 0;
-  const previousCachedInputTokens = input.previous?.cachedInputTokens ?? 0;
-  const previousReasoningOutputTokens = input.previous?.reasoningOutputTokens ?? 0;
+  const previousTotalProcessed = input.previous?.totalProcessedTokens ?? 0;
+
+  const maxTokens =
+    input.maxTokens !== undefined && input.maxTokens > 0 ? input.maxTokens : undefined;
+
+  const inputTokens = input.inputTokens ?? 0;
+  const outputTokens = input.outputTokens ?? 0;
+  const cachedReadTokens = input.cachedReadTokens ?? 0;
+  const turnTokens = inputTokens + outputTokens + cachedReadTokens;
+  const usedDelta = Math.max(0, input.usedTokens - previousUsedTokens);
+
+  const totalProcessedTokens =
+    input.totalProcessedTokens ??
+    (turnTokens > 0 ? previousTotalProcessed + turnTokens : previousTotalProcessed + usedDelta);
 
   return {
     usedTokens: input.usedTokens,
-    totalProcessedTokens: input.usedTokens,
-    lastUsedTokens: Math.max(0, input.usedTokens - previousUsedTokens),
+    totalProcessedTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    lastUsedTokens: usedDelta,
     ...(input.inputTokens !== undefined && input.inputTokens > 0
       ? {
           inputTokens: input.inputTokens,
-          lastInputTokens: Math.max(0, input.inputTokens - previousInputTokens),
+          lastInputTokens: input.inputTokens,
         }
       : {}),
     ...(input.outputTokens !== undefined && input.outputTokens > 0
       ? {
           outputTokens: input.outputTokens,
-          lastOutputTokens: Math.max(0, input.outputTokens - previousOutputTokens),
+          lastOutputTokens: input.outputTokens,
         }
       : {}),
     ...(input.cachedReadTokens !== undefined && input.cachedReadTokens > 0
       ? {
           cachedInputTokens: input.cachedReadTokens,
-          lastCachedInputTokens: Math.max(0, input.cachedReadTokens - previousCachedInputTokens),
+          lastCachedInputTokens: input.cachedReadTokens,
         }
       : {}),
     ...(input.thoughtTokens !== undefined && input.thoughtTokens > 0
       ? {
           reasoningOutputTokens: input.thoughtTokens,
-          lastReasoningOutputTokens: Math.max(
-            0,
-            input.thoughtTokens - previousReasoningOutputTokens,
-          ),
+          lastReasoningOutputTokens: input.thoughtTokens,
         }
       : {}),
   };

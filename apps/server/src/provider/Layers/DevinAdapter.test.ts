@@ -2,7 +2,12 @@ import { describe, expect, it } from "@effect/vitest";
 import * as EffectAcpSchema from "effect-acp/schema";
 
 import type { AcpParsedSessionEvent } from "../acp/AcpRuntimeModel.ts";
-import { isAcpUsageGreaterOrNew, usageFromUsageUpdate } from "./DevinAdapter.ts";
+import {
+  isAcpUsageGreaterOrNew,
+  makeDevinTokenUsageSnapshot,
+  makeDevinTokenUsageSnapshotFromUsageUpdate,
+  usageFromUsageUpdate,
+} from "./DevinAdapter.ts";
 
 function makeUsageUpdatedEvent(
   event: Partial<Extract<AcpParsedSessionEvent, { readonly _tag: "UsageUpdated" }>> & {
@@ -143,5 +148,150 @@ describe("isAcpUsageGreaterOrNew", () => {
         thoughtTokens: 1,
       }),
     ).toBe(true);
+  });
+});
+describe("makeDevinTokenUsageSnapshotFromUsageUpdate", () => {
+  it("uses size as maxTokens and used as usedTokens", () => {
+    const event = makeUsageUpdatedEvent({
+      used: 21_776,
+      size: 262_000,
+      inputTokens: 21_687,
+      outputTokens: 89,
+      cachedReadTokens: 448,
+    });
+
+    const snapshot = makeDevinTokenUsageSnapshotFromUsageUpdate(event, undefined);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 21_776,
+      maxTokens: 262_000,
+      totalProcessedTokens: 21_687 + 89 + 448,
+      inputTokens: 21_687,
+      outputTokens: 89,
+      cachedInputTokens: 448,
+      lastUsedTokens: 21_776,
+      lastInputTokens: 21_687,
+      lastOutputTokens: 89,
+      lastCachedInputTokens: 448,
+    });
+  });
+
+  it("accumulates totalProcessedTokens across usage updates", () => {
+    const first = makeDevinTokenUsageSnapshotFromUsageUpdate(
+      makeUsageUpdatedEvent({
+        used: 1_000,
+        size: 200_000,
+        inputTokens: 990,
+        outputTokens: 10,
+      }),
+      undefined,
+    );
+
+    const second = makeDevinTokenUsageSnapshotFromUsageUpdate(
+      makeUsageUpdatedEvent({
+        used: 1_500,
+        size: 200_000,
+        inputTokens: 480,
+        outputTokens: 20,
+      }),
+      first,
+    );
+
+    expect(second?.usedTokens).toBe(1_500);
+    expect(second?.maxTokens).toBe(200_000);
+    expect(second?.totalProcessedTokens).toBe(1_500);
+    expect(second?.lastUsedTokens).toBe(500);
+    expect(second?.lastInputTokens).toBe(480);
+    expect(second?.lastOutputTokens).toBe(20);
+  });
+
+  it("does not decrease totalProcessedTokens when context compacts", () => {
+    const first = makeDevinTokenUsageSnapshotFromUsageUpdate(
+      makeUsageUpdatedEvent({
+        used: 10_000,
+        size: 200_000,
+        inputTokens: 9_990,
+        outputTokens: 10,
+      }),
+      undefined,
+    );
+
+    const second = makeDevinTokenUsageSnapshotFromUsageUpdate(
+      makeUsageUpdatedEvent({
+        used: 8_000,
+        size: 200_000,
+        inputTokens: 1_000,
+        outputTokens: 500,
+      }),
+      first,
+    );
+
+    expect(second?.usedTokens).toBe(8_000);
+    expect(second?.totalProcessedTokens).toBe(11_500);
+    expect(second?.lastUsedTokens).toBe(0);
+    expect(second?.lastInputTokens).toBe(1_000);
+    expect(second?.lastOutputTokens).toBe(500);
+  });
+
+  it("ignores size 0 and omits maxTokens", () => {
+    const event = makeUsageUpdatedEvent({
+      used: 100,
+      size: 0,
+    });
+
+    const snapshot = makeDevinTokenUsageSnapshotFromUsageUpdate(event, undefined);
+
+    expect(snapshot).not.toHaveProperty("maxTokens");
+    expect(snapshot?.usedTokens).toBe(100);
+    expect(snapshot?.totalProcessedTokens).toBe(100);
+  });
+});
+
+describe("makeDevinTokenUsageSnapshot", () => {
+  it("uses totalTokens as totalProcessedTokens and preserves previous context", () => {
+    const previous = {
+      usedTokens: 1_500,
+      maxTokens: 200_000,
+      totalProcessedTokens: 1_500,
+    } as const;
+
+    const usage = {
+      inputTokens: 10_000,
+      outputTokens: 500,
+      totalTokens: 10_500,
+      cachedReadTokens: null,
+      cachedWriteTokens: null,
+      thoughtTokens: null,
+    } satisfies EffectAcpSchema.Usage;
+
+    const snapshot = makeDevinTokenUsageSnapshot(usage, previous);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 1_500,
+      totalProcessedTokens: 10_500,
+      maxTokens: 200_000,
+      inputTokens: 10_000,
+      outputTokens: 500,
+      lastUsedTokens: 9_000,
+    });
+  });
+
+  it("falls back to totalTokens when there is no previous context", () => {
+    const usage = {
+      inputTokens: 1_000,
+      outputTokens: 100,
+      totalTokens: 1_100,
+      cachedReadTokens: null,
+      cachedWriteTokens: null,
+      thoughtTokens: null,
+    } satisfies EffectAcpSchema.Usage;
+
+    const snapshot = makeDevinTokenUsageSnapshot(usage, undefined);
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 1_100,
+      totalProcessedTokens: 1_100,
+    });
+    expect(snapshot?.maxTokens).toBeUndefined();
   });
 });
