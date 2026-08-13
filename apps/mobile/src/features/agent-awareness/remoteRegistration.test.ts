@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { cryptoLayer } from "../cloud/dpop";
@@ -184,7 +184,7 @@ const activeAgentActivitySnapshot = {
     activities: [
       {
         environmentId: "env-1" as EnvironmentId,
-        threadId: "thread-1",
+        threadId: "thread-1" as ThreadId,
         projectTitle: "Project",
         threadTitle: "Thread",
         modelTitle: "gpt-5.4",
