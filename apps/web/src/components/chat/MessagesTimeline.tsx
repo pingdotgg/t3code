@@ -998,7 +998,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     <img
                       src={image.previewUrl}
                       alt={image.name}
-                      className="block h-auto max-h-[220px] w-full object-cover"
+                      className="block h-auto max-h-[220px] w-full object-contain"
                     />
                   </button>
                 ) : (
