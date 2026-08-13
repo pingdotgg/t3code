@@ -11,6 +11,7 @@ import type { EnvironmentProject } from "./models.ts";
 import { scopeProject } from "./models.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { arrayElementsEqual, parseProjectKey, projectKey, projectRefsEqual } from "./entities.ts";
+import { isVisibleShellProject } from "./projectKind.ts";
 
 const EMPTY_PROJECTS: ReadonlyArray<OrchestrationProjectShell> = Object.freeze([]);
 const EMPTY_PROJECT_INDEX: ReadonlyMap<ProjectId, OrchestrationProjectShell> = new Map();
@@ -24,7 +25,9 @@ export function createEnvironmentProjectAtoms(input: {
   const environmentProjectsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
       (get): ReadonlyArray<OrchestrationProjectShell> =>
-        get(input.snapshotAtom(environmentId))?.projects ?? EMPTY_PROJECTS,
+        (get(input.snapshotAtom(environmentId))?.projects ?? EMPTY_PROJECTS).filter(
+          isVisibleShellProject,
+        ),
     ).pipe(Atom.withLabel(`environment-projects:${environmentId}`)),
   );
 

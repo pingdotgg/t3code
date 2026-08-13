@@ -15,6 +15,11 @@ export function projectHasWorkspace(
   return project != null && project.kind !== "chat";
 }
 
+/** Chat projects are omitted from the client-visible shell. */
+export function isVisibleShellProject(project: { readonly kind?: ProjectKind }): boolean {
+  return project.kind !== "chat";
+}
+
 export function isChatDraft(
   draft: { readonly createInChatScratch?: boolean } | null | undefined,
 ): boolean {

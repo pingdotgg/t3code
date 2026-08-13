@@ -19,7 +19,8 @@ Open the command palette and choose **New chat**, or use the New chat shortcut (
 
 Send the first message from the chat composer. T3 Code creates the conversation when you send.
 
-Chats appear in the thread list alongside project threads. Rename, pin, snooze, and archive work
-the same as they do for any other thread.
+Chats appear in the thread list alongside project threads, with a speech-bubble icon
+instead of a project folder. Rename, pin, snooze, and archive work the same as they
+do for any other thread.
 
 Attaching an existing chat to a project later is not available yet.

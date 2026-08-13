@@ -6,6 +6,7 @@ import {
   chatLogicalProjectKey,
   isChatDraft,
   isChatThread,
+  isVisibleShellProject,
   projectHasWorkspace,
 } from "./projectKind.ts";
 
@@ -23,6 +24,12 @@ it("treats missing and chat-kind projects as having no workspace", () => {
   expect(projectHasWorkspace({ kind: "chat" })).toBe(false);
   expect(projectHasWorkspace({ kind: "workspace" })).toBe(true);
   expect(projectHasWorkspace({})).toBe(true);
+});
+
+it("hides chat-kind projects from the visible shell", () => {
+  expect(isVisibleShellProject({ kind: "chat" })).toBe(false);
+  expect(isVisibleShellProject({ kind: "workspace" })).toBe(true);
+  expect(isVisibleShellProject({})).toBe(true);
 });
 
 it("identifies chat drafts only when the scratch flag is set", () => {

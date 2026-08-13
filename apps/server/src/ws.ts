@@ -622,11 +622,16 @@ const makeWsRpcLayer = (
                     projectId,
                   }),
                 onSome: (nextProject) =>
-                  Option.some<OrchestrationShellStreamEvent>({
-                    kind: "project-upserted" as const,
-                    sequence,
-                    project: nextProject,
-                  }),
+                  // Match getShellSnapshot: chat projects stay off the client
+                  // project list. Live upserts that leak them make chats look
+                  // like a workspace named "Chats".
+                  nextProject.kind === "chat"
+                    ? Option.none()
+                    : Option.some<OrchestrationShellStreamEvent>({
+                        kind: "project-upserted" as const,
+                        sequence,
+                        project: nextProject,
+                      }),
               }),
             ),
           ),

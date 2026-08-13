@@ -24,12 +24,13 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { isChatDraft, isChatThread } from "@t3tools/client-runtime/state/project-kind";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { CHAT_PROJECT_TITLE, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -244,6 +245,32 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+function SidebarScopeGlyph(props: {
+  isChat: boolean;
+  environmentId: EnvironmentThreadShell["environmentId"];
+  cwd: string | null;
+  faviconPath: string | null;
+  className?: string;
+}) {
+  if (props.isChat) {
+    return (
+      <MessageSquareIcon className={cn("shrink-0 text-icon-muted", props.className ?? "size-4")} />
+    );
+  }
+  return (
+    <ProjectFavicon
+      environmentId={props.environmentId}
+      cwd={props.cwd ?? ""}
+      faviconPath={props.faviconPath}
+      className={props.className}
+    />
+  );
+}
+
+function sidebarProjectLabel(isChat: boolean, projectTitle: string | null): string | null {
+  return isChat ? CHAT_PROJECT_TITLE : projectTitle;
+}
+
 function SidebarThreadTooltip({
   thread,
   projectTitle,
@@ -256,6 +283,7 @@ function SidebarThreadTooltip({
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
+  isChat,
 }: {
   thread: SidebarThreadSummary;
   projectTitle: string | null;
@@ -271,7 +299,9 @@ function SidebarThreadTooltip({
   } | null;
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
+  isChat: boolean;
 }) {
+  const scopeTitle = sidebarProjectLabel(isChat, projectTitle);
   return (
     <TooltipPopup
       side="right"
@@ -285,15 +315,16 @@ function SidebarThreadTooltip({
           {thread.title}
         </div>
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
-          {projectTitle ? (
+          {scopeTitle ? (
             <div className="flex min-w-0 items-center gap-2">
-              <ProjectFavicon
+              <SidebarScopeGlyph
+                isChat={isChat}
                 environmentId={thread.environmentId}
-                cwd={projectCwd ?? ""}
+                cwd={projectCwd}
                 faviconPath={projectFaviconPath}
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
-              <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
+              <div className="min-w-0 truncate text-foreground/75">{scopeTitle}</div>
             </div>
           ) : null}
           {environmentLabel ? (
@@ -444,6 +475,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
 }) {
   const { composer, draftId, onDiscard, onNavigate, session } = props;
+  const isChat = isChatDraft(session);
+  const scopeTitle = sidebarProjectLabel(isChat, props.projectTitle);
   const promptPreview = composer.prompt.trim().split("\n", 1)[0] ?? "";
   // images mirrors persistedAttachments once rehydration finishes; before
   // that only the persisted list is populated, hence max not sum.
@@ -500,14 +533,15 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               aria-hidden
               className="size-3 shrink-0 text-amber-600 dark:text-amber-300/80"
             />
-            <ProjectFavicon
+            <SidebarScopeGlyph
+              isChat={isChat}
               environmentId={session.environmentId}
-              cwd={props.projectCwd ?? ""}
+              cwd={props.projectCwd}
               faviconPath={props.projectFaviconPath}
               className="size-4 shrink-0"
             />
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {props.projectTitle}
+              {scopeTitle}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
               <button
@@ -707,6 +741,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onChangeRequestState: (threadKey: string, state: "open" | "closed" | "merged" | null) => void;
+  isChat: boolean;
 }) {
   const {
     isRenaming,
@@ -735,6 +770,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const scopeTitle = sidebarProjectLabel(props.isChat, props.projectTitle);
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -887,6 +923,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
+      isChat={props.isChat}
     />
   );
 
@@ -1155,12 +1192,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              <ProjectFavicon
+              <SidebarScopeGlyph
+                isChat={props.isChat}
                 environmentId={thread.environmentId}
-                cwd={props.projectCwd ?? ""}
+                cwd={props.projectCwd}
                 faviconPath={props.projectFaviconPath}
                 className="size-4"
-                fallbackIcon={MessageSquareIcon}
               />
             </span>
             {title}
@@ -1295,20 +1332,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         >
           <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
-              <ProjectFavicon
+              <SidebarScopeGlyph
+                isChat={props.isChat}
                 environmentId={thread.environmentId}
-                cwd={props.projectCwd ?? ""}
+                cwd={props.projectCwd}
                 faviconPath={props.projectFaviconPath}
                 className="size-4 shrink-0"
               />
-              {props.projectTitle ? (
+              {scopeTitle ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
                   )}
                 >
-                  {props.projectTitle}
+                  {scopeTitle}
                 </span>
               ) : (
                 <span className="flex-1" />
@@ -1504,6 +1542,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   resultId: string;
   onHighlight: () => void;
   onSelect: () => void;
+  isChat: boolean;
 }) {
   const { thread } = props;
   // Same details tooltip as the regular rows: a search hit is still a thread,
@@ -1552,7 +1591,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               aria-selected={props.isHighlighted}
               aria-current={props.isRouteActive ? "page" : undefined}
               aria-label={
-                props.projectTitle ? `${thread.title}, ${props.projectTitle}` : thread.title
+                sidebarProjectLabel(props.isChat, props.projectTitle)
+                  ? `${thread.title}, ${sidebarProjectLabel(props.isChat, props.projectTitle)}`
+                  : thread.title
               }
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
@@ -1565,12 +1606,12 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             />
           }
         >
-          <ProjectFavicon
+          <SidebarScopeGlyph
+            isChat={props.isChat}
             environmentId={thread.environmentId}
-            cwd={props.projectCwd ?? ""}
+            cwd={props.projectCwd}
             faviconPath={props.projectFaviconPath}
             className="size-4 shrink-0"
-            fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
@@ -1589,6 +1630,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}
+          isChat={props.isChat}
         />
       </Tooltip>
     </li>
@@ -3477,6 +3519,11 @@ export default function Sidebar() {
                         resultId={`sidebar-thread-search-result-${index}`}
                         onHighlight={() => setActiveSearchResultIndex(index)}
                         onSelect={() => selectThreadSearchResult(thread)}
+                        isChat={isChatThread({
+                          thread,
+                          projects,
+                          projectsKnown,
+                        })}
                       />
                     );
                   })}
@@ -3579,6 +3626,11 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
+                        isChat={isChatThread({
+                          thread,
+                          projects,
+                          projectsKnown,
+                        })}
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
