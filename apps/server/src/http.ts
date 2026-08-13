@@ -45,9 +45,12 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-export function assetResponseHeaders(filePath: string): Record<string, string> {
+export function assetResponseHeaders(
+  filePath: string,
+  cacheControl = "private, max-age=3600",
+): Record<string, string> {
   return {
-    "Cache-Control": "private, max-age=3600",
+    "Cache-Control": cacheControl,
     "X-Content-Type-Options": "nosniff",
     ...(filePath.toLowerCase().endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
@@ -219,7 +222,7 @@ export const assetRouteLayer = HttpRouter.add(
     }
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
-      headers: assetResponseHeaders(asset.path),
+      headers: assetResponseHeaders(asset.path, asset.cacheControl),
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );

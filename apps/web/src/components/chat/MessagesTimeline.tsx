@@ -135,7 +135,11 @@ interface TimelineRowSharedState {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<ServerProviderSkill>;
+  onOpenSkill: (
+    messageId: MessageId,
+    skill: { readonly name: string; readonly path: string },
+  ) => void;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -187,7 +191,9 @@ function TimelineLoadEarlierHeader({
   );
 }
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
-const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_TIMELINE_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+type UserMessageSkill = Pick<ServerProviderSkill, "name" | "displayName" | "path">;
+const NOOP_OPEN_SKILL = () => {};
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: {
@@ -224,7 +230,11 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
-  skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills?: ReadonlyArray<ServerProviderSkill>;
+  onOpenSkill?: (
+    messageId: MessageId,
+    skill: { readonly name: string; readonly path: string },
+  ) => void;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   contentInsetEndAdjustment: number;
@@ -271,6 +281,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
+  onOpenSkill = NOOP_OPEN_SKILL,
   anchorMessageId,
   onAnchorReady,
   contentInsetEndAdjustment,
@@ -509,6 +520,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      onOpenSkill,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -525,6 +537,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      onOpenSkill,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -1030,7 +1043,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <CollapsibleUserMessageBody
           text={elementContextState.promptText}
           terminalContexts={terminalContexts}
-          skills={ctx.skills}
+          skills={
+            row.message.resolvedSkills?.map((skill) => ({
+              ...skill,
+              displayName: ctx.skills.find((candidate) => candidate.name === skill.name)
+                ?.displayName,
+            })) ?? ctx.skills.filter((skill) => skill.enabled)
+          }
+          onSkillClick={(skill) => ctx.onOpenSkill(row.message.id, skill)}
           markdownCwd={ctx.markdownCwd}
         />
       </div>
@@ -1598,7 +1618,8 @@ function shouldCollapseUserMessage(text: string): boolean {
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<UserMessageSkill>;
+  onSkillClick: (skill: { readonly name: string; readonly path: string }) => void;
   markdownCwd: string | undefined;
   footer?: ReactNode;
 }) {
@@ -1629,6 +1650,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
             text={props.text}
             terminalContexts={props.terminalContexts}
             skills={props.skills}
+            onSkillClick={props.onSkillClick}
             markdownCwd={props.markdownCwd}
           />
         </div>
@@ -1666,10 +1688,18 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<UserMessageSkill>;
+  onSkillClick: (skill: { readonly name: string; readonly path: string }) => void;
   markdownCwd: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
+  const handleSkillClick = useCallback(
+    (skill: Pick<ServerProviderSkill, "name">) => {
+      const resolved = props.skills.find((candidate) => candidate.name === skill.name);
+      if (resolved) props.onSkillClick({ name: resolved.name, path: resolved.path });
+    },
+    [props.onSkillClick, props.skills],
+  );
   const renderInlineMarkdownSegment = (text: string, key: string) => {
     const leadingWhitespace = /^\s+/.exec(text)?.[0] ?? "";
     const textWithoutLeadingWhitespace = text.slice(leadingWhitespace.length);
@@ -1688,6 +1718,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
             cwd={props.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             skills={props.skills}
+            onSkillClick={handleSkillClick}
             className="text-message-foreground"
             lineBreaks
           />
@@ -1710,6 +1741,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
                   cwd={props.markdownCwd}
                   threadRef={ctx.threadRef ?? undefined}
                   skills={props.skills}
+                  onSkillClick={handleSkillClick}
                   className="text-message-foreground"
                   lineBreaks
                 />
@@ -1798,6 +1830,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
           cwd={props.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           skills={props.skills}
+          onSkillClick={handleSkillClick}
           className="text-message-foreground"
           lineBreaks
         />,
@@ -1823,6 +1856,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
+      onSkillClick={handleSkillClick}
       className="text-message-foreground"
       lineBreaks
     />

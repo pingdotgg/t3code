@@ -415,7 +415,9 @@ function surfaceTitle(
     case "files":
       return "Files";
     case "file":
-      return surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
+      return surface.skill && surface.relativePath === "SKILL.md"
+        ? `$${surface.skill.name}`
+        : surface.relativePath.slice(surface.relativePath.lastIndexOf("/") + 1);
     case "terminal":
       return (
         terminalLabelsById.get(surface.activeTerminalId) ??

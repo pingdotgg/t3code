@@ -40,6 +40,7 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  SkillReadFileError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
@@ -50,6 +51,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  type MessageId,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -59,6 +61,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { collectSubmittedSkillNames } from "@t3tools/shared/composerInlineTokens";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -120,6 +123,7 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import { readResolvedSkillFile } from "./skill/SkillFileAccess.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -417,6 +421,29 @@ const makeWsRpcLayer = (
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
+      type SkillMessage = {
+        readonly text: string;
+        readonly resolvedSkills?: ReadonlyArray<{
+          readonly name: string;
+          readonly path: string;
+        }>;
+      };
+      const getUserMessageForSkill = Effect.fn("WsRpc.getUserMessageForSkill")(function* (input: {
+        readonly threadId: ThreadId;
+        readonly messageId: MessageId;
+      }) {
+        const message = yield* projectionSnapshotQuery.getThreadMessageById(
+          input.threadId,
+          input.messageId,
+        );
+        if (Option.isNone(message) || message.value.role !== "user") {
+          return undefined as SkillMessage | undefined;
+        }
+        return {
+          text: message.value.text,
+          ...(message.value.resolvedSkills ? { resolvedSkills: message.value.resolvedSkills } : {}),
+        };
+      });
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1037,7 +1064,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
-              const normalizedCommand = yield* normalizeDispatchCommand(command);
+              const normalizedCommand = yield* normalizeDispatchCommand(
+                command,
+                yield* providerRegistry.getProviders,
+              );
               // Archive and settle both mean "done with this thread", so a
               // live provider session must not keep running background work
               // (PR monitors, dev servers, subagent fleets) after either
@@ -1804,6 +1834,72 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.skillsReadFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsReadFile,
+            Effect.gen(function* () {
+              const message = yield* getUserMessageForSkill({
+                threadId: input.threadId,
+                messageId: input.messageId,
+              }).pipe(
+                Effect.mapError(
+                  () =>
+                    new SkillReadFileError({
+                      ...input,
+                      failure: "operation_failed",
+                      message: "T3 Code could not load this thread.",
+                    }),
+                ),
+              );
+              if (!message) {
+                return yield* new SkillReadFileError({
+                  ...input,
+                  failure: "message_not_found",
+                  message: "The user message for this skill call is no longer available.",
+                });
+              }
+
+              const recorded = message.resolvedSkills?.find(
+                (candidate) => candidate.name === input.skillName,
+              );
+              let legacy: { readonly name: string; readonly path: string } | undefined;
+              if (!recorded && collectSubmittedSkillNames(message.text).includes(input.skillName)) {
+                const thread = yield* projectionSnapshotQuery
+                  .getThreadShellById(input.threadId)
+                  .pipe(
+                    Effect.mapError(
+                      () =>
+                        new SkillReadFileError({
+                          ...input,
+                          failure: "operation_failed",
+                          message: "T3 Code could not load this thread.",
+                        }),
+                    ),
+                  );
+                if (Option.isSome(thread)) {
+                  legacy = (yield* providerRegistry.getProviders)
+                    .find(
+                      (provider) => provider.instanceId === thread.value.modelSelection.instanceId,
+                    )
+                    ?.skills.find((skill) => skill.enabled && skill.name === input.skillName);
+                }
+              }
+              const skill = recorded ?? legacy;
+              if (!skill) {
+                return yield* new SkillReadFileError({
+                  ...input,
+                  failure: "skill_not_resolved",
+                  message: "This skill is no longer available.",
+                });
+              }
+              return yield* readResolvedSkillFile({
+                skillName: input.skillName,
+                skillPath: skill.path,
+                relativePath: input.relativePath,
+              });
+            }),
+            { "rpc.aggregate": "skill" },
+          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
@@ -1845,6 +1941,62 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               if (input.resource._tag === "attachment") {
                 return yield* issueAssetUrl({ resource: input.resource });
+              }
+              if (input.resource._tag === "skill-file") {
+                const skillResource = input.resource;
+                const message = yield* getUserMessageForSkill({
+                  threadId: skillResource.threadId,
+                  messageId: skillResource.messageId,
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new AssetWorkspaceContextResolutionError({
+                        resource: skillResource,
+                        cause,
+                      }),
+                  ),
+                );
+                const recordedSkill = message?.resolvedSkills?.find(
+                  (candidate) => candidate.name === skillResource.skillName,
+                );
+                let legacySkill: { readonly name: string; readonly path: string } | undefined;
+                if (
+                  !recordedSkill &&
+                  message &&
+                  collectSubmittedSkillNames(message.text).includes(skillResource.skillName)
+                ) {
+                  const thread = yield* projectionSnapshotQuery
+                    .getThreadShellById(skillResource.threadId)
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new AssetWorkspaceContextResolutionError({
+                            resource: skillResource,
+                            cause,
+                          }),
+                      ),
+                    );
+                  if (Option.isSome(thread)) {
+                    legacySkill = (yield* providerRegistry.getProviders)
+                      .find(
+                        (provider) =>
+                          provider.instanceId === thread.value.modelSelection.instanceId,
+                      )
+                      ?.skills.find(
+                        (skill) => skill.enabled && skill.name === skillResource.skillName,
+                      );
+                  }
+                }
+                const skill = recordedSkill ?? legacySkill;
+                if (!skill) {
+                  return yield* new AssetWorkspaceContextNotFoundError({
+                    resource: skillResource,
+                  });
+                }
+                return yield* issueAssetUrl({
+                  resource: skillResource,
+                  skillPath: skill.path,
+                });
               }
               if (input.resource._tag === "project-favicon") {
                 const project = yield* projectionSnapshotQuery

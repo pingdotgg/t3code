@@ -83,6 +83,13 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("skill-file-exact"),
+    skillRoot: Schema.String,
+    relativePath: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("project-favicon"),
     workspaceRoot: Schema.String,
     relativePath: Schema.NullOr(Schema.String),
@@ -95,7 +102,11 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset = {
+  readonly kind: "file";
+  readonly path: string;
+  readonly cacheControl?: "no-store";
+};
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -170,6 +181,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
+  readonly skillPath?: string;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -278,6 +290,42 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = path.basename(attachmentPath);
       break;
     }
+    case "skill-file": {
+      if (!input.skillPath) {
+        return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
+      }
+      if (!isWorkspaceImagePreviewPath(input.resource.path)) {
+        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
+      }
+      const skillRoot = path.dirname(input.skillPath);
+      const canonicalFile = yield* resolveCanonicalWorkspaceFile({
+        workspaceRoot: skillRoot,
+        relativePath: input.resource.path,
+      }).pipe(
+        Effect.mapError(
+          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+        ),
+      );
+      if (!canonicalFile) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      const canonicalSkillRoot = yield* fileSystem
+        .realPath(skillRoot)
+        .pipe(
+          Effect.mapError(
+            (cause) => new AssetWorkspaceResolutionError({ resource: input.resource, cause }),
+          ),
+        );
+      claims = {
+        version: 1,
+        kind: "skill-file-exact",
+        skillRoot: canonicalSkillRoot,
+        relativePath: path.relative(canonicalSkillRoot, canonicalFile),
+        expiresAt,
+      };
+      fileName = path.basename(canonicalFile);
+      break;
+    }
     case "project-favicon": {
       const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.resource.cwd).pipe(
         Effect.mapError(
@@ -382,6 +430,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       PROJECT_FAVICON_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
+
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
   const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
   return {
@@ -439,6 +488,20 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       relativePath: claims.relativePath,
     });
     return faviconPath ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset) : null;
+  }
+
+  if (claims.kind === "skill-file-exact") {
+    const decodedPath = decodeRelativePath(relativePath);
+    if (decodedPath === null) return null;
+    const path = yield* Path.Path;
+    if (decodedPath !== path.basename(claims.relativePath)) return null;
+    const exactSkillFile = yield* resolveCanonicalWorkspaceFileForRequest({
+      workspaceRoot: claims.skillRoot,
+      relativePath: claims.relativePath,
+    });
+    return exactSkillFile
+      ? ({ kind: "file", path: exactSkillFile, cacheControl: "no-store" } satisfies ResolvedAsset)
+      : null;
   }
 
   const decodedPath = decodeRelativePath(relativePath);

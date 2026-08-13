@@ -122,6 +122,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           turn_id,
           role,
           text,
+          resolved_skills_json,
           is_streaming,
           created_at,
           updated_at
@@ -132,6 +133,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'turn-1',
           'assistant',
           'hello from projection',
+          '[{"name":"implementor","path":"/tmp/skills/implementor/SKILL.md"}]',
           0,
           '2026-02-24T00:00:04.000Z',
           '2026-02-24T00:00:05.000Z'
@@ -332,6 +334,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               id: asMessageId("message-1"),
               role: "assistant",
               text: "hello from projection",
+              resolvedSkills: [{ name: "implementor", path: "/tmp/skills/implementor/SKILL.md" }],
               turnId: asTurnId("turn-1"),
               streaming: false,
               createdAt: "2026-02-24T00:00:04.000Z",

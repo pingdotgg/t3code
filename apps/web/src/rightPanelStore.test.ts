@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -21,6 +21,32 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("opens one durable file tab per invoked skill and refreshes it when reopened", () => {
+    const target = {
+      messageId: MessageId.make("message-1"),
+      name: "github:gh-fix-ci",
+      path: "/skills/gh-fix-ci/SKILL.md",
+      relativePath: "SKILL.md",
+    };
+
+    useRightPanelStore.getState().openSkillFile(refA, target);
+    const first = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    useRightPanelStore.getState().openSkillFile(refA, target);
+    const second = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+
+    const expectedSkill = {
+      messageId: target.messageId,
+      name: target.name,
+      path: target.path,
+    };
+    expect(first).toMatchObject({ kind: "file", relativePath: "SKILL.md", skill: expectedSkill });
+    expect(second).toMatchObject({ kind: "file", relativePath: "SKILL.md", skill: expectedSkill });
+    expect(second?.kind === "file" ? second.revealRequestId : 0).toBe(2);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toHaveLength(1);
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({

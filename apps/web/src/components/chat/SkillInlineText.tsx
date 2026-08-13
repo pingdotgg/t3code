@@ -14,7 +14,11 @@ const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
 type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
-export function SkillInlineText(props: { text: string; skills: ReadonlyArray<InlineSkill> }) {
+export function SkillInlineText(props: {
+  text: string;
+  skills: ReadonlyArray<InlineSkill>;
+  onSkillClick?: ((skill: InlineSkill) => void) | undefined;
+}) {
   const nodes: ReactNode[] = [];
   let cursor = 0;
 
@@ -31,7 +35,14 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
     if (start > cursor) {
       nodes.push(props.text.slice(cursor, start));
     }
-    nodes.push(<SkillChip key={`${start}:${name}`} skill={skill} rawText={rawText} />);
+    nodes.push(
+      <SkillChip
+        key={`${start}:${name}`}
+        skill={skill}
+        rawText={rawText}
+        onClick={props.onSkillClick}
+      />,
+    );
     cursor = start + rawText.length;
   }
 
@@ -47,10 +58,11 @@ export function SkillInlineText(props: { text: string; skills: ReadonlyArray<Inl
 export function renderSkillInlineMarkdownChildren(
   children: ReactNode,
   skills: ReadonlyArray<InlineSkill>,
+  onSkillClick?: (skill: InlineSkill) => void,
 ): ReactNode {
   return Children.map(children, (child) => {
     if (typeof child === "string") {
-      return <SkillInlineText text={child} skills={skills} />;
+      return <SkillInlineText text={child} skills={skills} onSkillClick={onSkillClick} />;
     }
     if (!isValidElement<{ children?: ReactNode; node?: { tagName?: string } }>(child)) {
       return child;
@@ -67,29 +79,52 @@ export function renderSkillInlineMarkdownChildren(
     return cloneElement(
       child,
       undefined,
-      renderSkillInlineMarkdownChildren(child.props.children, skills),
+      renderSkillInlineMarkdownChildren(child.props.children, skills, onSkillClick),
     );
   });
 }
 
-function SkillChip(props: { skill: InlineSkill; rawText: string }) {
+function SkillChip(props: {
+  skill: InlineSkill;
+  rawText: string;
+  onClick?: ((skill: InlineSkill) => void) | undefined;
+}) {
+  const content = (
+    <>
+      <span
+        aria-hidden="true"
+        className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+        dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
+      />
+      <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>
+        {formatProviderSkillDisplayName(props.skill)}
+      </span>
+    </>
+  );
   return (
     <span className="inline-flex align-middle leading-none" data-markdown-copy={props.rawText}>
-      <span
-        className={cn(
-          CHAT_INLINE_CHIP_CLASS_NAME,
-          "border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300",
-        )}
-      >
+      {props.onClick ? (
+        <button
+          type="button"
+          className={cn(
+            CHAT_INLINE_CHIP_CLASS_NAME,
+            "cursor-pointer border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 hover:bg-fuchsia-500/20 dark:text-fuchsia-300",
+          )}
+          aria-label={`Open $${props.skill.name}`}
+          onClick={() => props.onClick?.(props.skill)}
+        >
+          {content}
+        </button>
+      ) : (
         <span
-          aria-hidden="true"
-          className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
-          dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
-        />
-        <span className={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}>
-          {formatProviderSkillDisplayName(props.skill)}
+          className={cn(
+            CHAT_INLINE_CHIP_CLASS_NAME,
+            "border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300",
+          )}
+        >
+          {content}
         </span>
-      </span>
+      )}
     </span>
   );
 }

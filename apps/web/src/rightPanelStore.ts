@@ -9,6 +9,7 @@
  */
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { MessageId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -44,6 +45,11 @@ export type RightPanelSurface =
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      skill?: {
+        messageId: MessageId;
+        name: string;
+        path: string;
+      };
     }
   | {
       /**
@@ -90,6 +96,7 @@ interface RightPanelStoreState {
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openSkillFile: (ref: ScopedThreadRef, target: SkillFileTarget) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
     target: { environmentId?: string; projectId: string; repository: string; number: number },
@@ -155,6 +162,17 @@ const fileSurface = (
   revealLine,
   revealRequestId,
 });
+
+export interface SkillFileTarget {
+  readonly messageId: MessageId;
+  readonly name: string;
+  readonly path: string;
+  readonly relativePath: string;
+}
+
+function skillFileSurfaceId(target: SkillFileTarget): `file:${string}` {
+  return `file:skill:${encodeURIComponent(target.messageId)}:${encodeURIComponent(target.name)}:${encodeURIComponent(target.relativePath)}`;
+}
 
 const terminalSurface = (terminalId: string): RightPanelSurface => ({
   id: `terminal:${terminalId}`,
@@ -406,6 +424,40 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               normalizeRevealLine(line),
               (existing?.revealRequestId ?? 0) + 1,
             );
+            return {
+              isOpen: true,
+              activeSurfaceId: surface.id,
+              surfaces: existing
+                ? withoutStandaloneExplorer.map((entry) =>
+                    entry.id === surface.id ? surface : entry,
+                  )
+                : [...withoutStandaloneExplorer, surface],
+            };
+          }),
+        })),
+      openSkillFile: (ref, target) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            const withoutStandaloneExplorer = current.surfaces.filter(
+              (surface) => surface.kind !== "files",
+            );
+            const surfaceId = skillFileSurfaceId(target);
+            const existing = withoutStandaloneExplorer.find(
+              (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
+                surface.id === surfaceId && surface.kind === "file",
+            );
+            const surface: Extract<RightPanelSurface, { kind: "file" }> = {
+              id: surfaceId,
+              kind: "file",
+              relativePath: target.relativePath,
+              revealLine: null,
+              revealRequestId: (existing?.revealRequestId ?? 0) + 1,
+              skill: {
+                messageId: target.messageId,
+                name: target.name,
+                path: target.path,
+              },
+            };
             return {
               isOpen: true,
               activeSurfaceId: surface.id,

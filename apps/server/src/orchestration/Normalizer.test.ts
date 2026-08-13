@@ -8,7 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { canonicalizeClientCommandTimestamps } from "./Normalizer.ts";
+import { canonicalizeClientCommandTimestamps, resolveInvokedSkills } from "./Normalizer.ts";
 
 const clientCreatedAt = "2031-01-01T00:00:00.000Z";
 const serverReceivedAt = "2026-07-18T00:00:00.000Z";
@@ -69,5 +69,16 @@ describe("canonicalizeClientCommandTimestamps", () => {
     }
     expect(result.createdAt).toBe(serverReceivedAt);
     expect(result.bootstrap?.createThread?.createdAt).toBe(serverReceivedAt);
+  });
+});
+
+describe("resolveInvokedSkills", () => {
+  it("records exact enabled skill calls and their current paths", () => {
+    expect(
+      resolveInvokedSkills("Use $review and `$disabled`", [
+        { name: "review", path: "/skills/review/SKILL.md", enabled: true },
+        { name: "disabled", path: "/skills/disabled/SKILL.md", enabled: false },
+      ]),
+    ).toEqual([{ name: "review", path: "/skills/review/SKILL.md" }]);
   });
 });

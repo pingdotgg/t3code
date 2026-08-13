@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import { collectComposerInlineTokens, collectSubmittedSkillNames } from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -149,5 +149,22 @@ describe("collectComposerInlineTokens", () => {
     const started = performance.now();
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("collectSubmittedSkillNames", () => {
+  it("collects unique qualified skill calls from submitted prose", () => {
+    expect(collectSubmittedSkillNames("Use $github:gh-fix-ci then $review and $review")).toEqual([
+      "github:gh-fix-ci",
+      "review",
+    ]);
+  });
+
+  it("ignores skill-shaped text in inline and fenced code", () => {
+    expect(
+      collectSubmittedSkillNames(
+        "Use $review not `$inline`.\n```sh\n$inside-fence\n```\n~~~\n$also-code\n~~~\n$final",
+      ),
+    ).toEqual(["review", "final"]);
   });
 });

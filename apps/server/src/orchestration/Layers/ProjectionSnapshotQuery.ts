@@ -24,6 +24,7 @@ import {
   type OrchestrationThreadShell,
   ModelSelection,
   ProjectId,
+  ResolvedSkillReference,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
@@ -79,6 +80,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    resolvedSkills: Schema.NullOr(Schema.fromJsonString(Schema.Array(ResolvedSkillReference))),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -135,6 +137,7 @@ const ProjectIdLookupInput = Schema.Struct({
 const ThreadIdLookupInput = Schema.Struct({
   threadId: ThreadId,
 });
+const ThreadMessageLookupInput = Schema.Struct({ threadId: ThreadId, messageId: MessageId });
 // Windowed reads order turns by the stable keyset (anchor, turn key), where
 // anchor is requested_at and turn key is
 // COALESCE(turn_id, ''). Both are event-derived, so cursors survive the
@@ -528,6 +531,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          resolved_skills_json AS "resolvedSkills",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -971,12 +975,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          resolved_skills_json AS "resolvedSkills",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
         ORDER BY created_at ASC, message_id ASC
+      `,
+  });
+
+  const getThreadMessageRowById = SqlSchema.findOneOption({
+    Request: ThreadMessageLookupInput,
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: ({ threadId, messageId }) =>
+      sql`
+        SELECT message_id AS "messageId", thread_id AS "threadId", turn_id AS "turnId",
+          role, text, attachments_json AS "attachments",
+          resolved_skills_json AS "resolvedSkills", is_streaming AS "isStreaming",
+          created_at AS "createdAt", updated_at AS "updatedAt"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId} AND message_id = ${messageId}
+        LIMIT 1
       `,
   });
 
@@ -1197,6 +1217,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          resolved_skills_json AS "resolvedSkills",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1433,6 +1454,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   role: row.role,
                   text: row.text,
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+                  ...(row.resolvedSkills !== null ? { resolvedSkills: row.resolvedSkills } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
                   createdAt: row.createdAt,
@@ -2478,7 +2500,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             updatedAt: row.updatedAt,
           };
           if (row.attachments !== null) {
-            return Object.assign(message, { attachments: row.attachments });
+            Object.assign(message, { attachments: row.attachments });
+          }
+          if (row.resolvedSkills !== null) {
+            Object.assign(message, { resolvedSkills: row.resolvedSkills });
           }
           return message;
         }),
@@ -2521,6 +2546,32 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     getThreadDetailByIdBounded(threadId, undefined);
+
+  const getThreadMessageById: ProjectionSnapshotQueryShape["getThreadMessageById"] = (
+    threadId,
+    messageId,
+  ) =>
+    getThreadMessageRowById({ threadId, messageId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadMessageById:query",
+          "ProjectionSnapshotQuery.getThreadMessageById:decodeRow",
+        ),
+      ),
+      Effect.map(
+        Option.map((row) => ({
+          id: row.messageId,
+          role: row.role,
+          text: row.text,
+          ...(row.attachments !== null ? { attachments: row.attachments } : {}),
+          ...(row.resolvedSkills !== null ? { resolvedSkills: row.resolvedSkills } : {}),
+          turnId: row.turnId,
+          streaming: row.isStreaming === 1,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        })),
+      ),
+    );
 
   // Bounds pathological fan-out: one user turn that spawned hundreds of
   // subagent turns still pages in bounded chunks, at the cost of splitting the
@@ -2678,6 +2729,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,
+    getThreadMessageById,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

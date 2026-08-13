@@ -6,14 +6,30 @@ import {
   type ClientOrchestrationCommand,
   type IsoDateTime,
   type OrchestrationCommand,
+  type ServerProvider,
   OrchestrationDispatchCommandError,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import { collectSubmittedSkillNames } from "@t3tools/shared/composerInlineTokens";
 
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+
+export function resolveInvokedSkills(
+  text: string,
+  skills: ReadonlyArray<{
+    readonly name: string;
+    readonly path: string;
+    readonly enabled: boolean;
+  }>,
+) {
+  return collectSubmittedSkillNames(text).flatMap((name) => {
+    const skill = skills.find((candidate) => candidate.enabled && candidate.name === name);
+    return skill ? [{ name: skill.name, path: skill.path }] : [];
+  });
+}
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
@@ -43,7 +59,10 @@ export const canonicalizeClientCommandTimestamps = (
   };
 };
 
-export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
+export const normalizeDispatchCommand = (
+  command: ClientOrchestrationCommand,
+  providers: ReadonlyArray<ServerProvider> = [],
+) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const canonicalCommand = canonicalizeClientCommandTimestamps(command, receivedAt);
@@ -169,11 +188,23 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       { concurrency: 1 },
     );
 
+    const providerInstanceId =
+      canonicalCommand.modelSelection?.instanceId ??
+      canonicalCommand.bootstrap?.createThread?.modelSelection.instanceId;
+    const provider = providerInstanceId
+      ? providers.find((candidate) => candidate.instanceId === providerInstanceId)
+      : undefined;
+    const resolvedSkills = resolveInvokedSkills(
+      canonicalCommand.message.text,
+      provider?.skills ?? [],
+    );
+
     return {
       ...canonicalCommand,
       message: {
         ...canonicalCommand.message,
         attachments: normalizedAttachments,
+        ...(resolvedSkills.length > 0 ? { resolvedSkills } : {}),
       },
     } satisfies OrchestrationCommand;
   });

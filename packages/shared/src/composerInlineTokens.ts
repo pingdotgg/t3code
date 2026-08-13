@@ -19,6 +19,7 @@ export interface CollectComposerInlineTokensOptions {
 }
 
 const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
+const SUBMITTED_SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**
  * The label body is bounded rather than `*`. Unbounded, every whitespace in
@@ -132,4 +133,61 @@ export function collectComposerInlineTokens(
   }
 
   return [...matches].sort((left, right) => left.start - right.start);
+}
+
+/**
+ * Finds skill calls in submitted Markdown while ignoring code. The composer
+ * tokenizer intentionally accepts a trailing in-progress token; persisted
+ * messages use this stricter, Markdown-aware pass when the server records the
+ * skills that actually affected a turn.
+ */
+export function collectSubmittedSkillNames(text: string): ReadonlyArray<string> {
+  const searchable = [...text];
+  let fencedMarker: "`" | "~" | null = null;
+  let fencedLength = 0;
+  let offset = 0;
+
+  for (const line of text.split(/(?<=\n)/)) {
+    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    const marker = fence?.[1]?.[0] as "`" | "~" | undefined;
+    const length = fence?.[1]?.length ?? 0;
+    const closesFence = fencedMarker !== null && marker === fencedMarker && length >= fencedLength;
+    if (fencedMarker !== null || marker !== undefined) {
+      searchable.fill(" ", offset, offset + line.length);
+      if (closesFence) {
+        fencedMarker = null;
+        fencedLength = 0;
+      } else if (fencedMarker === null && marker !== undefined) {
+        fencedMarker = marker;
+        fencedLength = length;
+      }
+    }
+    offset += line.length;
+  }
+
+  const withoutFences = searchable.join("");
+  for (let index = 0; index < withoutFences.length; index += 1) {
+    if (withoutFences[index] !== "`") continue;
+    let runLength = 1;
+    while (withoutFences[index + runLength] === "`") runLength += 1;
+    const marker = "`".repeat(runLength);
+    const closingIndex = withoutFences.indexOf(marker, index + runLength);
+    if (closingIndex === -1) {
+      index += runLength - 1;
+      continue;
+    }
+    searchable.fill(" ", index, closingIndex + runLength);
+    index = closingIndex + runLength - 1;
+  }
+
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const match of searchable.join("").matchAll(SUBMITTED_SKILL_TOKEN_REGEX)) {
+    const name = match[2];
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  }
+  return names;
 }

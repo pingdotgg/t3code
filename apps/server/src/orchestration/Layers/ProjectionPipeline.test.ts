@@ -124,6 +124,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           messageId: MessageId.make("message-1"),
           role: "assistant",
           text: "hello",
+          resolvedSkills: [{ name: "implementor", path: "/tmp/skills/implementor/SKILL.md" }],
           turnId: null,
           streaming: false,
           createdAt: now,
@@ -151,13 +152,21 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       const messageRows = yield* sql<{
         readonly messageId: string;
         readonly text: string;
+        readonly resolvedSkillsJson: string | null;
       }>`
         SELECT
           message_id AS "messageId",
-          text
+          text,
+          resolved_skills_json AS "resolvedSkillsJson"
         FROM projection_thread_messages
       `;
-      assert.deepEqual(messageRows, [{ messageId: "message-1", text: "hello" }]);
+      assert.deepEqual(messageRows, [
+        {
+          messageId: "message-1",
+          text: "hello",
+          resolvedSkillsJson: '[{"name":"implementor","path":"/tmp/skills/implementor/SKILL.md"}]',
+        },
+      ]);
 
       const stateRows = yield* sql<{
         readonly projector: string;
