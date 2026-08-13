@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "./hooks/useSettings";
+import {
+  useClientSettingsHydrated,
+  usePrimarySettings,
+  useUpdatePrimarySettings,
+} from "./hooks/useSettings";
 import { resolvePlanAgentHealPatch } from "./modelSelection";
 
 /**
@@ -18,9 +22,16 @@ export function PlanAgentSelectionHeal() {
   const sourceControlWriterModelSelection = usePrimarySettings(
     (settings) => settings.sourceControlWriterModelSelection,
   );
+  const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
 
   useEffect(() => {
+    // planModeEnabled reads as false until client settings hydrate, so never
+    // heal before then: we would strip a stored plan selection from a user
+    // whose plan mode is actually on.
+    if (!settingsHydrated) {
+      return;
+    }
     const patch = resolvePlanAgentHealPatch({
       planModeEnabled,
       textGenerationModelSelection,
@@ -31,6 +42,7 @@ export function PlanAgentSelectionHeal() {
     }
   }, [
     planModeEnabled,
+    settingsHydrated,
     textGenerationModelSelection,
     sourceControlWriterModelSelection,
     updateSettings,
