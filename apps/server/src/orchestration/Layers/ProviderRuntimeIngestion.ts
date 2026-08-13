@@ -840,10 +840,10 @@ export function runtimeEventToActivities(
 
     case "item.completed": {
       if (event.payload.itemType === "reasoning") {
+        // Settle even without a detail string — a streamed activity must flip
+        // streaming:false or it renders as live Thinking forever; the merge
+        // keeps the accumulated delta text when the completion carries none.
         const detail = event.payload.detail?.trim();
-        if (!detail) {
-          return [];
-        }
         return [
           {
             id: reasoningActivityId(event),
@@ -852,7 +852,7 @@ export function runtimeEventToActivities(
             kind: "reasoning",
             summary: event.payload.title ?? "Thought",
             payload: {
-              detail,
+              ...(detail ? { detail } : {}),
               streaming: false,
             },
             turnId: toTurnId(event.turnId) ?? null,

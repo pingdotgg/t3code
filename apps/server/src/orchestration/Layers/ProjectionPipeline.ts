@@ -1098,6 +1098,16 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             previousActivity,
             event.payload.activity,
           );
+          // A reasoning settle with no streamed row and no text of its own is an
+          // orphan (codex completes reasoning items without a detail string);
+          // inserting it would render an empty Thought entry.
+          if (
+            activity.kind === "reasoning" &&
+            previousActivity === undefined &&
+            typeof (activity.payload as { detail?: unknown } | null)?.detail !== "string"
+          ) {
+            return;
+          }
           yield* projectionThreadActivityRepository.upsert({
             activityId: activity.id,
             threadId: event.payload.threadId,
