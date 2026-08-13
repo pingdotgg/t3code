@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -236,16 +237,22 @@ export const layer = Layer.effect(
             yield* Effect.all([reportLines(child.stdout), reportLines(child.stderr)], {
               concurrency: "unbounded",
             });
-            const exitCode = Number(yield* child.exitCode);
+            const exitResult = yield* Effect.result(child.exitCode);
             runs.delete(agentId);
             yield* emit(input.threadId, "task.completed", {
               ...linkage,
-              status: run.cancelled ? "stopped" : exitCode === 0 ? "completed" : "failed",
+              status: run.cancelled
+                ? "stopped"
+                : Result.isSuccess(exitResult) && Number(exitResult.success) === 0
+                  ? "completed"
+                  : "failed",
               summary: run.cancelled
                 ? "Cancelled by T3"
-                : exitCode === 0
-                  ? "Managed Codex exec completed"
-                  : `Managed Codex exec exited with code ${exitCode}`,
+                : Result.isFailure(exitResult)
+                  ? "Managed Codex exec failed before reporting an exit code"
+                  : Number(exitResult.success) === 0
+                    ? "Managed Codex exec completed"
+                    : `Managed Codex exec exited with code ${Number(exitResult.success)}`,
             });
           }),
           scope,

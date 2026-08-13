@@ -5,6 +5,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -20,21 +22,30 @@ import {
 } from "./Services/ProjectionSnapshotQuery.ts";
 
 describe("ManagedCodexExec", () => {
-  it.effect("launches an owned codex exec and cancels its exact process handle", () =>
+  it.effect("terminalizes signal exits and releases owned process handles", () =>
     Effect.gen(function* () {
-      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      const terminal = yield* Deferred.make<ProviderRuntimeEvent>();
+      const exit = yield* Deferred.make<
+        ChildProcessSpawner.ExitCode,
+        PlatformError.PlatformError
+      >();
+      const terminals = yield* Queue.unbounded<ProviderRuntimeEvent>();
       const events: ProviderRuntimeEvent[] = [];
       let killed = false;
       let spawnedCommand: unknown;
-      const handle = ChildProcessSpawner.makeHandle({
+      const signalExitError = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "exitCode",
+        description: "Process interrupted due to receipt of signal: 'SIGTERM'",
+      });
+      const cancelledHandle = ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1234),
         exitCode: Deferred.await(exit),
         isRunning: Effect.sync(() => !killed),
         kill: () =>
           Effect.gen(function* () {
             killed = true;
-            yield* Deferred.succeed(exit, ChildProcessSpawner.ExitCode(143));
+            yield* Deferred.fail(exit, signalExitError);
           }),
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
@@ -44,9 +55,25 @@ describe("ManagedCodexExec", () => {
         getInputFd: () => Sink.drain,
         getOutputFd: () => Stream.empty,
       });
+      const unexpectedExitHandle = ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1235),
+        exitCode: Effect.fail(signalExitError),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+      const handles = [cancelledHandle, unexpectedExitHandle];
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.sync(() => {
           spawnedCommand = command;
+          const handle = handles.shift();
+          if (!handle) throw new Error("Unexpected managed Codex spawn");
           return handle;
         }),
       );
@@ -71,7 +98,7 @@ describe("ManagedCodexExec", () => {
           Effect.sync(() => events.push(event)).pipe(
             Effect.andThen(
               event.type === "task.completed"
-                ? Deferred.succeed(terminal, event).pipe(Effect.asVoid)
+                ? Queue.offer(terminals, event).pipe(Effect.asVoid)
                 : Effect.void,
             ),
           ),
@@ -128,10 +155,34 @@ describe("ManagedCodexExec", () => {
         yield* manager.cancel({ threadId: ThreadId.make("thread-1"), agentId: launched.agentId }),
       ).toEqual({ cancelled: true });
       expect(killed).toBe(true);
-      expect(yield* Deferred.await(terminal)).toMatchObject({
+      expect(yield* Queue.take(terminals)).toMatchObject({
         type: "task.completed",
         payload: { taskId: launched.agentId, status: "stopped" },
       });
+      expect(
+        yield* Effect.result(
+          manager.cancel({ threadId: ThreadId.make("thread-1"), agentId: launched.agentId }),
+        ),
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "run-not-found" } });
+
+      const unexpectedExit = yield* manager.launch({
+        threadId: ThreadId.make("thread-1"),
+        prompt: "Review another implementation",
+        title: "Reviewer",
+      });
+      expect(yield* Queue.take(terminals)).toMatchObject({
+        type: "task.completed",
+        payload: {
+          taskId: unexpectedExit.agentId,
+          status: "failed",
+          summary: "Managed Codex exec failed before reporting an exit code",
+        },
+      });
+      expect(
+        yield* Effect.result(
+          manager.cancel({ threadId: ThreadId.make("thread-1"), agentId: unexpectedExit.agentId }),
+        ),
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "run-not-found" } });
     }).pipe(Effect.scoped),
   );
 });
