@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PartitionedSemaphore from "effect/PartitionedSemaphore";
 import * as Schema from "effect/Schema";
 
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
@@ -85,6 +86,7 @@ function toRuntimeBinding(
 
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const writeLocks = yield* PartitionedSemaphore.make<string>({ permits: 1 });
 
   const getBinding = (threadId: ThreadId) =>
     repository.getByThreadId({ threadId }).pipe(
@@ -100,7 +102,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
-  const upsert: ProviderSessionDirectoryShape["upsert"] = Effect.fn(function* (binding) {
+  const upsertUnlocked = Effect.fn(function* (binding: ProviderRuntimeBinding) {
     const existing = yield* repository
       .getByThreadId({ threadId: binding.threadId })
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:getByThreadId")));
@@ -148,6 +150,9 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
   });
 
+  const upsert: ProviderSessionDirectoryShape["upsert"] = (binding) =>
+    writeLocks.withPermit(String(binding.threadId))(upsertUnlocked(binding));
+
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
     getBinding(threadId).pipe(
       Effect.flatMap((binding) =>
@@ -182,12 +187,57 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
+  const clearPendingTerminalEvent: ProviderSessionDirectoryShape["clearPendingTerminalEvent"] = (
+    input,
+  ) =>
+    writeLocks.withPermit(String(input.threadId))(
+      repository
+        .clearPendingTerminalEvent(input)
+        .pipe(
+          Effect.mapError(
+            toPersistenceError(
+              "ProviderSessionDirectory.clearPendingTerminalEvent:clearPendingTerminalEvent",
+            ),
+          ),
+        ),
+    );
+
+  const appendPendingTerminalEvent: ProviderSessionDirectoryShape["appendPendingTerminalEvent"] = (
+    input,
+  ) =>
+    writeLocks.withPermit(String(input.threadId))(
+      repository
+        .appendPendingTerminalEvent(input)
+        .pipe(
+          Effect.mapError(
+            toPersistenceError(
+              "ProviderSessionDirectory.appendPendingTerminalEvent:appendPendingTerminalEvent",
+            ),
+          ),
+        ),
+    );
+
+  const listPendingTerminalEvents: ProviderSessionDirectoryShape["listPendingTerminalEvents"] =
+    () =>
+      repository
+        .listPendingTerminalEvents()
+        .pipe(
+          Effect.mapError(
+            toPersistenceError(
+              "ProviderSessionDirectory.listPendingTerminalEvents:listPendingTerminalEvents",
+            ),
+          ),
+        );
+
   return {
     upsert,
     getProvider,
     getBinding,
     listThreadIds,
     listBindings,
+    clearPendingTerminalEvent,
+    appendPendingTerminalEvent,
+    listPendingTerminalEvents,
   } satisfies ProviderSessionDirectoryShape;
 });
 

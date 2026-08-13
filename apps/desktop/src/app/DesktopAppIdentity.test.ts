@@ -14,6 +14,8 @@ import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
+const portablePath = (value: string) => value.replaceAll("\\", "/");
+
 const defaultEnvironmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
   homeDirectory: "/Users/alice",
@@ -149,7 +151,10 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Alpha)");
+        assert.equal(
+          portablePath(userDataPath),
+          "/Users/alice/Library/Application Support/T3 Code (Alpha)",
+        );
       }),
       { legacyPathExists: true },
     ),
@@ -171,11 +176,11 @@ describe("DesktopAppIdentity", () => {
         const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
 
         assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
-        assert.equal(error.legacyPath, legacyPath);
+        assert.equal(portablePath(error.legacyPath), legacyPath);
         assert.strictEqual(error.cause, cause);
         assert.equal(
           error.message,
-          `Failed to inspect legacy desktop user-data path at "${legacyPath}".`,
+          `Failed to inspect legacy desktop user-data path at "${error.legacyPath}".`,
         );
       }),
       { legacyPathProbeError: cause },

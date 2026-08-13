@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { HttpClient, HttpRouter } from "effect/unstable/http";
 
 import { makeMockUpdateRouteLayer } from "./mock-update-server.ts";
@@ -17,6 +18,16 @@ const withMockUpdateServer = <A, E, R>(rootRealPath: string, effect: Effect.Effe
       }).pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
     ),
   );
+
+function isSymlinkPermissionDenied(error: PlatformError.PlatformError): boolean {
+  return (
+    error.reason._tag === "Unknown" &&
+    typeof error.reason.cause === "object" &&
+    error.reason.cause !== null &&
+    "code" in error.reason.cause &&
+    error.reason.cause.code === "EPERM"
+  );
+}
 
 it.layer(NodeServices.layer)("mock-update-server", (it) => {
   it.effect("serves files from the configured root", () =>
@@ -89,7 +100,13 @@ it.layer(NodeServices.layer)("mock-update-server", (it) => {
 
       yield* fileSystem.writeFileString(outsideFile, "version: outside\n");
       yield* fileSystem.makeDirectory(linksDir, { recursive: true });
-      yield* fileSystem.symlink(outsideFile, symlinkPath);
+      const symlinkCreated = yield* fileSystem.symlink(outsideFile, symlinkPath).pipe(
+        Effect.as(true),
+        Effect.catchTag("PlatformError", (error) =>
+          isSymlinkPermissionDenied(error) ? Effect.succeed(false) : Effect.fail(error),
+        ),
+      );
+      if (!symlinkCreated) return;
 
       yield* withMockUpdateServer(
         rootRealPath,

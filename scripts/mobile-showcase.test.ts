@@ -70,6 +70,8 @@ const config: ShowcaseConfig = {
   ],
 };
 
+const portablePath = (value: string) => value.replaceAll("\\", "/");
+
 it("parses repeatable capture filters", () => {
   const options = parseShowcaseCliArgs([
     "--platform",
@@ -144,7 +146,7 @@ it("expands both appearances into independent upload-ready directories", () => {
   assert.deepStrictEqual(
     captures.map((capture) => ({
       appearance: capture.appearance,
-      directory: showcaseCaptureDirectory("/captures", capture),
+      directory: portablePath(showcaseCaptureDirectory("/captures", capture)),
     })),
     [
       { appearance: "light", directory: "/captures/apple/iphone-test/light" },

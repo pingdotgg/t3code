@@ -130,6 +130,7 @@ interface ClaudeResumeState {
 interface ClaudeTurnState {
   readonly turnId: TurnId;
   readonly startedAt: string;
+  readonly turnStartEventSequence?: number;
   /**
    * True for turns auto-started by assistant output arriving without an
    * active turn (background agent/subagent responses between user prompts).
@@ -266,6 +267,10 @@ export interface ClaudeAdapterLiveOptions {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
+  readonly offerPrompt?: (
+    queue: Queue.Queue<PromptQueueItem>,
+    item: PromptQueueItem,
+  ) => Effect.Effect<boolean>;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -1654,6 +1659,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         prompt: input.prompt,
         options: input.options,
       }) as ClaudeQueryRuntime);
+  const offerPrompt = options?.offerPrompt ?? Queue.offer;
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -2330,6 +2336,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       createdAt: stamp.createdAt,
       threadId: context.session.threadId,
       turnId: turnState.turnId,
+      ...(turnState.turnStartEventSequence !== undefined
+        ? { turnStartEventSequence: turnState.turnStartEventSequence }
+        : {}),
       payload: {
         state: status,
         ...(result?.stop_reason !== undefined ? { stopReason: result.stop_reason } : {}),
@@ -2353,6 +2362,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(status === "failed" && errorMessage ? { lastError: errorMessage } : {}),
     };
     yield* updateResumeCursor(context);
+    return stamp.eventId;
   });
 
   const handleStreamEvent = Effect.fn("handleStreamEvent")(function* (
@@ -4307,6 +4317,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? input.modelSelection
         : undefined;
 
+    // Build and validate the SDK message before mutating turn lifecycle. File
+    // reads and attachment validation are local preparation; if either fails,
+    // Claude never received a prompt and no turn.started should be published.
+    const message = yield* buildUserMessageEffect(input, {
+      fileSystem,
+      attachmentsDir: serverConfig.attachmentsDir,
+      boundInstanceId,
+    });
+
     // A sendTurn while a real turn is running is a steer: the message is
     // queued into the live SDK agent loop and the work continues as the same
     // turn — no synthetic turn boundary. Stale synthetic turns (from
@@ -4356,58 +4375,118 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
-    if (steeringTurnState === null) {
-      const turnState: ClaudeTurnState = {
-        turnId,
-        startedAt: yield* nowIso,
-        items: [],
-        assistantTextBlocks: new Map(),
-        assistantTextBlockOrder: [],
-        capturedProposedPlanKeys: new Set(),
-        nextSyntheticAssistantBlockIndex: -1,
-      };
-
-      const updatedAt = yield* nowIso;
-      context.turnState = turnState;
-      context.session = {
-        ...context.session,
-        status: "running",
-        activeTurnId: turnId,
-        updatedAt,
-      };
-
-      const turnStartedStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
-        type: "turn.started",
-        eventId: turnStartedStamp.eventId,
+    // Session shutdown can win any of the asynchronous preparation above.
+    // Recheck immediately before publishing a lifecycle boundary so a prompt
+    // can never start against the already-closed queue retained by this send.
+    if (context.stopped || context.session.status === "closed") {
+      return yield* new ProviderAdapterSessionClosedError({
         provider: PROVIDER,
-        createdAt: turnStartedStamp.createdAt,
-        threadId: context.session.threadId,
-        turnId,
-        payload: modelSelection?.model ? { model: modelSelection.model } : {},
-        providerRefs: {},
+        threadId: input.threadId,
       });
     }
 
-    const message = yield* buildUserMessageEffect(input, {
-      fileSystem,
-      attachmentsDir: serverConfig.attachmentsDir,
-      boundInstanceId,
-    });
+    const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
+    const freshTurn =
+      steeringTurnState === null
+        ? {
+            state: {
+              turnId,
+              startedAt: yield* nowIso,
+              ...(input.turnStartEventSequence !== undefined
+                ? { turnStartEventSequence: input.turnStartEventSequence }
+                : {}),
+              items: [],
+              assistantTextBlocks: new Map(),
+              assistantTextBlockOrder: [],
+              capturedProposedPlanKeys: new Set(),
+              nextSyntheticAssistantBlockIndex: -1,
+            } satisfies ClaudeTurnState,
+            updatedAt: yield* nowIso,
+            stamp: yield* makeEventStamp(),
+          }
+        : undefined;
 
-    yield* Queue.offer(context.promptQueue, {
+    const promptAccepted = yield* offerPrompt(context.promptQueue, {
       type: "message",
       message,
-    }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
-
-    return {
+    });
+    const turnStartResult = () => ({
       threadId: context.session.threadId,
       turnId,
       ...(context.session.resumeCursor !== undefined
         ? { resumeCursor: context.session.resumeCursor }
         : {}),
-    };
+    });
+    if (!promptAccepted) {
+      const requestError = new ProviderAdapterSessionClosedError({
+        provider: PROVIDER,
+        threadId: input.threadId,
+      });
+      // Queue.offer reports a closed queue with `false`, not a typed failure.
+      // No lifecycle has started yet. Emit only the targeted terminal and
+      // leave the exact intent for runtime ingestion; publishing turn.started
+      // first would release the gate before this terminal can consume it.
+      if (freshTurn !== undefined) {
+        context.session = {
+          ...context.session,
+          status: "ready",
+          activeTurnId: undefined,
+          updatedAt: freshTurn.updatedAt,
+          lastError: requestError.message,
+        };
+        const terminalEvent = {
+          type: "turn.completed",
+          eventId: freshTurn.stamp.eventId,
+          provider: PROVIDER,
+          createdAt: freshTurn.stamp.createdAt,
+          threadId: context.session.threadId,
+          turnId,
+          ...(input.turnStartEventSequence !== undefined
+            ? { turnStartEventSequence: input.turnStartEventSequence }
+            : {}),
+          payload: {
+            state: "failed",
+            errorMessage: requestError.message,
+          },
+          providerRefs: {},
+        } satisfies ProviderRuntimeEvent;
+        yield* offerRuntimeEvent(terminalEvent);
+        return {
+          ...turnStartResult(),
+          terminalEvent,
+          terminalEventId: freshTurn.stamp.eventId,
+        };
+      }
+      return yield* requestError;
+    }
+
+    if (freshTurn !== undefined) {
+      // The SDK prompt iterable accepted the message. Only now publish the
+      // start boundary, before the async consumer can surface its first turn
+      // event, so a rejected queue handoff never transiently releases P1.
+      context.turnState = freshTurn.state;
+      context.session = {
+        ...context.session,
+        status: "running",
+        activeTurnId: turnId,
+        updatedAt: freshTurn.updatedAt,
+      };
+      yield* offerRuntimeEvent({
+        type: "turn.started",
+        eventId: freshTurn.stamp.eventId,
+        provider: PROVIDER,
+        createdAt: freshTurn.stamp.createdAt,
+        threadId: context.session.threadId,
+        turnId,
+        ...(input.turnStartEventSequence !== undefined
+          ? { turnStartEventSequence: input.turnStartEventSequence }
+          : {}),
+        payload: modelSelection?.model ? { model: modelSelection.model } : {},
+        providerRefs: {},
+      });
+    }
+
+    return turnStartResult();
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(

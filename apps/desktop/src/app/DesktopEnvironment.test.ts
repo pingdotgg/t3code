@@ -7,6 +7,9 @@ import * as Option from "effect/Option";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 
+const portablePath = (value: string) => value.replaceAll("\\", "/").replace(/^[A-Z]:/iu, "");
+const portableOptionPath = (value: Option.Option<string>) => Option.map(value, portablePath);
+
 const defaultInput = {
   dirname: "/repo/apps/desktop/dist-electron",
   homeDirectory: "/Users/alice",
@@ -51,22 +54,34 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, true);
-      assert.equal(environment.appDataDirectory, "/Users/alice/Library/Application Support");
-      assert.equal(environment.baseDir, "/tmp/t3");
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
-      assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
       assert.equal(
-        environment.savedEnvironmentRegistryPath,
+        portablePath(environment.appDataDirectory),
+        "/Users/alice/Library/Application Support",
+      );
+      assert.equal(portablePath(environment.baseDir), "/tmp/t3");
+      assert.equal(portablePath(environment.stateDir), "/tmp/t3/userdata");
+      assert.equal(
+        portablePath(environment.desktopSettingsPath),
+        "/tmp/t3/userdata/desktop-settings.json",
+      );
+      assert.equal(
+        portablePath(environment.clientSettingsPath),
+        "/tmp/t3/userdata/client-settings.json",
+      );
+      assert.equal(
+        portablePath(environment.savedEnvironmentRegistryPath),
         "/tmp/t3/userdata/saved-environments.json",
       );
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
-      assert.equal(environment.rootDir, "/repo");
-      assert.equal(environment.appRoot, "/repo");
-      assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
-      assert.equal(environment.backendCwd, "/repo");
+      assert.equal(portablePath(environment.serverSettingsPath), "/tmp/t3/userdata/settings.json");
+      assert.equal(portablePath(environment.logDir), "/tmp/t3/userdata/logs");
+      assert.equal(
+        portablePath(environment.browserArtifactsDir),
+        "/tmp/t3/userdata/browser-artifacts",
+      );
+      assert.equal(portablePath(environment.rootDir), "/repo");
+      assert.equal(portablePath(environment.appRoot), "/repo");
+      assert.equal(portablePath(environment.backendEntryPath), "/repo/apps/server/dist/bin.mjs");
+      assert.equal(portablePath(environment.backendCwd), "/repo");
       assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
       assert.equal(environment.linuxWmClass, "t3code-dev");
       assert.deepEqual(
@@ -91,10 +106,13 @@ describe("DesktopEnvironment", () => {
       );
 
       assert.equal(environment.isDevelopment, false);
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.equal(portablePath(environment.stateDir), "/tmp/t3/userdata");
+      assert.equal(portablePath(environment.logDir), "/tmp/t3/userdata/logs");
+      assert.equal(
+        portablePath(environment.browserArtifactsDir),
+        "/tmp/t3/userdata/browser-artifacts",
+      );
+      assert.equal(portablePath(environment.serverSettingsPath), "/tmp/t3/userdata/settings.json");
     }),
   );
 
@@ -106,8 +124,8 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
-      assert.equal(development.stateDir, "/Users/alice/.t3/dev");
-      assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
+      assert.equal(portablePath(development.stateDir), "/Users/alice/.t3/dev");
+      assert.equal(portablePath(production.stateDir), "/Users/alice/.t3/userdata");
     }),
   );
 
@@ -139,7 +157,7 @@ describe("DesktopEnvironment", () => {
         Option.some("/Users/alice"),
       );
       assert.deepEqual(
-        environment.resolvePickFolderDefaultPath({ initialPath: "~/project" }),
+        portableOptionPath(environment.resolvePickFolderDefaultPath({ initialPath: "~/project" })),
         Option.some("/Users/alice/project"),
       );
     }),

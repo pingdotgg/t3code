@@ -10,7 +10,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 
-import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import { createCommandAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -106,7 +106,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
 
     const normalizedAttachments = yield* Effect.forEach(
       canonicalCommand.message.attachments,
-      (attachment) =>
+      (attachment, attachmentIndex) =>
         Effect.gen(function* () {
           const parsed = parseBase64DataUrl(attachment.dataUrl);
           if (!parsed || !parsed.mimeType.startsWith("image/")) {
@@ -122,7 +122,13 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             });
           }
 
-          const attachmentId = createAttachmentId(canonicalCommand.threadId);
+          const attachmentId = yield* createCommandAttachmentId(
+            canonicalCommand.threadId,
+            canonicalCommand.commandId,
+            attachmentIndex,
+            parsed.mimeType.toLowerCase(),
+            bytes,
+          );
           if (!attachmentId) {
             return yield* new OrchestrationDispatchCommandError({
               message: "Failed to create a safe attachment id.",

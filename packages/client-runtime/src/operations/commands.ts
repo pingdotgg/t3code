@@ -1,18 +1,20 @@
 import {
   CommandId,
   ORCHESTRATION_WS_METHODS,
+  threadTurnBootstrapRequiresSameServerProcess,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+import type { ConnectionTransientError } from "../connection/model.ts";
 import type { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import {
   type EnvironmentRpcFailure,
   type EnvironmentRpcSuccess,
   type EnvironmentRpcUnavailableError,
-  request,
+  requestIdempotent,
 } from "../rpc/client.ts";
 
 type CommandType = ClientOrchestrationCommand["type"];
@@ -55,7 +57,7 @@ export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
-  EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
+  EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError | ConnectionTransientError,
   Crypto.Crypto | EnvironmentSupervisor
 >;
 
@@ -83,7 +85,15 @@ function timestampedCommandMetadata(input: {
 }
 
 function dispatch(command: ClientOrchestrationCommand) {
-  return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
+  if (
+    command.type === "thread.turn.start" &&
+    threadTurnBootstrapRequiresSameServerProcess(command.bootstrap)
+  ) {
+    return requestIdempotent(ORCHESTRATION_WS_METHODS.dispatchCommand, command, {
+      sameServerProcess: true,
+    });
+  }
+  return requestIdempotent(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
 }
 
 export const createProject: (input: CreateProjectInput) => CommandEffect = Effect.fn(

@@ -104,6 +104,20 @@ export function buildTemporaryWorktreeBranchName(
   return `${WORKTREE_BRANCH_PREFIX}/${token}`;
 }
 
+/** Derive a stable temporary branch for retryable worktree bootstraps. */
+export function buildDeterministicTemporaryWorktreeBranchName(seed: string): string {
+  const compactSeed = seed.toLowerCase().replace(/[^0-9a-f]/g, "");
+  let token = compactSeed.slice(0, 8);
+  if (token.length < 8) {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < seed.length; index += 1) {
+      hash = Math.imul(hash ^ seed.charCodeAt(index), 0x01000193);
+    }
+    token = (hash >>> 0).toString(16).padStart(8, "0");
+  }
+  return buildTemporaryWorktreeBranchName(() => token);
+}
+
 export function isTemporaryWorktreeBranch(refName: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
 }

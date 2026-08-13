@@ -31,7 +31,7 @@
  *   1. Read the current `ServerSettings` once and use it to seed the
  *      registry's initial state via `ProviderInstanceRegistryMutableLayer`.
  *   2. Fork a daemon fiber (lifetime tied to the layer's scope) that
- *      subscribes to `ServerSettingsService.streamChanges` and calls
+ *      acquires `ServerSettingsService.subscribeChanges` and calls
  *      `ProviderInstanceRegistryMutator.reconcile` on every emission.
  *
  * Failures inside the watcher are logged and swallowed so a single bad
@@ -118,7 +118,8 @@ const SettingsWatcherLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const mutator = yield* ProviderInstanceRegistryMutator;
     const serverSettings = yield* ServerSettingsService;
-    yield* serverSettings.streamChanges.pipe(
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    yield* settingsChanges.pipe(
       Stream.runForEach((next) =>
         mutator
           .reconcile(deriveProviderInstanceConfigMap(next))

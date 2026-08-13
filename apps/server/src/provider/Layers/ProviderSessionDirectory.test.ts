@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import { EventId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import { it, assert } from "@effect/vitest";
 import { assertSome } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
@@ -120,6 +120,39 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           activeTurnId: "turn-1",
         });
       }
+    }));
+
+  it("queues terminal events in order and clears only the exact event", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.make("thread-terminal-queue");
+      const firstEventId = EventId.make("event-terminal-1");
+      const secondEventId = EventId.make("event-terminal-2");
+
+      yield* directory.appendPendingTerminalEvent({
+        eventId: firstEventId,
+        threadId,
+        event: { eventId: firstEventId, type: "turn.completed" },
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* directory.appendPendingTerminalEvent({
+        eventId: secondEventId,
+        threadId,
+        event: { eventId: secondEventId, type: "turn.aborted" },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      });
+
+      assert.deepEqual(
+        (yield* directory.listPendingTerminalEvents()).map(({ eventId }) => eventId),
+        [firstEventId, secondEventId],
+      );
+
+      yield* directory.clearPendingTerminalEvent({ threadId, eventId: secondEventId });
+
+      assert.deepEqual(
+        (yield* directory.listPendingTerminalEvents()).map(({ eventId }) => eventId),
+        [firstEventId],
+      );
     }));
 
   it("lists persisted bindings with metadata in oldest-first order", () =>

@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { ThreadId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
@@ -244,13 +245,18 @@ describe("EventNdjsonLogger", () => {
       const threadPath = ownedLogPath(basePath, "thread-batched");
 
       try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
+        const drained = yield* Deferred.make<void>();
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 1_000,
+          onDrain: () => Deferred.succeed(drained, undefined).pipe(Effect.asVoid),
+        });
         yield* store
           .logger("native")
           .write({ id: "batched-event" }, ThreadId.make("thread-batched"));
 
         assert.equal(NodeFS.existsSync(threadPath), false);
         yield* TestClock.adjust(1_000);
+        yield* Deferred.await(drained);
         assert.equal(NodeFS.existsSync(threadPath), true);
         yield* store.close();
       } finally {
@@ -259,27 +265,211 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
-  it.effect("does not strand a later batch after an interrupted write", () =>
+  it.effect("keeps provider writes responsive while an asynchronous flush is stalled", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
       const basePath = NodePath.join(tempDir, "events.log");
-      const threadPath = ownedLogPath(basePath, "thread-interrupted");
 
       try {
-        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 1_000 });
+        const writeStarted = Promise.withResolvers<void>();
+        const releaseWrite = Promise.withResolvers<void>();
+        let writes = 0;
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          writeAsync: async () => {
+            writes += 1;
+            writeStarted.resolve();
+            await releaseWrite.promise;
+          },
+        });
         const logger = store.logger("native");
-        const interruptedWrite = yield* logger
-          .write({ id: "possibly-interrupted" }, ThreadId.make("thread-interrupted"))
-          .pipe(Effect.forkChild);
-        yield* Effect.yieldNow;
-        yield* Fiber.interrupt(interruptedWrite);
-        yield* logger.write({ id: "accepted" }, ThreadId.make("thread-interrupted"));
+        yield* logger.write({ id: "accepted" }, null);
+        yield* Effect.promise(() => writeStarted.promise);
+        yield* logger.write({ id: "accepted-during-stall" }, null);
 
-        yield* TestClock.adjust(1_000);
-
-        assert.equal(NodeFS.existsSync(threadPath), true);
-        assert.include(NodeFS.readFileSync(threadPath, "utf8"), '{"id":"accepted"}');
+        assert.equal(writes, 1);
+        releaseWrite.resolve();
         yield* store.close();
+
+        assert.equal(writes, 2);
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("retries failed records ahead of events accepted during the failed drain", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+
+      try {
+        const firstWriteStarted = Promise.withResolvers<void>();
+        const rejectFirstWrite = Promise.withResolvers<void>();
+        const firstDrainFinished = yield* Deferred.make<void>();
+        const retryFinished = Promise.withResolvers<void>();
+        const chunks: Array<string> = [];
+        let attempts = 0;
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          writeAsync: async (_filePath, chunk) => {
+            attempts += 1;
+            if (attempts === 1) {
+              firstWriteStarted.resolve();
+              await rejectFirstWrite.promise;
+              throw new Error("simulated first write failure");
+            }
+            chunks.push(chunk.toString());
+            retryFinished.resolve();
+          },
+          onDrain: () => Deferred.succeed(firstDrainFinished, undefined).pipe(Effect.asVoid),
+        });
+        const logger = store.logger("native");
+
+        yield* logger.write({ id: "failed-first" }, null);
+        yield* Effect.promise(() => firstWriteStarted.promise);
+        yield* logger.write({ id: "accepted-during-failure" }, null);
+        rejectFirstWrite.resolve();
+        yield* Deferred.await(firstDrainFinished);
+
+        assert.equal(attempts, 1);
+        yield* TestClock.adjust("1 second");
+        yield* Effect.promise(() => retryFinished.promise);
+        yield* store.close();
+
+        assert.equal(attempts, 2);
+        assert.lengthOf(chunks, 1);
+        assert.isBelow(
+          chunks[0]?.indexOf('"failed-first"') ?? -1,
+          chunks[0]?.indexOf('"accepted-during-failure"') ?? -1,
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("does not prune a live log after its transient write failure", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const activePath = ownedLogPath(basePath, "active-failure");
+
+      try {
+        yield* TestClock.setTime(1_800_000_000_000);
+        const firstDrained = yield* Deferred.make<void>();
+        const secondDrained = yield* Deferred.make<void>();
+        let drains = 0;
+        let failWrite = false;
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          maxAgeMs: 1,
+          retentionCheckIntervalMs: 1,
+          writeAsync: async (filePath, chunk) => {
+            if (failWrite) throw new Error("simulated transient write failure");
+            await NodeFS.promises.appendFile(filePath, chunk);
+          },
+          onDrain: () =>
+            Effect.sync(() => {
+              drains += 1;
+              return drains;
+            }).pipe(
+              Effect.flatMap((count) =>
+                count === 1
+                  ? Deferred.succeed(firstDrained, undefined)
+                  : Deferred.succeed(secondDrained, undefined),
+              ),
+              Effect.asVoid,
+            ),
+        });
+        const logger = store.logger("native");
+
+        yield* logger.write({ id: "written-before-failure" }, ThreadId.make("active-failure"));
+        yield* Deferred.await(firstDrained);
+        assert.equal(NodeFS.existsSync(activePath), true);
+
+        yield* TestClock.adjust("2 millis");
+        failWrite = true;
+        yield* logger.write({ id: "transient-failure" }, ThreadId.make("active-failure"));
+        yield* Deferred.await(secondDrained);
+
+        assert.equal(NodeFS.existsSync(activePath), true);
+        failWrite = false;
+        yield* TestClock.adjust("1 second");
+        yield* store.close();
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("bounds accepted records while an asynchronous flush is stalled", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+
+      try {
+        const firstWriteStarted = Promise.withResolvers<void>();
+        const releaseFirstWrite = Promise.withResolvers<void>();
+        const chunks: Array<string> = [];
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          maxBufferedRecords: 2,
+          writeAsync: async (_filePath, chunk) => {
+            chunks.push(chunk.toString());
+            if (chunks.length === 1) {
+              firstWriteStarted.resolve();
+              await releaseFirstWrite.promise;
+            }
+          },
+        });
+        const logger = store.logger("native");
+
+        yield* logger.write({ id: "in-flight" }, null);
+        yield* Effect.promise(() => firstWriteStarted.promise);
+        yield* logger.write({ id: "pending" }, null);
+        yield* logger.write({ id: "dropped-at-capacity" }, null);
+        releaseFirstWrite.resolve();
+        yield* store.close();
+
+        assert.equal(chunks.length, 2);
+        const persisted = chunks.join("");
+        assert.include(persisted, '"in-flight"');
+        assert.include(persisted, '"pending"');
+        assert.notInclude(persisted, '"dropped-at-capacity"');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("bounds close when an asynchronous provider write never completes", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+
+      try {
+        const writeStarted = Promise.withResolvers<void>();
+        let writes = 0;
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          batchWindowMs: 0,
+          writeAsync: () => {
+            writes += 1;
+            writeStarted.resolve();
+            return new Promise(() => undefined);
+          },
+        });
+        const logger = store.logger("native");
+        yield* logger.write({ id: "stalled" }, null);
+        yield* Effect.promise(() => writeStarted.promise);
+
+        const closeFiber = yield* store.close().pipe(Effect.forkChild);
+        yield* TestClock.adjust("2 seconds");
+        yield* Fiber.join(closeFiber);
+        yield* Effect.all([store.close(), store.close()], { concurrency: "unbounded" });
+        yield* logger.write({ id: "ignored-after-close" }, null);
+
+        assert.equal(writes, 1);
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
@@ -500,18 +690,35 @@ describe("EventNdjsonLogger", () => {
 
       try {
         yield* TestClock.setTime(1_800_000_000_000);
+        const firstDrained = yield* Deferred.make<void>();
+        const secondDrained = yield* Deferred.make<void>();
+        let drains = 0;
         const store = yield* makeEventNdjsonLogStore(basePath, {
           batchWindowMs: 0,
           maxAgeMs: 1,
           retentionCheckIntervalMs: 1,
+          onDrain: () =>
+            Effect.sync(() => {
+              drains += 1;
+              return drains;
+            }).pipe(
+              Effect.flatMap((count) =>
+                count === 1
+                  ? Deferred.succeed(firstDrained, undefined)
+                  : Deferred.succeed(secondDrained, undefined),
+              ),
+              Effect.asVoid,
+            ),
         });
         const logger = store.logger("native");
 
         yield* logger.write({ id: "active-before-retention" }, ThreadId.make("active"));
+        yield* Deferred.await(firstDrained);
         assert.equal(NodeFS.existsSync(activePath), true);
 
         yield* TestClock.adjust("2 millis");
         yield* logger.write({ id: "retention-trigger" }, ThreadId.make("other"));
+        yield* Deferred.await(secondDrained);
 
         assert.equal(NodeFS.existsSync(activePath), true);
         yield* store.close();
@@ -521,7 +728,7 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
-  it("attributes batches that were written before a later chunk fails", () => {
+  it("attributes batches that were written before a later chunk fails", async () => {
     const records: ReadonlyArray<PendingRecord> = [
       {
         stream: "native",
@@ -539,19 +746,21 @@ describe("EventNdjsonLogger", () => {
     const attributed: Array<PendingRecord> = [];
     let writes = 0;
 
-    assert.throws(() =>
-      writeBatchedMessages(
-        {
-          write: () => {
-            writes += 1;
-            if (writes === 2) throw new Error("simulated disk exhaustion");
-          },
+    const failure = await writeBatchedMessages(
+      {
+        writeAsync: () => {
+          writes += 1;
+          return writes === 2
+            ? Promise.reject(new Error("simulated disk exhaustion"))
+            : Promise.resolve();
         },
-        records,
-        5,
-        (written) => attributed.push(...written),
-      ),
-    );
+      },
+      records,
+      5,
+      (written) => attributed.push(...written),
+    ).catch((cause: unknown) => cause);
+    assert.instanceOf(failure, Error);
+    assert.equal((failure as Error).message, "simulated disk exhaustion");
     assert.deepEqual(attributed, [records[0]]);
   });
 

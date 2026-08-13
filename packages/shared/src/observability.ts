@@ -9,6 +9,10 @@ import { OtlpResource, OtlpTracer } from "effect/unstable/observability";
 import { RotatingFileSink } from "./logging.ts";
 
 const FLUSH_BUFFER_THRESHOLD = 256;
+const FLUSH_WRITE_MAX_RECORDS = 1_024;
+const FLUSH_BUFFER_MAX_RECORDS = 8_192;
+const CLOSE_FLUSH_TIMEOUT_MS = 2_000;
+const CLOSE_FLUSH_RETRY_DELAY_MS = 25;
 const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
@@ -111,6 +115,7 @@ export interface TraceSinkOptions {
   readonly maxFiles: number;
   readonly batchWindowMs: number;
   readonly onFlush?: (stats: TraceSinkFlushStats) => Effect.Effect<void>;
+  readonly writeAsync?: (chunk: string | Buffer) => Promise<void>;
 }
 
 export interface TraceSinkFlushStats {
@@ -349,10 +354,13 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     count: 0,
     durationMs: 0,
   };
+  let flushQueue: Promise<void> = Promise.resolve();
+  let thresholdFlushScheduled = false;
+  let closed = false;
 
-  const flushUnsafe = () => {
+  const flushUnsafe = async (): Promise<boolean> => {
     if (buffer.length === 0) {
-      return;
+      return true;
     }
 
     const records = buffer;
@@ -368,7 +376,8 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 
       let nextIndex = persistedCount + 1;
       let chunkBytes = firstRecordBytes;
-      while (nextIndex < records.length) {
+      const recordLimit = Math.min(records.length, persistedCount + FLUSH_WRITE_MAX_RECORDS);
+      while (nextIndex < recordLimit) {
         const nextRecordBytes = textEncoder.encode(records[nextIndex]).byteLength;
         if (chunkBytes + nextRecordBytes > options.maxBytes) break;
         chunkBytes += nextRecordBytes;
@@ -378,10 +387,12 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       const chunk = records.slice(persistedCount, nextIndex).join("");
       const startedAt = performance.now();
       try {
-        sink.write(chunk);
+        await (options.writeAsync ?? ((value) => sink.writeAsync(value)))(chunk);
       } catch {
-        buffer.unshift(...records.slice(persistedCount));
-        return;
+        // Keep failed records ahead of anything pushed while the asynchronous
+        // write was in flight so retry order remains stable.
+        buffer = [...records.slice(persistedCount), ...buffer].slice(-FLUSH_BUFFER_MAX_RECORDS);
+        return false;
       }
       pendingFlushStats = {
         logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
@@ -390,25 +401,107 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       };
       persistedCount = nextIndex;
     }
+
+    return true;
   };
 
-  const flush = Effect.sync(() => {
-    flushUnsafe();
-    const stats = pendingFlushStats;
-    pendingFlushStats = {
-      logicalWriteBytes: 0,
-      count: 0,
-      durationMs: 0,
-    };
-    return stats;
-  }).pipe(
+  const enqueueThresholdFlush = (): void => {
+    if (thresholdFlushScheduled) return;
+    thresholdFlushScheduled = true;
+    const queued = flushQueue.then(async () => {
+      let drained = false;
+      try {
+        drained = await flushUnsafe();
+      } finally {
+        thresholdFlushScheduled = false;
+        // Records can cross the threshold while the previous asynchronous
+        // write is in flight. Drain them immediately after successful I/O,
+        // but leave failed writes to the periodic retry to avoid a hot loop.
+        if (!closed && drained && buffer.length >= FLUSH_BUFFER_THRESHOLD) {
+          enqueueThresholdFlush();
+        }
+      }
+    });
+    // `flushUnsafe` handles persistence failures by restoring records. Keep a
+    // defensive rejection handler here so one defect cannot poison the queue.
+    flushQueue = queued.catch(() => undefined);
+  };
+
+  const flushAndTakeStats = (): Promise<TraceSinkFlushStats> => {
+    // Admission and queue insertion must happen in one synchronous callback.
+    // Otherwise a flush can observe `closed === false`, yield, and enqueue
+    // after close has already drained the queue and returned.
+    if (closed) {
+      return Promise.resolve({
+        logicalWriteBytes: 0,
+        count: 0,
+        durationMs: 0,
+      });
+    }
+    const queued = flushQueue.then(async () => {
+      await flushUnsafe();
+      const stats = pendingFlushStats;
+      pendingFlushStats = {
+        logicalWriteBytes: 0,
+        count: 0,
+        durationMs: 0,
+      };
+      return stats;
+    });
+    flushQueue = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
+  };
+
+  const closeAndTakeStats = Effect.gen(function* () {
+    yield* Effect.promise(() => flushQueue);
+    while (!(yield* Effect.promise(flushUnsafe))) {
+      // Yield to the Effect scheduler so a permanently rejecting filesystem
+      // cannot starve the outer bounded-close timeout.
+      yield* Effect.sleep(`${CLOSE_FLUSH_RETRY_DELAY_MS} millis`);
+    }
+    return yield* Effect.sync(() => {
+      const stats = pendingFlushStats;
+      pendingFlushStats = {
+        logicalWriteBytes: 0,
+        count: 0,
+        durationMs: 0,
+      };
+      return stats;
+    });
+  });
+
+  const flush = Effect.promise(() => flushAndTakeStats()).pipe(
     Effect.flatMap((stats) =>
       stats.count > 0 && options.onFlush ? options.onFlush(stats).pipe(Effect.ignore) : Effect.void,
     ),
     Effect.withTracerEnabled(false),
   );
 
-  yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
+  const closeOnce = yield* Effect.cached(
+    Effect.sync(() => {
+      closed = true;
+    }).pipe(
+      Effect.andThen(closeAndTakeStats),
+      Effect.timeoutOption(`${CLOSE_FLUSH_TIMEOUT_MS} millis`),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (stats) =>
+            stats.count > 0 && options.onFlush
+              ? options.onFlush(stats).pipe(Effect.ignore)
+              : Effect.void,
+        }),
+      ),
+      Effect.withTracerEnabled(false),
+    ),
+  );
+
+  const close = () => closeOnce;
+
+  yield* Effect.addFinalizer(() => close().pipe(Effect.ignore));
   yield* Effect.forkScoped(
     Effect.sleep(`${options.batchWindowMs} millis`).pipe(Effect.andThen(flush), Effect.forever),
   );
@@ -417,16 +510,22 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     filePath: options.filePath,
     push(record) {
       try {
+        if (closed) return;
+        // Local traces are best effort. Bound memory during a sustained slow
+        // filesystem/antivirus stall and retain the newest diagnostic context.
+        if (buffer.length >= FLUSH_BUFFER_MAX_RECORDS) {
+          buffer.splice(0, buffer.length - FLUSH_BUFFER_MAX_RECORDS + 1);
+        }
         buffer.push(`${JSON.stringify(record)}\n`);
         if (buffer.length >= FLUSH_BUFFER_THRESHOLD) {
-          flushUnsafe();
+          enqueueThresholdFlush();
         }
       } catch {
         return;
       }
     },
     flush,
-    close: () => flush,
+    close,
   } satisfies TraceSink;
 });
 

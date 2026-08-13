@@ -78,6 +78,18 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
       httpBaseUrl: target.httpBaseUrl,
       wsBaseUrl: target.wsBaseUrl,
       bearerToken: bearerToken.value,
+      // Bound abandoned Chromium requests while the desktop replaces its
+      // backend. Failed probes never authorize from stale identity: issuing a
+      // bearer-backed ticket from stale data could disclose the credential to
+      // a different process that claimed the loopback port.
+      requestTimeoutMs: 3_000,
+      // The replacement listener is often ready by the time an abandoned
+      // request reaches its timeout. Probe it again inside this establishment
+      // attempt so recovery does not pay another supervisor backoff.
+      transportRetries: 1,
+      // A loopback port can change owners while the desktop replaces its
+      // backend. Revalidate on every attempt before sending the bearer.
+      requireFreshDescriptor: true,
     });
     return {
       ...authorized,

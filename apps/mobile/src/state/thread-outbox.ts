@@ -2,7 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 
 import { appAtomRegistry } from "./atom-registry";
 import { createThreadOutboxManager } from "./thread-outbox-manager";
-import type { QueuedThreadMessage } from "./thread-outbox-model";
+import type { QueuedThreadMessage, ThreadOutboxDeliveryHoldReason } from "./thread-outbox-model";
 import { expoThreadOutboxStorage } from "./thread-outbox-storage";
 
 export * from "./thread-outbox-model";
@@ -28,6 +28,25 @@ export function confirmThreadOutboxMessageQueued(message: QueuedThreadMessage): 
 /** Rewrite a queued message; no-op (false) if it was removed in the meantime. */
 export function updateThreadOutboxMessage(message: QueuedThreadMessage): Promise<boolean> {
   return threadOutboxManager.update(message);
+}
+
+export function beginThreadOutboxProcessLocalDelivery(
+  message: QueuedThreadMessage,
+): Promise<boolean> {
+  return threadOutboxManager.beginProcessLocalDelivery(message);
+}
+
+export function holdThreadOutboxMessage(
+  message: QueuedThreadMessage,
+  reason: ThreadOutboxDeliveryHoldReason,
+): Promise<boolean> {
+  return threadOutboxManager.hold(message, reason);
+}
+
+export function confirmThreadOutboxMessageDelivered(
+  message: QueuedThreadMessage,
+): Promise<boolean> {
+  return threadOutboxManager.hold(message, "delivery-confirmed-cleanup-pending");
 }
 
 export function removeThreadOutboxMessage(message: QueuedThreadMessage): Promise<void> {

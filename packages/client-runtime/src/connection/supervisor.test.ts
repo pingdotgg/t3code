@@ -3,9 +3,12 @@ import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -216,6 +219,28 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
 });
 
 describe("EnvironmentSupervisor", () => {
+  it.effect("publishes a terminal available state when its scope closes", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const scope = yield* Scope.make();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies), Scope.provide(scope));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* Scope.close(scope, Exit.void);
+
+      const terminalState = yield* SubscriptionRef.get(supervisor.state);
+      expect(terminalState).toMatchObject({
+        desired: false,
+        phase: "available",
+      });
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }),
+  );
+
   it.effect("exports each relay setup as a standalone linked trace that ends at readiness", () =>
     Effect.gen(function* () {
       const spans: Array<Tracer.NativeSpan> = [];
@@ -508,6 +533,68 @@ describe("EnvironmentSupervisor", () => {
       yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
       yield* supervisor.retryNow;
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+    }),
+  );
+
+  it.effect("coalesces concurrent explicit retries for one connected lease", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* Effect.all(
+        Array.from({ length: 64 }, () => supervisor.retryNow),
+        {
+          concurrency: "unbounded",
+        },
+      );
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      yield* Effect.yieldNow;
+
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+    }),
+  );
+
+  it.effect("does not poison later retries when a retry caller is interrupted", () =>
+    Effect.gen(function* () {
+      let interruptSignalSpan = false;
+      let retryFiber: Fiber.Fiber<void> | undefined;
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          if (interruptSignalSpan && options.name === "EnvironmentSupervisor.signal") {
+            interruptSignalSpan = false;
+            retryFiber?.interruptUnsafe();
+          }
+          return span;
+        },
+      });
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      interruptSignalSpan = true;
+      retryFiber = yield* supervisor.retryNow.pipe(
+        Effect.provideService(Tracer.Tracer, tracer),
+        Effect.forkChild,
+      );
+      const interruptedExit = yield* Fiber.await(retryFiber);
+      expect(Exit.hasInterrupts(interruptedExit)).toBe(true);
+
+      yield* supervisor.retryNow;
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
 
       expect(yield* Ref.get(harness.prepareCount)).toBe(2);
     }),

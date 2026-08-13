@@ -1,17 +1,31 @@
 import { describe, expect, it } from "@effect/vitest";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
+  AVAILABLE_CONNECTION_STATE,
+  ConnectionTransientError,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import type { RpcSession } from "../rpc/session.ts";
+import {
   environmentRpcKey,
   createAtomCommandScheduler,
+  createEnvironmentRpcCommand,
   createRuntimeCommand,
   scheduleAtomCommandEffect,
   executeAtomCommand,
@@ -299,6 +313,116 @@ describe("executeAtomQuery", () => {
 });
 
 describe("runtime command runner", () => {
+  it.effect("settles a queued environment RPC command when its session closes", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-1");
+      const target = new PrimaryConnectionTarget({
+        environmentId,
+        label: "Test environment",
+        httpBaseUrl: "https://environment.example.test",
+        wsBaseUrl: "wss://environment.example.test",
+      });
+      const connectionState: SupervisorConnectionState = {
+        ...AVAILABLE_CONNECTION_STATE,
+        desired: true,
+        network: "online",
+        phase: "connected",
+        attempt: 1,
+        generation: 1,
+      };
+      const requestStarted = Latch.makeUnsafe();
+      const sessionClosed = Latch.makeUnsafe();
+      const closeFailure = new ConnectionTransientError({
+        reason: "transport",
+        detail: "Test environment disconnected.",
+      });
+      let replacementRequests = 0;
+      const firstClient = {
+        [WS_METHODS.serverRefreshProviders]: () =>
+          Effect.sync(() => requestStarted.openUnsafe()).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const replacementClient = {
+        [WS_METHODS.serverRefreshProviders]: () =>
+          Effect.sync(() => {
+            replacementRequests += 1;
+            return {};
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const firstSession: RpcSession = {
+        client: firstClient,
+        initialConfig: Effect.never,
+        ready: Effect.void,
+        probe: Effect.void,
+        closed: sessionClosed.await.pipe(Effect.andThen(Effect.fail(closeFailure))),
+      };
+      const replacementSession: RpcSession = {
+        client: replacementClient,
+        initialConfig: Effect.never,
+        ready: Effect.void,
+        probe: Effect.void,
+        closed: Effect.never,
+      };
+      const activeSession = yield* SubscriptionRef.make(Option.some(firstSession));
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target,
+        state: yield* SubscriptionRef.make(connectionState),
+        session: activeSession,
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+        _environmentId,
+        effect,
+      ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+      const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+        run,
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const runtime = Atom.runtime(
+        Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+      );
+      const scheduler = createAtomCommandScheduler();
+      const concurrency = { mode: "serial" as const, key: () => "shared" };
+      const command = createEnvironmentRpcCommand(runtime, {
+        label: "test.environment-rpc",
+        tag: WS_METHODS.serverRefreshProviders,
+        scheduler,
+        concurrency,
+      });
+      const laterCommand = createRuntimeCommand(runtime, {
+        label: "test.after-environment-rpc",
+        scheduler,
+        concurrency,
+        execute: () => Effect.succeed("later command ran"),
+      });
+      const registry = AtomRegistry.make();
+
+      const request = command.run(registry, {
+        environmentId,
+        input: {},
+      });
+      yield* requestStarted.await;
+      const later = laterCommand.run(registry, undefined);
+      yield* SubscriptionRef.set(activeSession, Option.some(replacementSession));
+      sessionClosed.openUnsafe();
+
+      const result = yield* Effect.promise(() => request);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(Cause.squash(result.cause)).toBe(closeFailure);
+      }
+      expect(yield* Effect.promise(() => later)).toMatchObject({
+        _tag: "Success",
+        value: "later command ran",
+        waiting: false,
+      });
+      expect(replacementRequests).toBe(0);
+
+      registry.dispose();
+    }),
+  );
+
   it("encodes custom command rejections as defects", async () => {
     const defect = new Error("custom command rejected");
     const registry = AtomRegistry.make();

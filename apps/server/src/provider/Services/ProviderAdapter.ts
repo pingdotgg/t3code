@@ -9,6 +9,7 @@
  */
 import type {
   ApprovalRequestId,
+  EventId,
   ProviderApprovalDecision,
   ProviderDriverKind,
   ProviderUserInputAnswers,
@@ -42,6 +43,19 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+export type ProviderAdapterTerminalEvent = Extract<
+  ProviderRuntimeEvent,
+  { readonly type: "turn.completed" | "turn.aborted" }
+>;
+
+/** Internal handoff result used when an accepted turn already terminalized. */
+export interface ProviderAdapterTurnStartResult extends ProviderTurnStartResult {
+  /** Exact event already emitted by the adapter for direct durable handoff. */
+  readonly terminalEvent?: ProviderAdapterTerminalEvent;
+  /** Stable identifier retained for diagnostics and compatibility with existing callers. */
+  readonly terminalEventId?: EventId;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -61,7 +75,7 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
-  ) => Effect.Effect<ProviderTurnStartResult, TError>;
+  ) => Effect.Effect<ProviderAdapterTurnStartResult, TError>;
 
   /**
    * Interrupt an active turn.

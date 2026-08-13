@@ -9,11 +9,28 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
+import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+
+import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
+import type { OrchestrationDispatchError } from "../Errors.ts";
+import type * as PlatformError from "effect/PlatformError";
 
 /**
  * CheckpointReactorShape - Service API for checkpoint reactor lifecycle.
  */
 export interface CheckpointReactorShape {
+  /**
+   * Finalize the filesystem boundary for an authoritative provider turn
+   * completion. Runtime ingestion awaits this before publishing a terminal
+   * session state, so clients cannot start the next turn across the boundary.
+   */
+  readonly finalizeTurnCompletion: (
+    event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>,
+  ) => Effect.Effect<
+    void,
+    CheckpointStoreError | OrchestrationDispatchError | PlatformError.PlatformError
+  >;
+
   /**
    * Start the checkpoint reactor.
    *

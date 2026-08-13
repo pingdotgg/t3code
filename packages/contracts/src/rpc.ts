@@ -55,7 +55,9 @@ import { KeybindingsConfigError } from "./keybindings.ts";
 import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
+  OrchestrationCommandDeduplicationWindowChangedError,
   OrchestrationDispatchCommandError,
+  OrchestrationTurnStartPendingError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
@@ -861,7 +863,12 @@ export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   {
     payload: ClientOrchestrationCommand,
     success: OrchestrationRpcSchemas.dispatchCommand.output,
-    error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+    error: Schema.Union([
+      OrchestrationCommandDeduplicationWindowChangedError,
+      OrchestrationTurnStartPendingError,
+      OrchestrationDispatchCommandError,
+      EnvironmentAuthorizationError,
+    ]),
   },
 );
 

@@ -225,11 +225,32 @@ describe("ConnectionResolver", () => {
 
   it.effect("authorizes a desktop primary environment with its platform bearer token", () =>
     Effect.gen(function* () {
-      const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);
+      const bearerInputs = yield* Ref.make<
+        ReadonlyArray<{
+          readonly bearerToken: string;
+          readonly requestTimeoutMs?: number;
+          readonly transportRetries?: number;
+          readonly requireFreshDescriptor?: boolean;
+        }>
+      >([]);
       const brokerLayer = yield* makeDependencies({
         primaryBearerToken: "desktop-bearer",
         authorizeBearer: (input) =>
-          Ref.update(bearerInputs, (values) => [...values, input.bearerToken]).pipe(
+          Ref.update(bearerInputs, (values) => [
+            ...values,
+            {
+              bearerToken: input.bearerToken,
+              ...(input.requestTimeoutMs === undefined
+                ? {}
+                : { requestTimeoutMs: input.requestTimeoutMs }),
+              ...(input.transportRetries === undefined
+                ? {}
+                : { transportRetries: input.transportRetries }),
+              ...(input.requireFreshDescriptor === undefined
+                ? {}
+                : { requireFreshDescriptor: input.requireFreshDescriptor }),
+            },
+          ]).pipe(
             Effect.as({
               environmentId: input.expectedEnvironmentId,
               label: "Primary",
@@ -255,7 +276,14 @@ describe("ConnectionResolver", () => {
         httpAuthorization: { _tag: "Bearer", token: "desktop-bearer" },
         target,
       });
-      expect(yield* Ref.get(bearerInputs)).toEqual(["desktop-bearer"]);
+      expect(yield* Ref.get(bearerInputs)).toEqual([
+        {
+          bearerToken: "desktop-bearer",
+          requestTimeoutMs: 3_000,
+          transportRetries: 1,
+          requireFreshDescriptor: true,
+        },
+      ]);
     }),
   );
 

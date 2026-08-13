@@ -1,5 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -68,6 +69,7 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    subscribedEventStream: null as AsyncIterable<unknown> | null,
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
@@ -88,6 +90,7 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.subscribedEventStream = null;
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
@@ -205,11 +208,13 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       },
       event: {
         subscribe: async () => ({
-          stream: (async function* () {
-            for (const event of runtimeMock.state.subscribedEvents) {
-              yield event;
-            }
-          })(),
+          stream:
+            runtimeMock.state.subscribedEventStream ??
+            (async function* () {
+              for (const event of runtimeMock.state.subscribedEvents) {
+                yield event;
+              }
+            })(),
         }),
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
@@ -238,6 +243,9 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   getBinding: () => Effect.succeed(Option.none()),
   listThreadIds: () => Effect.succeed([]),
   listBindings: () => Effect.succeed([]),
+  clearPendingTerminalEvent: () => Effect.void,
+  appendPendingTerminalEvent: () => Effect.void,
+  listPendingTerminalEvents: () => Effect.succeed([]),
 });
 
 // The adapter now receives its settings as a plain argument (the old design
@@ -692,7 +700,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("rolls back session state when sendTurn fails before OpenCode accepts the prompt", () =>
+  it.effect("terminalizes a rejected promptAsync handoff without publishing turn.started", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
       yield* adapter.startSession({
@@ -701,32 +709,147 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         runtimeMode: "full-access",
       });
 
-      runtimeMock.state.promptAsyncError = new Error("prompt failed");
-      const error = yield* adapter
-        .sendTurn({
-          threadId: asThreadId("thread-send-turn-failure"),
-          input: "Fix it",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("opencode"),
-            model: "openai/gpt-5",
-          },
-        })
-        .pipe(Effect.flip);
-      const sessions = yield* adapter.listSessions();
-
-      NodeAssert.equal(error._tag, "ProviderAdapterRequestError");
-      if (error._tag !== "ProviderAdapterRequestError") {
-        throw new Error("Unexpected error type");
-      }
-      NodeAssert.equal(error.detail, "prompt failed");
-      NodeAssert.equal(
-        error.message,
-        "Provider adapter request failed (opencode) for session.promptAsync: prompt failed",
+      const lifecycleEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === asThreadId("thread-send-turn-failure") &&
+            (event.type === "turn.started" ||
+              event.type === "turn.completed" ||
+              event.type === "turn.aborted"),
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
       );
+      runtimeMock.state.promptAsyncError = new Error("prompt failed");
+      const accepted = yield* adapter.sendTurn({
+        threadId: asThreadId("thread-send-turn-failure"),
+        turnStartEventSequence: 43,
+        input: "Fix it",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      const sessions = yield* adapter.listSessions();
+      const lifecycleEvents = Array.from(yield* Fiber.join(lifecycleEventsFiber));
+
+      NodeAssert.equal("terminalEventId" in accepted, true);
+      NodeAssert.equal("terminalEvent" in accepted, true);
       NodeAssert.equal(sessions.length, 1);
       NodeAssert.equal(sessions[0]?.status, "ready");
       NodeAssert.equal(sessions[0]?.activeTurnId, undefined);
       NodeAssert.equal(sessions[0]?.lastError, "prompt failed");
+      NodeAssert.deepEqual(
+        lifecycleEvents.map((event) => event.type),
+        ["turn.completed"],
+      );
+      NodeAssert.equal(String(accepted.turnId), String(lifecycleEvents[0]?.turnId));
+      NodeAssert.equal(String(accepted.terminalEventId), String(lifecycleEvents[0]?.eventId));
+      NodeAssert.strictEqual(accepted.terminalEvent, lifecycleEvents[0]);
+      NodeAssert.deepEqual(
+        lifecycleEvents.map((event) => event.turnStartEventSequence),
+        [43],
+      );
+      const terminal = lifecycleEvents[0];
+      NodeAssert.equal(terminal?.type, "turn.completed");
+      if (terminal?.type === "turn.completed") {
+        NodeAssert.equal(terminal.payload.state, "failed");
+        NodeAssert.equal(terminal.payload.errorMessage, "prompt failed");
+      }
+    }),
+  );
+
+  it.effect("publishes a causally linked start after promptAsync accepts the prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-send-turn-accepted");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.started"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      const accepted = yield* adapter.sendTurn({
+        threadId,
+        turnStartEventSequence: 45,
+        input: "accepted by OpenCode",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      const started = yield* Fiber.join(startedFiber);
+
+      NodeAssert.equal(started._tag, "Some");
+      if (started._tag === "Some") {
+        NodeAssert.equal(String(started.value.turnId), String(accepted.turnId));
+        NodeAssert.equal(started.value.turnStartEventSequence, 45);
+      }
+    }),
+  );
+
+  it.effect("emits only the causal failed terminal for an active OpenCode session error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-active-session-error");
+      let releaseSessionError!: () => void;
+      const sessionErrorRelease = new Promise<void>((resolve) => {
+        releaseSessionError = resolve;
+      });
+      runtimeMock.state.subscribedEventStream = (async function* () {
+        await sessionErrorRelease;
+        yield {
+          type: "session.error",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            error: { data: { message: "provider exploded" } },
+          },
+        };
+      })();
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" ||
+              event.type === "turn.completed" ||
+              event.type === "runtime.error"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        turnStartEventSequence: 46,
+        input: "accepted before session error",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+      releaseSessionError();
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const terminalEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+      NodeAssert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        ["turn.started", "turn.completed"],
+      );
+      NodeAssert.equal(runtimeEvents.filter((event) => event.type === "runtime.error").length, 0);
+      NodeAssert.equal(terminalEvents.length, 1);
+      NodeAssert.equal(String(terminalEvents[0]?.turnId), String(turn.turnId));
+      NodeAssert.equal(terminalEvents[0]?.turnStartEventSequence, 46);
     }),
   );
 
@@ -1049,9 +1172,14 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const real = path.join(base, "real");
       const link = path.join(base, "link");
       yield* fileSystem.makeDirectory(real);
-      yield* fileSystem.symlink(real, link);
-      NodeAssert.equal(yield* sameDirectory(link, real), true);
-      NodeAssert.equal(yield* sameDirectory(link, path.join(base, "other")), false);
+      // Ordinary Windows shells cannot create symlinks without Developer Mode
+      // or elevation. The lexical cases above remain portable; exercise the
+      // physical realpath equivalence where the host supports normal symlinks.
+      if ((yield* HostProcessPlatform) !== "win32") {
+        yield* fileSystem.symlink(real, link);
+        NodeAssert.equal(yield* sameDirectory(link, real), true);
+        NodeAssert.equal(yield* sameDirectory(link, path.join(base, "other")), false);
+      }
     }).pipe(Effect.scoped),
   );
 

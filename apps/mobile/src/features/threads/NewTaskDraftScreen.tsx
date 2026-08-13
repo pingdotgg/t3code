@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { CommandId, EnvironmentId } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -47,7 +47,18 @@ import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { resolveSelectableModelSelection } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
-import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
+import {
+  confirmThreadOutboxMessageDelivered,
+  enqueueThreadOutboxMessage,
+  removeThreadOutboxMessage,
+} from "../../state/thread-outbox";
+import { settleThreadOutboxDelivery } from "../../state/thread-outbox-drain";
+import {
+  hasSameThreadOutboxUserPayload,
+  isOutcomeUnknownThreadOutboxHold,
+  resolveQueuedWorktreeBranchName,
+  shouldQueueThreadCreationForDurableDelivery,
+} from "../../state/thread-outbox-model";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { useCreateProjectThread } from "./use-project-actions";
@@ -719,22 +730,35 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     const draft = getComposerDraftSnapshot(draftKey);
+    const editingPendingTask = flow.editingPendingTask;
+    const exactReplayTask =
+      editingPendingTask && isOutcomeUnknownThreadOutboxHold(editingPendingTask)
+        ? editingPendingTask
+        : null;
+    const exactReplayCreation = exactReplayTask?.creation;
     // Snapshot read keeps just-typed selector state; the availability gate
     // still applies so a stored selection on a disabled provider falls back
     // to the flow's resolved model.
-    const modelSelection =
+    const selectedModelSelection =
       resolveSelectableModelSelection(
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
       ) ?? flow.selectedModel;
-    const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
-    const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
-    const selectedWorktreePath =
-      draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
-    const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
-    const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
-    const interactionMode = draft.interactionMode ?? flow.interactionMode;
-    const initialMessageText = draft.text.trim();
+    const draftWorkspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
+    const draftBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
+    const draftWorktreePath = draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
+    const draftStartFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
+    const modelSelection = exactReplayTask?.modelSelection ?? selectedModelSelection;
+    const workspaceMode = exactReplayCreation?.workspaceMode ?? draftWorkspaceMode;
+    const selectedBranchName = exactReplayCreation?.branch ?? draftBranchName;
+    const selectedWorktreePath = exactReplayCreation?.worktreePath ?? draftWorktreePath;
+    const startFromOrigin =
+      exactReplayCreation?.startFromOrigin ?? (exactReplayCreation ? false : draftStartFromOrigin);
+    const runtimeMode = exactReplayTask?.runtimeMode ?? draft.runtimeMode ?? flow.runtimeMode;
+    const interactionMode =
+      exactReplayTask?.interactionMode ?? draft.interactionMode ?? flow.interactionMode;
+    const initialMessageText = (exactReplayTask?.text ?? draft.text).trim();
+    const initialAttachments = exactReplayTask?.attachments ?? draft.attachments;
 
     if (
       !modelSelection ||
@@ -745,20 +769,95 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    const editingPendingTask = flow.editingPendingTask;
+    if (exactReplayTask) {
+      const editedCandidate = flow.buildPendingTaskMessage({
+        threadId: exactReplayTask.threadId,
+        commandId: exactReplayTask.commandId,
+        messageId: exactReplayTask.messageId,
+        createdAt: exactReplayTask.createdAt,
+      });
+      if (!editedCandidate || !hasSameThreadOutboxUserPayload(exactReplayTask, editedCandidate)) {
+        Alert.alert(
+          "Retry the original task",
+          "This worktree may already have been created. To avoid running it twice, recovery must resend the original task unchanged.",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Restore original",
+              onPress: () => {
+                const originalProject = projects.find(
+                  (project) =>
+                    project.environmentId === exactReplayTask.environmentId &&
+                    project.id === exactReplayCreation?.projectId,
+                );
+                if (originalProject) {
+                  flow.setProject(originalProject);
+                }
+                void restoreComposerDraftSnapshot(draftKey, {
+                  text: exactReplayTask.text,
+                  attachments: exactReplayTask.attachments,
+                  ...(exactReplayTask.modelSelection
+                    ? { modelSelection: exactReplayTask.modelSelection }
+                    : {}),
+                  ...(exactReplayTask.runtimeMode
+                    ? { runtimeMode: exactReplayTask.runtimeMode }
+                    : {}),
+                  ...(exactReplayTask.interactionMode
+                    ? { interactionMode: exactReplayTask.interactionMode }
+                    : {}),
+                  ...(exactReplayCreation
+                    ? {
+                        workspaceSelection: {
+                          mode: exactReplayCreation.workspaceMode,
+                          branch: exactReplayCreation.branch,
+                          worktreePath: exactReplayCreation.worktreePath,
+                          ...(exactReplayCreation.startFromOrigin ? { startFromOrigin: true } : {}),
+                        },
+                      }
+                    : {}),
+                }).catch((error) => {
+                  Alert.alert(
+                    "Could not restore task",
+                    error instanceof Error
+                      ? error.message
+                      : "The original task could not be restored.",
+                  );
+                });
+              },
+            },
+          ],
+        );
+        return;
+      }
+    }
 
-    if (!environmentConnected) {
-      // Offline: park the task in the outbox; the drain sends it when the
-      // environment reconnects. Editing an existing pending task re-queues it
-      // under its original identifiers.
-      const metadata = editingPendingTask
-        ? {
-            threadId: editingPendingTask.threadId,
-            commandId: editingPendingTask.commandId,
-            messageId: editingPendingTask.messageId,
-            createdAt: editingPendingTask.createdAt,
-          }
-        : makeTurnCommandMetadata();
+    const editingTurnMetadata = editingPendingTask
+      ? {
+          threadId: editingPendingTask.threadId,
+          commandId: editingPendingTask.commandId,
+          messageId: editingPendingTask.messageId,
+          createdAt: editingPendingTask.createdAt,
+        }
+      : null;
+
+    if (
+      shouldQueueThreadCreationForDurableDelivery({
+        environmentConnected,
+        workspaceMode,
+        exactHeldReplay: exactReplayTask !== null,
+      })
+    ) {
+      if (exactReplayTask) {
+        Alert.alert(
+          "Reconnect to retry",
+          "This task has an outcome-unknown worktree operation and must be retried unchanged while connected.",
+        );
+        return;
+      }
+      // Worktree bootstraps always enter the durable outbox before crossing a
+      // process-local boundary. Offline local-mode tasks use the same queue.
+      // Editing an existing pending task re-queues it under its original ids.
+      const metadata = editingTurnMetadata ?? makeTurnCommandMetadata();
       const message = flow.buildPendingTaskMessage(metadata);
       if (!message) {
         return;
@@ -788,6 +887,9 @@ export function NewTaskDraftScreen(props: {
     }
 
     flow.setSubmitting(true);
+    const submissionProject = exactReplayCreation?.projectCwd
+      ? { ...selectedProject, workspaceRoot: exactReplayCreation.projectCwd }
+      : selectedProject;
     // Arm the lock-screen card before the async thread creation: backgrounding
     // the app right after tapping submit would otherwise reject the foreground
     // -only Activity start. If creation fails, the token registration's replay
@@ -797,7 +899,7 @@ export function NewTaskDraftScreen(props: {
       projectTitle: selectedProject.title,
     });
     const result = await createProjectThread({
-      project: selectedProject,
+      project: submissionProject,
       modelSelection,
       envMode: workspaceMode,
       branch: selectedBranchName,
@@ -806,15 +908,16 @@ export function NewTaskDraftScreen(props: {
       runtimeMode,
       interactionMode,
       initialMessageText,
-      initialAttachments: draft.attachments,
-      ...(editingPendingTask
+      initialAttachments,
+      ...(editingTurnMetadata
         ? {
-            turnMetadata: {
-              threadId: editingPendingTask.threadId,
-              commandId: editingPendingTask.commandId,
-              messageId: editingPendingTask.messageId,
-              createdAt: editingPendingTask.createdAt,
-            },
+            turnMetadata: editingTurnMetadata,
+            worktreeBranchName: resolveQueuedWorktreeBranchName(
+              CommandId.make(editingTurnMetadata.commandId),
+              editingTurnMetadata.commandId === editingPendingTask?.commandId
+                ? editingPendingTask?.creation?.worktreeBranchName
+                : undefined,
+            ),
           }
         : {}),
     });
@@ -832,11 +935,21 @@ export function NewTaskDraftScreen(props: {
     }
 
     if (editingPendingTask) {
-      try {
-        await removeThreadOutboxMessage(editingPendingTask);
-      } catch (error) {
-        console.warn("[new-task] failed to remove delivered pending task", error);
-      }
+      await settleThreadOutboxDelivery({
+        message: editingPendingTask,
+        failureAction: null,
+        confirmDelivered: confirmThreadOutboxMessageDelivered,
+        // This is the success path, so the hold callback is unreachable.
+        hold: async () => false,
+        remove: removeThreadOutboxMessage,
+        onConfirmDeliveredError: (error) => {
+          console.warn("[new-task] failed to persist delivered pending-task cleanup marker", error);
+        },
+        onHoldError: () => undefined,
+        onRemoveError: (error) => {
+          console.warn("[new-task] failed to remove delivered pending task", error);
+        },
+      });
       flow.finishEditingPendingTask();
     } else {
       clearComposerDraftContent(draftKey, { clearWorkspaceSelection: true });

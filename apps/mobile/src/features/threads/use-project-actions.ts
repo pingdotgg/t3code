@@ -39,6 +39,8 @@ export function useCreateProjectThread() {
       readonly initialAttachments: ReadonlyArray<DraftComposerImageAttachment>;
       /** Reuse identifiers from a queued pending task instead of minting new ones. */
       readonly turnMetadata?: TurnCommandMetadata;
+      /** Preserve the original worktree target when retrying a queued task. */
+      readonly worktreeBranchName?: string;
     }) => {
       const metadata = input.turnMetadata ?? makeTurnCommandMetadata();
       const threadId = ThreadId.make(metadata.threadId);
@@ -74,7 +76,8 @@ export function useCreateProjectThread() {
           branch: input.branch,
           worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
-          worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          worktreeBranchName:
+            input.worktreeBranchName ?? buildTemporaryWorktreeBranchName(randomHex),
         }),
       });
       if (AsyncResult.isFailure(result)) {

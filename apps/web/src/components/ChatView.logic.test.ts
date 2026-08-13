@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { Thread, ThreadShell } from "../types";
 import {
+  DESKTOP_PRIMARY_RECONNECT_WARNING_GRACE_MS,
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   branchMismatchKey,
@@ -26,6 +27,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveEnvironmentReconnectWarningGraceMs,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -63,6 +65,35 @@ describe("environment reconnect warning grace", () => {
     vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
 
     expect(showWarning).not.toHaveBeenCalled();
+  });
+
+  it("allows a desktop primary backend to finish its managed restart", () => {
+    vi.useFakeTimers();
+    const showWarning = vi.fn();
+    const graceMs = resolveEnvironmentReconnectWarningGraceMs({
+      isElectron: true,
+      targetKind: "PrimaryConnectionTarget",
+    });
+
+    expect(graceMs).toBe(DESKTOP_PRIMARY_RECONNECT_WARNING_GRACE_MS);
+    scheduleEnvironmentReconnectWarning(showWarning, graceMs);
+    vi.advanceTimersByTime(DESKTOP_PRIMARY_RECONNECT_WARNING_GRACE_MS - 1);
+    expect(showWarning).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(showWarning).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { isElectron: true, targetKind: null },
+    { isElectron: false, targetKind: "PrimaryConnectionTarget" as const },
+    { isElectron: true, targetKind: "BearerConnectionTarget" as const },
+    { isElectron: true, targetKind: "RelayConnectionTarget" as const },
+    { isElectron: true, targetKind: "SshConnectionTarget" as const },
+  ])("keeps the ordinary grace for $targetKind outside the desktop primary", (input) => {
+    expect(resolveEnvironmentReconnectWarningGraceMs(input)).toBe(
+      ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
+    );
   });
 
   it("does not reuse elapsed grace from another environment", () => {

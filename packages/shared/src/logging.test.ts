@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   RotatingFileSink,
@@ -28,6 +28,7 @@ const captureError = (run: () => unknown): unknown => {
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of tempDirectories.splice(0)) {
     NodeFS.rmSync(directory, { recursive: true, force: true });
   }
@@ -71,13 +72,15 @@ describe("RotatingFileSink", () => {
 
   it("only treats a missing log file as an empty current size", () => {
     const directory = makeTempDirectory();
-    const filePath = NodePath.join(directory, "a".repeat(300));
+    const filePath = NodePath.join(directory, "invalid\0path");
 
     const thrown = captureError(() => new RotatingFileSink({ filePath, maxBytes: 1, maxFiles: 1 }));
 
     expect(thrown).toBeInstanceOf(RotatingFileSinkError);
     expect(thrown).toMatchObject({ operation: "read", filePath });
-    expect((thrown as RotatingFileSinkError).cause).toMatchObject({ code: "ENAMETOOLONG" });
+    expect((thrown as RotatingFileSinkError).cause).toMatchObject({
+      code: "ERR_INVALID_ARG_VALUE",
+    });
   });
 
   it("starts an absent log file at zero bytes", () => {
@@ -106,6 +109,101 @@ describe("RotatingFileSink", () => {
     expect(thrown).toBeInstanceOf(RotatingFileSinkError);
     expect(thrown).toMatchObject({ operation: "write", filePath });
     expect((thrown as RotatingFileSinkError).cause).toMatchObject({ code: "EISDIR" });
+  });
+
+  it("serializes concurrent asynchronous writes and rotation", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    const sink = new RotatingFileSink({
+      filePath,
+      maxBytes: 6,
+      maxFiles: 2,
+      throwOnError: true,
+    });
+
+    await Promise.all([
+      sink.writeAsync("aa"),
+      sink.writeAsync("bb"),
+      sink.writeAsync("cccc"),
+      sink.writeAsync("dd"),
+    ]);
+
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("ccccdd");
+    expect(NodeFS.readFileSync(`${filePath}.1`, "utf8")).toBe("aabb");
+  });
+
+  it("preserves asynchronous write failures", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    NodeFS.mkdirSync(filePath);
+    const sink = new RotatingFileSink({
+      filePath,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxFiles: 1,
+      throwOnError: true,
+    });
+
+    const thrown = await sink.writeAsync("entry").catch((cause: unknown) => cause);
+
+    expect(thrown).toBeInstanceOf(RotatingFileSinkError);
+    expect(thrown).toMatchObject({ operation: "write", filePath });
+    expect((thrown as RotatingFileSinkError).cause).toMatchObject({ code: "EISDIR" });
+  });
+
+  it("swallows asynchronous write and size recovery failures in best-effort mode", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    const sink = new RotatingFileSink({
+      filePath,
+      maxBytes: Number.MAX_SAFE_INTEGER,
+      maxFiles: 1,
+    });
+    vi.spyOn(NodeFS.promises, "appendFile").mockRejectedValueOnce(
+      Object.assign(new Error("write denied"), { code: "EACCES" }),
+    );
+    vi.spyOn(NodeFS.promises, "stat").mockRejectedValueOnce(
+      Object.assign(new Error("stat denied"), { code: "EACCES" }),
+    );
+
+    await expect(sink.writeAsync("entry")).resolves.toBeUndefined();
+    await expect(sink.writeAsync("next")).resolves.toBeUndefined();
+
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("next");
+  });
+
+  it("swallows asynchronous rotation and size recovery failures in best-effort mode", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    NodeFS.writeFileSync(filePath, "a");
+    NodeFS.mkdirSync(`${filePath}.1`);
+    const sink = new RotatingFileSink({ filePath, maxBytes: 1, maxFiles: 1 });
+    vi.spyOn(NodeFS.promises, "stat").mockRejectedValueOnce(
+      Object.assign(new Error("stat denied"), { code: "EACCES" }),
+    );
+
+    await expect(sink.writeAsync("b")).resolves.toBeUndefined();
+
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("ab");
+  });
+
+  it("preserves asynchronous rotation failures when configured to throw", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    NodeFS.writeFileSync(filePath, "a");
+    NodeFS.mkdirSync(`${filePath}.1`);
+    const sink = new RotatingFileSink({
+      filePath,
+      maxBytes: 1,
+      maxFiles: 1,
+      throwOnError: true,
+    });
+
+    const thrown = await sink.writeAsync("b").catch((cause: unknown) => cause);
+
+    expect(thrown).toBeInstanceOf(RotatingFileSinkError);
+    expect(thrown).toMatchObject({ operation: "rotate", filePath });
+    expect((thrown as RotatingFileSinkError).cause).toBeInstanceOf(Error);
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("a");
   });
 
   it("preserves rotation failures without an artificial write wrapper", () => {

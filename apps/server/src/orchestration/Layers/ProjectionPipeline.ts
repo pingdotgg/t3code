@@ -1150,12 +1150,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
         case "thread.turn-start-requested": {
-          yield* projectionTurnRepository.replacePendingTurnStart({
+          yield* projectionTurnRepository.appendPendingTurnStart({
+            eventSequence: event.sequence,
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
             requestedAt: event.payload.createdAt,
+          });
+          return;
+        }
+
+        case "thread.turn-start-acknowledged": {
+          // The provider may accept steering on an already-running turn and
+          // emit no second turn.started event. Settle only the placeholder
+          // correlated to the consumed durable intent; a newer request must
+          // survive delayed/replayed acknowledgements.
+          yield* projectionTurnRepository.deletePendingTurnStartExact({
+            threadId: event.payload.threadId,
+            eventSequence: event.payload.eventSequence,
           });
           return;
         }
@@ -1168,9 +1181,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               event.payload.session.status === "stopped" ||
               event.payload.session.status === "interrupted"
             ) {
-              yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
-                threadId: event.payload.threadId,
-              });
+              yield* event.payload.turnStartEventSequence === undefined
+                ? projectionTurnRepository.deletePendingTurnStartByThreadId({
+                    threadId: event.payload.threadId,
+                  })
+                : projectionTurnRepository.deletePendingTurnStartExact({
+                    threadId: event.payload.threadId,
+                    eventSequence: event.payload.turnStartEventSequence,
+                  });
             }
             // Leaving the "running" session status is the turn-end signal:
             // settle still-running turns so their duration reflects the whole
@@ -1227,9 +1245,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId,
           });
-          const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
-            threadId: event.payload.threadId,
-          });
+          // A delayed/replayed running update for an existing active turn must
+          // not steal the oldest placeholder queued for the next turn. This is
+          // true even for a legacy/unsolicited turn without correlation: only
+          // the first projection of a distinct turn may adopt queued work.
+          const shouldAdoptPendingTurnStart = Option.isNone(existingTurn);
+          const pendingTurnStart = shouldAdoptPendingTurnStart
+            ? event.payload.turnStartEventSequence === undefined
+              ? yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+                  threadId: event.payload.threadId,
+                })
+              : yield* projectionTurnRepository.getPendingTurnStartExact({
+                  threadId: event.payload.threadId,
+                  eventSequence: event.payload.turnStartEventSequence,
+                })
+            : Option.none();
           if (Option.isSome(existingTurn)) {
             const nextState =
               existingTurn.value.state === "completed" || existingTurn.value.state === "error"
@@ -1291,9 +1321,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             });
           }
 
-          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
-            threadId: event.payload.threadId,
-          });
+          if (Option.isSome(pendingTurnStart)) {
+            yield* projectionTurnRepository.deletePendingTurnStartExact({
+              threadId: event.payload.threadId,
+              eventSequence: pendingTurnStart.value.eventSequence,
+            });
+          }
           return;
         }
 

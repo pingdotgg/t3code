@@ -1,6 +1,7 @@
 import { AuthStandardClientScopes, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -36,12 +37,13 @@ const BOOTSTRAP: RemoteEnvironmentAuthorization.RelayEnvironmentAuthorization = 
   credential: "relay-bootstrap",
 };
 
-function recordedFetch(responses: ReadonlyArray<Response>) {
+function recordedFetch(responses: ReadonlyArray<Response | Error | Promise<Response>>) {
   const calls: Array<readonly [RequestInfo | URL, RequestInit]> = [];
   let responseIndex = 0;
   const fetchFn = ((input, init) => {
     calls.push([input, init ?? {}]);
     const response = responses[responseIndex++];
+    if (response instanceof Error) return Promise.reject(response);
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
       : Promise.resolve(response);
@@ -77,7 +79,7 @@ const authInvalid = () =>
 
 const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (input: {
   readonly initialToken?: TokenStore.RemoteDpopAccessToken;
-  readonly responses: ReadonlyArray<Response>;
+  readonly responses: ReadonlyArray<Response | Error | Promise<Response>>;
 }) {
   const tokens = yield* Ref.make(
     new Map(
@@ -189,7 +191,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("revalidates a bearer descriptor after the cache expires", () =>
+  it.effect("rejects a mismatched port owner before sending it a bearer credential", () =>
     Effect.gen(function* () {
       const reassignedEnvironmentId = EnvironmentId.make("environment-2");
       const harness = yield* makeHarness({
@@ -211,10 +213,12 @@ describe("RemoteEnvironmentAuthorization", () => {
             httpBaseUrl: ENDPOINT.httpBaseUrl,
             wsBaseUrl: ENDPOINT.wsBaseUrl,
             bearerToken: "bearer-token",
+            requestTimeoutMs: 3_000,
+            transportRetries: 1,
+            requireFreshDescriptor: true,
           });
 
         yield* authorize();
-        yield* TestClock.adjust("10 seconds");
         return yield* authorize().pipe(Effect.flip);
       }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
 
@@ -228,6 +232,280 @@ describe("RemoteEnvironmentAuthorization", () => {
       expect(
         harness.fetch.calls.filter(([url]) => String(url).endsWith("/.well-known/t3/environment")),
       ).toHaveLength(2);
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/api/auth/websocket-ticket")),
+      ).toHaveLength(1);
+    }),
+  );
+
+  it.effect("retries a live descriptor without sending the stale port owner a bearer", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          websocketTicket("first-ticket"),
+          new Error("replacement backend not accepting requests yet"),
+          Response.json(DESCRIPTOR),
+          websocketTicket("reconnect-ticket"),
+        ],
+      });
+
+      const reconnect = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = () =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl: ENDPOINT.httpBaseUrl,
+            wsBaseUrl: ENDPOINT.wsBaseUrl,
+            bearerToken: "desktop-bearer",
+            requestTimeoutMs: 3_000,
+            transportRetries: 1,
+            requireFreshDescriptor: true,
+          });
+        yield* authorize();
+        yield* TestClock.adjust("10 seconds");
+        const reconnectFiber = yield* Effect.forkChild(authorize());
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("249 millis");
+        expect(reconnectFiber.pollUnsafe()).toBeUndefined();
+        yield* TestClock.adjust("1 millis");
+        return yield* Fiber.join(reconnectFiber);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(reconnect.socketUrl).toContain("wsTicket=reconnect-ticket");
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/.well-known/t3/environment")),
+      ).toHaveLength(3);
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/api/auth/websocket-ticket")),
+      ).toHaveLength(2);
+    }),
+  );
+
+  it.effect("revalidates and retries a hung ticket during the descriptor cache window", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          websocketTicket("first-ticket"),
+          Response.json(DESCRIPTOR),
+          new Promise<Response>(() => {}),
+          Response.json(DESCRIPTOR),
+          websocketTicket("reconnect-ticket"),
+        ],
+      });
+
+      const reconnect = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = () =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl: ENDPOINT.httpBaseUrl,
+            wsBaseUrl: ENDPOINT.wsBaseUrl,
+            bearerToken: "desktop-bearer",
+            requestTimeoutMs: 3_000,
+            transportRetries: 1,
+            requireFreshDescriptor: true,
+          });
+        yield* authorize();
+        const reconnectFiber = yield* Effect.forkChild(authorize());
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("250 millis");
+        return yield* Fiber.join(reconnectFiber);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(reconnect.socketUrl).toContain("wsTicket=reconnect-ticket");
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/.well-known/t3/environment")),
+      ).toHaveLength(3);
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/api/auth/websocket-ticket")),
+      ).toHaveLength(3);
+    }),
+  );
+
+  it.effect("reprobes after a hung dead listener without disclosing the bearer", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          websocketTicket("first-ticket"),
+          new Promise<Response>(() => {}),
+          Response.json(DESCRIPTOR),
+          websocketTicket("reconnect-ticket"),
+        ],
+      });
+
+      const reconnect = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = () =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl: ENDPOINT.httpBaseUrl,
+            wsBaseUrl: ENDPOINT.wsBaseUrl,
+            bearerToken: "desktop-bearer",
+            requestTimeoutMs: 3_000,
+            transportRetries: 1,
+            requireFreshDescriptor: true,
+          });
+        yield* authorize();
+        yield* TestClock.adjust("10 seconds");
+        const reconnectFiber = yield* Effect.forkChild(authorize());
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("250 millis");
+        return yield* Fiber.join(reconnectFiber);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(reconnect.socketUrl).toContain("wsTicket=reconnect-ticket");
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/.well-known/t3/environment")),
+      ).toHaveLength(3);
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/api/auth/websocket-ticket")),
+      ).toHaveLength(2);
+    }),
+  );
+
+  it.effect("ends the attempt without sending a bearer when both descriptor probes hang", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          websocketTicket("first-ticket"),
+          new Promise<Response>(() => {}),
+          new Promise<Response>(() => {}),
+        ],
+      });
+
+      const failure = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = () =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl: ENDPOINT.httpBaseUrl,
+            wsBaseUrl: ENDPOINT.wsBaseUrl,
+            bearerToken: "desktop-bearer",
+            requestTimeoutMs: 3_000,
+            transportRetries: 1,
+            requireFreshDescriptor: true,
+          });
+        yield* authorize();
+        yield* TestClock.adjust("10 seconds");
+        const reconnectFiber = yield* Effect.forkChild(Effect.flip(authorize()));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("250 millis");
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        return yield* Fiber.join(reconnectFiber);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/.well-known/t3/environment")),
+      ).toHaveLength(3);
+      expect(
+        harness.fetch.calls.filter(([url]) => String(url).endsWith("/api/auth/websocket-ticket")),
+      ).toHaveLength(1);
+    }),
+  );
+
+  it.effect("bounds a hung initial desktop descriptor probe", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [new Promise<Response>(() => {})],
+      });
+
+      const failure = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = remote.authorizeBearer({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          httpBaseUrl: ENDPOINT.httpBaseUrl,
+          wsBaseUrl: ENDPOINT.wsBaseUrl,
+          bearerToken: "desktop-bearer",
+          requestTimeoutMs: 3_000,
+        });
+        const authorizeFiber = yield* Effect.forkChild(Effect.flip(authorize));
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("3 seconds");
+        return yield* Fiber.join(authorizeFiber);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(failure).toMatchObject({ _tag: "ConnectionTransientError", reason: "timeout" });
+    }),
+  );
+
+  it.effect("does not mask response failures or reuse a descriptor for another endpoint", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          websocketTicket("first-ticket"),
+          authInvalid(),
+          new Error("different endpoint unavailable"),
+        ],
+      });
+
+      const [authenticationFailure, endpointFailure] = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = (httpBaseUrl = ENDPOINT.httpBaseUrl) =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl,
+            wsBaseUrl: ENDPOINT.wsBaseUrl,
+            bearerToken: "desktop-bearer",
+            requestTimeoutMs: 3_000,
+          });
+        yield* authorize();
+        yield* TestClock.adjust("10 seconds");
+        const authenticationFailure = yield* authorize().pipe(Effect.flip);
+        const endpointFailure = yield* authorize("https://replacement.example.test").pipe(
+          Effect.flip,
+        );
+        return [authenticationFailure, endpointFailure] as const;
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(authenticationFailure).toMatchObject({
+        _tag: "ConnectionTransientError",
+        reason: "remote-unavailable",
+      });
+      expect(endpointFailure).toMatchObject({
+        _tag: "ConnectionTransientError",
+        reason: "network",
+      });
+    }),
+  );
+
+  it.effect("never reuses an expired descriptor for saved bearer connections", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          Response.json(DESCRIPTOR),
+          websocketTicket("first-ticket"),
+          new Error("remote unavailable"),
+        ],
+      });
+
+      const failure = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = () =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl: ENDPOINT.httpBaseUrl,
+            wsBaseUrl: ENDPOINT.wsBaseUrl,
+            bearerToken: "saved-bearer",
+          });
+        yield* authorize();
+        yield* TestClock.adjust("10 seconds");
+        return yield* authorize().pipe(Effect.flip);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(failure).toMatchObject({ _tag: "ConnectionTransientError" });
     }),
   );
 

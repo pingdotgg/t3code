@@ -17,6 +17,7 @@ import {
   type EnvironmentSubscriptionRpcTag,
   type EnvironmentUnaryRpcTag,
   request,
+  requestSingleShot,
   runStream,
   subscribe,
 } from "../rpc/client.ts";
@@ -43,12 +44,11 @@ interface EnvironmentCommandAtomOptions<Input, A, E, R> extends Omit<
   ) => Effect.Effect<A, E, R>;
 }
 
-interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOptions<
-  Input,
-  A,
-  E,
-  R
+interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
+  EnvironmentAtomOptions<Input, A, E, R>,
+  "execute"
 > {
+  readonly execute: (input: Input, environmentId: EnvironmentIdType) => Effect.Effect<A, E, R>;
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
@@ -516,7 +516,10 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         if (generation === null) {
           return Effect.never;
         }
-        return runInEnvironment(target.environmentId, options.execute(target.input));
+        return runInEnvironment(
+          target.environmentId,
+          options.execute(target.input, target.environmentId),
+        );
       })
       .pipe(
         Atom.swr({
@@ -678,7 +681,7 @@ export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnary
         environmentId,
         input,
       };
-      return request(options.tag, input).pipe(
+      return requestSingleShot(options.tag, input).pipe(
         Effect.tap(() => options.onSuccess?.(target, registry) ?? Effect.void),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );

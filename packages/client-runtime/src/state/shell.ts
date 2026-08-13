@@ -72,7 +72,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
-  const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
+  const hasAuthoritativeSnapshot = yield* Ref.make(false);
   const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
   const persistence = yield* Queue.sliding<OrchestrationShellSnapshot>(1);
 
@@ -172,7 +172,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     if (item.kind === "snapshot") {
       const session = yield* Ref.get(activeSubscriptionSession);
       if (session !== null) {
-        yield* Ref.set(lastAuthoritativeSession, session);
+        yield* Ref.set(hasAuthoritativeSnapshot, true);
       }
     }
     yield* Queue.offer(persistence, nextSnapshot);
@@ -197,13 +197,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
-        // Foreground resubscriptions on the same live session can resume from
-        // the in-memory cursor. A new session reloads the authoritative HTTP
-        // snapshot so a valid cursor cannot preserve incomplete cached data.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
-        let canResume = hasAuthoritativeSnapshot;
+        // Once a snapshot has come from this server, every applied event keeps
+        // it at an authoritative sequence. Resume from that cursor across
+        // replacement sockets so a brief transport loss does not rebuild the
+        // entire project list. The server replaces stale or ahead cursors with
+        // a fresh snapshot when the backend state changed.
+        const hasAuthoritativeState = yield* Ref.get(hasAuthoritativeSnapshot);
+        let canResume = hasAuthoritativeState;
         let current = yield* SubscriptionRef.get(state);
-        if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
+        if (!hasAuthoritativeState || Option.isNone(current.snapshot)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({

@@ -23,6 +23,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, vi } from "@effect/vitest";
 
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -38,6 +39,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderSessionDirectoryPersistenceError,
   ProviderUnsupportedError,
   ProviderValidationError,
   type ProviderAdapterError,
@@ -271,7 +273,7 @@ const hasMetricSnapshot = (
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
 
-function makeProviderServiceLayer() {
+function makeProviderServiceLayer(options?: { readonly failSendTurnDirectoryUpserts?: boolean }) {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
@@ -288,7 +290,44 @@ function makeProviderServiceLayer() {
   const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
   );
-  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+  const directoryBaseLayer = ProviderSessionDirectoryLive.pipe(
+    Layer.provide(runtimeRepositoryLayer),
+  );
+  const sendTurnDirectoryUpsertAttempts = { value: 0 };
+  const directoryLayer = options?.failSendTurnDirectoryUpserts
+    ? Layer.effect(
+        ProviderSessionDirectory.ProviderSessionDirectory,
+        Effect.gen(function* () {
+          const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+          return ProviderSessionDirectory.ProviderSessionDirectory.of({
+            ...directory,
+            upsert: (binding) => {
+              const runtimePayload = binding.runtimePayload;
+              const isSendTurnUpdate =
+                typeof runtimePayload === "object" &&
+                runtimePayload !== null &&
+                "lastRuntimeEvent" in runtimePayload &&
+                runtimePayload.lastRuntimeEvent === "provider.sendTurn";
+              if (!isSendTurnUpdate) {
+                return directory.upsert(binding);
+              }
+              return Effect.sync(() => {
+                sendTurnDirectoryUpsertAttempts.value += 1;
+              }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ProviderSessionDirectoryPersistenceError({
+                      operation: "ProviderService.test.sendTurnUpsert",
+                      detail: "Injected post-handoff directory failure.",
+                    }),
+                  ),
+                ),
+              );
+            },
+          });
+        }),
+      ).pipe(Layer.provide(directoryBaseLayer))
+    : directoryBaseLayer;
 
   const layer = it.layer(
     Layer.mergeAll(
@@ -316,6 +355,7 @@ function makeProviderServiceLayer() {
     codex,
     claude,
     cursor,
+    sendTurnDirectoryUpsertAttempts,
     layer,
   };
 }
@@ -854,6 +894,63 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("leaves a terminalized accepted handoff for runtime ingestion", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-terminalized-acceptance");
+      const turnId = asTurnId("turn-terminalized-acceptance");
+      const terminalEventId = asEventId("evt-terminalized-acceptance");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      routing.codex.sendTurn.mockImplementationOnce((input) =>
+        Effect.succeed({
+          threadId: input.threadId,
+          turnId,
+          terminalEventId,
+        }),
+      );
+      const acknowledgementCount = yield* Ref.make(0);
+      const sendTurnWithAcknowledgement = provider.sendTurnWithAcknowledgement;
+      if (!sendTurnWithAcknowledgement) {
+        return yield* Effect.die("ProviderService lacks acknowledged send support");
+      }
+
+      const result = yield* sendTurnWithAcknowledgement(
+        {
+          threadId,
+          input: "provider accepted and immediately terminalized",
+          attachments: [],
+        },
+        () => Ref.update(acknowledgementCount, (count) => count + 1),
+      );
+
+      assert.equal(result.terminalEventId, terminalEventId);
+      assert.equal(yield* Ref.get(acknowledgementCount), 0);
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        const runtimePayload = binding.value.runtimePayload;
+        assert.equal(
+          runtimePayload !== null &&
+            typeof runtimePayload === "object" &&
+            !Array.isArray(runtimePayload) &&
+            "activeTurnId" in runtimePayload
+            ? runtimePayload.activeTurnId
+            : undefined,
+          null,
+        );
+      }
+      yield* provider.stopSession({ threadId });
+      routing.codex.sendTurn.mockClear();
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -1553,11 +1650,83 @@ routing.layer("ProviderServiceLive routing", (it) => {
   );
 });
 
-const fanout = makeProviderServiceLayer();
-fanout.layer("ProviderServiceLive fanout", (it) => {
-  it.effect("fans out adapter turn completion events", () =>
+const postHandoffBookkeeping = makeProviderServiceLayer({
+  failSendTurnDirectoryUpserts: true,
+});
+postHandoffBookkeeping.layer("ProviderServiceLive post-handoff bookkeeping", (it) => {
+  it.effect("returns an accepted turn when directory bookkeeping keeps failing", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
+      const session = yield* provider.startSession(asThreadId("thread-bookkeeping-failure"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-bookkeeping-failure"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "accepted before bookkeeping",
+        attachments: [],
+      });
+
+      assert.equal(turn.turnId, asTurnId("turn-thread-bookkeeping-failure"));
+      assert.equal(postHandoffBookkeeping.codex.sendTurn.mock.calls.length, 1);
+      assert.equal(postHandoffBookkeeping.sendTurnDirectoryUpsertAttempts.value, 3);
+    }),
+  );
+
+  it.effect("finishes the acceptance acknowledgement when interrupted after adapter success", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const session = yield* provider.startSession(asThreadId("thread-ack-boundary"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-ack-boundary"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      const acknowledgementStarted = yield* Deferred.make<void>();
+      const releaseAcknowledgement = yield* Deferred.make<void>();
+      const acknowledgementCompleted = yield* Ref.make(false);
+      const sendCallsBefore = postHandoffBookkeeping.codex.sendTurn.mock.calls.length;
+      const sendTurnWithAcknowledgement = provider.sendTurnWithAcknowledgement;
+      if (!sendTurnWithAcknowledgement) {
+        return yield* Effect.die("ProviderService lacks acknowledged send support");
+      }
+
+      const sendFiber = yield* sendTurnWithAcknowledgement(
+        {
+          threadId: session.threadId,
+          input: "accepted before graceful shutdown",
+          attachments: [],
+        },
+        () =>
+          Deferred.succeed(acknowledgementStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseAcknowledgement)),
+            Effect.andThen(Ref.set(acknowledgementCompleted, true)),
+          ),
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(acknowledgementStarted);
+
+      const interruptFiber = yield* Fiber.interrupt(sendFiber).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(releaseAcknowledgement, undefined);
+      yield* Fiber.join(interruptFiber);
+
+      assert.equal(yield* Ref.get(acknowledgementCompleted), true);
+      assert.equal(postHandoffBookkeeping.codex.sendTurn.mock.calls.length, sendCallsBefore + 1);
+    }),
+  );
+});
+
+const fanout = makeProviderServiceLayer();
+fanout.layer("ProviderServiceLive fanout", (it) => {
+  it.effect("durably fans out adapter lifecycle and runtime error events", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
       const session = yield* provider.startSession(asThreadId("thread-1"), {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
@@ -1580,8 +1749,24 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         turnId: asTurnId("turn-1"),
         status: "completed",
       };
+      const laterCompletedEvent: LegacyProviderRuntimeEvent = {
+        ...completedEvent,
+        eventId: asEventId("evt-2"),
+        turnId: asTurnId("turn-2"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+      };
+      const runtimeErrorEvent: LegacyProviderRuntimeEvent = {
+        type: "runtime.error",
+        eventId: asEventId("evt-runtime-error"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        threadId: session.threadId,
+        payload: { message: "provider process failed" },
+      };
 
       fanout.codex.emit(completedEvent);
+      fanout.codex.emit(laterCompletedEvent);
+      fanout.codex.emit(runtimeErrorEvent);
       yield* advanceTestClock(50);
 
       const events = yield* Ref.get(eventsRef);
@@ -1597,6 +1782,11 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
             entry.type === "turn.completed" && entry.providerInstanceId === codexInstanceId,
         ),
         true,
+      );
+      const pendingTerminalEvents = yield* directory.listPendingTerminalEvents();
+      assert.deepEqual(
+        pendingTerminalEvents.map(({ eventId }) => eventId),
+        [completedEvent.eventId, laterCompletedEvent.eventId, runtimeErrorEvent.eventId],
       );
     }),
   );

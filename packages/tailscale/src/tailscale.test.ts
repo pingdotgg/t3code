@@ -1,3 +1,4 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -25,6 +26,7 @@ import {
 } from "./tailscale.ts";
 
 const encoder = new TextEncoder();
+const testPlatformLayer = Layer.succeed(HostProcessPlatform, "linux");
 
 /**
  * Asserts nothing reachable from `error` contains `secret`. Recurses through
@@ -169,13 +171,16 @@ describe("tailscale", () => {
   );
 
   it.effect("reads tailscale status through the process spawner service", () => {
-    const layer = mockSpawnerLayer((command, args) => {
-      assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["status", "--json"]);
-      return {
-        stdout: tailscaleStatusWithSingleIpJson,
-      };
-    });
+    const layer = Layer.merge(
+      mockSpawnerLayer((command, args) => {
+        assert.equal(command, "tailscale");
+        assert.deepEqual(args, ["status", "--json"]);
+        return {
+          stdout: tailscaleStatusWithSingleIpJson,
+        };
+      }),
+      testPlatformLayer,
+    );
 
     return Effect.gen(function* () {
       const status = yield* readTailscaleStatus.pipe(Effect.provide(layer));
@@ -194,9 +199,12 @@ describe("tailscale", () => {
       method: "spawn",
       cause: systemCause,
     });
-    const layer = Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() => Effect.fail(cause)),
+    const layer = Layer.merge(
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.fail(cause)),
+      ),
+      testPlatformLayer,
     );
 
     return Effect.gen(function* () {
@@ -213,10 +221,13 @@ describe("tailscale", () => {
   });
 
   it.effect("keeps nonzero exit diagnostics structured", () => {
-    const layer = mockSpawnerLayer(() => ({
-      code: 7,
-      stderr: "not logged in tskey-auth-secret-token-value",
-    }));
+    const layer = Layer.merge(
+      mockSpawnerLayer(() => ({
+        code: 7,
+        stderr: "not logged in tskey-auth-secret-token-value",
+      })),
+      testPlatformLayer,
+    );
 
     return Effect.gen(function* () {
       const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
@@ -238,10 +249,13 @@ describe("tailscale", () => {
   });
 
   it.effect("classifies unrecognized stderr without quoting it", () => {
-    const layer = mockSpawnerLayer(() => ({
-      code: 3,
-      stderr: "something novel went wrong for node fluffy-badger tskey-auth-secret-token-value",
-    }));
+    const layer = Layer.merge(
+      mockSpawnerLayer(() => ({
+        code: 3,
+        stderr: "something novel went wrong for node fluffy-badger tskey-auth-secret-token-value",
+      })),
+      testPlatformLayer,
+    );
 
     return Effect.gen(function* () {
       const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
@@ -256,8 +270,9 @@ describe("tailscale", () => {
   });
 
   it.effect("times out tailscale status through TestClock", () => {
-    const layer = Layer.merge(
+    const layer = Layer.mergeAll(
       TestClock.layer(),
+      testPlatformLayer,
       Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(() => Effect.succeed(neverFinishingMockHandle())),
@@ -281,20 +296,26 @@ describe("tailscale", () => {
   });
 
   it.effect("configures tailscale serve through the process spawner service", () => {
-    const layer = mockSpawnerLayer((command, args) => {
-      assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"]);
-      return {};
-    });
+    const layer = Layer.merge(
+      mockSpawnerLayer((command, args) => {
+        assert.equal(command, "tailscale");
+        assert.deepEqual(args, ["serve", "--bg", "--https=8443", "http://127.0.0.1:13773"]);
+        return {};
+      }),
+      testPlatformLayer,
+    );
 
     return ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(Effect.provide(layer));
   });
 
   it.effect("retains tailscale serve exit diagnostics", () => {
-    const layer = mockSpawnerLayer(() => ({
-      code: 1,
-      stderr: "serve permission denied tskey-auth-secret-token-value",
-    }));
+    const layer = Layer.merge(
+      mockSpawnerLayer(() => ({
+        code: 1,
+        stderr: "serve permission denied tskey-auth-secret-token-value",
+      })),
+      testPlatformLayer,
+    );
 
     return Effect.gen(function* () {
       const error = yield* ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(
@@ -323,12 +344,15 @@ describe("tailscale", () => {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
     }[] = [];
-    const layer = mockSpawnerLayer((command, args) => {
-      commands.push({ command, args });
-      assert.equal(command, "tailscale");
-      assert.deepEqual(args, ["serve", "--https=8443", "off"]);
-      return {};
-    });
+    const layer = Layer.merge(
+      mockSpawnerLayer((command, args) => {
+        commands.push({ command, args });
+        assert.equal(command, "tailscale");
+        assert.deepEqual(args, ["serve", "--https=8443", "off"]);
+        return {};
+      }),
+      testPlatformLayer,
+    );
 
     return Effect.gen(function* () {
       yield* disableTailscaleServe({ servePort: 8443 }).pipe(Effect.provide(layer));

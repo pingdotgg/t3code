@@ -1,5 +1,11 @@
 import {
+  CommandId,
   EnvironmentId,
+  MessageId,
+  ORCHESTRATION_WS_METHODS,
+  OrchestrationCommandDeduplicationWindowChangedError,
+  ThreadId,
+  type ClientOrchestrationCommand,
   type RelayClientInstallProgressEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -8,6 +14,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -15,9 +22,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/unstable/rpc";
+import * as Socket from "effect/unstable/socket/Socket";
 
 import {
   AVAILABLE_CONNECTION_STATE,
+  ConnectionTransientError,
   PrimaryConnectionTarget,
   type PreparedConnection,
   type SupervisorConnectionState,
@@ -25,7 +34,15 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { EnvironmentRpcRequestObserver, request, runStream, subscribe } from "./client.ts";
+import {
+  EnvironmentRpcRequestObserver,
+  isRetryableRpcTransportError,
+  request,
+  requestIdempotent,
+  requestSingleShot,
+  runStream,
+  subscribe,
+} from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -43,13 +60,68 @@ const INSTALL_DOWNLOADING: RelayClientInstallProgressEvent = {
   stage: "downloading",
 };
 
-function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
+const CONNECTED_STATE: SupervisorConnectionState = {
+  ...AVAILABLE_CONNECTION_STATE,
+  desired: true,
+  network: "online",
+  phase: "connected",
+  attempt: 1,
+  generation: 1,
+};
+
+const BACKOFF_STATE: SupervisorConnectionState = {
+  ...CONNECTED_STATE,
+  phase: "backoff",
+  generation: 1,
+};
+
+const TEST_COMMAND: ClientOrchestrationCommand = {
+  type: "thread.archive",
+  commandId: CommandId.make("command-reconnect"),
+  threadId: ThreadId.make("thread-1"),
+};
+
+const TEST_BOOTSTRAP_COMMAND: ClientOrchestrationCommand = {
+  type: "thread.turn.start",
+  commandId: CommandId.make("command-bootstrap-reconnect"),
+  threadId: ThreadId.make("thread-bootstrap"),
+  message: {
+    messageId: MessageId.make("message-bootstrap"),
+    role: "user",
+    text: "hello",
+    attachments: [],
+  },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  bootstrap: { runSetupScript: true },
+  createdAt: "2026-08-12T00:00:00.000Z",
+};
+
+const socketCloseError = () =>
+  new RpcClientError.RpcClientError({
+    reason: new Socket.SocketCloseError({ code: 1006 }),
+  });
+
+function session(
+  client: WsRpcProtocolClient,
+  closed: RpcSession.RpcSession["closed"] = Effect.never,
+  serverRunId?: string,
+  initialConfigFailure?: ConnectionTransientError,
+  probe: RpcSession.RpcSession["probe"] = Effect.void,
+): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.never,
+    initialConfig:
+      initialConfigFailure !== undefined
+        ? Effect.fail(initialConfigFailure)
+        : serverRunId === undefined
+          ? Effect.never
+          : Effect.succeed({ serverRunId } as Effect.Success<
+              RpcSession.RpcSession["initialConfig"]
+            >),
     ready: Effect.void,
-    probe: Effect.void,
-    closed: Effect.never,
+    probe,
+    closed,
   };
 }
 
@@ -77,6 +149,848 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it("classifies only socket transport failures as retryable", () => {
+    const cause = new Error("transport failed");
+    const retryable = [
+      new Socket.SocketReadError({ cause }),
+      new Socket.SocketWriteError({ cause }),
+      new Socket.SocketOpenError({ kind: "Timeout", cause }),
+      new Socket.SocketCloseError({ code: 1006 }),
+    ].map((reason) => new RpcClientError.RpcClientError({ reason }));
+
+    expect(retryable.every(isRetryableRpcTransportError)).toBe(true);
+    expect(
+      isRetryableRpcTransportError(
+        new RpcClientError.RpcClientError({
+          reason: new RpcClientError.RpcClientDefect({ message: "bad response", cause }),
+        }),
+      ),
+    ).toBe(false);
+    expect(isRetryableRpcTransportError(new Error("domain failure"))).toBe(false);
+  });
+
+  it.effect("replays an idempotent request on a replacement session with the same input", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.fail(socketCloseError()))),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 42 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      const firstSession = session(firstClient);
+      yield* SubscriptionRef.set(activeSession, Option.some(firstSession));
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_COMMAND,
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      for (let attempt = 0; attempt < 100 && (yield* Ref.get(retryCount)) < 1; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* SubscriptionRef.set(activeSession, Option.none());
+      yield* SubscriptionRef.set(supervisor.state, BACKOFF_STATE);
+      yield* SubscriptionRef.set(activeSession, Option.some(firstSession));
+      yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 42 });
+      expect(yield* Ref.get(retryCount)).toBe(1);
+      expect(received).toHaveLength(2);
+      expect(received[0]).toBe(TEST_COMMAND);
+      expect(received[1]).toBe(TEST_COMMAND);
+    }),
+  );
+
+  it.effect("replays when a closed session leaves the unary request pending", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const firstClosed = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 43 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      const firstSession = session(
+        firstClient,
+        firstClosed.await.pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ConnectionTransientError({
+                reason: "transport",
+                detail: "Test environment disconnected.",
+              }),
+            ),
+          ),
+        ),
+      );
+      yield* SubscriptionRef.set(activeSession, Option.some(firstSession));
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_COMMAND,
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      firstClosed.openUnsafe();
+      yield* SubscriptionRef.set(activeSession, Option.none());
+      yield* SubscriptionRef.set(supervisor.state, BACKOFF_STATE);
+      yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 43 });
+      expect(received).toHaveLength(2);
+      expect(received[0]).toBe(TEST_COMMAND);
+      expect(received[1]).toBe(TEST_COMMAND);
+    }),
+  );
+
+  it.effect("keeps a healthy lease for process-local work beyond the initial timeout", () =>
+    Effect.gen(function* () {
+      const attempted = Latch.makeUnsafe();
+      const response = yield* Latch.make();
+      const received: ClientOrchestrationCommand[] = [];
+      const client = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            attempted.openUnsafe();
+          }).pipe(Effect.andThen(response.await), Effect.as({ sequence: 43 })),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(client, Effect.never, "server-run-1")),
+      );
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_BOOTSTRAP_COMMAND,
+        { sameServerProcess: true },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* attempted.await;
+      yield* TestClock.adjust("10 seconds");
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(retryCount)).toBe(0);
+      expect(received).toEqual([TEST_BOOTSTRAP_COMMAND]);
+      response.openUnsafe();
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 43 });
+      expect(yield* Ref.get(retryCount)).toBe(0);
+      expect(received).toHaveLength(1);
+    }),
+  );
+
+  it.effect("replaces a half-open session once when its health probe hangs", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const replacementResponse = yield* Latch.make();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => received.push(command)).pipe(
+            Effect.andThen(replacementResponse.await),
+            Effect.as({ sequence: 44 }),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(firstClient, Effect.never, "server-run-1", undefined, Effect.never)),
+      );
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_BOOTSTRAP_COMMAND,
+        { sameServerProcess: true },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      yield* TestClock.adjust("12 seconds");
+      for (let attempt = 0; attempt < 100 && (yield* Ref.get(retryCount)) < 1; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* SubscriptionRef.set(activeSession, Option.none());
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(secondClient, Effect.never, "server-run-1")),
+      );
+      for (let attempt = 0; attempt < 100 && received.length < 2; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(retryCount)).toBe(1);
+      expect(received).toHaveLength(2);
+      replacementResponse.openUnsafe();
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 44 });
+      expect(yield* Ref.get(retryCount)).toBe(1);
+      expect(received).toEqual([
+        TEST_BOOTSTRAP_COMMAND,
+        { ...TEST_BOOTSTRAP_COMMAND, expectedServerRunId: "server-run-1" },
+      ]);
+    }),
+  );
+
+  it.effect("replays process-local work after a WebSocket replacement in the same server run", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const firstClosed = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 46 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(
+          session(
+            firstClient,
+            firstClosed.await.pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ConnectionTransientError({
+                    reason: "transport",
+                    detail: "Test environment disconnected.",
+                  }),
+                ),
+              ),
+            ),
+            "server-run-1",
+          ),
+        ),
+      );
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_BOOTSTRAP_COMMAND,
+        { sameServerProcess: true },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      firstClosed.openUnsafe();
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(secondClient, Effect.never, "server-run-1")),
+      );
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 46 });
+      expect(received).toEqual([
+        TEST_BOOTSTRAP_COMMAND,
+        { ...TEST_BOOTSTRAP_COMMAND, expectedServerRunId: "server-run-1" },
+      ]);
+    }),
+  );
+
+  it.effect("retries process-local work when a session closes before initial config resolves", () =>
+    Effect.gen(function* () {
+      const initialConfigStarted = Latch.makeUnsafe();
+      const firstClosed = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 45 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 46 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      const firstSession: RpcSession.RpcSession = {
+        ...session(
+          firstClient,
+          firstClosed.await.pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ConnectionTransientError({
+                  reason: "transport",
+                  detail: "Test environment disconnected.",
+                }),
+              ),
+            ),
+          ),
+        ),
+        initialConfig: Effect.sync(() => initialConfigStarted.openUnsafe()).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      };
+      yield* SubscriptionRef.set(activeSession, Option.some(firstSession));
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_BOOTSTRAP_COMMAND,
+        { sameServerProcess: true },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* initialConfigStarted.await;
+      firstClosed.openUnsafe();
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(secondClient, Effect.never, "server-run-1")),
+      );
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 46 });
+      expect(received).toEqual([
+        { ...TEST_BOOTSTRAP_COMMAND, expectedServerRunId: "server-run-1" },
+      ]);
+    }),
+  );
+
+  it.effect("preserves the initial-config failure when process-local replay cannot start", () =>
+    Effect.gen(function* () {
+      const cause = new ConnectionTransientError({
+        reason: "transport",
+        detail: "Initial server config failed.",
+      });
+      const client = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: () => Effect.succeed({ sequence: 46 }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(client, Effect.never, undefined, cause)),
+      );
+
+      const failure = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_BOOTSTRAP_COMMAND,
+        { sameServerProcess: true },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+      );
+
+      expect(failure).toMatchObject({
+        _tag: "EnvironmentRpcUnavailableError",
+        environmentId: TARGET.environmentId,
+        cause,
+      });
+    }),
+  );
+
+  it.effect("does not force-replay bootstrap work against an older server without a run id", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const client = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, retryCount, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some({
+          ...session(client),
+          initialConfig: Effect.succeed(
+            {} as Effect.Success<RpcSession.RpcSession["initialConfig"]>,
+          ),
+        }),
+      );
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_BOOTSTRAP_COMMAND,
+        { sameServerProcess: true },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(retryCount)).toBe(0);
+      expect(received).toEqual([TEST_BOOTSTRAP_COMMAND]);
+      yield* Fiber.interrupt(resultFiber);
+    }),
+  );
+
+  it.effect("lets the server recover a retained receipt after its run id rotates", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const firstClosed = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const replacementClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 47 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(
+          session(
+            firstClient,
+            firstClosed.await.pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ConnectionTransientError({
+                    reason: "transport",
+                    detail: "Test environment disconnected.",
+                  }),
+                ),
+              ),
+            ),
+            "server-run-1",
+          ),
+        ),
+      );
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_BOOTSTRAP_COMMAND,
+        { sameServerProcess: true },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      firstClosed.openUnsafe();
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(replacementClient, Effect.never, "server-run-2")),
+      );
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 47 });
+      expect(received).toEqual([
+        TEST_BOOTSTRAP_COMMAND,
+        { ...TEST_BOOTSTRAP_COMMAND, expectedServerRunId: "server-run-1" },
+      ]);
+    }),
+  );
+
+  it.effect("replays an idempotent command after a server restart", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const firstClosed = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const replacementClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 47 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(
+          session(
+            firstClient,
+            firstClosed.await.pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ConnectionTransientError({
+                    reason: "transport",
+                    detail: "Test environment disconnected.",
+                  }),
+                ),
+              ),
+            ),
+            "server-run-1",
+          ),
+        ),
+      );
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_BOOTSTRAP_COMMAND,
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      firstClosed.openUnsafe();
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(replacementClient, Effect.never, "server-run-2")),
+      );
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 47 });
+      expect(received).toEqual([TEST_BOOTSTRAP_COMMAND, TEST_BOOTSTRAP_COMMAND]);
+    }),
+  );
+
+  it.effect("surfaces a retryable failure when guarded work is absent after restart", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const firstClosed = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const guardedCommand: ClientOrchestrationCommand = {
+        ...TEST_BOOTSTRAP_COMMAND,
+        bootstrap: {
+          prepareWorktree: {
+            projectCwd: "/repo",
+            baseBranch: "main",
+            branch: "t3code/restart-test",
+          },
+          runSetupScript: true,
+        },
+      };
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const replacementClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(new OrchestrationCommandDeduplicationWindowChangedError({})),
+            ),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(
+          session(
+            firstClient,
+            firstClosed.await.pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ConnectionTransientError({
+                    reason: "transport",
+                    detail: "Test environment disconnected.",
+                  }),
+                ),
+              ),
+            ),
+            "server-run-1",
+          ),
+        ),
+      );
+      const failureFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        guardedCommand,
+        { sameServerProcess: true },
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      firstClosed.openUnsafe();
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(session(replacementClient, Effect.never, "server-run-2")),
+      );
+
+      expect(yield* Fiber.join(failureFiber)).toMatchObject({
+        _tag: "EnvironmentRpcUnavailableError",
+        message: expect.stringContaining("restarted"),
+        cause: {
+          _tag: "OrchestrationCommandDeduplicationWindowChangedError",
+        },
+      });
+      expect(received).toEqual([
+        guardedCommand,
+        { ...guardedCommand, expectedServerRunId: "server-run-1" },
+      ]);
+    }),
+  );
+
+  it.effect("fails a single-shot request on session close without replaying it", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const firstClosed = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const replacementClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 45 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some(
+          session(
+            firstClient,
+            firstClosed.await.pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ConnectionTransientError({
+                    reason: "transport",
+                    detail: "Test environment disconnected.",
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      const failureFiber = yield* requestSingleShot(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_COMMAND,
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      firstClosed.openUnsafe();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(replacementClient)));
+
+      expect(yield* Fiber.join(failureFiber)).toMatchObject({
+        _tag: "ConnectionTransientError",
+        reason: "transport",
+      });
+      yield* Effect.yieldNow;
+      expect(received).toEqual([TEST_COMMAND]);
+    }),
+  );
+
+  it.effect("replays a non-transport failure when its session was replaced", () =>
+    Effect.gen(function* () {
+      const received: ClientOrchestrationCommand[] = [];
+      const nonTransportFailure = new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({
+          message: "session teardown interrupted the request",
+          cause: new Error("session replaced"),
+        }),
+      });
+      const { activeSession, supervisor } = yield* makeHarness();
+      const secondClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 44 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const secondSession = session(secondClient);
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => received.push(command)).pipe(
+            Effect.andThen(SubscriptionRef.set(activeSession, Option.some(secondSession))),
+            Effect.andThen(Effect.fail(nonTransportFailure)),
+          ),
+      } as unknown as WsRpcProtocolClient;
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
+      const result = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_COMMAND,
+      ).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(result).toEqual({ sequence: 44 });
+      expect(received).toHaveLength(2);
+      expect(received[0]).toBe(TEST_COMMAND);
+      expect(received[1]).toBe(TEST_COMMAND);
+    }),
+  );
+
+  it.effect("does not replay a caller-interrupted idempotent request", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const received: ClientOrchestrationCommand[] = [];
+      const firstClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            firstAttempted.openUnsafe();
+          }).pipe(Effect.andThen(Effect.never)),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          Effect.sync(() => {
+            received.push(command);
+            return { sequence: 44 };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_COMMAND,
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* firstAttempted.await;
+      yield* Fiber.interrupt(resultFiber);
+      const interrupted = yield* Fiber.await(resultFiber);
+      yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
+      yield* Effect.yieldNow;
+
+      expect(Exit.isFailure(interrupted)).toBe(true);
+      if (Exit.isFailure(interrupted)) {
+        expect(Cause.hasInterruptsOnly(interrupted.cause)).toBe(true);
+      }
+      expect(received).toEqual([TEST_COMMAND]);
+    }),
+  );
+
+  it.effect("waits for an initial session while the supervisor is reconnecting", () =>
+    Effect.gen(function* () {
+      const client = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: () => Effect.succeed({ sequence: 7 }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(supervisor.state, BACKOFF_STATE);
+
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_COMMAND,
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      expect(yield* Fiber.join(resultFiber)).toEqual({ sequence: 7 });
+    }),
+  );
+
+  it.effect("stops waiting when the environment is manually disconnected", () =>
+    Effect.gen(function* () {
+      const firstAttempted = Latch.makeUnsafe();
+      const client = {
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: () =>
+          Effect.sync(() => firstAttempted.openUnsafe()).pipe(
+            Effect.andThen(Effect.fail(socketCloseError())),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(supervisor.state, CONNECTED_STATE);
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      const resultFiber = yield* requestIdempotent(
+        ORCHESTRATION_WS_METHODS.dispatchCommand,
+        TEST_COMMAND,
+      ).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* firstAttempted.await;
+      yield* SubscriptionRef.set(activeSession, Option.none());
+      yield* SubscriptionRef.set(supervisor.state, AVAILABLE_CONNECTION_STATE);
+
+      expect(yield* Fiber.join(resultFiber)).toMatchObject({
+        _tag: "EnvironmentRpcUnavailableError",
+        environmentId: TARGET.environmentId,
+      });
+    }),
+  );
+
   it.effect("observes unary requests until they complete", () =>
     Effect.gen(function* () {
       const observations: string[] = [];

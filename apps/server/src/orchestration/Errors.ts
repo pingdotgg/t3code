@@ -1,5 +1,6 @@
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Schema from "effect/Schema";
+import type { OrchestrationTurnStartPendingError } from "@t3tools/contracts";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 
@@ -83,6 +84,7 @@ export type OrchestrationDispatchError =
   | ProjectionRepositoryError
   | OrchestrationCommandInvariantError
   | OrchestrationCommandPreviouslyRejectedError
+  | OrchestrationTurnStartPendingError
   | OrchestrationProjectorDecodeError
   | OrchestrationListenerCallbackError;
 

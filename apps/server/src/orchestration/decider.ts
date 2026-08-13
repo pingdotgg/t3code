@@ -1,5 +1,6 @@
 import {
   EventId,
+  threadTurnBootstrapRequiresSameServerProcess,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -7,11 +8,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import type * as PlatformError from "effect/PlatformError";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   listThreadsByProjectId,
+  findThreadById,
   requireActiveProjectWorkspaceRootAbsent,
   requireProject,
   requireProjectAbsent,
@@ -912,6 +915,79 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
+      const createThread = command.bootstrap?.createThread;
+      if (
+        createThread !== undefined &&
+        !threadTurnBootstrapRequiresSameServerProcess(command.bootstrap)
+      ) {
+        const { bootstrap: _bootstrap, ...turnStartCommand } = command;
+        const existingThread = findThreadById(readModel, command.threadId);
+        // Rollout compatibility: an older server may have committed its
+        // deterministic inner thread.create immediately before being replaced
+        // by a server that handles the bootstrap atomically. Resume only an
+        // untouched draft whose persisted creation fields match this payload.
+        // Any visible activity or metadata change keeps the normal duplicate
+        // create rejection, so this cannot overwrite an established thread.
+        const resumesLegacyPartialBootstrap =
+          existingThread !== undefined &&
+          existingThread.deletedAt === null &&
+          existingThread.projectId === createThread.projectId &&
+          existingThread.title === createThread.title &&
+          existingThread.modelSelection.instanceId === createThread.modelSelection.instanceId &&
+          existingThread.modelSelection.model === createThread.modelSelection.model &&
+          Equal.equals(
+            existingThread.modelSelection.options ?? [],
+            createThread.modelSelection.options ?? [],
+          ) &&
+          existingThread.runtimeMode === createThread.runtimeMode &&
+          existingThread.interactionMode === createThread.interactionMode &&
+          existingThread.branch === createThread.branch &&
+          existingThread.worktreePath === createThread.worktreePath &&
+          existingThread.createdAt === createThread.createdAt &&
+          existingThread.createdAt === existingThread.updatedAt &&
+          existingThread.latestTurn === null &&
+          existingThread.messages.length === 0 &&
+          existingThread.proposedPlans.length === 0 &&
+          existingThread.activities.length === 0 &&
+          existingThread.checkpoints.length === 0 &&
+          existingThread.session === null &&
+          existingThread.archivedAt === null &&
+          existingThread.settledOverride === null &&
+          existingThread.settledAt === null &&
+          existingThread.snoozedUntil == null &&
+          existingThread.snoozedAt == null &&
+          existingThread.pinnedAt == null &&
+          existingThread.pinOrderKey == null &&
+          existingThread.titleRegeneration == null;
+        if (resumesLegacyPartialBootstrap) {
+          return yield* decideOrchestrationCommand({
+            command: turnStartCommand,
+            readModel,
+          });
+        }
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [
+            {
+              type: "thread.create",
+              // One command id gives the engine one durable receipt for the
+              // whole create + first-message transaction.
+              commandId: command.commandId,
+              threadId: command.threadId,
+              projectId: createThread.projectId,
+              title: createThread.title,
+              modelSelection: createThread.modelSelection,
+              runtimeMode: createThread.runtimeMode,
+              interactionMode: createThread.interactionMode,
+              branch: createThread.branch,
+              worktreePath: createThread.worktreePath,
+              createdAt: createThread.createdAt,
+            },
+            turnStartCommand,
+          ],
+        });
+      }
+
       const targetThread = yield* requireThread({
         readModel,
         command,
@@ -1179,6 +1255,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.session-set",
         payload: {
           threadId: command.threadId,
+          ...(command.turnStartEventSequence !== undefined
+            ? { turnStartEventSequence: command.turnStartEventSequence }
+            : {}),
           session: command.session,
         },
       };
