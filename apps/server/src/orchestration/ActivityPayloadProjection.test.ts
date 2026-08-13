@@ -114,4 +114,24 @@ describe("projectActivityPayload agent-field survival", () => {
     const projected = projectActivityPayload(source);
     expect(projected.payload).toEqual(source.payload);
   });
+
+  it("ships a stderr summary when a command result writes only to stderr", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          toolCallId: "call-1",
+          kind: "execute",
+          command: "bun test",
+          rawOutput: {
+            exitCode: 1,
+            stdout: "",
+            stderr: "error: Cannot find module './missing'\n    at /repo/test.ts:3:1\n",
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.rawOutput).toEqual({ content: "error: Cannot find module './missing'" });
+  });
 });

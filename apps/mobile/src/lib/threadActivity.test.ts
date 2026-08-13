@@ -331,6 +331,57 @@ describe("buildThreadFeed", () => {
     expect(group.activities[0]?.getFullDetail()).toBe("git status\n\nOn branch applib/foo");
   });
 
+  it("surfaces a stderr-only result in the expanded body", () => {
+    const turnId = TurnId.make("turn-grok-stderr");
+    const thread = makeThread({
+      id: ThreadId.make("thread-grok-stderr"),
+      projectId: ProjectId.make("project-1"),
+      title: "Grok stderr output",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-08-13T00:00:00.000Z",
+        startedAt: "2026-08-13T00:00:01.000Z",
+        completedAt: "2026-08-13T00:00:03.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-08-13T00:00:02.000Z",
+          turnId,
+          payload: {
+            title: "Ran command",
+            itemType: "command_execution",
+            detail: "bun test",
+            data: {
+              toolCallId: "call-3c5a98f4",
+              kind: "execute",
+              command: "bun test",
+              rawOutput: {
+                exitCode: 1,
+                stdout: "",
+                stderr: "error: Cannot find module './missing'\n    at /repo/test.ts:3:1\n",
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const group = feed[0];
+    if (!group || group.type !== "activity-group") {
+      throw new Error("expected an activity group");
+    }
+    expect(group.activities[0]?.getFullDetail()).toBe(
+      "bun test\n\nerror: Cannot find module './missing'",
+    );
+  });
+
   it("keeps MCP inputs available to expanded mobile work rows", () => {
     const turnId = TurnId.make("turn-mcp");
     const thread = makeThread({

@@ -256,6 +256,12 @@ function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
     return summary ? { content: summary } : undefined;
   }
 
+  const stderr = asTrimmedString(rawOutput.stderr);
+  if (stderr) {
+    const summary = summarizeToolTextOutput(stderr);
+    return summary ? { content: summary } : undefined;
+  }
+
   return undefined;
 }
 

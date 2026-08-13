@@ -1379,6 +1379,11 @@ function summarizeToolRawOutput(payload: Record<string, unknown> | null): string
     return summarizeToolTextOutput(stdout);
   }
 
+  const stderr = asTrimmedString(rawOutput.stderr);
+  if (stderr) {
+    return summarizeToolTextOutput(stderr);
+  }
+
   return null;
 }
 

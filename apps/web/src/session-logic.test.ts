@@ -1362,6 +1362,39 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("surfaces a stderr-only result when the command has no stdout", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "grok-command-stderr",
+        createdAt: "2026-08-13T10:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "bun test",
+          data: {
+            toolCallId: "call-3c5a98f4",
+            kind: "execute",
+            command: "bun test",
+            rawOutput: {
+              exitCode: 1,
+              stdout: "",
+              stderr: "error: Cannot find module './missing'\n    at /repo/test.ts:3:1\n",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "bun test",
+      detail: "error: Cannot find module './missing'",
+      itemType: "command_execution",
+    });
+  });
+
   it("keeps the command as the row content when an ACP command has no output summary", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
