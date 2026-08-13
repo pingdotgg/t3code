@@ -1712,9 +1712,10 @@ export const makeCodexSessionRuntime = (
       Effect.gen(function* () {
         const requestKind = mcpApprovalRequestKind(payload);
         if (!requestKind) {
-          return yield* CodexErrors.CodexAppServerRequestError.methodNotFound(
-            "mcpServer/elicitation/request",
-          );
+          // We advertise form elicitation support at initialize. Unrecognized
+          // forms (and URL elicitations) must be answered, not methodNotFound,
+          // or Codex can stall the turn.
+          return { action: "decline" } as const;
         }
 
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4("mcp-approval-request"));

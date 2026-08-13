@@ -573,6 +573,13 @@ func backgroundRightClick(_ target: WindowTarget, at point: CGPoint) -> Bool {
     clickGroupCounter += 1
     let group = clickGroupCounter
     let src = CGEventSource(stateID: .combinedSessionState)
+    // Prime hit-testing the same way left-click and scroll do; a bare
+    // rightMouseDown against a background window often lands outside the control.
+    if let moved = CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) {
+        SkyLight.postMouse(moved, pid: target.pid, wid: target.wid, windowOrigin: target.origin,
+                           screen: point, clickState: 0, button: 0, subtype: 3, groupID: group)
+    }
+    usleep(12_000)
     var delivered = false
     if let down = CGEvent(mouseEventSource: src, mouseType: .rightMouseDown, mouseCursorPosition: point, mouseButton: .right) {
         SkyLight.postMouse(down, pid: target.pid, wid: target.wid, windowOrigin: target.origin,
