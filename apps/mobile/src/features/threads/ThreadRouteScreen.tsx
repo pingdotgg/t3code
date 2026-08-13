@@ -22,6 +22,7 @@ import { vcsEnvironment } from "../../state/vcs";
 
 import { EmptyState } from "../../components/EmptyState";
 import {
+  AndroidHeaderIconButton,
   AndroidScreenHeader,
   type AndroidHeaderAction,
 } from "../../components/AndroidScreenHeader";
@@ -858,6 +859,21 @@ function ThreadRouteContent(
           subtitle={headerSubtitle}
           onBack={layout.usesSplitView ? undefined : () => navigation.goBack()}
           actions={androidHeaderActions}
+          trailing={
+            layout.usesSplitView ? (
+              <AndroidHeaderIconButton
+                accessibilityLabel={
+                  panes.primarySidebarVisible ? "Maximize content" : "Show thread sidebar"
+                }
+                icon={
+                  panes.primarySidebarVisible
+                    ? "arrow.up.left.and.arrow.down.right"
+                    : "sidebar.left"
+                }
+                onPress={togglePrimarySidebar}
+              />
+            ) : null
+          }
         />
       ) : null}
 

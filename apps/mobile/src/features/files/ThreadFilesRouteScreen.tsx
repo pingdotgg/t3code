@@ -11,7 +11,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
@@ -408,6 +408,21 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
                 onPress: entriesQuery.refresh,
               },
             ]}
+            trailing={
+              layout.usesSplitView ? (
+                <AndroidHeaderIconButton
+                  accessibilityLabel={
+                    panes.primarySidebarVisible ? "Maximize files" : "Show threads"
+                  }
+                  icon={
+                    panes.primarySidebarVisible
+                      ? "arrow.up.left.and.arrow.down.right"
+                      : "sidebar.left"
+                  }
+                  onPress={togglePrimarySidebar}
+                />
+              ) : null
+            }
           />
           <View className="flex-row items-center gap-2 border-b border-border px-3 py-2">
             <SymbolView name="magnifyingglass" size={17} tintColor={iconColor} type="monochrome" />
