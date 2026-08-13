@@ -640,6 +640,7 @@ struct DailyUXSidebarTests {
             updatedAt: now.addingTimeInterval(updated),
             state: state,
             isSettled: isSettled,
+            lastActivityAt: now.addingTimeInterval(updated),
             settlementInput: FeatureSettlementProjectionInput(
                 hasPendingApprovals: !settlementEligible,
                 hasPendingUserInput: false,
@@ -648,8 +649,7 @@ struct DailyUXSidebarTests {
                 latestTurnRequestedAt: nil,
                 latestTurnStartedAt: nil,
                 latestTurnCompletedAt: nil
-            ),
-            lastActivityAt: now.addingTimeInterval(updated)
+            )
         )
     }
 }
