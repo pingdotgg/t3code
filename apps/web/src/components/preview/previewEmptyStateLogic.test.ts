@@ -52,7 +52,7 @@ describe("findDiscoveredServerTargetPort", () => {
       host: "localhost",
       port: 4058,
       url: "http://100.65.180.100:4058/",
-      requestedUrl: "https://artelo.localhost/",
+      requestedUrl: "https://artelo.localhost",
       processName: "node",
       pid: 123,
       terminal: null,

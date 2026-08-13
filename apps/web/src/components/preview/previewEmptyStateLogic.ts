@@ -1,5 +1,7 @@
 import type { PreviewSessionSnapshot, ProjectScript } from "@t3tools/contracts";
 
+import { normalizeHistoryUrl } from "~/browserHistoryStore";
+
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
 export function shouldShowPreviewEmptyState(snapshot: PreviewSessionSnapshot | null): boolean {
@@ -16,5 +18,7 @@ export function findDiscoveredServerTargetPort(
   url: string,
   servers: ReadonlyArray<PreviewableServer>,
 ): number | undefined {
-  return servers.find((server) => server.requestedUrl === url)?.port;
+  const normalizedUrl = normalizeHistoryUrl(url);
+  if (normalizedUrl === null) return undefined;
+  return servers.find((server) => normalizeHistoryUrl(server.requestedUrl) === normalizedUrl)?.port;
 }
