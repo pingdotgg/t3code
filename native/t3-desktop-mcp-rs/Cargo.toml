@@ -44,5 +44,7 @@ x11rb = { version = "0.14.0", features = ["xtest"] }
 [profile.release]
 codegen-units = 1
 lto = "thin"
-panic = "abort"
+# Deliberately NOT panic = "abort": xcap panics on compositors it does not
+# recognise (WSLg among them), and a screenshot must not take the whole server
+# down with it. `capture::guarded` turns those panics into tool errors.
 strip = true

@@ -19,7 +19,9 @@ struct Group {
 }
 
 fn grouped_windows() -> Result<Vec<Group>> {
-    let windows = Window::all()
+    // Same panic hazard as capture: xcap aborts on compositors it cannot read.
+    let windows = std::panic::catch_unwind(Window::all)
+        .map_err(|_| DesktopError::new("window enumeration is not supported by this display server"))?
         .map_err(|error| DesktopError::new(format!("failed to enumerate windows: {error}")))?;
 
     let mut groups: HashMap<u32, Group> = HashMap::new();
@@ -86,7 +88,15 @@ pub fn resolve_pid(query: &str) -> Result<u32> {
         return Ok(pid);
     }
 
-    let apps = list_apps()?;
+    // Minimal window managers (WSLg among them) do not publish the EWMH
+    // properties window enumeration needs. Keep the guidance rather than
+    // surfacing an X11 property name the model can do nothing with.
+    let apps = list_apps().map_err(|error| {
+        DesktopError::new(format!(
+            "cannot enumerate windows on this session ({}) — call list_apps, or pass a numeric pid",
+            error.0
+        ))
+    })?;
     let lowered = query.to_lowercase();
 
     if let Some(app) = apps
