@@ -55,7 +55,7 @@ export function CodeAppearanceSection() {
       <SettingsSwitchRow
         disabled={!isReady}
         icon="text.word.spacing"
-        label="Word break"
+        label="Line wrap"
         onValueChange={setCodeWordBreak}
         value={appearance.codeWordBreak}
       />

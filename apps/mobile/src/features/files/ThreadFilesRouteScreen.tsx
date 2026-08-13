@@ -35,6 +35,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { ReviewHighlighterProvider } from "../review/ReviewHighlighterProvider";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
@@ -463,6 +464,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
 export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const navigation = useNavigation();
+  const { appearance, isReady: appearanceIsReady, setCodeWordBreak } = useAppearancePreferences();
   const { fileInspector, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const iconColor = useThemeColor("--color-icon");
   const params = props.route.params;
@@ -626,6 +628,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
                   Source
                 </NativeHeaderToolbar.MenuAction>
               </NativeHeaderToolbar.Menu>
+            ) : null}
+            {resolvedActiveMode === "source" ? (
+              <NativeHeaderToolbar.MenuAction
+                disabled={!appearanceIsReady}
+                icon="text.word.spacing"
+                isOn={appearance.codeWordBreak}
+                onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
+              >
+                Line wrap
+              </NativeHeaderToolbar.MenuAction>
             ) : null}
             <NativeHeaderToolbar.MenuAction
               icon="doc.on.doc"
