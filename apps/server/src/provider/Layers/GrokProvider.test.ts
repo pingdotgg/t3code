@@ -91,7 +91,16 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           const grokPath = path.join(dir, "grok");
           yield* fs.writeFileString(
             grokPath,
-            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+            [
+              "#!/bin/sh",
+              'if [ "$1" = "inspect" ]; then',
+              '  printf \'%s\\n\' \'{"skills":[{"name":"handoff-session","description":"Write a handoff.","userInvocable":true,"source":{"type":"user","path":"/tmp/handoff-session/SKILL.md"}}]}\'',
+              "  exit 0",
+              "fi",
+              'printf "grok-cli 0.0.99\\n"',
+              "exit 0",
+              "",
+            ].join("\n"),
           );
           yield* fs.chmod(grokPath, 0o755);
 
@@ -105,6 +114,15 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
       expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.skills).toEqual([
+        {
+          name: "handoff-session",
+          description: "Write a handoff.",
+          path: "/tmp/handoff-session/SKILL.md",
+          scope: "user",
+          enabled: true,
+        },
+      ]);
     }),
   );
 });
