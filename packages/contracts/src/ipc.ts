@@ -91,6 +91,7 @@ import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import type { DesktopPortForwardBridge } from "./portForward.ts";
 import type { ClientSettings } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import type {
@@ -1145,6 +1146,8 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  /** Desktop-owned loopback listeners. Optional for desktop/web version skew. */
+  portForward?: DesktopPortForwardBridge;
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.

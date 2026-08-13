@@ -36,6 +36,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as TcpForwardTicketStore from "../portForward/TcpForwardTicketStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -203,6 +204,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const tcpForwardTickets = yield* TcpForwardTicketStore.TcpForwardTicketStore;
 
     return handlers
       .handle(
@@ -328,6 +330,24 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("websocket_ticket_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "tcpPortForwardTicket",
+        Effect.fn("environment.auth.tcpPortForwardTicket")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* requireEnvironmentScope(AuthTerminalOperateScope);
+            yield* appendCredentialResponseHeaders;
+            return yield* tcpForwardTickets.issue({
+              sessionId: session.sessionId,
+              remoteHost: args.payload.remoteHost,
+              remotePort: args.payload.remotePort,
+            });
+          },
+          Effect.catchTag("TcpForwardTicketIssueError", (error) =>
+            failEnvironmentInternal("tcp_forward_ticket_issuance_failed", error),
           ),
         ),
       )

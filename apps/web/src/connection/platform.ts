@@ -597,8 +597,14 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   EnvironmentOwnedDataCleanup,
   EnvironmentOwnedDataCleanup.of({
     clear: (environmentId) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         clearComposerDraftsEnvironment(environmentId);
+        const portForward = window.desktopBridge?.portForward;
+        if (portForward !== undefined) {
+          yield* Effect.promise(() => portForward.stopEnvironment(environmentId)).pipe(
+            Effect.catchCause(() => Effect.void),
+          );
+        }
       }),
   }),
 );

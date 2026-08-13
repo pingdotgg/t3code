@@ -45,6 +45,7 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { DesktopPortForwardControl } from "../desktop/DesktopPortForwardControl";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -408,6 +409,10 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
+        <DesktopPortForwardControl
+          key={activeThreadEnvironmentId}
+          preferredEnvironmentId={activeThreadEnvironmentId}
+        />
       </div>
     </div>
   );

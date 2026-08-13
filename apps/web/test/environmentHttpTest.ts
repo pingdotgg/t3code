@@ -101,6 +101,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
             )
             .handle("token", () => unexpectedEndpoint("auth.token"))
             .handle("webSocketTicket", () => unexpectedEndpoint("auth.webSocketTicket"))
+            .handle("tcpPortForwardTicket", () => unexpectedEndpoint("auth.tcpPortForwardTicket"))
             .handle(
               "pairingCredential",
               Effect.fn("test.environment.auth.pairingCredential")(function* ({ payload }) {
