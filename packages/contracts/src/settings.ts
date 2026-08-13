@@ -538,6 +538,17 @@ export const BackgroundActivitySettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
+/** Local desktop / browser computer-use MCP (`t3-desktop`). */
+export const DesktopControlSettings = Schema.Struct({
+  /** When false, providers do not inject the t3-desktop MCP server. Default on. */
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Show the agent pointer overlay while controlling the desktop. */
+  agentCursorEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Allow browser_* tools via the Chrome extension bridge. */
+  browserControlEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type DesktopControlSettings = typeof DesktopControlSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -612,6 +623,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Local computer-use MCP (`t3-desktop`): agents can drive the desktop and an
+  // agent-owned Chrome tab group. Off disables injection even when the binary
+  // is present. Sub-flags are passed through to the MCP process as env.
+  desktopControl: DesktopControlSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -736,6 +751,13 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  desktopControl: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      agentCursorEnabled: Schema.optionalKey(Schema.Boolean),
+      browserControlEnabled: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   providers: Schema.optionalKey(

@@ -6,7 +6,43 @@
 
 use serde_json::{Value, json};
 
+/// Host settings pass `T3_DESKTOP_BROWSER=0` when browser control is off.
+pub fn env_flag_disabled(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(raw) => {
+            let trimmed = raw.trim().to_ascii_lowercase();
+            matches!(trimmed.as_str(), "0" | "false" | "off" | "no")
+        }
+        Err(_) => false,
+    }
+}
+
+pub fn browser_control_enabled() -> bool {
+    !env_flag_disabled("T3_DESKTOP_BROWSER")
+}
+
 pub fn tool_defs() -> Value {
+    let defs = all_tool_defs();
+    if browser_control_enabled() {
+        return defs;
+    }
+    let Some(array) = defs.as_array() else {
+        return defs;
+    };
+    Value::Array(
+        array
+            .iter()
+            .filter(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .is_none_or(|name| !name.starts_with("browser_"))
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
+fn all_tool_defs() -> Value {
     json!([
         {
             "name": "list_apps",
@@ -255,13 +291,13 @@ pub fn tool_defs() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::tool_defs;
+    use super::{all_tool_defs, tool_defs};
 
     /// The macOS server advertises exactly these 23 tools. Drifting apart would
     /// silently give a model different capabilities per platform.
     #[test]
     fn advertises_the_macos_tool_surface() {
-        let defs = tool_defs();
+        let defs = all_tool_defs();
         let names: Vec<&str> = defs
             .as_array()
             .expect("tool defs are an array")

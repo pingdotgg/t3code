@@ -1856,6 +1856,54 @@ const stageDesktopMcp = Effect.fn("stageDesktopMcp")(function* (input: {
   yield* fs.makeDirectory(destinationDirectory, { recursive: true });
   yield* fs.copyFile(binaryPath, destinationPath);
   yield* fs.chmod(destinationPath, 0o755);
+
+  // Agent cursor overlay: a minimal LSUIElement .app so AppKit will actually
+  // put the pointer window up. The MCP server itself stays a bare executable
+  // so it keeps inheriting the host app's TCC grants; only the overlay needs a
+  // bundle identity. Same binary, different launch path (see AgentCursor.swift).
+  const overlayAppName = "T3AgentCursor.app";
+  const overlayExecutableName = "T3AgentCursor";
+  const overlayAppDir = path.join(destinationDirectory, overlayAppName);
+  const overlayMacOSDir = path.join(overlayAppDir, "Contents", "MacOS");
+  const overlayPlistPath = path.join(overlayAppDir, "Contents", "Info.plist");
+  const overlayExecutablePath = path.join(overlayMacOSDir, overlayExecutableName);
+  yield* fs.makeDirectory(overlayMacOSDir, { recursive: true });
+  yield* fs.copyFile(binaryPath, overlayExecutablePath);
+  yield* fs.chmod(overlayExecutablePath, 0o755);
+  yield* fs.writeFileString(
+    overlayPlistPath,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>${overlayExecutableName}</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.t3tools.t3code.agent-cursor</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>T3 Agent Cursor</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>
+`,
+  );
 });
 
 function generateMacIconSet(

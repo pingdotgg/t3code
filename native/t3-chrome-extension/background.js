@@ -78,6 +78,9 @@ async function ensureGroup(tabId) {
   } else {
     await chrome.tabs.group({ groupId, tabIds: [tabId] });
   }
+  // Agent tabs get the pointer favicon (not the T3 toolbar logo) as soon as
+  // they join the group, so the strip reads as "agent-owned" before the first click.
+  await markTab(tabId);
   return groupId;
 }
 
@@ -86,11 +89,12 @@ async function openTab(url) {
   const tab = await chrome.tabs.create({ url: url || "about:blank", active: false });
   ownedTabs.add(tab.id);
   await ensureGroup(tab.id);
-  // Re-badge once the page has its own icon in place, otherwise the page load
-  // overwrites ours immediately.
+  // Pages replace their favicon on load (Spotify, YouTube, …). Re-apply the
+  // pointer whenever the document finishes, and also when the tab's own icon
+  // changes, so the strip stays on the agent cursor rather than the site logo.
   chrome.tabs.onUpdated.addListener(function badge(id, info) {
     if (id !== tab.id) return;
-    if (info.status === "complete") markTab(tab.id);
+    if (info.status === "complete" || info.favIconUrl) markTab(tab.id);
     if (!ownedTabs.has(tab.id)) chrome.tabs.onUpdated.removeListener(badge);
   });
   return { tabId: tab.id, url: tab.url, title: tab.title };
@@ -195,6 +199,8 @@ async function snapshot(tabId) {
 }
 
 async function clickAt(tabId, x, y) {
+  // Show the same agent pointer the desktop overlay uses, painted into the page.
+  const cursor = await paintCursor(tabId, x, y);
   // A hover first, then press/release carrying the button bitmask. Single-page
   // apps route clicks through pointer/hover handlers, and without the leading
   // mouseMoved (or with buttons unset) the press lands on nothing.
@@ -225,56 +231,87 @@ async function clickAt(tabId, x, y) {
     pointerType: "mouse",
   });
   await markTab(tabId);
-  return { clicked: { x, y } };
+  return { clicked: { x, y }, cursor };
 }
 
 /// The agent cursor, drawn into the page itself so a controlled tab shows the
 /// same pointer as the desktop overlay. Fixed-position, pointer-events:none and
 /// max z-index, so it is purely decorative and cannot intercept anything.
+///
+/// Uses the PNG exported from BubbleView in AgentCursor.swift (not a hand-traced
+/// SVG) so Chrome and desktop stay pixel-matched: same glow, fill, rim, shape.
+const CURSOR_IMG_URL = chrome.runtime.getURL("icons/cursor-112.png");
+const CURSOR_HOTSPOT = 56; // OverlayController.hotspot — tip at centre of 112×112
+
 const PAINT_CURSOR_JS = `
-  (function paint(x, y) {
+  (function paint(x, y, src) {
     const ID = '__t3AgentCursor';
     let el = document.getElementById(ID);
     if (!el) {
       el = document.createElement('div');
       el.id = ID;
-      el.style.cssText = 'position:fixed;left:0;top:0;width:96px;height:96px;' +
+      el.style.cssText = 'position:fixed;left:0;top:0;width:112px;height:112px;' +
         'pointer-events:none;z-index:2147483647;opacity:0;' +
-        'transition:transform .3s cubic-bezier(.22,1,.36,1),opacity .25s ease;';
-      el.innerHTML =
-        '<svg width="96" height="96" viewBox="0 0 96 96">' +
-          '<defs>' +
-            '<radialGradient id="t3g">' +
-              '<stop offset="0" stop-color="#bcbaf0" stop-opacity=".55"/>' +
-              '<stop offset=".55" stop-color="#bcbaf0" stop-opacity=".2"/>' +
-              '<stop offset="1" stop-color="#bcbaf0" stop-opacity="0"/>' +
-            '</radialGradient>' +
-            '<linearGradient id="t3f" x1="0" y1="1" x2="1" y2="0">' +
-              '<stop offset="0" stop-color="#66668d"/>' +
-              '<stop offset="1" stop-color="#9a9ac0"/>' +
-            '</linearGradient>' +
-          '</defs>' +
-          '<circle cx="48" cy="48" r="33" fill="url(#t3g)"/>' +
-          '<path d="M48 48 L70.5 58.5 L61.5 64 L54.5 74 Z" fill="url(#t3f)" ' +
-            'stroke="#f7f7fa" stroke-width="3.1" stroke-linejoin="round" stroke-linecap="round"/>' +
-        '</svg>';
-      (document.body || document.documentElement).appendChild(el);
+        'transition:transform .35s cubic-bezier(.22,1.4,.36,1),opacity .28s ease;';
+      const img = document.createElement('img');
+      img.src = src;
+      img.width = 112;
+      img.height = 112;
+      img.alt = '';
+      img.draggable = false;
+      img.style.display = 'block';
+      el.appendChild(img);
+      (document.documentElement || document.body).appendChild(el);
+    } else {
+      const img = el.querySelector('img');
+      if (img && img.src !== src) img.src = src;
     }
-    el.style.transform = 'translate(' + (x - 48) + 'px,' + (y - 48) + 'px)';
+    el.style.transform = 'translate(' + (x - ${CURSOR_HOTSPOT}) + 'px,' + (y - ${CURSOR_HOTSPOT}) + 'px)';
     requestAnimationFrame(function () { el.style.opacity = '1'; });
     clearTimeout(el.__t3hide);
-    el.__t3hide = setTimeout(function () { el.style.opacity = '0'; }, 1700);
+    el.__t3hide = setTimeout(function () { el.style.opacity = '0'; }, 1900);
   })
 `;
+
+async function paintCursor(tabId, x, y) {
+  try {
+    const res = await send(tabId, "Runtime.evaluate", {
+      expression:
+        `(${PAINT_CURSOR_JS})(${Number(x)}, ${Number(y)}, ${JSON.stringify(CURSOR_IMG_URL)});` +
+        `(() => {` +
+        `  const el = document.getElementById('__t3AgentCursor');` +
+        `  if (!el) return { ok: false, reason: 'paint produced no element' };` +
+        `  const img = el.querySelector('img');` +
+        `  const s = getComputedStyle(el);` +
+        `  return {` +
+        `    ok: true,` +
+        `    opacity: s.opacity,` +
+        `    hasGlow: !!(img && /cursor-112\\.png/.test(img.src)),` +
+        `    darkFill: !!(img && /cursor-112\\.png/.test(img.src)),` +
+        `    transform: el.style.transform || ''` +
+        `  };` +
+        `})()`,
+      returnByValue: true,
+    });
+    if (res?.exceptionDetails) {
+      return { ok: false, reason: res.exceptionDetails.text || "paint evaluate failed" };
+    }
+    return res?.result?.value || { ok: false, reason: "empty paint result" };
+  } catch (e) {
+    // Decorative only — a paint failure must never fail the click.
+    return { ok: false, reason: e && e.message ? e.message : String(e) };
+  }
+}
 
 const CLICK_JS = (index) => `(() => {
   const el = document.querySelector('[data-t3-idx="${index}"]');
   if (!el) return { ok: false, reason: 'element ${index} is no longer on the page' };
   el.scrollIntoView({ block: 'center', inline: 'nearest' });
   const r = el.getBoundingClientRect();
-  try { (${PAINT_CURSOR_JS})(r.left + r.width / 2, r.top + r.height / 2); } catch (e) {}
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
   const opts = { bubbles: true, cancelable: true, composed: true, view: window,
-                 clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };
+                 clientX: cx, clientY: cy, button: 0 };
   el.dispatchEvent(new PointerEvent('pointerover', opts));
   el.dispatchEvent(new MouseEvent('mouseover', opts));
   el.dispatchEvent(new PointerEvent('pointerdown', opts));
@@ -283,7 +320,7 @@ const CLICK_JS = (index) => `(() => {
   el.dispatchEvent(new PointerEvent('pointerup', opts));
   el.dispatchEvent(new MouseEvent('mouseup', opts));
   el.click();
-  return { ok: true, tag: el.tagName.toLowerCase(), href: el.href || null };
+  return { ok: true, tag: el.tagName.toLowerCase(), href: el.href || null, x: cx, y: cy };
 })()`;
 
 /// Click a snapshotted element by invoking it in the page.
@@ -301,8 +338,9 @@ async function clickElement(tabId, index) {
   if (res?.exceptionDetails) throw new Error(res.exceptionDetails.text || "click failed");
   const value = res.result.value || {};
   if (!value.ok) throw new Error(value.reason || "click failed");
+  const cursor = await paintCursor(tabId, value.x, value.y);
   await markTab(tabId);
-  return value;
+  return { ...value, cursor };
 }
 
 async function typeText(tabId, text) {
@@ -338,26 +376,22 @@ async function navigate(tabId, url) {
 
 // ── "the agent is using this tab" indicator ─────────────────────────────────
 //
+// Toolbar icon = T3 logo (manifest icons/). Tab favicon = agent pointer
+// (icons/pointer-*.png), matching the desktop overlay — so a tab in the
+// "T3 Code" group is visually distinct from the extension itself.
+//
 // An extension cannot set a tab's favicon directly, but it can replace the
 // page's icon link, which is what Chrome renders in the tab strip. Pages
 // rewrite their own favicon (YouTube does it for notifications), so this is
-// re-applied after each interaction rather than set once.
-
-const CURSOR_FAVICON =
-  "data:image/svg+xml;base64," +
-  btoa(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
-      '<rect x="1" y="1" width="30" height="30" rx="9" fill="#c8c7f5"/>' +
-      '<path d="M11 7 L23.5 16.2 L17.2 17.4 L20.6 24.4 L17.6 25.8 L14.2 18.8 ' +
-      'L9.6 22.6 Z" fill="#ffffff" stroke="#ffffff" stroke-width="2" ' +
-      'stroke-linejoin="round" stroke-linecap="round"/>' +
-      "</svg>",
-  );
+// re-applied on group join, load, favicon changes, and after each interaction.
 
 function applyFavicon(url) {
-  for (const link of document.querySelectorAll("link[rel~='icon']")) link.remove();
+  for (const link of document.querySelectorAll("link[rel~='icon'], link[rel='shortcut icon']")) {
+    link.remove();
+  }
   const link = document.createElement("link");
   link.rel = "icon";
+  link.type = "image/png";
   link.href = url;
   document.head.appendChild(link);
 }
@@ -367,7 +401,7 @@ async function markTab(tabId) {
     await chrome.scripting.executeScript({
       target: { tabId },
       func: applyFavicon,
-      args: [CURSOR_FAVICON],
+      args: [chrome.runtime.getURL("icons/pointer-64.png")],
     });
   } catch {
     // Chrome's own pages (chrome://, the Web Store) refuse injection; the tab
