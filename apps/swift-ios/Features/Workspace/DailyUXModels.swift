@@ -653,13 +653,17 @@ extension FeatureThread {
         state == .waitingForApproval || state == .waitingForInput || state == .failed
     }
 
-    func isEffectivelySettled(at now: Date) -> Bool {
+    var canSettle: Bool {
         switch state {
-        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
-            return false
         case .idle, .failed, .completed:
-            break
+            true
+        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
+            false
         }
+    }
+
+    func isEffectivelySettled(at now: Date) -> Bool {
+        guard canSettle else { return false }
         if isSettled {
             return true
         }

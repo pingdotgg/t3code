@@ -22,7 +22,11 @@ enum HomeThreadSwipeActions {
 
         var kinds: [HomeThreadSwipeActionKind] = []
         if thread.canToggleSettlement {
-            kinds.append(thread.isEffectivelySettled(at: now) ? .reopen : .settle)
+            if thread.isEffectivelySettled(at: now) {
+                kinds.append(.reopen)
+            } else if thread.canSettle {
+                kinds.append(.settle)
+            }
         }
         if thread.pinnedAt != nil, thread.canTogglePin {
             kinds.append(.unpin)
@@ -457,16 +461,18 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 }
                 if thread.canToggleSettlement {
                     let isSettled = thread.isEffectivelySettled(at: .now)
-                    actions.append(
-                        UIAction(
-                            title: isSettled ? "Reopen" : "Settle",
-                            image: UIImage(
-                                systemName: isSettled ? "arrow.counterclockwise" : "checkmark"
-                            )
-                        ) { [weak self] _ in
-                            self?.parent.onSettle(thread, !isSettled)
-                        }
-                    )
+                    if isSettled || thread.canSettle {
+                        actions.append(
+                            UIAction(
+                                title: isSettled ? "Reopen" : "Settle",
+                                image: UIImage(
+                                    systemName: isSettled ? "arrow.counterclockwise" : "checkmark"
+                                )
+                            ) { [weak self] _ in
+                                self?.parent.onSettle(thread, !isSettled)
+                            }
+                        )
+                    }
                 }
 
                 if thread.canToggleSnooze {

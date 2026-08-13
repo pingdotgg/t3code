@@ -138,6 +138,31 @@ struct DailyUXSidebarTests {
         #expect(actions.last == .delete)
     }
 
+    @Test(arguments: [
+        FeatureThreadState.queued,
+        .working,
+        .monitoring,
+        .waitingForApproval,
+        .waitingForInput,
+    ])
+    func blockedThreadsDoNotOfferSettleAsAFullSwipe(state: FeatureThreadState) {
+        let blocked = thread(
+            id: state.rawValue,
+            created: -100,
+            updated: -50,
+            state: state
+        )
+
+        #expect(blocked.canSettle == false)
+        #expect(
+            HomeThreadSwipeActions.kinds(
+                for: blocked,
+                isArchived: false,
+                now: now
+            ) == [.archive, .delete]
+        )
+    }
+
     @Test
     func fullSwipeAlwaysChoosesAReversibleAction() {
         let settled = thread(
