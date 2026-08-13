@@ -16,7 +16,7 @@ import {
 } from "./AcpRuntimeModel.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
-const DEVIN_AUTH_METHOD_ID = "default";
+export const DEVIN_AUTH_METHOD_ID = "devin-browser";
 const DEVIN_DRIVER_KIND = ProviderDriverKind.make("devin");
 
 const DEVIN_REASONING_CONFIG_OPTION_IDS = new Set(["effort", "thought_level", "reasoning"]);

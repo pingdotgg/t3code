@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as EffectAcpErrors from "effect-acp/errors";
 import { DevinSettings, ProviderInstanceId } from "@t3tools/contracts";
 
 import {
   applyDevinAcpModelSelection,
   buildDevinAcpSpawnInput,
+  DEVIN_AUTH_METHOD_ID,
   resolveDevinAcpBaseModelId,
   resolveDevinAcpModelSelection,
 } from "./DevinAcpSupport.ts";
@@ -525,4 +525,10 @@ describe("Devin reasoning variant synonyms", () => {
       expect(setConfigOption).not.toHaveBeenCalled();
     }),
   );
+});
+
+describe("Devin ACP auth method", () => {
+  it("uses the devin-browser auth method advertised by the ACP agent", () => {
+    expect(DEVIN_AUTH_METHOD_ID).toBe("devin-browser");
+  });
 });
