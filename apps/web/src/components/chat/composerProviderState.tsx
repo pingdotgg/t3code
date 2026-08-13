@@ -130,6 +130,7 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      planModeEnabled={planModeEnabled}
     />
   );
 }
