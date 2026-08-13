@@ -348,6 +348,21 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
+    func pullRequestLookupCacheExpiresResultsAndThrottlesFailures() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let cachedMissingPullRequest = HomeThreadPullRequestResolution.cached(nil, at: now)
+        let failedLookup = HomeThreadPullRequestResolution.failed(at: now)
+
+        #expect(
+            cachedMissingPullRequest.needsLoad(at: now.addingTimeInterval(5 * 60 - 1))
+                == false
+        )
+        #expect(cachedMissingPullRequest.needsLoad(at: now.addingTimeInterval(5 * 60)))
+        #expect(failedLookup.needsLoad(at: now.addingTimeInterval(9)) == false)
+        #expect(failedLookup.needsLoad(at: now.addingTimeInterval(10)))
+    }
+
+    @Test
     func blankPullRequestStateHasATruthfulAccessibilityFallback() throws {
         let presentation = try #require(HomeThreadPullRequestPresentation(
             thread: pullRequestThread(branch: "feature/pr-links"),

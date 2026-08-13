@@ -362,7 +362,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
         private func loadPullRequestIfNeeded(for thread: FeatureThread) {
             guard let key = HomeThreadPullRequestLookupKey(thread: thread),
-                  pullRequestResolutions[key] == nil,
+                  pullRequestResolutions[key]?.needsLoad(at: .now) ?? true,
                   pullRequestTasks[key] == nil else { return }
             let token = UUID()
             let client = parent.projectFaviconClient
@@ -374,12 +374,14 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 } catch {
                     guard let self, pullRequestTasks[key]?.token == token else { return }
                     pullRequestTasks[key] = nil
+                    pullRequestResolutions[key] = .failed(at: .now)
+                    reconfigureThreadRows(matching: key)
                     return
                 }
                 guard !Task.isCancelled, let self,
                       pullRequestTasks[key]?.token == token else { return }
                 pullRequestTasks[key] = nil
-                pullRequestResolutions[key] = .resolved(presentation)
+                pullRequestResolutions[key] = .cached(presentation, at: .now)
                 reconfigureThreadRows(matching: key)
             }
             pullRequestTasks[key] = (token, task)
@@ -796,12 +798,30 @@ struct HomeThreadPullRequestLookupKey: Hashable {
     }
 }
 
-private enum HomeThreadPullRequestResolution {
-    case resolved(HomeThreadPullRequestPresentation?)
+enum HomeThreadPullRequestResolution {
+    private static let cacheLifetime: TimeInterval = 5 * 60
+    private static let failureRetryDelay: TimeInterval = 10
+
+    private case resolved(HomeThreadPullRequestPresentation?, expiresAt: Date)
+    private case retryAfter(Date)
+
+    static func cached(_ presentation: HomeThreadPullRequestPresentation?, at date: Date) -> Self {
+        .resolved(presentation, expiresAt: date.addingTimeInterval(cacheLifetime))
+    }
+
+    static func failed(at date: Date) -> Self {
+        .retryAfter(date.addingTimeInterval(failureRetryDelay))
+    }
 
     var presentation: HomeThreadPullRequestPresentation? {
+        guard case let .resolved(presentation, _) = self else { return nil }
+        return presentation
+    }
+
+    func needsLoad(at date: Date) -> Bool {
         switch self {
-        case let .resolved(presentation): presentation
+        case let .resolved(_, expiresAt): expiresAt <= date
+        case let .retryAfter(retryAfter): retryAfter <= date
         }
     }
 }
