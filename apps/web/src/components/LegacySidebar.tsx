@@ -213,6 +213,7 @@ const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
 const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
+  activity: "Latest activity",
 };
 const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   duration: 180,

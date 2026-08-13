@@ -779,6 +779,30 @@ describe("sortThreadsForSidebar", () => {
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
   });
+
+  it("can order by the latest user message or completed agent turn", () => {
+    const sorted = sortThreadsForSidebar(
+      [
+        {
+          id: "user-message-later",
+          createdAt: "2026-03-09T08:00:00.000Z",
+          updatedAt: "2026-03-09T09:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T12:00:00.000Z",
+          latestTurn: { completedAt: "2026-03-09T10:00:00.000Z" },
+        },
+        {
+          id: "agent-turn-later",
+          createdAt: "2026-03-09T09:00:00.000Z",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+          latestUserMessageAt: "2026-03-09T11:00:00.000Z",
+          latestTurn: { completedAt: "2026-03-09T13:00:00.000Z" },
+        },
+      ],
+      "activity",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["agent-turn-later", "user-message-later"]);
+  });
 });
 
 describe("pinOrderKeyBetween", () => {

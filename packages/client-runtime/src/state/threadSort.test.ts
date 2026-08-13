@@ -21,6 +21,46 @@ function makeThread(overrides: Partial<TestThread> = {}): TestThread {
 }
 
 describe("sortThreads", () => {
+  it("sorts by whichever is newer: the latest user message or completed agent turn", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: "user-message-newer",
+          latestUserMessageAt: "2026-03-09T10:20:00.000Z",
+          latestTurn: { completedAt: "2026-03-09T10:10:00.000Z" },
+        }),
+        makeThread({
+          id: "agent-turn-newer",
+          latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+          latestTurn: { completedAt: "2026-03-09T10:30:00.000Z" },
+        }),
+      ],
+      "activity",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["agent-turn-newer", "user-message-newer"]);
+  });
+
+  it("ignores nonterminal updates in latest activity order", () => {
+    const sorted = sortThreads(
+      [
+        makeThread({
+          id: "tool-updated",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          updatedAt: "2026-03-09T10:30:00.000Z",
+        }),
+        makeThread({
+          id: "created-later",
+          createdAt: "2026-03-09T10:05:00.000Z",
+          updatedAt: "2026-03-09T10:05:00.000Z",
+        }),
+      ],
+      "activity",
+    );
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["created-later", "tool-updated"]);
+  });
+
   it("falls back to updatedAt and createdAt when latestUserMessageAt is invalid and there are no messages", () => {
     const sorted = sortThreads(
       [
