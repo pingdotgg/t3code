@@ -43,12 +43,20 @@ export function shellStreamItemFromEnrichmentRefresh(input: {
   readonly snapshot: OrchestrationV2ShellSnapshot;
   readonly changes: ReadonlyArray<{ readonly workspaceRoot: string }>;
 }): Extract<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }> {
+  const resolvedRepositoryIdentityRoots = [
+    ...new Set(input.changes.map((change) => change.workspaceRoot)),
+  ];
   return {
     kind: "snapshot",
-    snapshot: input.snapshot,
-    resolvedRepositoryIdentityRoots: [
-      ...new Set(input.changes.map((change) => change.workspaceRoot)),
-    ],
+    snapshot: {
+      ...input.snapshot,
+      projects: input.snapshot.projects.filter((project) =>
+        resolvedRepositoryIdentityRoots.includes(project.workspaceRoot),
+      ),
+      threads: [],
+      archivedThreads: [],
+    },
+    resolvedRepositoryIdentityRoots,
   };
 }
 
@@ -71,10 +79,27 @@ export function shellStreamItemsFromInitialSnapshot(input: {
     authoritative,
     {
       kind: "snapshot" as const,
-      snapshot: input.snapshot,
+      snapshot: {
+        ...input.snapshot,
+        projects: input.snapshot.projects.filter((project) =>
+          input.resolvedRepositoryIdentityRoots.includes(project.workspaceRoot),
+        ),
+        threads: [],
+        archivedThreads: [],
+      },
       resolvedRepositoryIdentityRoots: [...new Set(input.resolvedRepositoryIdentityRoots)],
     },
   ];
+}
+
+/** Resume after HTTP/cache hydration with metadata only, never another full shell body. */
+export function shellStreamItemsFromResumeSnapshot(input: {
+  readonly snapshot: OrchestrationV2ShellSnapshot;
+  readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
+}): ReadonlyArray<Extract<OrchestrationV2ShellStreamItem, { readonly kind: "snapshot" }>> {
+  return shellStreamItemsFromInitialSnapshot(input).filter(
+    (item) => item.resolvedRepositoryIdentityRoots !== undefined,
+  );
 }
 
 /** Keep only the newest stored event per thread within a coalescing window. */

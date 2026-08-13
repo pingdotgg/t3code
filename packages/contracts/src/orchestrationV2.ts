@@ -2384,8 +2384,48 @@ export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2Subscrib
 export const OrchestrationV2ThreadDetailSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projection: OrchestrationV2ThreadProjection,
+  /**
+   * Progressive history metadata. Omitted on full-projection caches and older
+   * clients. When present with hasMoreHistory/cursor, the projection is a
+   * bounded window and must not be treated as a complete timeline.
+   */
+  historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  hasMoreHistory: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Max local turn ordinal from the authoritative full projection at snapshot
+   * time. Optional for backward-compatible warm cache entries.
+   */
+  latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
 });
 export type OrchestrationV2ThreadDetailSnapshot = typeof OrchestrationV2ThreadDetailSnapshot.Type;
+
+/**
+ * Progressive cold open: full control-plane projection arrays with only a
+ * recent window of timeline rows. `historyCursor` is opaque; clients must not
+ * parse it. Resume live events with `afterSequence = snapshotSequence`.
+ */
+export const OrchestrationV2ThreadBoundedSnapshot = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  projection: OrchestrationV2ThreadProjection,
+  historyCursor: Schema.NullOr(TrimmedNonEmptyString),
+  hasMoreHistory: Schema.Boolean,
+  /**
+   * Max local turn ordinal over the authoritative full projection turnItems.
+   * Clients use this as a partial-timeline watermark when the bounded window
+   * has no local rows (inherited-only).
+   */
+  latestLocalTurnOrdinal: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadBoundedSnapshot.Type;
+
+/** Older timeline page for progressive history. Rows are chronological. */
+export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  items: Schema.Array(OrchestrationV2ProjectedTurnItem),
+  nextCursor: Schema.NullOr(TrimmedNonEmptyString),
+  hasMoreHistory: Schema.Boolean,
+});
+export type OrchestrationV2ThreadHistoryPage = typeof OrchestrationV2ThreadHistoryPage.Type;
 
 export const OrchestrationV2ThreadStreamItem = Schema.Union([
   Schema.Struct({
