@@ -1071,6 +1071,17 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
       activities = activities.slice(0, 1);
     }
 
+    // Home-screen widgets are independent of the lock-screen card. Publish
+    // the latest aggregate even when a Live Activity already exists or the
+    // user has turned Live Activities off; otherwise the widget stays on the
+    // "Connecting" snapshot from local arming.
+    const snapshot = yield* readAgentActivitySnapshot();
+    if (snapshot) {
+      publishHomeScreenWidget(
+        snapshot.aggregate ? widgetPropsFromAggregate(snapshot.aggregate) : idleWidgetProps(),
+      );
+    }
+
     // Activities are only ever created here, in the foreground, where the
     // update token can be observed and registered immediately — the relay
     // never remote-starts one (background push-to-start wakes proved too
@@ -1090,12 +1101,6 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
       // The toggle defaults to on: an unset preference (fresh install) must
       // prime, so only an explicit false blocks it.
       if (preferences?.liveActivitiesEnabled !== false) {
-        const snapshot = yield* readAgentActivitySnapshot();
-        if (snapshot) {
-          publishHomeScreenWidget(
-            snapshot.aggregate ? widgetPropsFromAggregate(snapshot.aggregate) : idleWidgetProps(),
-          );
-        }
         // The snapshot request yields; an arm-on-send may have created the
         // card in the meantime. Re-check so two cards are never started.
         const armedMeanwhile = yield* Effect.try({
