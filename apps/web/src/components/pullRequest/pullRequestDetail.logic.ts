@@ -72,6 +72,21 @@ export function orderPullRequestComments<T extends { readonly createdAt: string 
   return order === "newest" ? comments.toReversed() : comments;
 }
 
+/**
+ * A quote reply the way GitHub writes one: every line of the quoted comment behind "> ", then an
+ * empty line where the reply starts. Lands under whatever the reader already typed — quoting a
+ * second comment, or quoting after drafting, must never cost them the draft.
+ */
+export function quoteReplyDraft(draft: string, quoted: string): string {
+  const quote = quoted
+    .replace(/\r\n/gu, "\n")
+    .trim()
+    .split("\n")
+    .map((line) => (line.length === 0 ? ">" : `> ${line}`))
+    .join("\n");
+  return draft.trim().length === 0 ? `${quote}\n\n` : `${draft.trimEnd()}\n\n${quote}\n\n`;
+}
+
 export interface PullRequestTimelineEvent {
   readonly id: string;
   readonly at: string;

@@ -12,11 +12,12 @@ import {
   HammerIcon,
   MessageSquareIcon,
   PencilIcon,
+  ReplyIcon,
   SendIcon,
   TagIcon,
   UsersIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type Ref } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -40,6 +41,7 @@ import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavai
 import {
   orderPullRequestComments,
   pullRequestFindingKey,
+  quoteReplyDraft,
   type PullRequestFinding,
 } from "./pullRequestDetail.logic";
 import {
@@ -280,43 +282,22 @@ function Section({
 }
 
 function CommentComposer({
-  environmentId,
-  detail,
-  onCommented,
+  body,
+  posting,
+  textareaRef,
+  onBodyChange,
+  onSubmit,
 }: {
-  environmentId: EnvironmentId;
-  detail: PullRequestDetailView;
-  onCommented: () => void;
+  body: string;
+  posting: boolean;
+  textareaRef: Ref<HTMLTextAreaElement>;
+  onBodyChange: (body: string) => void;
+  onSubmit: () => void;
 }) {
-  const [body, setBody] = useState("");
-  const [posting, setPosting] = useState(false);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
-
-  const submit = async () => {
-    const trimmed = body.trim();
-    if (trimmed.length === 0 || posting) return;
-    setPosting(true);
-    const result = await postComment({
-      environmentId,
-      input: {
-        projectId: detail.projectId,
-        repository: detail.repository,
-        number: detail.number,
-        body: trimmed,
-      },
-    });
-    setPosting(false);
-    if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not post the comment" });
-      return;
-    }
-    setBody("");
-    onCommented();
-  };
-
   return (
     <div className="mt-3 space-y-2">
       <Textarea
+        ref={textareaRef}
         // Locked while posting: the body is cleared on success, which would otherwise throw
         // away a new draft typed while the request was still in flight.
         disabled={posting}
@@ -324,14 +305,14 @@ function CommentComposer({
         rows={3}
         placeholder="Leave a comment"
         aria-label="Comment on this pull request"
-        onChange={(event) => setBody(event.target.value)}
+        onChange={(event) => onBodyChange(event.target.value)}
       />
       <div className="flex justify-end">
         <Button
           size="xs"
           variant="outline"
           disabled={body.trim().length === 0 || posting}
-          onClick={() => void submit()}
+          onClick={onSubmit}
         >
           <SendIcon className="size-3.5" />
           {posting ? "Posting..." : "Comment"}
@@ -381,6 +362,53 @@ export function PullRequestSummaryTab({
   const hiddenCommentCount = detail.comments.length - recentComments.length;
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
   const visibleComments = orderPullRequestComments(recentComments, commentOrder);
+
+  const canComment = detail.capabilities.comment && detail.viewerPermissions.comment;
+  // The draft is keyed by the pull request the same way the paging window is, so opening another
+  // one starts from an empty box rather than a half-written reply to a different conversation.
+  const [draft, setDraft] = useState({ url: detail.url, body: "" });
+  const draftBody = draft.url === detail.url ? draft.body : "";
+  const setDraftBody = (body: string) => setDraft({ url: detail.url, body });
+  const [posting, setPosting] = useState(false);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+
+  const submitComment = async () => {
+    const trimmed = draftBody.trim();
+    if (trimmed.length === 0 || posting) return;
+    setPosting(true);
+    const result = await postComment({
+      environmentId,
+      input: {
+        projectId: detail.projectId,
+        repository: detail.repository,
+        number: detail.number,
+        body: trimmed,
+      },
+    });
+    setPosting(false);
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Could not post the comment" });
+      return;
+    }
+    // Cleared only if the draft still belongs to this pull request: by the time the request
+    // lands, the reader may already be drafting on another one.
+    setDraft((value) => (value.url === detail.url ? { url: value.url, body: "" } : value));
+    onRefresh();
+  };
+
+  const quoteReply = (commentBody: string) => {
+    setDraftBody(quoteReplyDraft(draftBody, commentBody));
+    // After React commits the merged draft: the cursor belongs at its end, below the quote,
+    // with the composer in view.
+    requestAnimationFrame(() => {
+      const element = composerRef.current;
+      if (element === null) return;
+      element.focus();
+      element.setSelectionRange(element.value.length, element.value.length);
+      element.scrollIntoView({ block: "nearest" });
+    });
+  };
 
   // A comment that already lives on a review thread is that thread: the thread carries the line
   // and side the bare comment has lost, and a resolved one is finished work nobody should be
@@ -752,6 +780,28 @@ export function PullRequestSummaryTab({
                               : fixFindingLabel}
                           </Button>
                         ) : null}
+                        {/* Only where the composer below exists to receive the quote, and only
+                            for comments with something to quote — a review that is all verdict
+                            and no words would quote as an empty block. */}
+                        {canComment && comment.body.trim().length > 0 ? (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  aria-label="Quote reply"
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  className="-mr-1 -mt-1 shrink-0 text-muted-foreground hover:text-foreground"
+                                  disabled={posting}
+                                  onClick={() => quoteReply(comment.body)}
+                                />
+                              }
+                            >
+                              <ReplyIcon className="size-3" />
+                            </TooltipTrigger>
+                            <TooltipPopup>Quote reply</TooltipPopup>
+                          </Tooltip>
+                        ) : null}
                       </div>
                       {comment.path ? (
                         <p
@@ -779,12 +829,13 @@ export function PullRequestSummaryTab({
           </>
         )}
         {/* Posting is a core capability and remains usable even if the activity read failed. */}
-        {detail.capabilities.comment && detail.viewerPermissions.comment ? (
+        {canComment ? (
           <CommentComposer
-            key={`${environmentId}:${detail.projectId}/${detail.repository}#${detail.number}`}
-            environmentId={environmentId}
-            detail={detail}
-            onCommented={onRefresh}
+            body={draftBody}
+            posting={posting}
+            textareaRef={composerRef}
+            onBodyChange={setDraftBody}
+            onSubmit={() => void submitComment()}
           />
         ) : null}
       </Section>
