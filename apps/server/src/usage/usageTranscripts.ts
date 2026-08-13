@@ -389,6 +389,16 @@ const DevinUsageLineSchema = Schema.Struct({
 const decodeDevinUsageLine = Schema.decodeUnknownOption(DevinUsageLineSchema);
 
 /**
+ * Devin advertises family slugs with dots (e.g. `swe-1.7`), but the ACP
+ * `model_uid` values and the T3 Code usage transcript write dashes
+ * (`swe-1-7`). The Usage page shows the dotted, human-readable version, so
+ * rehydrate version dots from the dashed slug at parse time.
+ */
+function displayDevinModelSlug(slug: string): string {
+  return slug.replace(/(\d+)-(\d+)/g, "$1.$2");
+}
+
+/**
  * Parses one line from a Devin usage transcript written by T3 Code.
  *
  * Each line is an independent, delta-normalized record keyed by
@@ -415,7 +425,7 @@ export function parseDevinLine(line: string): UsageRecord | null {
   return {
     provider: "devin",
     timestampMs,
-    model: record.model,
+    model: displayDevinModelSlug(record.model),
     sessionId,
     totals: record.totals,
     reportedCostUsd:

@@ -280,7 +280,7 @@ describe("parseDevinLine", () => {
     const record = parseDevinLine(line);
     expect(record).not.toBeNull();
     expect(record?.provider).toBe("devin");
-    expect(record?.model).toBe("swe-1-7");
+    expect(record?.model).toBe("swe-1.7");
     expect(record?.sessionId).toBe("aloud-lantana");
     expect(record?.totals).toEqual({
       uncachedInputTokens: 21239,
@@ -290,5 +290,75 @@ describe("parseDevinLine", () => {
       reasoningTokens: 0,
     });
     expect(record?.dedupeKey).toBe("aloud-lantana:af6deae3-30ba-42d4-aab7-c6908d04361d");
+  });
+
+  it("rehydrates version dots from dashed Devin model slugs", () => {
+    expect(
+      parseDevinLine(
+        JSON.stringify({
+          type: "devin_usage",
+          timestamp: "2026-08-11T16:44:06.637Z",
+          model: "swe-1-7-lightning-medium",
+          totals: {
+            uncachedInputTokens: 0,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+          },
+        }),
+      )?.model,
+    ).toBe("swe-1.7-lightning-medium");
+
+    expect(
+      parseDevinLine(
+        JSON.stringify({
+          type: "devin_usage",
+          timestamp: "2026-08-11T16:44:06.637Z",
+          model: "glm-5-2",
+          totals: {
+            uncachedInputTokens: 0,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+          },
+        }),
+      )?.model,
+    ).toBe("glm-5.2");
+
+    expect(
+      parseDevinLine(
+        JSON.stringify({
+          type: "devin_usage",
+          timestamp: "2026-08-11T16:44:06.637Z",
+          model: "adaptive",
+          totals: {
+            uncachedInputTokens: 0,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+          },
+        }),
+      )?.model,
+    ).toBe("adaptive");
+
+    expect(
+      parseDevinLine(
+        JSON.stringify({
+          type: "devin_usage",
+          timestamp: "2026-08-11T16:44:06.637Z",
+          model: "swe-1.7",
+          totals: {
+            uncachedInputTokens: 0,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+            outputTokens: 0,
+            reasoningTokens: 0,
+          },
+        }),
+      )?.model,
+    ).toBe("swe-1.7");
   });
 });
