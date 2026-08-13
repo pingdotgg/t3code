@@ -812,9 +812,6 @@ struct HomeThreadRowContext: Equatable {
         let environmentByID = snapshot.environments.reduce(into: [String: FeatureEnvironment]()) {
             $0[$1.id] = $1
         }
-        let providerByID = snapshot.providers.reduce(into: [String: FeatureProvider]()) {
-            $0[$1.id] = $1
-        }
         let activeEnvironmentID = snapshot.environments.first(where: \.isActive)?.id
 
         return snapshot.threads.reduce(into: [String: HomeThreadRowContext]()) { result, thread in
@@ -825,7 +822,11 @@ struct HomeThreadRowContext: Equatable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let explicitProvider = thread.providerName?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let configuredProvider = thread.providerID.flatMap { providerByID[$0] }
+            let configuredProvider = thread.providerID.flatMap { providerID in
+                environmentID.flatMap {
+                    snapshot.providersByEnvironment?[$0]?.first(where: { $0.id == providerID })
+                } ?? snapshot.providers.first(where: { $0.id == providerID })
+            }
             let providerName = (explicitProvider?.isEmpty == false ? explicitProvider : nil)
                 ?? configuredProvider?.name
                 ?? thread.providerID
