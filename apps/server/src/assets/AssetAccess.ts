@@ -173,27 +173,27 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
-const resolveCanonicalHostGeneratedImage = Effect.fn("AssetAccess.resolveCanonicalHostGeneratedImage")(
-  function* (absolutePath: string, generatedImagesRoots: ReadonlyArray<string>) {
-    const path = yield* Path.Path;
-    if (!path.isAbsolute(absolutePath) || !isWorkspaceImagePreviewPath(absolutePath)) return null;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const canonicalFile = yield* optionOnNotFound(fileSystem.realPath(absolutePath));
-    if (Option.isNone(canonicalFile) || !path.isAbsolute(canonicalFile.value)) return null;
-    const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
-    if (Option.isNone(info) || info.value.type !== "File") return null;
+const resolveCanonicalHostGeneratedImage = Effect.fn(
+  "AssetAccess.resolveCanonicalHostGeneratedImage",
+)(function* (absolutePath: string, generatedImagesRoots: ReadonlyArray<string>) {
+  const path = yield* Path.Path;
+  if (!path.isAbsolute(absolutePath) || !isWorkspaceImagePreviewPath(absolutePath)) return null;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const canonicalFile = yield* optionOnNotFound(fileSystem.realPath(absolutePath));
+  if (Option.isNone(canonicalFile) || !path.isAbsolute(canonicalFile.value)) return null;
+  const info = yield* optionOnNotFound(fileSystem.stat(canonicalFile.value));
+  if (Option.isNone(info) || info.value.type !== "File") return null;
 
-    for (const root of generatedImagesRoots) {
-      const canonicalRoot = yield* optionOnNotFound(fileSystem.realPath(root));
-      if (Option.isNone(canonicalRoot)) continue;
-      const relative = path.relative(canonicalRoot.value, canonicalFile.value);
-      if (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)) {
-        return { path: canonicalFile.value, root: canonicalRoot.value };
-      }
+  for (const root of generatedImagesRoots) {
+    const canonicalRoot = yield* optionOnNotFound(fileSystem.realPath(root));
+    if (Option.isNone(canonicalRoot)) continue;
+    const relative = path.relative(canonicalRoot.value, canonicalFile.value);
+    if (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+      return { path: canonicalFile.value, root: canonicalRoot.value };
     }
-    return null;
-  },
-);
+  }
+  return null;
+});
 
 const resolveCanonicalHostGeneratedImageForRequest = (
   absolutePath: string,
@@ -258,7 +258,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ).pipe(
           Effect.mapError(
             (cause) =>
-              new AssetWorkspacePathValidationError({
+              new AssetWorkspaceAssetInspectionError({
                 resource: input.resource,
                 cause,
               }),

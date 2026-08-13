@@ -160,20 +160,24 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("preserves non-missing canonical path failures when issuing asset URLs", () =>
+  it.effect("preserves generated image inspection failures when issuing asset URLs", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-asset-permission-root-",
       });
-      const htmlPath = path.join(root, "report.html");
-      yield* fileSystem.writeFileString(htmlPath, "<p>report</p>");
+      const generatedRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-generated-permission-root-",
+      });
+      const imagePath = path.join(generatedRoot, "generated_images", "image.png");
+      yield* fileSystem.makeDirectory(path.dirname(imagePath), { recursive: true });
+      yield* fileSystem.writeFile(imagePath, new Uint8Array([137, 80, 78, 71]));
       const cause = PlatformError.systemError({
         _tag: "PermissionDenied",
         module: "FileSystem",
         method: "realPath",
-        pathOrDescriptor: htmlPath,
+        pathOrDescriptor: imagePath,
       });
       const failingFileSystem = FileSystem.FileSystem.of({
         ...fileSystem,
@@ -184,9 +188,10 @@ describe("AssetAccess", () => {
         resource: {
           _tag: "workspace-file",
           threadId: ThreadId.make("thread-1"),
-          path: htmlPath,
+          path: imagePath,
         },
         workspaceRoot: root,
+        generatedImagesRoots: [path.dirname(imagePath)],
       }).pipe(Effect.provideService(FileSystem.FileSystem, failingFileSystem), Effect.flip);
 
       expect(error.message).toBe("Failed to inspect the workspace asset.");
@@ -195,7 +200,7 @@ describe("AssetAccess", () => {
         resource: {
           _tag: "workspace-file",
           threadId: "thread-1",
-          path: htmlPath,
+          path: imagePath,
         },
       });
       expect(error.cause).toBe(cause);
