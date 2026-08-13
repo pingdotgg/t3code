@@ -1591,9 +1591,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   );
 });
 
-export default function Sidebar() {
+export default function Sidebar(props: {
+  projectScopeKey: string | null;
+  onProjectScopeKeyChange: (key: string | null) => void;
+}) {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const { projectScopeKey, onProjectScopeKeyChange: setProjectScopeKey } = props;
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1824,7 +1828,6 @@ export default function Sidebar() {
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
-  const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
   const scopedProjectGroup = useMemo(
     () =>
       projectScopeKey === null
@@ -1847,7 +1850,7 @@ export default function Sidebar() {
     if (projectScopeKey !== null && scopedProjectGroup === null) {
       setProjectScopeKey(null);
     }
-  }, [projectScopeKey, scopedProjectGroup]);
+  }, [projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
