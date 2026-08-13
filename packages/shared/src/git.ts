@@ -307,7 +307,8 @@ export function applyGitStatusStreamState(
     case "snapshot":
       return {
         generation: event.generation ?? null,
-        acceptsLegacyRemote: event.generation === undefined,
+        acceptsLegacyRemote:
+          event.generation === undefined && (current === null || current.acceptsLegacyRemote),
         status: mergeGitStatusParts(event.local, event.remote),
       };
     case "localUpdated": {
@@ -319,23 +320,27 @@ export function applyGitStatusStreamState(
           : null;
       return {
         generation: event.generation ?? null,
-        acceptsLegacyRemote: false,
+        acceptsLegacyRemote:
+          event.generation === undefined && (current === null || current.acceptsLegacyRemote),
         status: mergeGitStatusParts(event.local, remote),
       };
     }
-    case "remoteUpdated":
+    case "remoteUpdated": {
       if (
         current === null ||
         (event.generation === undefined
           ? !current.acceptsLegacyRemote
           : current.generation !== event.generation)
       ) {
-        return current;
+        return current?.acceptsLegacyRemote === true && event.generation !== undefined
+          ? { ...current, acceptsLegacyRemote: false }
+          : current;
       }
       return {
         generation: event.generation ?? null,
-        acceptsLegacyRemote: current.acceptsLegacyRemote,
+        acceptsLegacyRemote: event.generation === undefined && current.acceptsLegacyRemote,
         status: mergeGitStatusParts(toLocalStatusPart(current.status), event.remote),
       };
+    }
   }
 }

@@ -73,7 +73,7 @@ struct FeatureToolStateTests {
     }
 
     @Test
-    func legacySourceControlClearsRemoteAndRejectsGenerationlessRemoteDelta() {
+    func legacySourceControlAcceptsGenerationlessRemoteAfterLocalDelta() {
         var accumulator = NativeSourceControlStatusAccumulator()
         _ = accumulator.consume(
             .snapshot(
@@ -94,7 +94,29 @@ struct FeatureToolStateTests {
 
         #expect(initialRemote?.aheadCount == 4)
         #expect(localOnly == nil)
-        #expect(afterRemote == nil)
+        #expect(afterRemote?.branch == "feature/b")
+        #expect(afterRemote?.aheadCount == 99)
+    }
+
+    @Test
+    func sourceControlStopsAcceptingLegacyRemoteAfterGenerationAppears() {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                generation: nil,
+                local: vcsLocal(refName: "feature/a"),
+                remote: nil
+            )
+        )
+        let mismatchedGeneration = accumulator.consume(
+            .remoteUpdated(generation: 1, remote: vcsRemote(aheadCount: 4))
+        )
+        let legacyRemote = accumulator.consume(
+            .remoteUpdated(generation: nil, remote: vcsRemote(aheadCount: 99))
+        )
+
+        #expect(mismatchedGeneration == nil)
+        #expect(legacyRemote == nil)
     }
 
     @Test

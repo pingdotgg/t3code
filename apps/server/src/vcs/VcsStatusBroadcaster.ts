@@ -7,8 +7,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -140,6 +140,8 @@ interface ActiveRemotePoller {
   readonly fiber: Fiber.Fiber<void, never>;
   readonly subscriberCount: number;
   readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
+  readonly needsRefresh: Ref.Ref<boolean>;
+  readonly refreshRequests: Queue.Queue<void>;
 }
 
 interface StreamStatusOptions {
@@ -224,6 +226,17 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
   const transitionLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
+  const requestRemoteRefresh = Effect.fn("VcsStatusBroadcaster.requestRemoteRefresh")(function* (
+    cwd: string,
+  ) {
+    const poller = (yield* SynchronizedRef.get(pollersRef)).get(cwd);
+    if (!poller) {
+      return;
+    }
+    yield* Ref.set(poller.needsRefresh, true);
+    yield* Queue.offer(poller.refreshRequests, undefined);
+  });
+
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
   ) {
@@ -303,6 +316,7 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
       );
       if (update.refChanged) {
         yield* workflow.invalidateRemoteStatus(cwd);
+        yield* requestRemoteRefresh(cwd);
       }
 
       return local;
@@ -469,10 +483,18 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
 
   const readCoherentStatus = Effect.fn("VcsStatusBroadcaster.readCoherentStatus")(function* (
     cwd: string,
+    cachedLocal?: VcsStatusLocalResult,
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const local = yield* workflow.localStatus({ cwd });
       const remote = yield* workflow.remoteStatus({ cwd });
+      if (
+        attempt === 0 &&
+        cachedLocal !== undefined &&
+        localStatusIdentity(local) === localStatusIdentity(cachedLocal)
+      ) {
+        return { local, remote };
+      }
       yield* workflow.invalidateLocalStatus(cwd);
       const confirmedLocal = yield* workflow.localStatus({ cwd });
       if (localStatusIdentity(local) === localStatusIdentity(confirmedLocal)) {
@@ -489,9 +511,9 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
     );
   });
 
-  const staleRefreshError = (cwd: string) =>
+  const staleRefreshError = (operation: string, cwd: string) =>
     new GitManagerError({
-      operation: "VcsStatusBroadcaster.refreshStatus",
+      operation,
       cwd,
       detail: "A newer local ref replaced this refresh before remote status completed",
     });
@@ -504,13 +526,12 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
     if (cached?.local && cached.remote?.generation === cached.generation) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
-    const { local, remote } = yield* readCoherentStatus(cwd);
+    const { local, remote } = yield* readCoherentStatus(cwd, cached?.local?.value);
     const updated = yield* updateCachedStatus(cwd, local, remote, { expected: cached });
     if (updated !== null) {
       return updated;
     }
-    const current = cachedCompleteResult(yield* getCachedStatus(cwd));
-    return current ?? (yield* Effect.fail(staleRefreshError(cwd)));
+    return mergeGitStatusParts(local, remote);
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
@@ -538,8 +559,7 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
     yield* getOrLoadLocalStatus(cwd);
     const generation = (yield* getCachedStatus(cwd))?.generation ?? 0;
     const remote = yield* workflow.remoteStatus({ cwd }, options);
-    yield* updateCachedRemoteStatus(cwd, remote, generation, { publish: true });
-    return remote;
+    return yield* updateCachedRemoteStatus(cwd, remote, generation, { publish: true });
   });
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
@@ -559,31 +579,34 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
       return updated;
     }
     const current = cachedCompleteResult(yield* getCachedStatus(cwd));
-    return current ?? (yield* Effect.fail(staleRefreshError(cwd)));
+    return (
+      current ?? (yield* Effect.fail(staleRefreshError("VcsStatusBroadcaster.refreshStatus", cwd)))
+    );
   });
 
   const makeRemoteRefreshLoop = (
     cwd: string,
     demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
+    needsRefreshRef: Ref.Ref<boolean>,
+    refreshRequests: Queue.Queue<void>,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
   ) => {
     return Effect.gen(function* () {
       const consecutiveFailuresRef = yield* Ref.make(0);
-      const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
       const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
         const configuredInterval = yield* automaticRemoteRefreshInterval;
         const activeInterval = Duration.isZero(configuredInterval)
           ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
           : configuredInterval;
-        const needsInitialRefresh = yield* Ref.get(needsInitialRefreshRef);
-        if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
+        const needsRefresh = yield* Ref.get(needsRefreshRef);
+        if (Duration.isZero(configuredInterval) && !needsRefresh) {
           return activeInterval;
         }
 
         const demandCwds = yield* Ref.get(demandCwdsRef);
         const shouldRun =
-          needsInitialRefresh ||
+          needsRefresh ||
           (yield* Effect.all(
             [...demandCwds.keys()].map((demandCwd) =>
               backgroundPolicy.shouldRunScopeWork({
@@ -601,7 +624,9 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
           refreshUpstream: !Duration.isZero(configuredInterval),
         }).pipe(Effect.exit);
         if (Exit.isSuccess(exit)) {
-          yield* Ref.set(needsInitialRefreshRef, false);
+          if (exit.value) {
+            yield* Ref.set(needsRefreshRef, false);
+          }
           yield* Ref.set(consecutiveFailuresRef, 0);
           return activeInterval;
         }
@@ -627,21 +652,20 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
 
       if (!refreshImmediately) {
         const configuredInterval = yield* automaticRemoteRefreshInterval;
-        yield* Effect.sleep(
-          Duration.isZero(configuredInterval)
-            ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
-            : configuredInterval,
+        yield* Effect.raceFirst(
+          Effect.sleep(
+            Duration.isZero(configuredInterval)
+              ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
+              : configuredInterval,
+          ),
+          Queue.take(refreshRequests),
         );
       }
 
-      return yield* refreshRemoteStatusIfEnabled.pipe(
-        Effect.repeat(
-          Schedule.identity<Duration.Duration>().pipe(
-            Schedule.addDelay(({ output: delay }) => Effect.succeed(delay)),
-          ),
-        ),
-        Effect.asVoid,
-      );
+      while (true) {
+        const nextDelay = yield* refreshRemoteStatusIfEnabled;
+        yield* Effect.raceFirst(Effect.sleep(nextDelay), Queue.take(refreshRequests));
+      }
     });
   };
 
@@ -654,27 +678,36 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
     yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
       if (existing) {
-        return Ref.update(existing.demandCwds, (demandCwds) => {
-          const next = new Map(demandCwds);
-          next.set(demandCwd, (next.get(demandCwd) ?? 0) + 1);
-          return next;
-        }).pipe(
-          Effect.map(() => {
-            const nextPollers = new Map(activePollers);
-            nextPollers.set(cwd, {
-              ...existing,
-              subscriberCount: existing.subscriberCount + 1,
-            });
-            return [undefined, nextPollers] as const;
-          }),
-        );
+        return Effect.gen(function* () {
+          yield* Ref.update(existing.demandCwds, (demandCwds) => {
+            const next = new Map(demandCwds);
+            next.set(demandCwd, (next.get(demandCwd) ?? 0) + 1);
+            return next;
+          });
+          if (refreshImmediately) {
+            yield* Ref.set(existing.needsRefresh, true);
+            yield* Queue.offer(existing.refreshRequests, undefined);
+          }
+          const nextPollers = new Map(activePollers);
+          nextPollers.set(cwd, {
+            ...existing,
+            subscriberCount: existing.subscriberCount + 1,
+          });
+          return [undefined, nextPollers] as const;
+        });
       }
 
-      return Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])).pipe(
-        Effect.flatMap((demandCwds) =>
+      return Effect.all({
+        demandCwds: Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])),
+        needsRefresh: Ref.make(refreshImmediately),
+        refreshRequests: Queue.sliding<void>(1),
+      }).pipe(
+        Effect.flatMap(({ demandCwds, needsRefresh, refreshRequests }) =>
           makeRemoteRefreshLoop(
             cwd,
             demandCwds,
+            needsRefresh,
+            refreshRequests,
             automaticRemoteRefreshInterval,
             refreshImmediately,
           ).pipe(
@@ -685,6 +718,8 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
                 fiber,
                 subscriberCount: 1,
                 demandCwds,
+                needsRefresh,
+                refreshRequests,
               });
               return [undefined, nextPollers] as const;
             }),

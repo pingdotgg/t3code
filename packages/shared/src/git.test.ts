@@ -237,7 +237,7 @@ describe("applyGitStatusStreamState", () => {
     expect(updated?.status.behindCount).toBe(1);
   });
 
-  it("supports a legacy snapshot remote update but fails closed after a local delta", () => {
+  it("keeps accepting generation-less remote updates after a legacy local delta", () => {
     const initial = applyGitStatusStreamState(null, {
       _tag: "snapshot",
       local,
@@ -259,6 +259,26 @@ describe("applyGitStatusStreamState", () => {
     expect(initial?.generation).toBeNull();
     expect(initialRemote?.status.aheadCount).toBe(2);
     expect(localOnly?.status.aheadCount).toBe(0);
-    expect(afterRemote).toEqual(localOnly);
+    expect(afterRemote?.status.aheadCount).toBe(99);
+  });
+
+  it("stops accepting generation-less remote updates after a generation-bearing event", () => {
+    const initial = applyGitStatusStreamState(null, {
+      _tag: "snapshot",
+      local,
+      remote: null,
+    });
+    const generationSeen = applyGitStatusStreamState(initial, {
+      _tag: "remoteUpdated",
+      generation: 1,
+      remote,
+    });
+    const legacyRemote = applyGitStatusStreamState(generationSeen, {
+      _tag: "remoteUpdated",
+      remote: { ...remote, aheadCount: 99 },
+    });
+
+    expect(generationSeen?.acceptsLegacyRemote).toBe(false);
+    expect(legacyRemote).toEqual(generationSeen);
   });
 });
