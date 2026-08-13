@@ -1718,7 +1718,7 @@ function LegacyFeaturesSection() {
             />
             <SettingsRow
               {...searchableSetting("legacy-sidebar")}
-              description="Brings back the original sidebar with per-project thread trees. The default sidebar shows one flat list: active work as rich cards, settled threads as compact rows."
+              description="Groups threads into expandable project trees. Turn this off to use one flat list with active work as rich cards and settled threads as compact rows."
               control={
                 <Switch
                   checked={settings.legacySidebarEnabled}

@@ -68,9 +68,9 @@ describe("ClientSettings environment identification", () => {
 });
 
 describe("ClientSettings sidebar", () => {
-  it("defaults to the current sidebar with a three-day auto-settle threshold", () => {
+  it("defaults to the expandable project sidebar with a three-day auto-settle threshold", () => {
     const settings = decodeClientSettings({});
-    expect(settings.legacySidebarEnabled).toBe(false);
+    expect(settings.legacySidebarEnabled).toBe(true);
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
   });
 
@@ -79,7 +79,7 @@ describe("ClientSettings sidebar", () => {
       sidebarV2Enabled: false,
       sidebarV2ConfiguredByUser: true,
     });
-    expect(decoded.legacySidebarEnabled).toBe(false);
+    expect(decoded.legacySidebarEnabled).toBe(true);
     expect(decoded).not.toHaveProperty("sidebarV2Enabled");
     expect(decoded).not.toHaveProperty("sidebarV2ConfiguredByUser");
   });

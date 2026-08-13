@@ -61,6 +61,11 @@ export interface RemoteT3RunnerOptions {
   readonly packageSpec?: string;
   readonly nodeScriptPath?: string | null;
   readonly nodeEngineRange?: string | null;
+  readonly desktopCli?: {
+    readonly executablePath: string;
+    readonly entryPath: string;
+    readonly version: string;
+  } | null;
 }
 
 export interface SshEnvironmentManagerOptions {
@@ -422,6 +427,15 @@ if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
   fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
+T3_DESKTOP_CLI_EXECUTABLE=@@T3_DESKTOP_CLI_EXECUTABLE@@
+T3_DESKTOP_CLI_ENTRY=@@T3_DESKTOP_CLI_ENTRY@@
+T3_DESKTOP_CLI_VERSION=@@T3_DESKTOP_CLI_VERSION@@
+if [ -n "$T3_DESKTOP_CLI_EXECUTABLE" ] && [ -x "$T3_DESKTOP_CLI_EXECUTABLE" ]; then
+  T3_INSTALLED_DESKTOP_CLI_VERSION="$(env ELECTRON_RUN_AS_NODE=1 "$T3_DESKTOP_CLI_EXECUTABLE" "$T3_DESKTOP_CLI_ENTRY" --version 2>/dev/null || true)"
+  if [ "$T3_INSTALLED_DESKTOP_CLI_VERSION" = "t3 v$T3_DESKTOP_CLI_VERSION" ]; then
+    exec env ELECTRON_RUN_AS_NODE=1 "$T3_DESKTOP_CLI_EXECUTABLE" "$T3_DESKTOP_CLI_ENTRY" "$@"
+  fi
+fi
 if command -v t3 >/dev/null 2>&1; then
   exec t3 "$@"
 fi
@@ -633,10 +647,14 @@ fi
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
   const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "t3@latest");
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
+  const desktopCli = input?.desktopCli;
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       T3_PACKAGE_SPEC: packageSpec,
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
+      T3_DESKTOP_CLI_EXECUTABLE: shellSingleQuote(desktopCli?.executablePath.trim() || ""),
+      T3_DESKTOP_CLI_ENTRY: shellSingleQuote(desktopCli?.entryPath.trim() || ""),
+      T3_DESKTOP_CLI_VERSION: shellSingleQuote(desktopCli?.version.trim() || ""),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),
   );
