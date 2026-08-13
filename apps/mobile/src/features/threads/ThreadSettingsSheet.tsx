@@ -13,6 +13,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  LayoutAnimation,
   Modal,
   Platform,
   Pressable,
@@ -31,7 +32,11 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { applyProviderOptionSelection, providerOptionValueLabels } from "../../lib/providerOptions";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { RUNTIME_MODE_CHOICES, selectableChoices } from "./thread-settings-menu";
-import { pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  pendingModelAfterPress,
+  usesInlineSelectChoices,
+  visibleSheetOptionDescriptors,
+} from "./thread-settings-sheet-state";
 import type { ThreadSettingsSheetCloseReason } from "./use-thread-settings-sheet-presentation";
 
 /**
@@ -40,6 +45,19 @@ import type { ThreadSettingsSheetCloseReason } from "./use-thread-settings-sheet
  * bury the list.
  */
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
+
+const SETTINGS_LAYOUT_ANIMATION = {
+  duration: 180,
+  create: {
+    type: LayoutAnimation.Types.easeInEaseOut,
+    property: LayoutAnimation.Properties.opacity,
+  },
+  update: { type: LayoutAnimation.Types.easeInEaseOut },
+  delete: {
+    type: LayoutAnimation.Types.easeInEaseOut,
+    property: LayoutAnimation.Properties.opacity,
+  },
+} as const;
 
 /**
  * Compact "Fable 5 · Max · Auto" style summary for the composer trigger pill,
@@ -163,19 +181,14 @@ function ProviderHeader(props: {
 function DisclosureRow(props: {
   readonly label: string;
   readonly value: string | undefined;
-  readonly disabled?: boolean;
   readonly onPress: () => void;
 }) {
   const iconSubtle = useThemeColor("--color-icon-subtle");
   return (
     <Pressable
       accessibilityRole="button"
-      disabled={props.disabled}
       onPress={props.onPress}
-      className={cn(
-        "flex-row items-center gap-2 px-5 py-3 active:opacity-70",
-        props.disabled && "opacity-40",
-      )}
+      className="flex-row items-center gap-2 px-5 py-2.5 active:opacity-70"
     >
       <Text className="text-sm font-t3-medium text-foreground">{props.label}</Text>
       <View className="flex-1" />
@@ -186,6 +199,61 @@ function DisclosureRow(props: {
       ) : null}
       <SymbolView name="chevron.right" size={12} tintColor={iconSubtle} type="monochrome" />
     </Pressable>
+  );
+}
+
+/** Inline mutually-exclusive choices for short catalogs (reasoning, runtime). */
+function ChoiceChipRow(props: {
+  readonly label: string;
+  readonly choices: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+    readonly accessibilityLabel?: string;
+  }>;
+  readonly selectedId: string | undefined;
+  readonly onSelect: (id: string) => void;
+}) {
+  const equalWidth = props.choices.length > 1 && props.choices.length <= 4;
+  return (
+    <View className="gap-2 px-5 py-2.5">
+      <Text className="text-sm font-t3-medium text-foreground">{props.label}</Text>
+      <View className={cn("flex-row gap-1.5", equalWidth ? undefined : "flex-wrap")}>
+        {props.choices.map((choice) => {
+          const selected = choice.id === props.selectedId;
+          return (
+            <Pressable
+              key={choice.id}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              accessibilityLabel={choice.accessibilityLabel ?? `${props.label}, ${choice.label}`}
+              onPress={() => {
+                if (choice.id === props.selectedId) {
+                  return;
+                }
+                void Haptics.selectionAsync();
+                props.onSelect(choice.id);
+              }}
+              className={cn(
+                "rounded-full px-3 py-1.5 active:opacity-70",
+                selected ? "bg-primary" : "bg-subtle",
+                equalWidth && "min-w-0 flex-1 items-center",
+              )}
+            >
+              <Text
+                className={cn(
+                  "text-xs font-t3-medium",
+                  selected ? "text-primary-foreground" : "text-foreground",
+                  equalWidth && "text-center",
+                )}
+                numberOfLines={1}
+              >
+                {choice.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
@@ -225,21 +293,14 @@ function ChoiceRow(props: {
 function SwitchRow(props: {
   readonly label: string;
   readonly value: boolean;
-  readonly disabled?: boolean;
   readonly onValueChange: (value: boolean) => void;
 }) {
   const activeTrack = String(useThemeColor("--color-switch-active"));
   const track = String(useThemeColor("--color-secondary-border"));
   return (
-    <View
-      className={cn(
-        "flex-row items-center justify-between px-5 py-2.5",
-        props.disabled && "opacity-40",
-      )}
-    >
+    <View className="flex-row items-center justify-between px-5 py-2.5">
       <Text className="text-sm font-t3-medium text-foreground">{props.label}</Text>
       <Switch
-        disabled={props.disabled}
         ios_backgroundColor={track}
         onValueChange={props.onValueChange}
         trackColor={{ false: track, true: activeTrack }}
@@ -249,17 +310,16 @@ function SwitchRow(props: {
   );
 }
 
-type SubmenuPage =
-  | { readonly kind: "descriptor"; readonly id: string }
-  | { readonly kind: "runtime" };
+type SubmenuPage = { readonly kind: "descriptor"; readonly id: string };
 
 /**
  * Unified thread settings: the sheet is the provider-grouped model list
  * (primary harnesses expanded, other providers folded, legacy behind the
- * top-right pill) with a Save button, plus compact disclosure rows whose
- * single-choice submenus stack in a small panel over the sheet so it never
- * changes size. Model changes stage until Save — while staged, the settings
- * rows edit the staged model's options and Save applies everything together.
+ * top-right pill) with a Save button. Settings below the list are only the
+ * options the displayed model actually supports — short catalogs (reasoning,
+ * context, runtime) render as chips; longer ones still open a stacked
+ * submenu. Model changes stage until Save — while staged, the settings
+ * edit the staged model's options and Save applies everything together.
  *
  * Callers control which harnesses are offered via providerGroups: an
  * existing thread must pass only its own provider's group, since a session
@@ -345,37 +405,7 @@ export function ThreadSettingsSheet(props: {
   // legacy model is exempted from the filter instead of forcing the whole
   // legacy list visible.
   const showLegacy = showLegacyToggle;
-
-  // Stable settings rows: the union of descriptors across the primary
-  // harnesses' current models (plus whatever the displayed model advertises)
-  // always renders, with unsupported rows disabled instead of vanishing when
-  // the selection changes. Keyed by label, not id — Claude and Codex use
-  // different ids for the same "Reasoning" concept.
-  const descriptorTemplate = (() => {
-    const seen = new Map<string, { type: "select" | "boolean" }>();
-    for (const group of props.providerGroups) {
-      const driver = group.models[0]?.providerDriver;
-      if (driver === undefined || !PRIMARY_PROVIDER_DRIVERS.has(driver)) {
-        continue;
-      }
-      for (const model of group.models) {
-        if (model.isLegacy) {
-          continue;
-        }
-        for (const descriptor of model.capabilities?.optionDescriptors ?? []) {
-          if (!seen.has(descriptor.label)) {
-            seen.set(descriptor.label, { type: descriptor.type });
-          }
-        }
-      }
-    }
-    for (const descriptor of displayedDescriptors) {
-      if (!seen.has(descriptor.label)) {
-        seen.set(descriptor.label, { type: descriptor.type });
-      }
-    }
-    return [...seen.entries()].map(([label, entry]) => ({ label, ...entry }));
-  })();
+  const visibleDescriptors = visibleSheetOptionDescriptors(displayedDescriptors);
 
   const handleSave = () => {
     if (pendingModel) {
@@ -410,43 +440,27 @@ export function ThreadSettingsSheet(props: {
     });
   };
 
-  const activeDescriptor =
-    submenu?.kind === "descriptor"
-      ? displayedDescriptors.find(
-          (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
-        )
-      : undefined;
+  const activeDescriptor = displayedDescriptors.find(
+    (descriptor) =>
+      submenu !== null && descriptor.type === "select" && descriptor.id === submenu.id,
+  );
 
   const submenuContent =
-    submenu?.kind === "runtime"
+    activeDescriptor?.type === "select"
       ? {
-          title: "Runtime",
-          rows: RUNTIME_MODE_CHOICES.map((choice) => ({
-            id: choice.mode,
+          title: activeDescriptor.label,
+          rows: selectableChoices(activeDescriptor).map((choice) => ({
+            id: choice.id,
             label: choice.label,
-            selected: choice.mode === props.runtimeMode,
+            selected: choice.id === getProviderOptionCurrentValue(activeDescriptor),
             onPress: () => {
               void Haptics.selectionAsync();
-              props.onUpdateRuntimeMode(choice.mode);
+              handleOptionChange(activeDescriptor.id, choice.id);
               setSubmenu(null);
             },
           })),
         }
-      : activeDescriptor?.type === "select"
-        ? {
-            title: activeDescriptor.label,
-            rows: selectableChoices(activeDescriptor).map((choice) => ({
-              id: choice.id,
-              label: choice.label,
-              selected: choice.id === getProviderOptionCurrentValue(activeDescriptor),
-              onPress: () => {
-                void Haptics.selectionAsync();
-                handleOptionChange(activeDescriptor.id, choice.id);
-                setSubmenu(null);
-              },
-            })),
-          }
-        : null;
+      : null;
 
   return (
     <Modal
@@ -536,6 +550,7 @@ export function ThreadSettingsSheet(props: {
                           selected={isDisplayed(option)}
                           onPress={() => {
                             void Haptics.selectionAsync();
+                            LayoutAnimation.configureNext(SETTINGS_LAYOUT_ANIMATION);
                             // Re-tapping the applied model cancels staging.
                             setPendingModel((current) =>
                               pendingModelAfterPress({
@@ -554,46 +569,56 @@ export function ThreadSettingsSheet(props: {
 
           <View className="mx-5 h-px bg-border" />
 
-          <View style={{ paddingBottom: insets.bottom + 12 }}>
-            {descriptorTemplate.map((entry) => {
-              const live = displayedDescriptors.find(
-                (descriptor) => descriptor.label === entry.label,
-              );
-              if ((live?.type ?? entry.type) === "select") {
+          <View className="pt-1" style={{ paddingBottom: insets.bottom + 12 }}>
+            {visibleDescriptors.map((descriptor) => {
+              if (descriptor.type === "select") {
+                if (usesInlineSelectChoices(descriptor)) {
+                  const currentValue = getProviderOptionCurrentValue(descriptor);
+                  return (
+                    <ChoiceChipRow
+                      key={descriptor.id}
+                      label={descriptor.label}
+                      selectedId={typeof currentValue === "string" ? currentValue : undefined}
+                      choices={selectableChoices(descriptor).map((choice) => ({
+                        id: choice.id,
+                        label: choice.label,
+                      }))}
+                      onSelect={(id) => handleOptionChange(descriptor.id, id)}
+                    />
+                  );
+                }
                 return (
                   <DisclosureRow
-                    key={entry.label}
-                    label={entry.label}
-                    value={live ? getProviderOptionCurrentLabel(live) : undefined}
-                    disabled={!live}
-                    onPress={() => {
-                      if (live) {
-                        setSubmenu({ kind: "descriptor", id: live.id });
-                      }
-                    }}
+                    key={descriptor.id}
+                    label={descriptor.label}
+                    value={getProviderOptionCurrentLabel(descriptor)}
+                    onPress={() => setSubmenu({ kind: "descriptor", id: descriptor.id })}
                   />
                 );
               }
               return (
                 <SwitchRow
-                  key={entry.label}
-                  label={entry.label}
-                  value={live?.type === "boolean" ? (live.currentValue ?? false) : false}
-                  disabled={!live}
-                  onValueChange={(value) => {
-                    if (live) {
-                      handleOptionChange(live.id, value);
-                    }
-                  }}
+                  key={descriptor.id}
+                  label={descriptor.label}
+                  value={descriptor.currentValue ?? false}
+                  onValueChange={(value) => handleOptionChange(descriptor.id, value)}
                 />
               );
             })}
-            <DisclosureRow
+            <ChoiceChipRow
               label="Runtime"
-              value={
-                RUNTIME_MODE_CHOICES.find((choice) => choice.mode === props.runtimeMode)?.label
-              }
-              onPress={() => setSubmenu({ kind: "runtime" })}
+              selectedId={props.runtimeMode}
+              choices={RUNTIME_MODE_CHOICES.map((choice) => ({
+                id: choice.mode,
+                label: choice.shortLabel,
+                accessibilityLabel: `Runtime, ${choice.label}`,
+              }))}
+              onSelect={(id) => {
+                const choice = RUNTIME_MODE_CHOICES.find((candidate) => candidate.mode === id);
+                if (choice) {
+                  props.onUpdateRuntimeMode(choice.mode);
+                }
+              }}
             />
             <Pressable
               accessibilityRole="button"

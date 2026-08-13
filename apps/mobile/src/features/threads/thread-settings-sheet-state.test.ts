@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  type ProviderOptionDescriptor,
+  type ProviderOptionSelection,
+} from "@t3tools/contracts";
 
 import type { ModelOption } from "../../lib/modelOptions";
-import { pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  pendingModelAfterPress,
+  usesInlineSelectChoices,
+  visibleSheetOptionDescriptors,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -60,5 +68,72 @@ describe("thread settings sheet state", () => {
         pressedIsApplied: false,
       }),
     ).toBe(pressed);
+  });
+});
+
+const reasoning: ProviderOptionDescriptor = {
+  id: "effort",
+  label: "Reasoning",
+  type: "select",
+  options: [
+    { id: "low", label: "Low" },
+    { id: "medium", label: "Medium", isDefault: true },
+    { id: "high", label: "High" },
+    { id: "ultrathink", label: "Ultrathink" },
+    { id: "ultracode", label: "Ultracode" },
+  ],
+  currentValue: "high",
+  promptInjectedValues: ["ultrathink"],
+};
+
+const contextWindow: ProviderOptionDescriptor = {
+  id: "contextWindow",
+  label: "Context Window",
+  type: "select",
+  options: [
+    { id: "200k", label: "200k", isDefault: true },
+    { id: "1m", label: "1M" },
+  ],
+  currentValue: "200k",
+};
+
+const fastMode: ProviderOptionDescriptor = {
+  id: "fastMode",
+  label: "Fast Mode",
+  type: "boolean",
+  currentValue: false,
+};
+
+describe("visible sheet option descriptors", () => {
+  it("keeps only the advertised options, dropping empty select catalogs", () => {
+    const emptySelect: ProviderOptionDescriptor = {
+      id: "serviceTier",
+      label: "Service Tier",
+      type: "select",
+      options: [{ id: "ultracode", label: "Ultracode" }],
+      currentValue: "ultracode",
+    };
+
+    expect(
+      visibleSheetOptionDescriptors([reasoning, fastMode, emptySelect]).map(
+        (descriptor) => descriptor.id,
+      ),
+    ).toEqual(["effort", "fastMode"]);
+  });
+
+  it("uses inline chips for short catalogs and a disclosure for long ones", () => {
+    expect(usesInlineSelectChoices(reasoning)).toBe(true);
+    expect(usesInlineSelectChoices(contextWindow)).toBe(true);
+
+    const longCatalog: Extract<ProviderOptionDescriptor, { type: "select" }> = {
+      id: "modelVariant",
+      label: "Variant",
+      type: "select",
+      options: Array.from({ length: 8 }, (_, index) => ({
+        id: `v${index}`,
+        label: `Variant ${index}`,
+      })),
+    };
+    expect(usesInlineSelectChoices(longCatalog)).toBe(false);
   });
 });
