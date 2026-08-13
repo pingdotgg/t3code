@@ -222,6 +222,7 @@ final class AgentCursor {
         guard listenerFD >= 0 else { return }
         let client = accept(listenerFD, nil, nil)
         guard client >= 0 else { return }
+        enableNoSigPipe(client)
 
         listenerSource?.cancel()
         listenerSource = nil
