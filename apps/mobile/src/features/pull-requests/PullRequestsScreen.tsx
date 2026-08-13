@@ -695,7 +695,22 @@ export function PullRequestsScreen(props: {
   );
 
   const listFooter = useMemo((): ReactNode => {
-    if (!props.canLoadMore && !props.loadingMore) return null;
+    const continuationFailed = props.error !== null && listItems.length > 0 && !props.firstLoad;
+    if (!props.canLoadMore && !props.loadingMore && !continuationFailed) return null;
+    if (continuationFailed && !props.loadingMore) {
+      return (
+        <View className="items-center gap-2 py-4">
+          <Text className="text-center text-xs text-foreground-muted">{props.error}</Text>
+          <Pressable
+            accessibilityRole="button"
+            className="rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
+            onPress={props.onLoadMore}
+          >
+            <Text className="text-sm font-t3-bold text-foreground">Try again</Text>
+          </Pressable>
+        </View>
+      );
+    }
     return (
       <View className="items-center py-4">
         {props.loadingMore ? (
@@ -711,7 +726,15 @@ export function PullRequestsScreen(props: {
         )}
       </View>
     );
-  }, [props.canLoadMore, props.loadingMore, props.onLoadMore, refreshTint]);
+  }, [
+    listItems.length,
+    props.canLoadMore,
+    props.error,
+    props.firstLoad,
+    props.loadingMore,
+    props.onLoadMore,
+    refreshTint,
+  ]);
 
   return (
     <View className="flex-1 bg-sheet">

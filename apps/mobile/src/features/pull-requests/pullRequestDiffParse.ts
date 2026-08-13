@@ -1,3 +1,6 @@
+import { diffLines } from "diff";
+import type { PullRequestDiffFileContentsInput } from "@t3tools/contracts";
+
 export type DiffLineKind = "context" | "add" | "del" | "hunk" | "meta";
 
 export interface ParsedDiffLine {
@@ -15,6 +18,8 @@ export interface ParsedDiffFile {
   readonly additions: number;
   readonly deletions: number;
   readonly lines: ReadonlyArray<ParsedDiffLine>;
+  /** The host listed this file but withheld its hunks. Open it to fetch the full contents. */
+  readonly withheld: boolean;
 }
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
@@ -119,6 +124,7 @@ export function parseUnifiedDiff(patch: string): ReadonlyArray<ParsedDiffFile> {
       additions: current.additions,
       deletions: current.deletions,
       lines: current.lines,
+      withheld: false,
     });
     current = null;
   };
@@ -192,4 +198,91 @@ export function parseUnifiedDiff(patch: string): ReadonlyArray<ParsedDiffFile> {
   }
   flush();
   return files;
+}
+
+export function diffFileHasHunks(file: ParsedDiffFile): boolean {
+  return file.lines.some(
+    (line) =>
+      line.kind === "add" || line.kind === "del" || line.kind === "hunk" || line.kind === "context",
+  );
+}
+
+export function isBinaryDiffFile(file: ParsedDiffFile): boolean {
+  return file.lines.some((line) => line.text.startsWith("Binary files"));
+}
+
+/** A header-only file in a truncated slice is one GitHub/GitLab declined to inline. */
+export function markWithheldDiffFiles(
+  files: ReadonlyArray<ParsedDiffFile>,
+  sliceTruncated: boolean,
+): ReadonlyArray<ParsedDiffFile> {
+  if (!sliceTruncated) return files;
+  return files.map((file) => {
+    if (diffFileHasHunks(file) || isBinaryDiffFile(file)) return file;
+    if (
+      file.oldPath !== file.newPath &&
+      file.oldPath !== "/dev/null" &&
+      file.newPath !== "/dev/null"
+    ) {
+      return file;
+    }
+    return { ...file, withheld: true };
+  });
+}
+
+export function pullRequestDiffChangeType(
+  file: ParsedDiffFile,
+): PullRequestDiffFileContentsInput["changeType"] {
+  if (file.oldPath === "/dev/null") return "new";
+  if (file.newPath === "/dev/null") return "deleted";
+  if (file.oldPath !== file.newPath)
+    return diffFileHasHunks(file) ? "rename-changed" : "rename-pure";
+  return "change";
+}
+
+export function pullRequestDiffContentsPaths(file: ParsedDiffFile): {
+  readonly oldPath: string;
+  readonly newPath: string;
+} {
+  const oldPath = file.oldPath === "/dev/null" ? file.newPath : file.oldPath;
+  const newPath = file.newPath === "/dev/null" ? file.oldPath : file.newPath;
+  return { oldPath, newPath };
+}
+
+function splitDiffChunk(value: string): ReadonlyArray<string> {
+  const trimmed = value.endsWith("\n") ? value.slice(0, -1) : value;
+  return trimmed.split("\n");
+}
+
+/** Build a numbered unified view from the host's full old/new file contents. */
+export function parsedDiffFromContents(
+  oldContents: string,
+  newContents: string,
+): Pick<ParsedDiffFile, "additions" | "deletions" | "lines"> {
+  const lines: ParsedDiffLine[] = [];
+  let oldLine = 1;
+  let newLine = 1;
+  let additions = 0;
+  let deletions = 0;
+  for (const part of diffLines(oldContents, newContents)) {
+    if (part.value.length === 0) continue;
+    for (const text of splitDiffChunk(part.value)) {
+      if (part.added === true) {
+        additions += 1;
+        lines.push({ kind: "add", text, oldLine: null, newLine });
+        newLine += 1;
+        continue;
+      }
+      if (part.removed === true) {
+        deletions += 1;
+        lines.push({ kind: "del", text, oldLine, newLine: null });
+        oldLine += 1;
+        continue;
+      }
+      lines.push({ kind: "context", text, oldLine, newLine });
+      oldLine += 1;
+      newLine += 1;
+    }
+  }
+  return { additions, deletions, lines };
 }

@@ -20,6 +20,7 @@ import {
   rankPullRequestMatches,
   resolveProjectScope,
   withDiffStat,
+  chunkPullRequestStatRefs,
   type PullRequestDiffStats,
   type PullRequestGroup,
 } from "./pullRequestList.logic";
@@ -231,6 +232,10 @@ export function usePullRequestList(input: {
   const nextCursors = answered?.nextCursors ?? {};
   const canContinue = !showingCarried && Object.keys(nextCursors).length > 0;
   const loadMore = useCallback(() => {
+    if (showingCarried && listQuery.error !== null) {
+      listQuery.refresh();
+      return;
+    }
     if (canContinue) {
       setPage({ key: filterKey, size: pageSize, cursors: nextCursors });
       return;
@@ -240,7 +245,7 @@ export function usePullRequestList(input: {
       size: Math.min(pageSize + PAGE_SIZE, MAX_PAGE_SIZE),
       cursors: null,
     });
-  }, [canContinue, filterKey, nextCursors, pageSize]);
+  }, [canContinue, filterKey, listQuery, nextCursors, pageSize, showingCarried]);
 
   const refreshList = useCallback(() => {
     if (sentCursors === null) {
@@ -326,20 +331,31 @@ export function usePullRequestList(input: {
     }),
     [groups],
   );
+  const statsChunks = useMemo(() => chunkPullRequestStatRefs(statsInput.refs), [statsInput.refs]);
+  const [statsChunkIndex, setStatsChunkIndex] = useState(0);
+  useEffect(() => {
+    setStatsChunkIndex(0);
+  }, [filterKey]);
+  const statsChunk =
+    statsChunks[statsChunkIndex] ??
+    (statsChunks.length === 0 ? [] : statsChunks[statsChunks.length - 1]!);
   const statsQuery = useEnvironmentQuery(
-    pullRequestEnvironmentId === null || statsInput.refs.length === 0
+    pullRequestEnvironmentId === null || statsChunk.length === 0
       ? null
       : pullRequestEnvironment.listStats({
           environmentId: pullRequestEnvironmentId,
-          input: statsInput,
+          input: { refs: statsChunk },
         }),
   );
   const [statsByRow, setStatsByRow] = useState<PullRequestDiffStats>(() => new Map());
   useEffect(() => {
     const stats = statsQuery.data?.stats;
-    if (stats === undefined) return;
+    if (stats === undefined || statsQuery.isPending) return;
     setStatsByRow((previous) => mergePullRequestDiffStats(previous, stats));
-  }, [statsQuery.data]);
+    if (statsChunkIndex + 1 < statsChunks.length) {
+      setStatsChunkIndex(statsChunkIndex + 1);
+    }
+  }, [statsChunkIndex, statsChunks.length, statsQuery.data, statsQuery.isPending]);
 
   const decoratedGroups = useMemo(
     () =>

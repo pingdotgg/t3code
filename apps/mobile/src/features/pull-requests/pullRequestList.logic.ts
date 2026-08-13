@@ -228,6 +228,21 @@ export function withDiffStat(
   return stat === undefined ? entry : { ...entry, ...stat };
 }
 
+/** `PullRequestListStatsInput.refs` is bounded at 500. */
+export const PULL_REQUEST_LIST_STATS_MAX_REFS = 500;
+
+export function chunkPullRequestStatRefs<T>(
+  refs: ReadonlyArray<T>,
+  size = PULL_REQUEST_LIST_STATS_MAX_REFS,
+): ReadonlyArray<ReadonlyArray<T>> {
+  if (refs.length === 0) return [];
+  const chunks: Array<ReadonlyArray<T>> = [];
+  for (let index = 0; index < refs.length; index += size) {
+    chunks.push(refs.slice(index, index + size));
+  }
+  return chunks;
+}
+
 /** Keep the Host menu once a host is chosen, even if the filtered RPC returns only that host. */
 export function shouldShowPullRequestHostFilter(
   hostCount: number,

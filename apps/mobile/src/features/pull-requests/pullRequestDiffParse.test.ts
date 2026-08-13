@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseUnifiedDiff } from "./pullRequestDiffParse";
+import {
+  markWithheldDiffFiles,
+  parsedDiffFromContents,
+  parseUnifiedDiff,
+  pullRequestDiffChangeType,
+} from "./pullRequestDiffParse";
 
 describe("parseUnifiedDiff", () => {
   it("splits files and counts added and deleted lines", () => {
@@ -57,5 +62,26 @@ Binary files a/icon.png and b/icon.png differ
 `);
     expect(files).toHaveLength(1);
     expect(files[0]?.displayPath).toBe("icon.png");
+  });
+
+  it("marks header-only files as withheld when the slice was truncated", () => {
+    const files = parseUnifiedDiff(`diff --git a/src/big.ts b/src/big.ts
+--- a/src/big.ts
++++ b/src/big.ts
+`);
+    expect(markWithheldDiffFiles(files, false)[0]?.withheld).toBe(false);
+    expect(markWithheldDiffFiles(files, true)[0]?.withheld).toBe(true);
+    expect(pullRequestDiffChangeType(files[0]!)).toBe("change");
+  });
+
+  it("builds a numbered diff from the host's full file contents", () => {
+    const parsed = parsedDiffFromContents("keep\ngone\n", "keep\nadded\n");
+    expect(parsed.additions).toBe(1);
+    expect(parsed.deletions).toBe(1);
+    expect(parsed.lines.map((line) => `${line.kind}:${line.text}`)).toEqual([
+      "context:keep",
+      "del:gone",
+      "add:added",
+    ]);
   });
 });

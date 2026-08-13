@@ -13,6 +13,8 @@ import {
   withDiffStat,
   resolveProjectScope,
   shouldShowPullRequestHostFilter,
+  chunkPullRequestStatRefs,
+  PULL_REQUEST_LIST_STATS_MAX_REFS,
 } from "./pullRequestList.logic";
 
 const VIEWERS = { "github.com": "Bilal" } as const;
@@ -167,5 +169,15 @@ describe("host filter visibility", () => {
     expect(shouldShowPullRequestHostFilter(1, undefined)).toBe(false);
     expect(shouldShowPullRequestHostFilter(1, "github.com")).toBe(true);
     expect(shouldShowPullRequestHostFilter(2, undefined)).toBe(true);
+  });
+});
+
+describe("diff-stat request chunks", () => {
+  it("splits refs at the contract limit", () => {
+    const refs = Array.from({ length: PULL_REQUEST_LIST_STATS_MAX_REFS + 1 }, (_, index) => index);
+    const chunks = chunkPullRequestStatRefs(refs);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).toHaveLength(PULL_REQUEST_LIST_STATS_MAX_REFS);
+    expect(chunks[1]).toEqual([PULL_REQUEST_LIST_STATS_MAX_REFS]);
   });
 });

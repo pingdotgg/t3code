@@ -3,7 +3,11 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { pullRequestEnvironment } from "../../state/pullRequests";
-import { parseUnifiedDiff, type ParsedDiffFile } from "./pullRequestDiffParse";
+import {
+  parseUnifiedDiff,
+  markWithheldDiffFiles,
+  type ParsedDiffFile,
+} from "./pullRequestDiffParse";
 
 /**
  * Walks the host's diff slices and keeps every file that has arrived so far.
@@ -54,7 +58,7 @@ export function usePullRequestDiffSlices(input: {
 
   useEffect(() => {
     if (query.data === null || query.isPending) return;
-    const parsed = parseUnifiedDiff(query.data.patch);
+    const parsed = markWithheldDiffFiles(parseUnifiedDiff(query.data.patch), query.data.truncated);
     const nextCursor = query.data.nextCursor;
     const truncated = query.data.truncated;
     setAccumulated((current) => {

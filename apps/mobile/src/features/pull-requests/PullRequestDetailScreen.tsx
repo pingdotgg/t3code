@@ -296,7 +296,9 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
             }),
           ),
       },
-      {
+    ];
+    if (activityQuery.data !== null) {
+      items.push({
         type: "action",
         title: "Fix findings in a thread",
         onPress: () =>
@@ -317,8 +319,19 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
               canResolve: detail.viewerPermissions.resolve && detail.capabilities.review.resolve,
             }),
           ),
-      },
-    ];
+      });
+    } else if (activityQuery.error !== null) {
+      items.push({
+        type: "action",
+        title: "Fix findings in a thread",
+        onPress: () =>
+          Alert.alert(
+            "Could not load the conversation",
+            activityQuery.error ??
+              "The review comments have not loaded yet. Try again after they appear.",
+          ),
+      });
+    }
     if (detail.state === "open" && detail.isDraft && can("ready")) {
       items.push({
         type: "action",
@@ -367,6 +380,8 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
     }
     return items;
   }, [
+    activityQuery.data,
+    activityQuery.error,
     can,
     detail,
     environmentId,
@@ -1035,6 +1050,8 @@ function FilesTab(props: {
                 <Text className="font-mono text-2xs tabular-nums text-foreground-tertiary">
                   {diff}
                 </Text>
+              ) : file.withheld ? (
+                <Text className="text-2xs text-foreground-tertiary">Truncated</Text>
               ) : null}
             </Pressable>
           );

@@ -1,6 +1,8 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useEffect, useRef } from "react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -9,7 +11,16 @@ import { EmptyState } from "../../components/EmptyState";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { cn } from "../../lib/cn";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { type DiffLineKind } from "./pullRequestDiffParse";
+import { pullRequestEnvironment } from "../../state/pullRequests";
+import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  parsedDiffFromContents,
+  pullRequestDiffChangeType,
+  pullRequestDiffContentsPaths,
+  type DiffLineKind,
+  type ParsedDiffFile,
+} from "./pullRequestDiffParse";
+import { readableFailure } from "./pullRequestDetail.logic";
 import { parseRoutePositiveInt, type PullRequestDiffRouteParams } from "./pullRequestNavigation";
 import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
 import { useResolvedPullRequestReference } from "./useResolvedPullRequestReference";
@@ -44,8 +55,14 @@ export function PullRequestDiffScreen(props: PullRequestDiffScreenProps) {
     reference,
     enabled: reference !== null,
   });
-  const file =
+  const listed =
     path === undefined ? diff.files[0] : diff.files.find((entry) => entry.displayPath === path);
+  const expanded = useExpandedWithheldDiffFile({
+    environmentId,
+    reference,
+    file: listed,
+  });
+  const file = expanded.file ?? (listed?.withheld === true ? undefined : listed);
   const attemptedCursors = useRef(new Set<string>());
   const scopeKey = reference
     ? `${reference.projectId}:${reference.repository}:${reference.number}`
@@ -57,14 +74,15 @@ export function PullRequestDiffScreen(props: PullRequestDiffScreenProps) {
 
   useEffect(() => {
     if (path === undefined || diff.loading || diff.loadingMore) return;
-    if (file !== undefined) return;
+    if (listed !== undefined) return;
     if (diff.nextCursor === null || attemptedCursors.current.has(diff.nextCursor)) return;
     attemptedCursors.current.add(diff.nextCursor);
     diff.loadMore();
-  }, [diff.loading, diff.loadingMore, diff.loadMore, diff.nextCursor, file, path]);
+  }, [diff.loading, diff.loadingMore, diff.loadMore, diff.nextCursor, listed, path]);
 
-  const title = file?.displayPath ?? path ?? "Diff";
-  const waitingForSlice = file === undefined && (diff.loading || diff.loadingMore);
+  const title = listed?.displayPath ?? path ?? "Diff";
+  const waitingForSlice = listed === undefined && (diff.loading || diff.loadingMore);
+  const waitingForContents = listed?.withheld === true && expanded.pending;
 
   return (
     <View className="flex-1 bg-sheet">
@@ -83,13 +101,17 @@ export function PullRequestDiffScreen(props: PullRequestDiffScreenProps) {
             detail="This link does not name a pull request."
           />
         </View>
-      ) : waitingForSlice ? (
+      ) : waitingForSlice || waitingForContents ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator color={iconColor} />
         </View>
-      ) : diff.error && file === undefined ? (
+      ) : diff.error && listed === undefined ? (
         <View className="flex-1 justify-center px-6">
           <EmptyState title="Could not load this file" detail={diff.error} />
+        </View>
+      ) : expanded.error !== null ? (
+        <View className="flex-1 justify-center px-6">
+          <EmptyState title="Could not load this file" detail={expanded.error} />
         </View>
       ) : file === undefined ? (
         <View className="flex-1 justify-center px-6">
@@ -130,4 +152,69 @@ export function PullRequestDiffScreen(props: PullRequestDiffScreenProps) {
       )}
     </View>
   );
+}
+
+function useExpandedWithheldDiffFile(input: {
+  readonly environmentId: EnvironmentId;
+  readonly reference: ReturnType<typeof useResolvedPullRequestReference>;
+  readonly file: ParsedDiffFile | undefined;
+}) {
+  const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents, {
+    reportFailure: false,
+  });
+  const [file, setFile] = useState<ParsedDiffFile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const fileKey = input.file?.key;
+  const withheld = input.file?.withheld === true;
+
+  useEffect(() => {
+    if (input.reference === null || input.file === undefined || !withheld) {
+      setFile(null);
+      setError(null);
+      setPending(false);
+      return;
+    }
+    const listed = input.file;
+    const reference = input.reference;
+    let cancelled = false;
+    setFile(null);
+    setError(null);
+    setPending(true);
+    const paths = pullRequestDiffContentsPaths(listed);
+    void getDiffFileContents({
+      environmentId: input.environmentId,
+      input: {
+        ...reference,
+        changeType: pullRequestDiffChangeType(listed),
+        oldPath: paths.oldPath,
+        newPath: paths.newPath,
+      },
+    }).then((result) => {
+      if (cancelled) return;
+      setPending(false);
+      if (AsyncResult.isFailure(result)) {
+        setError(
+          readableFailure(
+            squashAtomCommandFailure(result),
+            "The host would not return the full contents of this file.",
+          ),
+        );
+        return;
+      }
+      const expanded = parsedDiffFromContents(result.value.oldContents, result.value.newContents);
+      setFile({
+        ...listed,
+        additions: expanded.additions,
+        deletions: expanded.deletions,
+        lines: expanded.lines,
+        withheld: false,
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fileKey, getDiffFileContents, input.environmentId, input.file, input.reference, withheld]);
+
+  return { file, error, pending };
 }
