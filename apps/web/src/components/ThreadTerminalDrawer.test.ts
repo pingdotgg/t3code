@@ -6,6 +6,7 @@ import {
   shouldHandleTerminalSelectionMouseUp,
   shouldOpenTerminalSelectionContextMenu,
   shouldRefocusTerminalAfterSelectionMenuDismissal,
+  shouldReopenTerminalSelectionMenu,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
   terminalSelectionMenuItems,
@@ -123,6 +124,40 @@ describe("shouldOpenTerminalSelectionContextMenu", () => {
   it("leaves right-click to a mouse-reporting app that already claimed it", () => {
     expect(
       shouldOpenTerminalSelectionContextMenu({ hasSelection: true, defaultPrevented: true }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldReopenTerminalSelectionMenu", () => {
+  const pointer = { x: 10, y: 20 };
+
+  it("reopens after a dismissal caused by a new right-click on a live selection", () => {
+    expect(
+      shouldReopenTerminalSelectionMenu({
+        clicked: null,
+        reopenPointer: pointer,
+        hasSelection: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not reopen after an item click, without a parked pointer, or without a selection", () => {
+    expect(
+      shouldReopenTerminalSelectionMenu({
+        clicked: "copy",
+        reopenPointer: pointer,
+        hasSelection: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReopenTerminalSelectionMenu({ clicked: null, reopenPointer: null, hasSelection: true }),
+    ).toBe(false);
+    expect(
+      shouldReopenTerminalSelectionMenu({
+        clicked: null,
+        reopenPointer: pointer,
+        hasSelection: false,
+      }),
     ).toBe(false);
   });
 });

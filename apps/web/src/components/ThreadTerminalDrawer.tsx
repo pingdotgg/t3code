@@ -271,6 +271,19 @@ export function shouldOpenTerminalSelectionContextMenu(options: {
 }
 
 /**
+ * Whether a menu dismissal should immediately reopen the selection menu: only
+ * when the dismissal was caused by a new right-click (which parked a pointer)
+ * and the selection it would act on still exists.
+ */
+export function shouldReopenTerminalSelectionMenu(options: {
+  clicked: string | null;
+  reopenPointer: { x: number; y: number } | null;
+  hasSelection: boolean;
+}): boolean {
+  return options.clicked === null && options.reopenPointer !== null && options.hasSelection;
+}
+
+/**
  * Whether dismissing the selection menu should return focus to the terminal
  * input, so the keyboard copy shortcut keeps targeting the still-highlighted
  * selection. When the dismissal moved focus elsewhere (the web fallback menu
@@ -377,6 +390,7 @@ export function TerminalViewport({
   const selectionActionRequestIdRef = useRef(0);
   const selectionActionMenuOpenRef = useRef(false);
   const selectionActionTimerRef = useRef<number | null>(null);
+  const pendingSelectionMenuPointerRef = useRef<{ x: number; y: number } | null>(null);
   const keybindingsRef = useRef(keybindings);
   const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
@@ -523,6 +537,7 @@ export function TerminalViewport({
 
       const clearSelectionAction = () => {
         selectionActionRequestIdRef.current += 1;
+        pendingSelectionMenuPointerRef.current = null;
         if (selectionActionTimerRef.current !== null) {
           window.clearTimeout(selectionActionTimerRef.current);
           selectionActionTimerRef.current = null;
@@ -600,6 +615,13 @@ export function TerminalViewport({
           return;
         }
         if (selectionActionMenuOpenRef.current) {
+          // A right-click that dismisses the open native menu still reaches
+          // the renderer before the menu's IPC resolution does, so the gesture
+          // would otherwise end menu-less. Park the pointer; the settling
+          // handler below reopens there.
+          if (explicitPointer) {
+            pendingSelectionMenuPointerRef.current = explicitPointer;
+          }
           return;
         }
         const nextAction = readSelectionAction(explicitPointer);
@@ -614,6 +636,22 @@ export function TerminalViewport({
           .finally(() => {
             selectionActionMenuOpenRef.current = false;
           });
+        // A dismissal caused by a new right-click reopens at that pointer.
+        // This runs before the staleness check because the dismissing click's
+        // own pointerdown already bumped the request id.
+        const reopenPointer = pendingSelectionMenuPointerRef.current;
+        pendingSelectionMenuPointerRef.current = null;
+        if (
+          shouldReopenTerminalSelectionMenu({
+            clicked,
+            reopenPointer,
+            hasSelection: terminalRef.current?.hasSelection() === true,
+          }) &&
+          reopenPointer
+        ) {
+          void showSelectionAction(reopenPointer);
+          return;
+        }
         if (requestId !== selectionActionRequestIdRef.current) {
           return;
         }
@@ -804,11 +842,23 @@ export function TerminalViewport({
         event.preventDefault();
         void showSelectionAction({ x: event.clientX, y: event.clientY });
       };
+      // A parked pointer must not outlive the gesture that parked it: any
+      // newer pointerdown anywhere (composer, another split terminal) or a
+      // focus departure supersedes it, or a long-delayed dismissal would
+      // reopen a menu the user has moved on from. The parking right-click is
+      // unaffected — its own pointerdown precedes its contextmenu.
+      const clearParkedSelectionMenuPointer = () => {
+        pendingSelectionMenuPointerRef.current = null;
+      };
       window.addEventListener("mouseup", handleMouseUp);
+      window.addEventListener("pointerdown", clearParkedSelectionMenuPointer, true);
+      window.addEventListener("blur", clearParkedSelectionMenuPointer);
       mount.addEventListener("pointerdown", handlePointerDown);
       mount.addEventListener("contextmenu", handleContextMenu);
       setupCleanups.push(() => {
         window.removeEventListener("mouseup", handleMouseUp);
+        window.removeEventListener("pointerdown", clearParkedSelectionMenuPointer, true);
+        window.removeEventListener("blur", clearParkedSelectionMenuPointer);
         mount.removeEventListener("pointerdown", handlePointerDown);
         mount.removeEventListener("contextmenu", handleContextMenu);
       });
