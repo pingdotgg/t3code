@@ -7,7 +7,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -40,11 +40,13 @@ import {
   ACTION_FAILURE_LABELS,
   ACTION_SUCCESS_LABELS,
   OPEN_ON_HOST_LABELS,
+  allowedPullRequestReviewVerdicts,
   buildExplainPullRequestPrompt,
   buildFixFindingPrompt,
   buildFixFindingsPrompt,
   buildPullRequestTimeline,
   buildResolveConflictsPrompt,
+  canRequestPullRequestReviewers,
   composePullRequestDetailView,
   countUnresolvedReviewThreads,
   describePullRequestConversationSummary,
@@ -107,7 +109,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
   const diffSlices = usePullRequestDiffSlices({
     environmentId,
     reference,
-    enabled: reference !== null && tab === "files",
+    enabled: reference !== null && tab === "files" && detailQuery.data?.capabilities.diff === true,
   });
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
@@ -120,6 +122,25 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
       ? null
       : composePullRequestDetailView(detailQuery.data, activityQuery.data);
   const presentation = detail === null ? null : resolvePullRequestState(detail);
+  const visibleTabs = useMemo(
+    () =>
+      TABS.filter((item) => item.value !== "files" || detail === null || detail.capabilities.diff),
+    [detail],
+  );
+  const reviewVerdicts = useMemo(
+    () =>
+      detail === null
+        ? []
+        : allowedPullRequestReviewVerdicts(
+            detail.capabilities.review.verdicts,
+            detail.viewerPermissions.verdicts,
+          ),
+    [detail],
+  );
+
+  useEffect(() => {
+    if (!visibleTabs.some((item) => item.value === tab)) setTab("overview");
+  }, [tab, visibleTabs]);
 
   const refetch = useCallback(() => {
     detailQuery.refresh();
@@ -235,6 +256,17 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
     void tryOpenExternalUrl(detail.url, "pull-request");
   }, [detail]);
 
+  const openReview = useCallback(() => {
+    navigation.navigate("PullRequestComment", {
+      environmentId: String(environmentId),
+      projectId: props.route.params.projectId,
+      repository,
+      number: String(number),
+      mode: "review",
+      verdicts: reviewVerdicts,
+    });
+  }, [environmentId, navigation, number, props.route.params.projectId, repository, reviewVerdicts]);
+
   const moreItems = useMemo(() => {
     if (detail === null) return [];
     const items: Array<{
@@ -301,7 +333,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
         onPress: () => void perform("draft"),
       });
     }
-    if (detail.viewerPermissions.requestReviewers && detail.capabilities.reviewers.request) {
+    if (canRequestPullRequestReviewers(detail)) {
       items.push({
         type: "action",
         title: "Request reviewers",
@@ -477,7 +509,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
               {detail.title}
             </Text>
             <View className="mt-3 flex-row rounded-full bg-subtle p-1">
-              {TABS.map((item) => {
+              {visibleTabs.map((item) => {
                 const selected = tab === item.value;
                 return (
                   <Pressable
@@ -544,6 +576,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
               ) : (
                 <ConversationTab
                   busy={busy}
+                  canReview={reviewVerdicts.length > 0}
                   conversation={conversation}
                   detail={detail}
                   timeline={timeline}
@@ -583,15 +616,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
                       threadId,
                     })
                   }
-                  onReview={() =>
-                    navigation.navigate("PullRequestComment", {
-                      environmentId: String(environmentId),
-                      projectId: props.route.params.projectId,
-                      repository,
-                      number: String(number),
-                      mode: "review",
-                    })
-                  }
+                  onReview={openReview}
                   onToggleResolved={async (thread, resolved) => {
                     const result = await setThreadResolution({
                       environmentId,
@@ -692,18 +717,10 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
                     </Text>
                   </Pressable>
                 )
-              ) : detail.viewerPermissions.verdicts.length > 0 ? (
+              ) : reviewVerdicts.length > 0 ? (
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() =>
-                    navigation.navigate("PullRequestComment", {
-                      environmentId: String(environmentId),
-                      projectId: props.route.params.projectId,
-                      repository,
-                      number: String(number),
-                      mode: "review",
-                    })
-                  }
+                  onPress={openReview}
                   className="h-12 items-center justify-center rounded-full bg-primary active:opacity-80"
                 >
                   <Text className="text-base font-t3-bold text-primary-foreground">
@@ -749,11 +766,11 @@ function OverviewTab(props: {
         />
       </View>
 
-      {detail.reviewers.length > 0 || detail.viewerPermissions.requestReviewers ? (
+      {detail.reviewers.length > 0 || canRequestPullRequestReviewers(detail) ? (
         <View className="rounded-[20px] bg-card px-4 py-3">
           <View className="flex-row items-center justify-between">
             <Text className="text-sm font-t3-bold text-foreground">Reviewers</Text>
-            {detail.viewerPermissions.requestReviewers && detail.capabilities.reviewers.request ? (
+            {canRequestPullRequestReviewers(detail) ? (
               <Pressable onPress={props.onRequestReviewers} hitSlop={8}>
                 <Text className="text-sm font-t3-bold text-primary">Edit</Text>
               </Pressable>
@@ -828,6 +845,7 @@ function ConversationTab(props: {
   readonly busy: boolean;
   readonly onComment: () => void;
   readonly onReview: () => void;
+  readonly canReview: boolean;
   readonly onReply: (threadId: string) => void;
   readonly onFixThread: (thread: PullRequestReviewThread) => void;
   readonly onToggleResolved: (thread: PullRequestReviewThread, resolved: boolean) => Promise<void>;
@@ -849,7 +867,7 @@ function ConversationTab(props: {
               <Text className="text-xs font-t3-bold text-foreground">Comment</Text>
             </Pressable>
           ) : null}
-          {props.detail.viewerPermissions.verdicts.length > 0 ? (
+          {props.canReview ? (
             <Pressable onPress={props.onReview} className="rounded-full bg-subtle px-3 py-1.5">
               <Text className="text-xs font-t3-bold text-foreground">Review</Text>
             </Pressable>

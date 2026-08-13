@@ -18,6 +18,10 @@ import {
   orderPullRequestComments,
   pullRequestUrlHost,
   readableFailure,
+  allowedPullRequestReviewVerdicts,
+  canRequestPullRequestReviewers,
+  resolveReviewSheetVerdicts,
+  reviewRequiresBody,
 } from "./pullRequestDetail.logic";
 
 const TIMELINE_SOURCE: Pick<
@@ -51,6 +55,47 @@ describe("pull request state description", () => {
     expect(describePullRequestState("closed", true)).toBe("Closed");
     expect(describePullRequestState("open", true)).toBe("Draft");
     expect(describePullRequestState("open", false)).toBe("Ready for review");
+  });
+});
+
+describe("review controls", () => {
+  it("intersects host verdicts with what this viewer may submit", () => {
+    expect(
+      allowedPullRequestReviewVerdicts(["comment", "approve", "request-changes"], ["comment"]),
+    ).toEqual(["comment"]);
+    expect(
+      allowedPullRequestReviewVerdicts(
+        ["comment", "approve"],
+        ["comment", "approve", "request-changes"],
+      ),
+    ).toEqual(["comment", "approve"]);
+  });
+
+  it("requires a summary for every verdict except an empty approval", () => {
+    expect(reviewRequiresBody("approve")).toBe(false);
+    expect(reviewRequiresBody("comment")).toBe(true);
+    expect(reviewRequiresBody("request-changes")).toBe(true);
+  });
+
+  it("hides the reviewer picker when the host cannot list candidates", () => {
+    expect(
+      canRequestPullRequestReviewers({
+        viewerPermissions: { requestReviewers: true },
+        capabilities: { reviewers: { request: true, listCandidates: false } },
+      }),
+    ).toBe(false);
+    expect(
+      canRequestPullRequestReviewers({
+        viewerPermissions: { requestReviewers: true },
+        capabilities: { reviewers: { request: true, listCandidates: true } },
+      }),
+    ).toBe(true);
+  });
+
+  it("offers only Comment when a review sheet is opened without a verdict list", () => {
+    expect(resolveReviewSheetVerdicts(undefined)).toEqual(["comment"]);
+    expect(resolveReviewSheetVerdicts([])).toEqual(["comment"]);
+    expect(resolveReviewSheetVerdicts(["approve"])).toEqual(["approve"]);
   });
 });
 

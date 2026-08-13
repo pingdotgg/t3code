@@ -3,7 +3,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Platform, Pressable, View } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -14,7 +14,11 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { cn } from "../../lib/cn";
 import { pullRequestEnvironment } from "../../state/pullRequests";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { readableFailure } from "./pullRequestDetail.logic";
+import {
+  readableFailure,
+  resolveReviewSheetVerdicts,
+  reviewRequiresBody,
+} from "./pullRequestDetail.logic";
 import { type PullRequestCommentRouteParams } from "./pullRequestNavigation";
 import { useResolvedPullRequestReference } from "./useResolvedPullRequestReference";
 
@@ -37,7 +41,11 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
   const mode = props.route.params.mode;
   const threadId = props.route.params.threadId;
   const [body, setBody] = useState("");
-  const [verdict, setVerdict] = useState<PullRequestReviewVerdict>("comment");
+  const verdicts = useMemo(
+    () => resolveReviewSheetVerdicts(props.route.params.verdicts),
+    [props.route.params.verdicts],
+  );
+  const [verdict, setVerdict] = useState<PullRequestReviewVerdict>(verdicts[0] ?? "comment");
   const [pending, setPending] = useState(false);
   const comment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
@@ -52,8 +60,14 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
     reference !== null &&
     !pending &&
     body.length <= COMMENT_BODY_MAX_LENGTH &&
-    (mode === "review" ? true : body.trim().length > 0) &&
+    (mode === "review"
+      ? !reviewRequiresBody(verdict) || body.trim().length > 0
+      : body.trim().length > 0) &&
     (mode !== "reply" || (threadId !== undefined && threadId.length > 0));
+
+  useEffect(() => {
+    if (!verdicts.includes(verdict)) setVerdict(verdicts[0] ?? "comment");
+  }, [verdict, verdicts]);
 
   const submit = useCallback(async () => {
     if (reference === null || !canSubmit) return;
@@ -81,7 +95,16 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
         );
         return;
       }
-      await invalidate({ environmentId, input: { reference } });
+      const invalidateResult = await invalidate({ environmentId, input: { reference } });
+      if (AsyncResult.isFailure(invalidateResult)) {
+        Alert.alert(
+          "Posted, but this page may look stale",
+          readableFailure(
+            squashAtomCommandFailure(invalidateResult),
+            "The remark was sent. Pull to refresh if it does not appear yet.",
+          ),
+        );
+      }
       navigation.goBack();
     } finally {
       setPending(false);
@@ -100,11 +123,6 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
     threadId,
     verdict,
   ]);
-
-  const verdicts = useMemo<ReadonlyArray<PullRequestReviewVerdict>>(
-    () => ["comment", "approve", "request-changes"],
-    [],
-  );
 
   return (
     <KeyboardAvoidingView behavior="padding" className="flex-1 bg-sheet">
@@ -162,7 +180,9 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
           onChangeText={setBody}
           placeholder={
             mode === "review"
-              ? "Leave a review summary (optional)"
+              ? reviewRequiresBody(verdict)
+                ? "Leave a review summary"
+                : "Leave a review summary (optional)"
               : mode === "reply"
                 ? "Reply to this conversation"
                 : "Write a comment"

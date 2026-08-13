@@ -122,6 +122,7 @@ export function PullRequestsRouteScreen() {
       environments={environments}
       error={list.error}
       firstLoad={list.firstLoad}
+      projectErrors={list.errors}
       groups={list.groups}
       hasProjects={scopedProjects.length > 0}
       hosts={list.providers}

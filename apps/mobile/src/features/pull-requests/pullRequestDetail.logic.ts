@@ -7,6 +7,7 @@ import type {
   PullRequestActivity,
   PullRequestReaction,
   PullRequestReviewThread,
+  PullRequestReviewVerdict,
   PullRequestState,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -16,6 +17,39 @@ export function describePullRequestState(state: PullRequestState, isDraft: boole
   if (state === "merged") return "Merged";
   if (state === "closed") return "Closed";
   return isDraft ? "Draft" : "Ready for review";
+}
+
+/** Host capability ∩ viewer permission — either side saying no is a control that only ever fails. */
+export function allowedPullRequestReviewVerdicts(
+  hostVerdicts: ReadonlyArray<PullRequestReviewVerdict>,
+  viewerVerdicts: ReadonlyArray<PullRequestReviewVerdict>,
+): ReadonlyArray<PullRequestReviewVerdict> {
+  return hostVerdicts.filter((verdict) => viewerVerdicts.includes(verdict));
+}
+
+/** An approval may be empty; Comment and Request changes need a summary on this form. */
+export function reviewRequiresBody(verdict: PullRequestReviewVerdict): boolean {
+  return verdict !== "approve";
+}
+
+export function canRequestPullRequestReviewers(detail: {
+  readonly viewerPermissions: { readonly requestReviewers: boolean };
+  readonly capabilities: {
+    readonly reviewers: { readonly request: boolean; readonly listCandidates: boolean };
+  };
+}): boolean {
+  return (
+    detail.viewerPermissions.requestReviewers &&
+    detail.capabilities.reviewers.request &&
+    detail.capabilities.reviewers.listCandidates
+  );
+}
+
+/** Deep links omit the intersected list; Comment is the only verdict that never needs extra rights. */
+export function resolveReviewSheetVerdicts(
+  fromRoute: ReadonlyArray<PullRequestReviewVerdict> | undefined,
+): ReadonlyArray<PullRequestReviewVerdict> {
+  return fromRoute !== undefined && fromRoute.length > 0 ? fromRoute : ["comment"];
 }
 
 /** Chronological ascending, oldest to newest — reversed for the "newest" reading order. */

@@ -227,3 +227,11 @@ export function withDiffStat(
   const stat = statsByRow.get(`${entry.projectId} ${entry.number}`);
   return stat === undefined ? entry : { ...entry, ...stat };
 }
+
+/** Keep the Host menu once a host is chosen, even if the filtered RPC returns only that host. */
+export function shouldShowPullRequestHostFilter(
+  hostCount: number,
+  selectedHost: string | undefined,
+): boolean {
+  return hostCount > 1 || selectedHost !== undefined;
+}

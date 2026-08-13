@@ -8,7 +8,7 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Alert } from "react-native";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -42,6 +42,7 @@ export function usePullRequestHandoff() {
     reportFailure: false,
   });
   const [pendingKind, setPendingKind] = useState<string | null>(null);
+  const pendingRef = useRef(false);
 
   const startHandoff = useCallback(
     async (input: {
@@ -51,12 +52,14 @@ export function usePullRequestHandoff() {
       readonly url: string;
       readonly prompt: string;
     }) => {
-      if (pendingKind !== null) return false;
+      if (pendingRef.current) return false;
+      pendingRef.current = true;
       const project = projects.find(
         (candidate) =>
           candidate.environmentId === input.environmentId && candidate.id === input.projectId,
       );
       if (project === undefined) {
+        pendingRef.current = false;
         Alert.alert(
           "Could not start a thread",
           "The project for this pull request is not available on this environment.",
@@ -67,10 +70,11 @@ export function usePullRequestHandoff() {
       const modelOptions = buildModelOptions(config, project.defaultModelSelection);
       const modelSelection =
         resolveDefaultableModelSelection(config, project.defaultModelSelection) ??
-        modelOptions.find((option) => option.isDefault)?.selection ??
-        modelOptions[0]?.selection ??
+        modelOptions.find((option) => option.isDefault && !option.isLegacy)?.selection ??
+        modelOptions.find((option) => !option.isLegacy)?.selection ??
         null;
       if (modelSelection === null) {
+        pendingRef.current = false;
         Alert.alert(
           "Could not start a thread",
           "No model is available on this environment. Check Settings → Environments.",
@@ -139,17 +143,11 @@ export function usePullRequestHandoff() {
         });
         return true;
       } finally {
+        pendingRef.current = false;
         setPendingKind(null);
       }
     },
-    [
-      createProjectThread,
-      navigation,
-      pendingKind,
-      preparePullRequestThread,
-      projects,
-      serverConfigs,
-    ],
+    [createProjectThread, navigation, preparePullRequestThread, projects, serverConfigs],
   );
 
   return { pendingKind, startHandoff };

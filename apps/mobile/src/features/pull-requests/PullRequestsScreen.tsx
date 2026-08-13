@@ -3,6 +3,7 @@ import type {
   ProjectId,
   PullRequestInvolvement,
   PullRequestListEntry,
+  PullRequestListProjectError,
   PullRequestListState,
   PullRequestProviderSummary,
 } from "@t3tools/contracts";
@@ -33,7 +34,7 @@ import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
-import { scorePullRequestMatch } from "./pullRequestList.logic";
+import { scorePullRequestMatch, shouldShowPullRequestHostFilter } from "./pullRequestList.logic";
 import { PullRequestRow } from "./PullRequestRow";
 
 const MATCHED_ELSEWHERE_SCORE = 10;
@@ -66,6 +67,14 @@ export interface PullRequestListProject {
   readonly title: string;
 }
 
+function describeProjectErrors(errors: ReadonlyArray<PullRequestListProjectError>): string {
+  if (errors.length === 1) {
+    const error = errors[0]!;
+    return `${error.projectTitle} could not be read. Pull requests from that repository are missing.`;
+  }
+  return `${errors.length} projects could not be read. Pull requests from those repositories are missing.`;
+}
+
 function checked(on: boolean) {
   return on ? ("on" as const) : undefined;
 }
@@ -95,6 +104,7 @@ function PullRequestsHeader(props: {
   const searchTextColor = useThemeColor("--color-foreground");
   const usesCompactMailToolbar =
     Platform.OS === "ios" && width < 700 && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+  const showHostFilter = shouldShowPullRequestHostFilter(props.hosts.length, props.selectedHost);
 
   const filterMenu = {
     title: "Pull request options",
@@ -154,7 +164,7 @@ function PullRequestsHeader(props: {
           })),
         ],
       },
-      ...(props.hosts.length > 1
+      ...(showHostFilter
         ? [
             {
               type: "submenu" as const,
@@ -223,7 +233,7 @@ function PullRequestsHeader(props: {
           })),
         ],
       },
-      ...(props.hosts.length > 1
+      ...(showHostFilter
         ? [
             {
               id: "host",
@@ -252,6 +262,7 @@ function PullRequestsHeader(props: {
       props.selectedEnvironmentId,
       props.selectedHost,
       props.selectedProjectId,
+      showHostFilter,
     ],
   );
 
@@ -445,7 +456,7 @@ function PullRequestsHeader(props: {
                 </NativeHeaderToolbar.MenuAction>
               ))}
             </NativeHeaderToolbar.Menu>
-            {props.hosts.length > 1 ? (
+            {showHostFilter ? (
               <NativeHeaderToolbar.Menu title="Host">
                 <NativeHeaderToolbar.MenuAction
                   isOn={props.selectedHost === undefined}
@@ -529,6 +540,7 @@ export function PullRequestsScreen(props: {
   readonly loadingMore: boolean;
   readonly canLoadMore: boolean;
   readonly error: string | null;
+  readonly projectErrors: ReadonlyArray<PullRequestListProjectError>;
   readonly querySettled: boolean;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
@@ -646,7 +658,9 @@ export function PullRequestsScreen(props: {
         detail={
           hasCustomFilter
             ? "Nothing matches these filters. Try another involvement, project, or host."
-            : "Open pull requests from this environment’s repositories will appear here."
+            : props.projectErrors.length > 0
+              ? describeProjectErrors(props.projectErrors)
+              : "Open pull requests from this environment’s repositories will appear here."
         }
         actionLabel="Check again"
         onAction={props.onRefresh}
@@ -731,7 +745,22 @@ export function PullRequestsScreen(props: {
         keyExtractor={(item) => item.key}
         ListEmptyComponent={() => listEmpty}
         ListFooterComponent={() => listFooter}
-        ListHeaderComponent={<StateChips state={props.state} onChange={props.onStateChange} />}
+        ListHeaderComponent={
+          <>
+            <StateChips state={props.state} onChange={props.onStateChange} />
+            {props.projectErrors.length > 0 && listItems.length > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={props.onRefresh}
+                className="mb-2 rounded-[16px] bg-subtle px-3 py-2.5"
+              >
+                <Text className="text-xs text-foreground">
+                  {describeProjectErrors(props.projectErrors)}
+                </Text>
+              </Pressable>
+            ) : null}
+          </>
+        }
         refreshControl={
           <RefreshControl
             onRefresh={props.onRefresh}

@@ -1,4 +1,8 @@
-import type { PullRequestRef, RepositoryIdentity } from "@t3tools/contracts";
+import type {
+  PullRequestRef,
+  PullRequestReviewVerdict,
+  RepositoryIdentity,
+} from "@t3tools/contracts";
 import { ProjectId } from "@t3tools/contracts";
 
 import { parseChangeRequestUrl, repositoryFromIdentity } from "./pullRequestLinks";
@@ -17,6 +21,8 @@ export type PullRequestDetailRouteParams = {
 export type PullRequestCommentRouteParams = PullRequestDetailRouteParams & {
   readonly mode: "comment" | "review" | "reply";
   readonly threadId?: string;
+  /** Intersected host ∩ viewer verdicts. Absent on a deep link, which offers Comment only. */
+  readonly verdicts?: ReadonlyArray<PullRequestReviewVerdict>;
 };
 
 export type PullRequestDiffRouteParams = PullRequestDetailRouteParams & {

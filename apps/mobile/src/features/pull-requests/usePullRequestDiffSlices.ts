@@ -32,7 +32,14 @@ export function usePullRequestDiffSlices(input: {
     setAccumulated(null);
   }, [scopeKey]);
 
-  const query = useEnvironmentQuery(
+  const firstPageAtom =
+    !input.enabled || input.reference === null
+      ? null
+      : pullRequestEnvironment.diff({
+          environmentId: input.environmentId,
+          input: { ...input.reference },
+        });
+  const pageAtom =
     !input.enabled || input.reference === null
       ? null
       : pullRequestEnvironment.diff({
@@ -41,8 +48,9 @@ export function usePullRequestDiffSlices(input: {
             ...input.reference,
             ...(cursor === undefined ? {} : { cursor }),
           },
-        }),
-  );
+        });
+  const firstPageQuery = useEnvironmentQuery(firstPageAtom);
+  const query = useEnvironmentQuery(pageAtom);
 
   useEffect(() => {
     if (query.data === null || query.isPending) return;
@@ -72,15 +80,19 @@ export function usePullRequestDiffSlices(input: {
   const nextCursor = accumulated?.key === scopeKey ? accumulated.nextCursor : null;
 
   const loadMore = useCallback(() => {
-    if (nextCursor === null || nextCursor === cursor) return;
+    if (nextCursor === null) return;
+    if (nextCursor === cursor) {
+      if (query.error !== null) query.refresh();
+      return;
+    }
     setCursor(nextCursor);
-  }, [cursor, nextCursor]);
+  }, [cursor, nextCursor, query]);
 
   const refresh = useCallback(() => {
     setCursor(undefined);
     setAccumulated(null);
-    query.refresh();
-  }, [query]);
+    firstPageQuery.refresh();
+  }, [firstPageQuery]);
 
   return {
     files,

@@ -12,6 +12,7 @@ import {
   scorePullRequestMatch,
   withDiffStat,
   resolveProjectScope,
+  shouldShowPullRequestHostFilter,
 } from "./pullRequestList.logic";
 
 const VIEWERS = { "github.com": "Bilal" } as const;
@@ -158,5 +159,13 @@ describe("project scope", () => {
     expect(resolveProjectScope("missing", [{ id: "a" }], false)).toBe("missing");
     expect(resolveProjectScope("missing", [{ id: "a" }], true)).toBeUndefined();
     expect(resolveProjectScope("a", [{ id: "a" }], true)).toBe("a");
+  });
+});
+
+describe("host filter visibility", () => {
+  it("stays available after a host is selected, even when only that host remains", () => {
+    expect(shouldShowPullRequestHostFilter(1, undefined)).toBe(false);
+    expect(shouldShowPullRequestHostFilter(1, "github.com")).toBe(true);
+    expect(shouldShowPullRequestHostFilter(2, undefined)).toBe(true);
   });
 });
