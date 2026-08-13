@@ -7,6 +7,7 @@ import {
   type TurnPlanEntry,
   type WorkLogEntry,
 } from "../../session-logic";
+import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
@@ -236,6 +237,47 @@ export function computeMessageDurationStart(
 
 export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+}
+
+function workEntryRawCommand(
+  workEntry: Pick<WorkLogEntry, "command" | "rawCommand">,
+): string | null {
+  const rawCommand = workEntry.rawCommand?.trim();
+  if (!rawCommand || !workEntry.command) {
+    return null;
+  }
+  return rawCommand === workEntry.command.trim() ? null : rawCommand;
+}
+
+export function buildToolCallExpandedBody(
+  workEntry: Pick<
+    WorkLogEntry,
+    "changedFiles" | "command" | "detail" | "itemType" | "rawCommand" | "toolData"
+  >,
+  workspaceRoot: string | undefined,
+): string | null {
+  const blocks: string[] = [];
+  const appendUniqueBlock = (value: string | null | undefined) => {
+    const trimmed = value?.trim();
+    if (trimmed && !blocks.includes(trimmed)) {
+      blocks.push(trimmed);
+    }
+  };
+
+  if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
+    appendUniqueBlock(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
+  }
+  appendUniqueBlock(workEntryRawCommand(workEntry) ?? workEntry.command);
+  appendUniqueBlock(workEntry.detail);
+  if ((workEntry.changedFiles?.length ?? 0) > 0) {
+    appendUniqueBlock(
+      workEntry
+        .changedFiles!.map((filePath) => formatWorkspaceRelativePath(filePath, workspaceRoot))
+        .join("\n"),
+    );
+  }
+
+  return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
 export function resolveAssistantMessageCopyState({
