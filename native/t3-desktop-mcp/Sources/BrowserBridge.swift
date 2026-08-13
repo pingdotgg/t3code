@@ -177,6 +177,7 @@ final class BrowserBridge {
     static let shared = BrowserBridge()
 
     private var listenFD: Int32 = -1
+    private var ownershipLockFD: Int32 = -1
     private var clientFD: Int32 = -1
     private let lock = NSLock()
     private var nextID = 0
@@ -187,16 +188,32 @@ final class BrowserBridge {
         return clientFD >= 0
     }
 
+    private var ownershipLockPath: String { bridgeSocketPath + ".lock" }
+
     /// Bind the socket and accept the host connection. Silently does nothing if
     /// another server already owns it.
     func start() {
-        // Defer to a server that is already listening. Unlinking and rebinding
-        // would silently take the browser away from whichever session is using
-        // it, and the victim would keep reporting success while doing nothing.
-        if bridgeSocketIsLive() { return }
+        // Cross-process exclusive lock closes the live-check / unlink / bind
+        // race where two servers could both think they own the bridge.
+        let lockFd = open(ownershipLockPath, O_CREAT | O_RDWR, 0o600)
+        guard lockFd >= 0 else { return }
+        if flock(lockFd, LOCK_EX | LOCK_NB) != 0 {
+            close(lockFd)
+            return
+        }
+
+        if bridgeSocketIsLive() {
+            flock(lockFd, LOCK_UN)
+            close(lockFd)
+            return
+        }
         unlink(bridgeSocketPath)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else {
+            flock(lockFd, LOCK_UN)
+            close(lockFd)
+            return
+        }
         var addr = bridgeAddress()
         let size = socklen_t(MemoryLayout<sockaddr_un>.size)
         let bound = withUnsafePointer(to: &addr) {
@@ -204,8 +221,14 @@ final class BrowserBridge {
         }
         // Backlog of several: Chrome relaunches the host on every extension
         // reload, and a full queue makes the next connect fail outright.
-        guard bound == 0, listen(fd, 8) == 0 else { close(fd); return }
+        guard bound == 0, listen(fd, 8) == 0 else {
+            close(fd)
+            flock(lockFd, LOCK_UN)
+            close(lockFd)
+            return
+        }
         listenFD = fd
+        ownershipLockFD = lockFd
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
             while true {
