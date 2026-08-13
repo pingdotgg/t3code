@@ -27,6 +27,7 @@ import {
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
+  UNDO_COMMAND,
   COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_LOW,
   KEY_BACKSPACE_COMMAND,
@@ -897,6 +898,7 @@ interface ComposerPromptEditorProps {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  onBeforeUndo?: () => void;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -959,6 +961,26 @@ function ComposerCommandKeyPlugin(props: {
       unregisterTab();
     };
   }, [editor, props]);
+
+  return null;
+}
+
+function ComposerBeforeUndoPlugin(props: { onBeforeUndo?: () => void }) {
+  const [editor] = useLexicalComposerContext();
+  const onBeforeUndo = props.onBeforeUndo;
+
+  useEffect(() => {
+    return editor.registerCommand(
+      UNDO_COMMAND,
+      () => {
+        onBeforeUndo?.();
+        // Lexical still owns the text history. This hook only lets the
+        // composer reverse side state that lives outside the editor.
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor, onBeforeUndo]);
 
   return null;
 }
@@ -1537,6 +1559,7 @@ function ComposerPromptEditorInner({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onBeforeUndo,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1774,6 +1797,7 @@ function ComposerPromptEditorInner({
         />
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+        <ComposerBeforeUndoPlugin {...(onBeforeUndo ? { onBeforeUndo } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
         <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
@@ -1798,6 +1822,7 @@ export function ComposerPromptEditor({
   onRemoveTerminalContext,
   onChange,
   onCommandKeyDown,
+  onBeforeUndo,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -1834,6 +1859,7 @@ export function ComposerPromptEditor({
         placeholder={placeholder}
         onRemoveTerminalContext={onRemoveTerminalContext}
         onChange={onChange}
+        {...(onBeforeUndo ? { onBeforeUndo } : {})}
         onPaste={onPaste}
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
