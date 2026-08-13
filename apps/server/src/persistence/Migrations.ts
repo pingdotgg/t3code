@@ -71,6 +71,7 @@ import Migration0066 from "./Migrations/066_ProjectionThreadsPullRequest.ts";
 import Migration0067 from "./Migrations/067_BackfillReviewThreadPullRequests.ts";
 import Migration0068 from "./Migrations/068_RepairReviewThreadPullRequestState.ts";
 import Migration0069 from "./Migrations/069_ProjectionThreadSessionActiveMessage.ts";
+import Migration0070 from "./Migrations/070_RepairSkippedRoleAuthTables.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -141,6 +142,7 @@ export const migrationEntries = [
   [67, "BackfillReviewThreadPullRequests", Migration0067],
   [68, "RepairReviewThreadPullRequestState", Migration0068],
   [69, "ProjectionThreadSessionActiveMessage", Migration0069],
+  [70, "RepairSkippedRoleAuthTables", Migration0070],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
