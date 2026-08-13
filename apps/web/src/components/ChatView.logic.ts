@@ -273,6 +273,16 @@ export function cloneComposerImageForRetry(
   }
 }
 
+export function prepareComposerImagesForRetry(
+  images: ReadonlyArray<ComposerImageAttachment>,
+  input: { previewsOwnedByOptimisticMessage: boolean },
+): ComposerImageAttachment[] {
+  if (!input.previewsOwnedByOptimisticMessage) {
+    return [...images];
+  }
+  return images.map(cloneComposerImageForRetry);
+}
+
 export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;

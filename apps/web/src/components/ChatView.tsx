@@ -306,8 +306,8 @@ import {
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
-  cloneComposerImageForRetry,
   deriveLockedProvider,
+  prepareComposerImagesForRetry,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
@@ -5364,7 +5364,9 @@ function ChatViewContent(props: ChatViewProps) {
           return next.length === existing.length ? existing : next;
         });
         promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
+        const retryComposerImages = prepareComposerImagesForRetry(composerImagesSnapshot, {
+          previewsOwnedByOptimisticMessage: !newThreadDraft,
+        });
         composerImagesRef.current = retryComposerImages;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         composerElementContextsRef.current = composerElementContextsSnapshot;
@@ -5397,6 +5399,9 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     if (turnStartSucceeded && newThreadDraft && newThreadDraftId) {
+      for (const image of composerImagesSnapshot) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
       await settlePromise(() =>
         waitForStartedServerThread(
           scopeThreadRef(newThreadDraft.environmentId, threadIdForSend),
