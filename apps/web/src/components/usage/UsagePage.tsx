@@ -470,10 +470,10 @@ function Metric({
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Says plainly when the totals are incomplete: an environment that failed or is
+ * unreachable, or one whose transcripts another environment already reported.
+ * Environments that are still answering never reach this notice; the page shows
+ * the loading skeleton until every one is terminal.
  */
 function UsageCoverageNotice({
   environments,
@@ -495,7 +495,7 @@ function UsageCoverageNotice({
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
       {failed.map((environment) => (
-        <span key={environment.label}>{environment.label} could not report usage.</span>
+        <span key={environment.environmentId}>{environment.error}</span>
       ))}
       {stale.map((environment) => (
         <span key={environment.label}>
