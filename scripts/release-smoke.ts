@@ -163,6 +163,12 @@ function assertContains(haystack: string, needle: string, message: string): void
   }
 }
 
+function assertNotContains(haystack: string, needle: string, message: string): void {
+  if (haystack.includes(needle)) {
+    throw new Error(message);
+  }
+}
+
 function assertExists(path: string, message: string): void {
   if (!NodeFS.existsSync(path)) {
     throw new Error(message);
@@ -185,9 +191,69 @@ function assertMissing(path: string, message: string): void {
   }
 }
 
+function readWorkflowJob(workflow: string, jobName: string): string {
+  const jobStart = workflow.indexOf(`\n  ${jobName}:\n`);
+  if (jobStart === -1) {
+    throw new Error(`Release workflow is missing the ${jobName} job.`);
+  }
+
+  const nextJobPattern = /^  [a-zA-Z0-9_]+:\n/gm;
+  nextJobPattern.lastIndex = jobStart + jobName.length + 5;
+  const nextJob = nextJobPattern.exec(workflow);
+  return workflow.slice(jobStart, nextJob?.index);
+}
+
+function assertDryRunGuards(): void {
+  const workflow = NodeFS.readFileSync(
+    NodePath.resolve(repoRoot, ".github/workflows/release.yml"),
+    "utf8",
+  );
+  assertContains(
+    workflow,
+    'dry_run:\n        description: "Build release artifacts without publishing or deploying"\n        required: false\n        default: true',
+    "Manual releases must default to dry-run mode.",
+  );
+  assertContains(
+    readWorkflowJob(workflow, "preflight"),
+    '"${DISPATCH_PUBLISH_CONFIRMATION:-}" != "PUBLISH"',
+    "Manual publishing must require the exact PUBLISH confirmation.",
+  );
+  assertContains(
+    readWorkflowJob(workflow, "relay_public_config"),
+    "needs.preflight.outputs.dry_run != 'true'",
+    "Dry runs must not enter the production relay config job.",
+  );
+  assertNotContains(
+    readWorkflowJob(workflow, "dry_run_public_config"),
+    "environment:",
+    "Dry-run config must not enter a GitHub environment.",
+  );
+  assertContains(
+    readWorkflowJob(workflow, "build"),
+    'if [[ "${{ needs.preflight.outputs.sign_artifacts }}" != "true" ]]',
+    "Dry-run signing must require an explicit opt-in.",
+  );
+
+  for (const jobName of [
+    "publish_cli",
+    "release",
+    "build_web_deployment",
+    "deploy_web",
+    "finalize",
+    "announce_discord",
+  ]) {
+    assertContains(
+      readWorkflowJob(workflow, jobName),
+      "needs.preflight.outputs.dry_run != 'true'",
+      `Release workflow job ${jobName} is missing its dry-run guard.`,
+    );
+  }
+}
+
 const tempRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-release-smoke-"));
 
 try {
+  assertDryRunGuards();
   copyWorkspaceManifestFixture(tempRoot);
 
   NodeChildProcess.execFileSync(

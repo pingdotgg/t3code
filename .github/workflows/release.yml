@@ -21,6 +21,20 @@ on:
         description: "Release version (for example 1.2.3 or v1.2.3)"
         required: false
         type: string
+      dry_run:
+        description: "Build release artifacts without publishing or deploying"
+        required: false
+        default: true
+        type: boolean
+      sign_artifacts:
+        description: "Sign dry-run desktop artifacts"
+        required: false
+        default: false
+        type: boolean
+      publish_confirmation:
+        description: "Type PUBLISH when dry_run is false"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -65,7 +79,7 @@ jobs:
           fi
 
   preflight:
-    name: Preflight
+    name: Prepare release
     needs: [check_changes]
     if: |
       !failure() && !cancelled() &&
@@ -82,6 +96,8 @@ jobs:
       cli_dist_tag: ${{ steps.release_meta.outputs.cli_dist_tag }}
       is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
+      dry_run: ${{ steps.release_meta.outputs.dry_run }}
+      sign_artifacts: ${{ steps.release_meta.outputs.sign_artifacts }}
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
@@ -98,10 +114,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: true
-
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
 
       - id: release_meta
         name: Resolve release version
@@ -109,10 +124,26 @@ jobs:
         env:
           DISPATCH_CHANNEL: ${{ github.event.inputs.channel }}
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          DISPATCH_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          DISPATCH_SIGN_ARTIFACTS: ${{ github.event.inputs.sign_artifacts }}
+          DISPATCH_PUBLISH_CONFIRMATION: ${{ github.event.inputs.publish_confirmation }}
           NIGHTLY_DATE: ${{ github.run_started_at }}
           NIGHTLY_SHA: ${{ github.sha }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
+          dry_run=false
+          sign_artifacts=true
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_DRY_RUN:-true}" == "true" ]]; then
+            dry_run=true
+            sign_artifacts="${DISPATCH_SIGN_ARTIFACTS:-false}"
+          fi
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "$dry_run" != "true" && "${DISPATCH_PUBLISH_CONFIRMATION:-}" != "PUBLISH" ]]; then
+            echo "Manual publishing requires publish_confirmation=PUBLISH." >&2
+            exit 1
+          fi
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+          echo "sign_artifacts=$sign_artifacts" >> "$GITHUB_OUTPUT"
+
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then
             nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
 
@@ -129,7 +160,9 @@ jobs:
           else
             if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
               raw="${DISPATCH_VERSION}"
-              if [[ -z "$raw" ]]; then
+              if [[ -z "$raw" && "$dry_run" == "true" ]]; then
+                raw="0.0.0-dry-run.${GITHUB_RUN_NUMBER}"
+              elif [[ -z "$raw" ]]; then
                 echo "workflow_dispatch stable releases require the version input." >&2
                 exit 1
               fi
@@ -157,6 +190,40 @@ jobs:
             fi
           fi
 
+      - id: previous_tag
+        name: Resolve previous release tag
+        run: |
+          node scripts/resolve-previous-release-tag.ts \
+            --channel "${{ steps.release_meta.outputs.release_channel }}" \
+            --current-tag "${{ steps.release_meta.outputs.tag }}" \
+            --github-output
+
+  validate:
+    name: Validate release source
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+
       - name: Check
         run: vp check
 
@@ -166,18 +233,10 @@ jobs:
       - name: Test
         run: vp run test
 
-      - id: previous_tag
-        name: Resolve previous release tag
-        run: |
-          node scripts/resolve-previous-release-tag.ts \
-            --channel "${{ steps.release_meta.outputs.release_channel }}" \
-            --current-tag "${{ steps.release_meta.outputs.tag }}" \
-            --github-output
-
   relay_public_config:
     name: Resolve T3 Connect public config
     needs: preflight
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.dry_run != 'true' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
@@ -233,7 +292,7 @@ jobs:
           retention-days: 1
 
       - id: public_config
-        name: Resolve production relay public config
+        name: Resolve relay public config
         shell: bash
         run: |
           set -euo pipefail
@@ -263,6 +322,190 @@ jobs:
           echo "clerk_jwt_template=$CLERK_JWT_TEMPLATE" >> "$GITHUB_OUTPUT"
           echo "clerk_cli_oauth_client_id=$CLERK_CLI_OAUTH_CLIENT_ID" >> "$GITHUB_OUTPUT"
           echo "relay_url=https://$relay_domain" >> "$GITHUB_OUTPUT"
+
+  dry_run_public_config:
+    name: Create dry-run public config
+    needs: preflight
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.preflight.outputs.dry_run == 'true' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      clerk_publishable_key: ${{ steps.public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ steps.public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ steps.public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ steps.public_config.outputs.relay_url }}
+    steps:
+      - id: public_config
+        name: Create public config
+        run: |
+          echo "clerk_publishable_key=pk_test_Y2xlcmsudDMuY29kZXMk" >> "$GITHUB_OUTPUT"
+          echo "clerk_jwt_template=t3-relay" >> "$GITHUB_OUTPUT"
+          echo "clerk_cli_oauth_client_id=dry-run" >> "$GITHUB_OUTPUT"
+          echo "relay_url=https://relay.invalid" >> "$GITHUB_OUTPUT"
+          touch "$RUNNER_TEMP/relay-client-tracing.env"
+
+      - name: Upload relay client tracing config
+        uses: actions/upload-artifact@v7
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing.env
+          if-no-files-found: error
+          retention-days: 1
+
+  release_public_config:
+    name: Select release public config
+    needs: [preflight, relay_public_config, dry_run_public_config]
+    if: |
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      ((needs.preflight.outputs.dry_run == 'true' && needs.dry_run_public_config.result == 'success') ||
+       (needs.preflight.outputs.dry_run != 'true' && needs.relay_public_config.result == 'success'))
+    runs-on: ubuntu-24.04
+    outputs:
+      clerk_publishable_key: ${{ steps.select.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ steps.select.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ steps.select.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ steps.select.outputs.relay_url }}
+    steps:
+      - id: select
+        name: Select config
+        env:
+          DRY_RUN: ${{ needs.preflight.outputs.dry_run }}
+          LIVE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+          LIVE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+          LIVE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+          LIVE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+          DRY_CLERK_PUBLISHABLE_KEY: ${{ needs.dry_run_public_config.outputs.clerk_publishable_key }}
+          DRY_CLERK_JWT_TEMPLATE: ${{ needs.dry_run_public_config.outputs.clerk_jwt_template }}
+          DRY_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.dry_run_public_config.outputs.clerk_cli_oauth_client_id }}
+          DRY_RELAY_URL: ${{ needs.dry_run_public_config.outputs.relay_url }}
+        run: |
+          if [[ "$DRY_RUN" == "true" ]]; then
+            prefix=DRY
+          else
+            prefix=LIVE
+          fi
+
+          for name in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            source_name="${prefix}_${name}"
+            output_name="$(tr '[:upper:]' '[:lower:]' <<< "$name")"
+            echo "$output_name=${!source_name}" >> "$GITHUB_OUTPUT"
+          done
+
+  build_desktop_code:
+    name: Build shared desktop code
+    needs: [preflight, release_public_config]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release_public_config.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.release_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.release_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.release_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.release_public_config.outputs.relay_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/desktop...
+              - --filter=t3...
+              - --filter=@t3tools/scripts...
+
+      - name: Download relay client tracing config
+        uses: actions/download-artifact@v8
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing
+
+      - name: Load relay client tracing config
+        shell: bash
+        run: cat "$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env" >> "$GITHUB_ENV"
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      - name: Build desktop code
+        run: vp run build:desktop
+
+      - name: Upload desktop code
+        uses: actions/upload-artifact@v7
+        with:
+          name: shared-desktop-code
+          path: |
+            apps/desktop/dist-electron
+            apps/server/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  build_resource_monitor:
+    name: Build resource monitor (${{ matrix.resource_key }})
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: blacksmith-12vcpu-macos-26
+            rust_target: aarch64-apple-darwin
+            resource_key: darwin-arm64
+            binary_name: t3-resource-monitor
+          - runner: blacksmith-12vcpu-macos-26
+            rust_target: x86_64-apple-darwin
+            resource_key: darwin-x64
+            binary_name: t3-resource-monitor
+          - runner: blacksmith-32vcpu-ubuntu-2404
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
+            binary_name: t3-resource-monitor
+          - runner: blacksmith-32vcpu-windows-2025
+            rust_target: x86_64-pc-windows-msvc
+            resource_key: win32-x64
+            binary_name: t3-resource-monitor.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: native/resource-monitor
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/resource-monitor -> target
+          key: resource-monitor-${{ matrix.rust_target }}
+
+      - name: Build resource monitor
+        run: >-
+          cargo build --locked --release
+          --manifest-path native/resource-monitor/Cargo.toml
+          --target ${{ matrix.rust_target }}
+
+      - name: Upload resource monitor
+        uses: actions/upload-artifact@v7
+        with:
+          name: resource-monitor-${{ matrix.resource_key }}
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/${{ matrix.binary_name }}
+          if-no-files-found: error
+          retention-days: 1
 
   # node-pty publishes no Linux prebuilt and the WSL backend runs under the
   # distro's own (Linux) Node, which can't load the Windows/Electron binary. We
@@ -325,15 +568,22 @@ jobs:
     # builds. `!cancelled()` (not `!failure()`) lets the job run even when
     # build_wsl_node_pty failed; the Windows-only download step below then fails
     # that single platform if the prebuild is missing.
-    needs: [preflight, relay_public_config, build_wsl_node_pty]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
+    needs:
+      [
+        preflight,
+        release_public_config,
+        build_desktop_code,
+        build_resource_monitor,
+        build_wsl_node_pty,
+      ]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.release_public_config.result == 'success' && needs.build_desktop_code.result == 'success' && needs.build_resource_monitor.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.release_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.release_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.release_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.release_public_config.outputs.relay_url }}
     strategy:
       fail-fast: false
       matrix:
@@ -388,14 +638,20 @@ jobs:
           cache: true
           run-install: |
             args:
-              - --filter=@t3tools/desktop...
-              - --filter=t3...
+              - --filter=@t3tools/desktop
               - --filter=@t3tools/scripts...
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download desktop code
+        uses: actions/download-artifact@v8
         with:
-          targets: ${{ matrix.rust_target }}
+          name: shared-desktop-code
+          path: apps
+
+      - name: Download resource monitor
+        uses: actions/download-artifact@v8
+        with:
+          name: resource-monitor-${{ matrix.resource_key }}
+          path: resource-monitor-prebuild
 
       - name: Download relay client tracing config
         uses: actions/download-artifact@v8
@@ -454,7 +710,7 @@ jobs:
           fi
 
       - name: Prepare Azure Trusted Signing
-        if: matrix.platform == 'win'
+        if: matrix.platform == 'win' && needs.preflight.outputs.sign_artifacts == 'true'
         shell: pwsh
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -533,12 +789,15 @@ jobs:
           AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
           AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+          ELECTRON_BUILDER_COMPRESSION_LEVEL: ${{ matrix.platform == 'win' && '7' || '' }}
         run: |
           args=(
             --platform "${{ matrix.platform }}"
             --target "${{ matrix.target }}"
             --arch "${{ matrix.arch }}"
             --build-version "${{ needs.preflight.outputs.version }}"
+            --resource-monitor-prebuild "$GITHUB_WORKSPACE/resource-monitor-prebuild/${{ matrix.platform == 'win' && 't3-resource-monitor.exe' || 't3-resource-monitor' }}"
+            --skip-build
             --verbose
           )
 
@@ -551,7 +810,15 @@ jobs:
             return 0
           }
 
-          if [[ "${{ matrix.platform }}" == "mac" ]]; then
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            # Bundle the Linux node-pty binary built by the build_wsl_node_pty job
+            # so the packaged WSL backend ships a ready binary.
+            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
+          fi
+
+          if [[ "${{ needs.preflight.outputs.sign_artifacts }}" != "true" ]]; then
+            echo "Artifact signing disabled for this run."
+          elif [[ "${{ matrix.platform }}" == "mac" ]]; then
             if has_all "$CSC_LINK" "$CSC_KEY_PASSWORD" "$APPLE_API_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER"; then
               if ! has_all "$APPLE_TEAM_ID" "$MACOS_PROVISIONING_PROFILE"; then
                 echo "macOS signing is configured, but APPLE_TEAM_ID or MACOS_PROVISIONING_PROFILE is missing." >&2
@@ -574,10 +841,6 @@ jobs:
               echo "macOS signing disabled (missing one or more Apple signing secrets)."
             fi
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
-            # Bundle the Linux node-pty binary built by the build_wsl_node_pty job
-            # so the packaged WSL backend ships a ready binary (no first-launch
-            # compile). Required for a working WSL backend on Windows.
-            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
             if has_all \
               "$AZURE_TENANT_ID" \
               "$AZURE_CLIENT_ID" \
@@ -643,7 +906,7 @@ jobs:
           if [[ "${{ matrix.platform }}" == "win" ]]; then
             binary_name="${binary_name}.exe"
           fi
-          source_path="native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary_name}"
+          source_path="resource-monitor-prebuild/${binary_name}"
           target_dir="resource-monitor-publish/${{ matrix.resource_key }}"
           mkdir -p "$target_dir"
           cp "$source_path" "$target_dir/$binary_name"
@@ -655,27 +918,46 @@ jobs:
           path: release-publish/*
           if-no-files-found: error
 
-      - name: Upload resource monitor
-        uses: actions/upload-artifact@v7
-        with:
-          name: resource-monitor-${{ matrix.resource_key }}
-          path: resource-monitor-publish/${{ matrix.resource_key }}/*
-          if-no-files-found: error
+  dry_run_complete:
+    name: Complete release dry run
+    needs: [preflight, validate, build]
+    if: ${{ always() && needs.preflight.outputs.dry_run == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Report dry-run result
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          {
+            echo "## Release dry run"
+            echo
+            echo "No npm package, GitHub Release, Vercel deployment, version commit, or Discord announcement was created."
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Validation | $VALIDATE_RESULT |"
+            echo "| Desktop builds | $BUILD_RESULT |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$VALIDATE_RESULT" != "success" || "$BUILD_RESULT" != "success" ]]; then
+            exit 1
+          fi
 
   publish_cli:
     name: Publish CLI to npm
-    needs: [preflight, relay_public_config, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build.result == 'success' }}
+    needs: [preflight, validate, release_public_config, build]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.validate.result == 'success' && needs.release_public_config.result == 'success' && needs.build.result == 'success' && needs.preflight.outputs.dry_run != 'true' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
     env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.release_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.release_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.release_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.release_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -744,7 +1026,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' && needs.preflight.outputs.dry_run != 'true' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
@@ -856,23 +1138,23 @@ jobs:
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
-  deploy_web:
-    name: Deploy hosted web app
-    needs: [preflight, relay_public_config, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
+  build_web_deployment:
+    name: Build hosted web deployment
+    needs: [preflight, validate, release_public_config]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.validate.result == 'success' && needs.release_public_config.result == 'success' && needs.preflight.outputs.dry_run != 'true' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
+    outputs:
+      deployment_url: ${{ steps.deploy.outputs.deployment_url }}
     env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.release_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.release_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.release_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.release_public_config.outputs.relay_url }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       T3CODE_WEB_ROUTER_URL: ${{ vars.T3CODE_WEB_ROUTER_URL }}
-      T3CODE_WEB_LATEST_DOMAIN: ${{ vars.T3CODE_WEB_LATEST_DOMAIN }}
-      T3CODE_WEB_NIGHTLY_DOMAIN: ${{ vars.T3CODE_WEB_NIGHTLY_DOMAIN }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
@@ -914,7 +1196,8 @@ jobs:
       - name: Refresh release lockfile
         run: vp install --lockfile-only --ignore-scripts
 
-      - name: Deploy and alias channel
+      - id: deploy
+        name: Build hosted web deployment
         shell: bash
         run: |
           set -euo pipefail
@@ -925,17 +1208,10 @@ jobs:
           fi
 
           router_url="${T3CODE_WEB_ROUTER_URL:-https://app.t3.codes}"
-          latest_domain="${T3CODE_WEB_LATEST_DOMAIN:-latest.app.t3.codes}"
-          nightly_domain="${T3CODE_WEB_NIGHTLY_DOMAIN:-nightly.app.t3.codes}"
-          router_domain="${router_url#http://}"
-          router_domain="${router_domain#https://}"
-          router_domain="${router_domain%%/*}"
 
           if [[ "${{ needs.preflight.outputs.release_channel }}" == "stable" ]]; then
-            channel_domain="$latest_domain"
             channel_name="latest"
           else
-            channel_domain="$nightly_domain"
             channel_name="nightly"
           fi
 
@@ -963,21 +1239,66 @@ jobs:
               --build-env "VITE_HOSTED_APP_CHANNEL=$channel_name"
           )"
 
-          echo "Aliasing $deployment_url to $channel_domain."
-          vp dlx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
+          if [[ -z "$deployment_url" ]]; then
+            echo "Vercel did not return a deployment URL." >&2
+            exit 1
+          fi
+          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+
+  deploy_web:
+    name: Alias hosted web deployment
+    needs: [preflight, release, build_web_deployment]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.build_web_deployment.result == 'success' && needs.preflight.outputs.dry_run != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      T3CODE_WEB_ROUTER_URL: ${{ vars.T3CODE_WEB_ROUTER_URL }}
+      T3CODE_WEB_LATEST_DOMAIN: ${{ vars.T3CODE_WEB_LATEST_DOMAIN }}
+      T3CODE_WEB_NIGHTLY_DOMAIN: ${{ vars.T3CODE_WEB_NIGHTLY_DOMAIN }}
+      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+    steps:
+      - name: Alias channel
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ needs.build_web_deployment.outputs.deployment_url }}
+        run: |
+          set -euo pipefail
+
+          router_url="${T3CODE_WEB_ROUTER_URL:-https://app.t3.codes}"
+          latest_domain="${T3CODE_WEB_LATEST_DOMAIN:-latest.app.t3.codes}"
+          nightly_domain="${T3CODE_WEB_NIGHTLY_DOMAIN:-nightly.app.t3.codes}"
+          router_domain="${router_url#http://}"
+          router_domain="${router_domain#https://}"
+          router_domain="${router_domain%%/*}"
+
+          if [[ "${{ needs.preflight.outputs.release_channel }}" == "stable" ]]; then
+            channel_domain="$latest_domain"
+            channel_name="latest"
+          else
+            channel_domain="$nightly_domain"
+            channel_name="nightly"
+          fi
+
+          vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
+          vercel_scope_args=(--scope "$vercel_scope")
+
+          echo "Aliasing $DEPLOYMENT_URL to $channel_domain."
+          npx --yes vercel@53.1.1 alias set "$DEPLOYMENT_URL" "$channel_domain" \
             --token "$VERCEL_TOKEN" \
             "${vercel_scope_args[@]}"
 
           if [[ "$channel_name" == "latest" && -n "$router_domain" && "$router_domain" != "$channel_domain" ]]; then
-            echo "Aliasing $deployment_url to router domain $router_domain."
-            vp dlx vercel@53.1.1 alias set "$deployment_url" "$router_domain" \
+            echo "Aliasing $DEPLOYMENT_URL to router domain $router_domain."
+            npx --yes vercel@53.1.1 alias set "$DEPLOYMENT_URL" "$router_domain" \
               --token "$VERCEL_TOKEN" \
               "${vercel_scope_args[@]}"
           fi
 
   finalize:
     name: Finalize release
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' && needs.preflight.outputs.dry_run != 'true' }}
     needs: [preflight, release]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
@@ -1059,11 +1380,12 @@ jobs:
     if: |
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
-      needs.relay_public_config.result == 'success' &&
+      needs.release_public_config.result == 'success' &&
       needs.release.result == 'success' &&
       needs.deploy_web.result == 'success' &&
+      needs.preflight.outputs.dry_run != 'true' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
-    needs: [preflight, relay_public_config, release, deploy_web, finalize]
+    needs: [preflight, release_public_config, release, deploy_web, finalize]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

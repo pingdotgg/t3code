@@ -144,6 +144,7 @@ interface BuildCliInput {
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
+  readonly resourceMonitorPrebuild: Option.Option<string>;
   readonly wslPrebuild: Option.Option<string>;
 }
 
@@ -605,6 +606,7 @@ interface ResolvedBuildOptions {
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
+  readonly resourceMonitorPrebuild: string | undefined;
   readonly wslPrebuild: string | undefined;
 }
 
@@ -633,6 +635,43 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
 ] as const;
+export const NODE_PTY_PACKAGE_FILE_EXCLUSIONS = [
+  "!**/node_modules/node-pty/**/*.pdb",
+  "!**/node_modules/node-pty/deps/**/*",
+  "!**/node_modules/node-pty/scripts/**/*",
+  "!**/node_modules/node-pty/src/**/*",
+  "!**/node_modules/node-pty/third_party/**/*",
+] as const;
+
+/** Keep only the node-pty binaries that can run in the packaged app. */
+export function resolveDesktopFileExclusions(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+): readonly string[] {
+  const exclusions: string[] = [...DESKTOP_FILE_EXCLUSIONS, ...NODE_PTY_PACKAGE_FILE_EXCLUSIONS];
+
+  if (platform !== "linux") {
+    exclusions.push("!**/node_modules/node-pty/build/**/*");
+  }
+
+  if (platform === "win") {
+    exclusions.push("!**/node_modules/node-pty/prebuilds/darwin-*/**/*");
+    if (arch !== "universal") {
+      const otherArch = arch === "x64" ? "arm64" : "x64";
+      exclusions.push(`!**/node_modules/node-pty/prebuilds/win32-${otherArch}/**/*`);
+    }
+  } else if (platform === "mac") {
+    exclusions.push("!**/node_modules/node-pty/prebuilds/win32-*/**/*");
+    if (arch !== "universal") {
+      const otherArch = arch === "x64" ? "arm64" : "x64";
+      exclusions.push(`!**/node_modules/node-pty/prebuilds/darwin-${otherArch}/**/*`);
+    }
+  } else {
+    exclusions.push("!**/node_modules/node-pty/prebuilds/**/*");
+  }
+
+  return exclusions;
+}
 // The WSL backend launches the server with plain `wsl.exe -- node`, which
 // cannot read inside an asar archive — and the server bundle externalizes its
 // runtime deps, so the whole node_modules tree must be unpacked, not just the
@@ -1035,6 +1074,9 @@ const BuildEnvConfig = Config.all({
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
+  resourceMonitorPrebuild: Config.string("T3CODE_DESKTOP_RESOURCE_MONITOR_PREBUILD").pipe(
+    Config.option,
+  ),
   // Path to a prebuilt Linux node-pty binary (pty.node) for the target arch,
   // produced by the Linux CI job and handed to the Windows packaging job. Placed
   // into the staged node-pty so the WSL backend ships a ready binary and never
@@ -1133,6 +1175,9 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
 
   const wslPrebuild =
     Option.getOrUndefined(input.wslPrebuild) ?? Option.getOrUndefined(env.wslPrebuild);
+  const resourceMonitorPrebuild =
+    Option.getOrUndefined(input.resourceMonitorPrebuild) ??
+    Option.getOrUndefined(env.resourceMonitorPrebuild);
 
   return {
     platform,
@@ -1146,6 +1191,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     verbose,
     mockUpdates,
     mockUpdateServerPort,
+    resourceMonitorPrebuild,
     wslPrebuild,
   } satisfies ResolvedBuildOptions;
 });
@@ -1184,15 +1230,25 @@ const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input:
   readonly platform: typeof BuildPlatform.Type;
   readonly arch: typeof BuildArch.Type;
   readonly verbose: boolean;
+  readonly prebuildPath: string | undefined;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const manifestPath = path.join(input.repoRoot, "native/resource-monitor/Cargo.toml");
   const executableName = resourceMonitorExecutableName(input.platform);
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
-  const builtBinaries: string[] = [];
+  const builtBinaries: string[] = input.prebuildPath ? [input.prebuildPath] : [];
 
-  for (const rustTarget of rustTargets) {
+  if (input.prebuildPath && !(yield* fs.exists(input.prebuildPath))) {
+    return yield* new ResourceMonitorBuildOutputMissingError({
+      binaryPath: input.prebuildPath,
+      rustTarget: "prebuilt",
+      platform: input.platform,
+      arch: input.arch,
+    });
+  }
+
+  for (const rustTarget of input.prebuildPath ? [] : rustTargets) {
     const spawnCommand = yield* resolveSpawnCommand("cargo", [
       "build",
       "--locked",
@@ -1524,6 +1580,7 @@ export function resolveDesktopProductName(version: string): string {
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
+  arch: typeof BuildArch.Type,
   version: string,
   signed: boolean,
   mockUpdates: boolean,
@@ -1540,7 +1597,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
-    files: [...DESKTOP_FILE_EXCLUSIONS],
+    files: resolveDesktopFileExclusions(platform, arch),
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -1843,6 +1900,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     platform: options.platform,
     arch: options.arch,
     verbose: options.verbose,
+    prebuildPath: options.resourceMonitorPrebuild,
   });
 
   yield* assertPlatformBuildResources(
@@ -1924,6 +1982,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     build: yield* createBuildConfig(
       options.platform,
       options.target,
+      options.arch,
       appVersion,
       options.signed,
       options.mockUpdates,
@@ -2133,6 +2192,12 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   mockUpdateServerPort: Flag.integer("mock-update-server-port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
     Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
+    Flag.optional,
+  ),
+  resourceMonitorPrebuild: Flag.string("resource-monitor-prebuild").pipe(
+    Flag.withDescription(
+      "Path to a prebuilt resource monitor for the target platform and arch (env: T3CODE_DESKTOP_RESOURCE_MONITOR_PREBUILD).",
+    ),
     Flag.optional,
   ),
   wslPrebuild: Flag.string("wsl-prebuild").pipe(

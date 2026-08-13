@@ -28,6 +28,7 @@ import {
   resolveClerkPasskeyNativeArtifacts,
   resolveMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
+  resolveDesktopFileExclusions,
   resolveFffNativeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
@@ -309,11 +310,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
-  it("limits Electron locales and excludes the unused Claude SDK executable", () => {
+  it("limits Electron locales and removes unused packaged dependencies", () => {
     assert.deepStrictEqual(DESKTOP_ELECTRON_LANGUAGES, ["en-US"]);
     assert.deepStrictEqual(DESKTOP_FILE_EXCLUSIONS, [
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
     ]);
+    assert.deepStrictEqual(resolveDesktopFileExclusions("win", "x64"), [
+      "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+      "!**/node_modules/node-pty/**/*.pdb",
+      "!**/node_modules/node-pty/deps/**/*",
+      "!**/node_modules/node-pty/scripts/**/*",
+      "!**/node_modules/node-pty/src/**/*",
+      "!**/node_modules/node-pty/third_party/**/*",
+      "!**/node_modules/node-pty/build/**/*",
+      "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
+      "!**/node_modules/node-pty/prebuilds/win32-arm64/**/*",
+    ]);
+    assert.include(
+      resolveDesktopFileExclusions("linux", "x64"),
+      "!**/node_modules/node-pty/prebuilds/**/*",
+    );
+    assert.notInclude(
+      resolveDesktopFileExclusions("linux", "x64"),
+      "!**/node_modules/node-pty/build/**/*",
+    );
   });
 
   it.effect("applies platform-specific packaging to the build config", () =>
@@ -321,6 +341,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = yield* createBuildConfig(
         "mac",
         "dmg",
+        "arm64",
         "1.2.3",
         false,
         false,
@@ -330,6 +351,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const linux = yield* createBuildConfig(
         "linux",
         "AppImage",
+        "x64",
         "1.2.3",
         false,
         false,
@@ -339,6 +361,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const win = yield* createBuildConfig(
         "win",
         "nsis",
+        "x64",
         "1.2.3",
         false,
         false,
@@ -356,7 +379,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
       for (const config of [mac, linux, win]) {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
-        assert.deepStrictEqual(config.files, DESKTOP_FILE_EXCLUSIONS);
+        assert.isAtLeast(
+          (config.files as readonly string[]).length,
+          DESKTOP_FILE_EXCLUSIONS.length,
+        );
       }
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
@@ -518,10 +544,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it.effect("adds passkey entitlements and both renderer protocols to signed macOS builds", () =>
     Effect.gen(function* () {
-      const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false, undefined, {
-        entitlementsPath: "/tmp/entitlements.mac.plist",
-        provisioningProfilePath: "/tmp/t3code.provisionprofile",
-      });
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "arm64",
+        "1.2.3",
+        true,
+        false,
+        undefined,
+        {
+          entitlementsPath: "/tmp/entitlements.mac.plist",
+          provisioningProfilePath: "/tmp/t3code.provisionprofile",
+        },
+      );
 
       const mac = config.mac as Record<string, unknown>;
       assert.equal(config.appId, "com.t3tools.t3code");
@@ -538,6 +573,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const config = yield* createBuildConfig(
         "win",
         "nsis",
+        "x64",
         "1.2.3",
         false,
         false,
@@ -678,6 +714,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: Option.none(),
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
+        resourceMonitorPrebuild: Option.none(),
         wslPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
@@ -718,6 +755,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             verbose: Option.none(),
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
+            resourceMonitorPrebuild: Option.none(),
             wslPrebuild: Option.none(),
           }),
         );
@@ -742,6 +780,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         verbose: Option.some(false),
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),
+        resourceMonitorPrebuild: Option.none(),
         wslPrebuild: Option.none(),
       }).pipe(
         Effect.provide(
