@@ -46,10 +46,14 @@ const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 export function assetResponseHeaders(filePath: string): Record<string, string> {
+  const lowerPath = filePath.toLowerCase();
   return {
     "Cache-Control": "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
-    ...(filePath.toLowerCase().endsWith(".svg")
+    ...(lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+      ? { "Content-Type": "text/html; charset=utf-8" }
+      : {}),
+    ...(lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
