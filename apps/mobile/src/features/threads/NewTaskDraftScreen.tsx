@@ -791,7 +791,8 @@ export function NewTaskDraftScreen(props: {
     // Arm the lock-screen card before the async thread creation: backgrounding
     // the app right after tapping submit would otherwise reject the foreground
     // -only Activity start. If creation fails, the token registration's replay
-    // finds no work and ends the card within seconds.
+    // normally ends the card within seconds, and the arming's bounded reconcile
+    // retires it if no authoritative update ever lands.
     armAgentAwarenessLiveActivityForLocalWork({
       threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
       projectTitle: selectedProject.title,

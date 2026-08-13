@@ -11,7 +11,8 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/relay";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { cryptoLayer } from "../cloud/dpop";
@@ -20,14 +21,17 @@ import {
   clearAgentAwarenessRegistrationRecord,
   loadAgentAwarenessRegistrationRecord,
   loadOrCreateAgentAwarenessDeviceId,
+  loadPreferences,
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 import {
   AgentAwarenessOperationError,
   __resetAgentAwarenessRemoteRegistrationForTest,
+  armAgentAwarenessLiveActivityForLocalWork,
   getAgentAwarenessRegistrationStatus,
   mergeAgentAwarenessRegistrationPreferences,
+  reconcileLocallyArmedLiveActivity,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
   normalizeAgentAwarenessRelayBaseUrl,
@@ -43,6 +47,7 @@ import * as Notifications from "expo-notifications";
 const secureStore = vi.hoisted(() => new Map<string, string>());
 const widgetMocks = vi.hoisted(() => ({
   getInstances: vi.fn(() => []),
+  start: vi.fn(),
 }));
 const backgroundRuntime = vi.hoisted(() => ({
   pending: [] as Array<{
@@ -77,6 +82,7 @@ vi.mock("expo-widgets", () => ({
 vi.mock("../../widgets/AgentActivity", () => ({
   default: {
     getInstances: widgetMocks.getInstances,
+    start: widgetMocks.start,
   },
 }));
 
@@ -187,6 +193,57 @@ const relayTestLayer = managedRelayClientLayer("https://relay.example.test").pip
   Layer.provide(Layer.mergeAll(FetchHttpClient.layer, cryptoLayer)),
 );
 
+// `FetchHttpClient.Fetch` caches globalThis.fetch the first time its default is
+// read, so the module-level layer above answers every later test with the first
+// test's stub. Tests that care about a specific response body build their own
+// layer with the fetch handed in explicitly.
+const relayLayerWithFetch = (fetchFn: typeof fetch) =>
+  managedRelayClientLayer("https://relay.example.test").pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
+        cryptoLayer,
+      ),
+    ),
+  );
+
+function relayFetchAnsweringSnapshotWith(snapshotResponse: () => Response): typeof fetch {
+  return vi.fn((request: RequestInfo | URL) => {
+    const url = request instanceof Request ? request.url : String(request);
+    if (url.endsWith("/v1/client/dpop-token")) {
+      return Promise.resolve(
+        Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        }),
+      );
+    }
+    if (url.endsWith("/v1/mobile/agent-activity")) {
+      return Promise.resolve(snapshotResponse());
+    }
+    return Promise.resolve(Response.json({ ok: true }));
+  }) as unknown as typeof fetch;
+}
+
+function relayFetchServingSnapshot(snapshot: RelayAgentActivitySnapshotResponse): typeof fetch {
+  return relayFetchAnsweringSnapshotWith(() => Response.json(snapshot));
+}
+
+function relayFetchFailingSnapshot(): typeof fetch {
+  return relayFetchAnsweringSnapshotWith(() => new Response("relay unavailable", { status: 503 }));
+}
+
+function localLiveActivity(end: (mode: string) => Promise<void>) {
+  return {
+    getPushToken: vi.fn(() => Promise.resolve("activity-token")),
+    addPushTokenListener: vi.fn(),
+    end,
+  };
+}
+
 const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundOperations")(
   function* () {
     let idlePasses = 0;
@@ -211,8 +268,20 @@ const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundO
   },
 );
 
+// Drains the queue with fake timers still installed: the drain itself only needs
+// microtasks, so the reconcile deadlines a test is driving stay under its
+// control (and any deadline the drained operation arms is observable).
+async function drainBackgroundOperationsWith(
+  relayLayer: ReturnType<typeof relayLayerWithFetch>,
+): Promise<void> {
+  const drained = Effect.runPromise(runBackgroundOperations().pipe(Effect.provide(relayLayer)));
+  await vi.advanceTimersByTimeAsync(0);
+  await drained;
+}
+
 describe("makeRelayDeviceRegistrationRequest", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.stubGlobal("__DEV__", false);
     secureStore.clear();
@@ -225,8 +294,15 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     vi.mocked(loadAgentAwarenessRegistrationRecord).mockClear();
     vi.mocked(clearAgentAwarenessRegistrationRecord).mockClear();
     vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockResolvedValue("device-1");
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: false });
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
+    widgetMocks.start.mockReset();
+    widgetMocks.start.mockReturnValue({
+      getPushToken: vi.fn(() => Promise.resolve("activity-token")),
+      addPushTokenListener: vi.fn(),
+      end: vi.fn(() => Promise.resolve()),
+    } as never);
   });
 
   it("preserves disabled Live Activity preferences in relay registrations", () => {
@@ -856,4 +932,226 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(Effect.provide(relayTestLayer));
     },
   );
+
+  it.effect(
+    "ends a locally armed placeholder when the relay has nothing to repaint it with",
+    () => {
+      const end = vi.fn(() => Promise.resolve());
+      widgetMocks.getInstances.mockReturnValue([localLiveActivity(end)] as never);
+      Constants.expoConfig!.extra = {
+        relay: {
+          url: "https://relay.example.test/",
+        },
+      };
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+      return Effect.gen(function* () {
+        yield* reconcileLocallyArmedLiveActivity();
+
+        expect(end).toHaveBeenCalledWith("immediate");
+      }).pipe(Effect.provide(relayLayerWithFetch(relayFetchServingSnapshot({ aggregate: null }))));
+    },
+  );
+
+  it.effect("keeps a locally armed placeholder while the relay still has activity to show", () => {
+    const end = vi.fn(() => Promise.resolve());
+    widgetMocks.getInstances.mockReturnValue([localLiveActivity(end)] as never);
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* reconcileLocallyArmedLiveActivity();
+
+      expect(end).not.toHaveBeenCalled();
+    }).pipe(
+      Effect.provide(
+        relayLayerWithFetch(
+          relayFetchServingSnapshot({
+            aggregate: {
+              title: "T3 Code",
+              subtitle: "Agent work in progress",
+              activeCount: 1,
+              updatedAt: "2026-05-25T13:07:00.000Z",
+              activities: [
+                {
+                  environmentId: "env-1" as EnvironmentId,
+                  threadId: "thread-1" as ThreadId,
+                  projectTitle: "Project",
+                  threadTitle: "Thread",
+                  modelTitle: "gpt-5.4",
+                  phase: "running",
+                  status: "Working",
+                  updatedAt: "2026-05-25T13:07:00.000Z",
+                  deepLink: "/threads/env-1/thread-1",
+                },
+              ],
+            },
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("keeps a locally armed placeholder when the relay snapshot cannot be read", () => {
+    // A failed snapshot read says nothing about what the relay would push —
+    // APNs delivery does not depend on it — so the card must survive.
+    const end = vi.fn(() => Promise.resolve());
+    widgetMocks.getInstances.mockReturnValue([localLiveActivity(end)] as never);
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* reconcileLocallyArmedLiveActivity();
+
+      expect(end).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(relayLayerWithFetch(relayFetchFailingSnapshot())));
+  });
+
+  it.effect("keeps a locally armed placeholder after the relay token provider is released", () => {
+    const end = vi.fn(() => Promise.resolve());
+    widgetMocks.getInstances.mockReturnValue([localLiveActivity(end)] as never);
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+    releaseAgentAwarenessRelayTokenProvider();
+
+    return Effect.gen(function* () {
+      yield* reconcileLocallyArmedLiveActivity();
+
+      expect(end).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(relayLayerWithFetch(relayFetchServingSnapshot({ aggregate: null }))));
+  });
+
+  it("ends the local placeholder when the bounded reconcile fires", async () => {
+    vi.useFakeTimers();
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    armAgentAwarenessLiveActivityForLocalWork({
+      threadTitle: "Fix the stale placeholder",
+      projectTitle: "T3 Code",
+    });
+    // Let the preference read settle so the card is armed.
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(widgetMocks.start).toHaveBeenCalledTimes(1);
+    expect(widgetMocks.start.mock.calls[0]?.[0]).toMatchObject({
+      activities: [
+        {
+          threadTitle: "Fix the stale placeholder",
+          projectTitle: "T3 Code",
+          phase: "starting",
+          status: "Connecting",
+        },
+      ],
+    });
+
+    // The armed card is what the reconcile finds a window later.
+    const end = vi.fn(() => Promise.resolve());
+    widgetMocks.getInstances.mockReturnValue([localLiveActivity(end)] as never);
+    backgroundRuntime.pending.length = 0;
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.useRealTimers();
+
+    await Effect.runPromise(
+      runBackgroundOperations().pipe(
+        Effect.provide(relayLayerWithFetch(relayFetchServingSnapshot({ aggregate: null }))),
+      ),
+    );
+
+    expect(end).toHaveBeenCalledWith("immediate");
+  });
+
+  it("gives every armed placeholder the full reconcile window", async () => {
+    vi.useFakeTimers();
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    armAgentAwarenessLiveActivityForLocalWork({
+      threadTitle: "First turn",
+      projectTitle: "T3 Code",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(59_000);
+
+    // The relay ended the first card, and the next send arms a fresh one that
+    // must not inherit the previous card's remaining second.
+    armAgentAwarenessLiveActivityForLocalWork({
+      threadTitle: "Second turn",
+      projectTitle: "T3 Code",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const end = vi.fn(() => Promise.resolve());
+    widgetMocks.getInstances.mockReturnValue([localLiveActivity(end)] as never);
+    backgroundRuntime.pending.length = 0;
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(backgroundRuntime.pending).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(59_000);
+    await drainBackgroundOperationsWith(
+      relayLayerWithFetch(relayFetchServingSnapshot({ aggregate: null })),
+    );
+
+    expect(end).toHaveBeenCalledWith("immediate");
+    vi.useRealTimers();
+  });
+
+  it("looks once more, then stops, while the relay snapshot stays unreadable", async () => {
+    const unreadableRelay = relayLayerWithFetch(relayFetchFailingSnapshot());
+    vi.useFakeTimers();
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    armAgentAwarenessLiveActivityForLocalWork({
+      threadTitle: "Fix the stale placeholder",
+      projectTitle: "T3 Code",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const end = vi.fn(() => Promise.resolve());
+    widgetMocks.getInstances.mockReturnValue([localLiveActivity(end)] as never);
+    backgroundRuntime.pending.length = 0;
+
+    // First look: the read fails, so the card survives and one more look is armed.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(backgroundRuntime.pending).toHaveLength(1);
+    await drainBackgroundOperationsWith(unreadableRelay);
+
+    // Second look a window later, still unreadable — and that is the last one,
+    // so a durably unreachable relay cannot keep the timer alive forever.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(backgroundRuntime.pending).toHaveLength(1);
+    await drainBackgroundOperationsWith(unreadableRelay);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(backgroundRuntime.pending).toHaveLength(0);
+    expect(end).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });
