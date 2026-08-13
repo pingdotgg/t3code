@@ -4,18 +4,22 @@ import {
   ManagedAgentRunError,
   ProjectId,
   ThreadId,
+  WsOrchestrationLaunchManagedCodexExecRpc,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import * as Rpc from "effect/unstable/rpc/Rpc";
 
 import { ManagedCodexExec, layer } from "./ManagedCodexExec.ts";
 import {
@@ -26,6 +30,12 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "./Services/ProjectionSnapshotQuery.ts";
+
+const encodeManagedCodexLaunchExit = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.toCodecJson(Rpc.exitSchema(WsOrchestrationLaunchManagedCodexExecRpc)),
+  ),
+);
 
 describe("ManagedCodexExec", () => {
   it("exposes runtime ingestion as a layer composition requirement", () => {
@@ -252,7 +262,7 @@ describe("ManagedCodexExec", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps prompts out of spawn error messages while preserving the cause", () =>
+  it.effect("redacts spawn causes from the managed Codex launch RPC payload", () =>
     Effect.gen(function* () {
       const prompt = "TOP_SECRET_MANAGED_CODEX_PROMPT";
       const spawnCause = PlatformError.systemError({
@@ -307,12 +317,15 @@ describe("ManagedCodexExec", () => {
       expect(error).toMatchObject({
         reason: "spawn-failed",
         threadId: ThreadId.make("thread-1"),
-        cause: spawnCause,
       });
       expect(error.message).toBe("Managed agent run failed (spawn-failed): thread-1");
       expect(error.message).not.toContain(prompt);
       expect(String(error)).not.toContain(prompt);
-      expect(error.cause).toBe(spawnCause);
+
+      const wirePayload = yield* encodeManagedCodexLaunchExit(Exit.fail(error));
+      expect(wirePayload).toContain("spawn-failed");
+      expect(wirePayload).toContain("thread-1");
+      expect(wirePayload).not.toContain(prompt);
     }).pipe(Effect.scoped),
   );
 });

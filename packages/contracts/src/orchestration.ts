@@ -67,7 +67,6 @@ export class ManagedAgentRunError extends Schema.TaggedErrorClass<ManagedAgentRu
     reason: Schema.Literals(["thread-not-found", "spawn-failed", "run-not-found", "not-owned"]),
     threadId: Schema.optional(ThreadId),
     agentId: Schema.optional(TrimmedNonEmptyString),
-    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

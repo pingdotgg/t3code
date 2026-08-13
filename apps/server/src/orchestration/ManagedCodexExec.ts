@@ -94,11 +94,10 @@ export const make = Effect.gen(function* () {
     function* (input) {
       const threadOption = yield* snapshots.getThreadDetailById(input.threadId).pipe(
         Effect.mapError(
-          (cause) =>
+          () =>
             new ManagedAgentRunError({
               reason: "thread-not-found",
               threadId: input.threadId,
-              cause,
             }),
         ),
       );
@@ -111,11 +110,10 @@ export const make = Effect.gen(function* () {
       }
       const projectOption = yield* snapshots.getProjectShellById(thread.projectId).pipe(
         Effect.mapError(
-          (cause) =>
+          () =>
             new ManagedAgentRunError({
               reason: "thread-not-found",
               threadId: input.threadId,
-              cause,
             }),
         ),
       );
@@ -129,11 +127,10 @@ export const make = Effect.gen(function* () {
 
       const runUuid = yield* crypto.randomUUIDv4.pipe(
         Effect.mapError(
-          (cause) =>
+          () =>
             new ManagedAgentRunError({
               reason: "spawn-failed",
               threadId: input.threadId,
-              cause,
             }),
         ),
       );
@@ -164,11 +161,10 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.provideService(Scope.Scope, scope),
           Effect.mapError(
-            (cause) =>
+            () =>
               new ManagedAgentRunError({
                 reason: "spawn-failed",
                 threadId: input.threadId,
-                cause,
               }),
           ),
         );
@@ -197,7 +193,7 @@ export const make = Effect.gen(function* () {
         ...linkage,
         description: input.title,
       }).pipe(
-        Effect.catch((cause) =>
+        Effect.catch(() =>
           child.kill().pipe(
             Effect.ignore,
             Effect.andThen(
@@ -210,7 +206,6 @@ export const make = Effect.gen(function* () {
                 reason: "spawn-failed",
                 threadId: input.threadId,
                 agentId,
-                cause,
               }),
             ),
           ),
@@ -297,12 +292,11 @@ export const make = Effect.gen(function* () {
           }
           yield* run.child.kill({ killSignal: "SIGTERM", forceKillAfter: "3 seconds" }).pipe(
             Effect.mapError(
-              (cause) =>
+              () =>
                 new ManagedAgentRunError({
                   reason: "not-owned",
                   threadId: input.threadId,
                   agentId: input.agentId,
-                  cause,
                 }),
             ),
           );
