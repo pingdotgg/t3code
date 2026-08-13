@@ -48,11 +48,9 @@ const effortDescriptor: ProviderOptionDescriptor = {
     { id: "low", label: "Low" },
     { id: "medium", label: "Medium", isDefault: true },
     { id: "high", label: "High" },
-    { id: "ultrathink", label: "Ultrathink" },
     { id: "ultracode", label: "Ultracode" },
   ],
   currentValue: "high",
-  promptInjectedValues: ["ultrathink"],
 };
 
 const fastModeDescriptor: ProviderOptionDescriptor = {

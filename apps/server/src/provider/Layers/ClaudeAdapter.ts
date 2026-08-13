@@ -51,11 +51,9 @@ import {
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import {
-  applyClaudePromptEffortPrefix,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
-  resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -1174,20 +1172,8 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
-function buildPromptText(
-  input: ProviderSendTurnInput,
-  boundInstanceId: ProviderInstanceId,
-): string {
-  const rawEffort =
-    input.modelSelection?.instanceId === boundInstanceId
-      ? getModelSelectionStringOptionValue(input.modelSelection, "effort")
-      : null;
-  const claudeModel =
-    input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : undefined;
-  const caps = getClaudeModelCapabilities(claudeModel);
-
-  const promptEffort = resolvePromptInjectedEffort(caps, rawEffort);
-  return applyClaudePromptEffortPrefix(input.input?.trim() ?? "", promptEffort);
+function buildPromptText(input: ProviderSendTurnInput): string {
+  return input.input?.trim() ?? "";
 }
 
 function buildUserMessage(input: {
@@ -1226,7 +1212,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     readonly boundInstanceId: ProviderInstanceId;
   },
 ) {
-  const text = buildPromptText(input, dependencies.boundInstanceId);
+  const text = buildPromptText(input);
   const sdkContent: Array<Record<string, unknown>> = [];
 
   if (text.length > 0) {

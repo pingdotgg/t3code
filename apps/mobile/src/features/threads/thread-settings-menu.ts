@@ -7,13 +7,7 @@ import {
 
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 
-/**
- * Desktop-oriented effort keywords that don't belong in the phone picker.
- * Prompt-injected values (ultrathink and friends) are filtered from the
- * descriptor metadata; ultracode is a real option but a workflow trigger, not
- * a reasoning level. A value set elsewhere still displays, it just isn't
- * offered.
- */
+/** Desktop-oriented effort keywords that don't belong in the phone picker. */
 export const HIDDEN_EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["ultracode"]);
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
@@ -30,10 +24,7 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
 export function selectableChoices(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
 ) {
-  const injected = new Set(descriptor.promptInjectedValues ?? []);
-  return descriptor.options.filter(
-    (option) => !injected.has(option.id) && !HIDDEN_EFFORT_OPTION_IDS.has(option.id),
-  );
+  return descriptor.options.filter((option) => !HIDDEN_EFFORT_OPTION_IDS.has(option.id));
 }
 
 export type ThreadSettingsMenuEvent =

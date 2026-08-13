@@ -79,9 +79,7 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
             { value: "ultracode", label: "Ultracode" },
-            { value: "ultrathink", label: "Ultrathink" },
           ],
-          promptInjectedValues: ["ultrathink"],
         }),
         buildSelectOptionDescriptor({
           id: "contextWindow",
@@ -110,9 +108,7 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
             { value: "ultracode", label: "Ultracode" },
-            { value: "ultrathink", label: "Ultrathink" },
           ],
-          promptInjectedValues: ["ultrathink"],
         }),
         buildBooleanOptionDescriptor({
           id: "fastMode",
@@ -146,9 +142,7 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
             { value: "ultracode", label: "Ultracode" },
-            { value: "ultrathink", label: "Ultrathink" },
           ],
-          promptInjectedValues: ["ultrathink"],
         }),
         buildBooleanOptionDescriptor({
           id: "fastMode",
@@ -172,9 +166,7 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
             { value: "high", label: "High" },
             { value: "xhigh", label: "Extra High", isDefault: true },
             { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
           ],
-          promptInjectedValues: ["ultrathink"],
         }),
         buildBooleanOptionDescriptor({
           id: "fastMode",
@@ -197,9 +189,7 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
             { value: "medium", label: "Medium" },
             { value: "high", label: "High", isDefault: true },
             { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
           ],
-          promptInjectedValues: ["ultrathink"],
         }),
         buildBooleanOptionDescriptor({
           id: "fastMode",
@@ -254,9 +244,7 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
             { value: "high", label: "High", isDefault: true },
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
           ],
-          promptInjectedValues: ["ultrathink"],
         }),
         buildSelectOptionDescriptor({
           id: "contextWindow",
@@ -284,9 +272,7 @@ const CLAUDE_MODEL_CATALOG: ReadonlyArray<ServerProviderModel> = [
             { value: "medium", label: "Medium" },
             { value: "high", label: "High", isDefault: true },
             { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
           ],
-          promptInjectedValues: ["ultrathink"],
         }),
         buildSelectOptionDescriptor({
           id: "contextWindow",
@@ -402,15 +388,14 @@ export function resolveClaudeEffort(
  *
  * Mirrors the mapping used when invoking the Claude Agent SDK
  * ({@link getEffectiveClaudeAgentEffort} in ClaudeAdapter): `ultracode` is a
- * Claude Code setting that pairs with `xhigh`, `ultrathink` is filtered out
- * because it is a prompt-prefix mode, and older model compatibility mappings
- * are preserved for current Claude Code behavior.
+ * Claude Code setting that pairs with `xhigh`, and older model compatibility
+ * mappings are preserved for current Claude Code behavior.
  */
 export function normalizeClaudeCliEffort(
   effort: string | null | undefined,
   model: string | null | undefined,
 ): string | undefined {
-  if (!effort || effort === "ultrathink") {
+  if (!effort) {
     return undefined;
   }
   if (effort === "ultracode") {

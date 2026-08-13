@@ -844,10 +844,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     provider={activeEntry.driverKind as ProviderDriverKind}
                     models={activeEntry.models}
                     model={resolvedSelection.model}
-                    prompt=""
-                    onPromptChange={() => {}}
                     modelOptions={resolvedSelection.options ?? []}
-                    allowPromptInjectedEffort={false}
                     triggerVariant="outline"
                     triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                     onModelOptionsChange={(nextOptions) => {
