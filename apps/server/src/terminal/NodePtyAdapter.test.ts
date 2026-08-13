@@ -121,6 +121,32 @@ it.effect("resolves the spawn helper from the platform package", () =>
   ),
 );
 
+it.effect("preserves an already-unpacked spawn helper path", () =>
+  Effect.gen(function* () {
+    const wrapperPackageJsonPath =
+      "/Applications/T3.app/Contents/Resources/app.asar.unpacked/node_modules.asar.unpacked/@lydell/node-pty/package.json";
+    const unpackedHelperPath =
+      "/Applications/T3.app/Contents/Resources/app.asar.unpacked/node_modules.asar.unpacked/@lydell/node-pty-darwin-arm64/spawn-helper";
+    const resolve = vi.fn((request: string) => {
+      if (request === "@lydell/node-pty/package.json") return wrapperPackageJsonPath;
+      if (request === "@lydell/node-pty-darwin-arm64/spawn-helper") return unpackedHelperPath;
+      throw new Error(`Unexpected module request: ${request}`);
+    });
+    const createRequire = vi.fn((_filename: string | URL) => ({ resolve }));
+
+    const helperPath = yield* NodePtyAdapter.resolveNodePtySpawnHelperPath(createRequire);
+
+    assert.equal(helperPath, unpackedHelperPath);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcessPlatform, "darwin"),
+        Layer.succeed(HostProcessArchitecture, "arm64"),
+      ),
+    ),
+  ),
+);
+
 it.effect("reports native module load failures as structured startup defects", () =>
   Effect.gen(function* () {
     const cause = new Error("native binding could not be loaded");

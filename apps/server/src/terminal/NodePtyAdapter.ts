@@ -41,8 +41,8 @@ export const resolveNodePtySpawnHelperPath = Effect.fn(
       const requireForNodePty = createRequire(packageJsonPath);
       return requireForNodePty
         .resolve(`@lydell/node-pty-${platform}-${architecture}/spawn-helper`)
-        .replace("app.asar", "app.asar.unpacked")
-        .replace("node_modules.asar", "node_modules.asar.unpacked");
+        .replace(/(^|[\\/])app\.asar([\\/])/u, "$1app.asar.unpacked$2")
+        .replace(/(^|[\\/])node_modules\.asar([\\/])/u, "$1node_modules.asar.unpacked$2");
     },
     catch: () => null,
   }).pipe(Effect.orElseSucceed(() => null));
