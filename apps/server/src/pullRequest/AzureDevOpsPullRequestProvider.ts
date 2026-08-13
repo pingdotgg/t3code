@@ -18,11 +18,20 @@ const CAPABILITIES: PullRequestCapabilities = {
   // Reading a conversation is a plain REST read, but posting one is not something this can
   // claim without having run it, so the composer stays hidden.
   comment: false,
-  actions: ["merge", "ready", "draft", "close", "reopen"],
+  actions: [
+    "merge",
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+    "enable-auto-merge",
+    "disable-auto-merge",
+  ],
   // Azure squashes as a completion option; it has no rebase strategy of its own.
   mergeMethods: ["merge", "squash"],
   // `az repos pr list` filters by status, creator, reviewer and branch, and by no text at all.
   search: false,
+  reactions: false,
   // With no patch to show there are no lines to write against, so nothing here is offered.
   review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
   // `az repos pr reviewer add` and `remove` name identities, and nothing anywhere in `az repos`
@@ -30,6 +39,10 @@ const CAPABILITIES: PullRequestCapabilities = {
   // different service with its own permissions. So the page takes a name here rather than being
   // handed a menu built out of a guess.
   reviewers: { request: true, listCandidates: false },
+  // A new title and description travel on the same `az repos pr update` that moves a pull request.
+  // Rewriting a remark is false for the same reason posting one is: this cannot put a remark on
+  // Azure DevOps at all, so there is nothing here it could rewrite either.
+  edit: { changeRequest: true, comment: false },
 };
 
 /**
@@ -153,6 +166,7 @@ export const make = Effect.gen(function* () {
             checks: [],
             mergeCapabilities: { merge: true, squash: true, rebase: false },
             viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
+            autoMergeEnabled: pullRequest.autoMergeEnabled,
           }),
         ),
       ),
@@ -206,6 +220,16 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("runAction"))),
 
+    updateChangeRequest: (input) =>
+      cli
+        .updatePullRequest({
+          cwd: input.cwd,
+          number: input.number,
+          title: input.title,
+          body: input.body,
+        })
+        .pipe(Effect.mapError(fail("updateChangeRequest"))),
+
     // Never called: `capabilities.reviewers.listCandidates` is false, and the service refuses the
     // list without it.
     listReviewerCandidates: () =>
@@ -240,6 +264,8 @@ export const make = Effect.gen(function* () {
     replyToThread: () => unsupported("replyToThread"),
 
     setThreadResolution: () => unsupported("setThreadResolution"),
+
+    setReaction: () => unsupported("setReaction"),
   };
 
   return provider;
