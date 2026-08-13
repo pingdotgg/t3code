@@ -1700,15 +1700,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           );
         }
         if (desktopMcp) {
-          appServerArgs.push(
-            "-c",
-            `mcp_servers.t3-desktop.command=${JSON.stringify(desktopMcp.path)}`,
-          );
+          // Quote like the bearer_token override so paths with spaces survive `-c`.
+          appServerArgs.push("-c", `mcp_servers.t3-desktop.command="${desktopMcp.path}"`);
           for (const entry of desktopMcp.env) {
-            appServerArgs.push(
-              "-c",
-              `mcp_servers.t3-desktop.env.${entry.name}=${JSON.stringify(entry.value)}`,
-            );
+            appServerArgs.push("-c", `mcp_servers.t3-desktop.env.${entry.name}="${entry.value}"`);
           }
         }
         const runtimeInput: CodexSessionRuntimeOptions = {
