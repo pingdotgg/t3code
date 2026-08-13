@@ -190,7 +190,7 @@ describe("DesktopBackendConfiguration", () => {
         readonly archiveHash: string;
       }> = [];
       const observedNodePtyRoots: string[] = [];
-      const linuxRepoRoot = "/home/test/.cache/t3code/desktop-wsl-runtime/current";
+      const linuxRepoRoot = `/home/test/.cache/t3code/desktop-wsl-runtime/sha256-${archiveHash}`;
       const config = yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         return yield* configuration.resolveWsl({ port: 5000, distro: null });

@@ -50,14 +50,14 @@ const makeRuntimeArchiveFixture = () => {
     mode: 0o755,
   });
 
-  const pack = () => {
+  const pack = (archivePath = archive) => {
     const result = NodeChildProcess.spawnSync(
       "tar",
-      ["-czf", archive, "-C", source, "apps", "node_modules"],
+      ["-czf", archivePath, "-C", source, "apps", "node_modules"],
       { encoding: "utf8" },
     );
     expect(result.status, result.stderr).toBe(0);
-    return NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(archive)).digest("hex");
+    return NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(archivePath)).digest("hex");
   };
   const env = {
     ...process.env,
@@ -65,29 +65,39 @@ const makeRuntimeArchiveFixture = () => {
     PATH: `${tools}:${process.env.PATH ?? ""}`,
     XDG_CACHE_HOME: cache,
   };
-  const run = (archiveHash: string) =>
+  const run = (archiveHash: string, archivePath = archive) =>
     NodeChildProcess.spawnSync(
       "bash",
-      ["-c", buildPackagedRuntimeStageScript(archive, archiveHash)],
+      ["-c", buildPackagedRuntimeStageScript(archivePath, archiveHash)],
       { encoding: "utf8", env },
     );
-  const runAsync = (archiveHash: string) =>
-    new Promise<{ readonly status: number | null; readonly stderr: string }>((resolve) => {
+  const runAsync = (archiveHash: string, archivePath = archive) =>
+    new Promise<{
+      readonly status: number | null;
+      readonly stdout: string;
+      readonly stderr: string;
+    }>((resolve) => {
       const child = NodeChildProcess.spawn(
         "bash",
-        ["-c", buildPackagedRuntimeStageScript(archive, archiveHash)],
+        ["-c", buildPackagedRuntimeStageScript(archivePath, archiveHash)],
         { env },
       );
+      let stdout = "";
       let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => {
         stderr += chunk;
       });
-      child.on("close", (status) => resolve({ status, stderr }));
+      child.on("close", (status) => resolve({ status, stdout, stderr }));
     });
-  const current = NodePath.join(cache, "t3code/desktop-wsl-runtime/current");
+  const runtimeBase = NodePath.join(cache, "t3code/desktop-wsl-runtime");
+  const runtimePath = (archiveHash: string) => NodePath.join(runtimeBase, `sha256-${archiveHash}`);
 
-  return { archive, current, pack, root, run, runAsync, source, tools };
+  return { archive, pack, root, run, runAsync, runtimePath, source, tools };
 };
 
 const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exitCode?: number }) =>
@@ -245,9 +255,20 @@ describe("buildPackagedRuntimeStageScript", () => {
     expect(cacheHit).toBeGreaterThanOrEqual(0);
     expect(sourceConversion).toBeGreaterThan(cacheHit);
     expect(script.slice(cacheHit, sourceConversion)).toContain(
-      'runtimeRoot:%s\\n\' "$current_dir"',
+      'runtimeRoot:%s\\n\' "$runtime_dir"',
     );
     expect(script.slice(cacheHit, sourceConversion)).toContain("exit 0");
+  });
+
+  it("derives an immutable runtime root from the validated archive hash", () => {
+    const archiveHash = "b".repeat(64);
+    const script = buildPackagedRuntimeStageScript(
+      "C:\\Program Files\\T3 Code\\resources\\wsl-runtime.tar.gz",
+      archiveHash,
+    );
+
+    expect(script).toContain('runtime_dir="$runtime_base/sha256-$archive_hash"');
+    expect(script).not.toContain('current_dir="$runtime_base/current"');
   });
 
   it("falls back from an XDG cache on a Windows-mounted filesystem", () => {
@@ -301,30 +322,33 @@ describe("buildPackagedRuntimeStageScript", () => {
     const fixture = makeRuntimeArchiveFixture();
     try {
       const archiveHash = fixture.pack();
+      const runtimePath = fixture.runtimePath(archiveHash);
 
       const cold = fixture.run(archiveHash);
       expect(cold.status, cold.stderr).toBe(0);
       expect(
-        NodeFS.readFileSync(NodePath.join(fixture.current, ".t3code-runtime-sha256"), "utf8"),
+        NodeFS.readFileSync(NodePath.join(runtimePath, ".t3code-runtime-sha256"), "utf8"),
       ).toBe(`${archiveHash}\n`);
       expect(
-        NodeFS.readFileSync(NodePath.join(fixture.current, "apps/server/dist/bin.mjs"), "utf8"),
+        NodeFS.readFileSync(NodePath.join(runtimePath, "apps/server/dist/bin.mjs"), "utf8"),
       ).toBe("version one\n");
 
       NodeFS.rmSync(fixture.archive);
       const warm = fixture.run(archiveHash);
       expect(warm.status, warm.stderr).toBe(0);
-      expect(warm.stdout).toContain(`runtimeRoot:${fixture.current}`);
+      expect(warm.stdout).toContain(`runtimeRoot:${runtimePath}`);
     } finally {
       NodeFS.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
 
-  it("replaces an old cache when the archive changes", () => {
+  it("keeps a returned runtime pinned when a later archive is staged", () => {
     const fixture = makeRuntimeArchiveFixture();
     try {
       const firstHash = fixture.pack();
-      expect(fixture.run(firstHash).status).toBe(0);
+      const first = fixture.run(firstHash);
+      expect(first.status, first.stderr).toBe(0);
+      const firstRuntime = fixture.runtimePath(firstHash);
 
       NodeFS.writeFileSync(
         NodePath.join(fixture.source, "apps/server/dist/bin.mjs"),
@@ -335,10 +359,15 @@ describe("buildPackagedRuntimeStageScript", () => {
 
       expect(updated.status, updated.stderr).toBe(0);
       expect(
-        NodeFS.readFileSync(NodePath.join(fixture.current, "apps/server/dist/bin.mjs"), "utf8"),
+        NodeFS.readFileSync(NodePath.join(firstRuntime, "apps/server/dist/bin.mjs"), "utf8"),
+      ).toBe("version one\n");
+      const secondRuntime = fixture.runtimePath(secondHash);
+      expect(secondRuntime).not.toBe(firstRuntime);
+      expect(
+        NodeFS.readFileSync(NodePath.join(secondRuntime, "apps/server/dist/bin.mjs"), "utf8"),
       ).toBe("version two\n");
       expect(
-        NodeFS.readFileSync(NodePath.join(fixture.current, ".t3code-runtime-sha256"), "utf8"),
+        NodeFS.readFileSync(NodePath.join(secondRuntime, ".t3code-runtime-sha256"), "utf8"),
       ).toBe(`${secondHash}\n`);
     } finally {
       NodeFS.rmSync(fixture.root, { recursive: true, force: true });
@@ -350,6 +379,7 @@ describe("buildPackagedRuntimeStageScript", () => {
     try {
       const goodHash = fixture.pack();
       expect(fixture.run(goodHash).status).toBe(0);
+      const goodRuntime = fixture.runtimePath(goodHash);
 
       NodeFS.writeFileSync(fixture.archive, "not a tar archive\n");
       const brokenHash = NodeCrypto.createHash("sha256")
@@ -359,10 +389,10 @@ describe("buildPackagedRuntimeStageScript", () => {
 
       expect(broken.status).not.toBe(0);
       expect(
-        NodeFS.readFileSync(NodePath.join(fixture.current, "apps/server/dist/bin.mjs"), "utf8"),
+        NodeFS.readFileSync(NodePath.join(goodRuntime, "apps/server/dist/bin.mjs"), "utf8"),
       ).toBe("version one\n");
       expect(
-        NodeFS.readFileSync(NodePath.join(fixture.current, ".t3code-runtime-sha256"), "utf8"),
+        NodeFS.readFileSync(NodePath.join(goodRuntime, ".t3code-runtime-sha256"), "utf8"),
       ).toBe(`${goodHash}\n`);
     } finally {
       NodeFS.rmSync(fixture.root, { recursive: true, force: true });
@@ -390,6 +420,40 @@ describe("buildPackagedRuntimeStageScript", () => {
 
       for (const result of results) expect(result.status, result.stderr).toBe(0);
       expect(NodeFS.readFileSync(extractionLog, "utf8")).toBe("extract\n");
+    } finally {
+      NodeFS.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps concurrent callers on their own archive contents", async () => {
+    const fixture = makeRuntimeArchiveFixture();
+    try {
+      const firstArchive = NodePath.join(fixture.root, "runtime-one.tar.gz");
+      const firstHash = fixture.pack(firstArchive);
+      NodeFS.writeFileSync(
+        NodePath.join(fixture.source, "apps/server/dist/bin.mjs"),
+        "version two\n",
+      );
+      const secondArchive = NodePath.join(fixture.root, "runtime-two.tar.gz");
+      const secondHash = fixture.pack(secondArchive);
+
+      const [first, second] = await Promise.all([
+        fixture.runAsync(firstHash, firstArchive),
+        fixture.runAsync(secondHash, secondArchive),
+      ]);
+
+      expect(first.status, first.stderr).toBe(0);
+      expect(second.status, second.stderr).toBe(0);
+      const firstRuntime = fixture.runtimePath(firstHash);
+      const secondRuntime = fixture.runtimePath(secondHash);
+      expect(first.stdout).toContain(`runtimeRoot:${firstRuntime}`);
+      expect(second.stdout).toContain(`runtimeRoot:${secondRuntime}`);
+      expect(
+        NodeFS.readFileSync(NodePath.join(firstRuntime, "apps/server/dist/bin.mjs"), "utf8"),
+      ).toBe("version one\n");
+      expect(
+        NodeFS.readFileSync(NodePath.join(secondRuntime, "apps/server/dist/bin.mjs"), "utf8"),
+      ).toBe("version two\n");
     } finally {
       NodeFS.rmSync(fixture.root, { recursive: true, force: true });
     }

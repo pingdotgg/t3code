@@ -418,7 +418,7 @@ export const buildPackagedRuntimeStageScript = (
   const normalizedWindowsArchivePath = windowsArchivePath.replaceAll("\\", "/");
   const cacheHitScript = [
     'if [ "$(cat "$manifest_path" 2>/dev/null || true)" = "$archive_hash" ] && [ -f "$entry_path" ] && [ -f "$effect_package" ]; then',
-    `  printf 'runtimeRoot:%s\\n' "$current_dir"`,
+    `  printf 'runtimeRoot:%s\\n' "$runtime_dir"`,
     "  exit 0",
     "fi",
   ];
@@ -438,10 +438,10 @@ export const buildPackagedRuntimeStageScript = (
     '  *) cache_home="${HOME:?WSL home directory is unavailable}/.cache" ;;',
     "esac",
     'runtime_base="$cache_home/t3code/desktop-wsl-runtime"',
-    'current_dir="$runtime_base/current"',
-    'manifest_path="$current_dir/.t3code-runtime-sha256"',
-    'entry_path="$current_dir/apps/server/dist/bin.mjs"',
-    'effect_package="$current_dir/node_modules/effect/package.json"',
+    'runtime_dir="$runtime_base/sha256-$archive_hash"',
+    'manifest_path="$runtime_dir/.t3code-runtime-sha256"',
+    'entry_path="$runtime_dir/apps/server/dist/bin.mjs"',
+    'effect_package="$runtime_dir/node_modules/effect/package.json"',
     ...cacheHitScript,
     "",
     'mkdir -p "$runtime_base"',
@@ -479,20 +479,12 @@ export const buildPackagedRuntimeStageScript = (
     "  exit 7",
     "fi",
     "",
-    'staging_dir="$runtime_base/.staging-$$"',
-    'previous_dir="$runtime_base/.previous-$$"',
-    'rm -rf -- "$staging_dir" "$previous_dir"',
-    "restore_previous() {",
+    'staging_dir="$runtime_base/.staging-$archive_hash-$$"',
+    'rm -rf -- "$staging_dir"',
+    "cleanup_staging() {",
     '  rm -rf -- "$staging_dir"',
-    '  if [ -d "$previous_dir" ]; then',
-    '    if [ ! -e "$current_dir" ]; then',
-    '      mv -- "$previous_dir" "$current_dir"',
-    "    else",
-    '      rm -rf -- "$previous_dir"',
-    "    fi",
-    "  fi",
     "}",
-    "trap restore_previous EXIT",
+    "trap cleanup_staging EXIT",
     "trap 'exit 1' HUP INT TERM",
     'mkdir "$staging_dir"',
     'tar -xzf "$source_archive" -C "$staging_dir"',
@@ -505,11 +497,14 @@ export const buildPackagedRuntimeStageScript = (
     "  exit 4",
     "fi",
     'printf "%s\\n" "$archive_hash" > "$staging_dir/.t3code-runtime-sha256"',
-    'if [ -e "$current_dir" ]; then mv -- "$current_dir" "$previous_dir"; fi',
-    'mv -- "$staging_dir" "$current_dir"',
-    'rm -rf -- "$previous_dir"',
+    // A valid content-addressed root returned above and is never replaced.
+    // Only an incomplete/corrupt directory for this exact hash can reach here.
+    // Do not prune other roots here: staging cannot know whether a side-by-side
+    // desktop/backend process still has one of them in use.
+    'rm -rf -- "$runtime_dir"',
+    'mv -- "$staging_dir" "$runtime_dir"',
     "trap - EXIT HUP INT TERM",
-    `printf 'runtimeRoot:%s\\n' "$current_dir"`,
+    `printf 'runtimeRoot:%s\\n' "$runtime_dir"`,
   ].join("\n");
 };
 
