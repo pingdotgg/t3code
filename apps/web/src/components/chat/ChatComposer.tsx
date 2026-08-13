@@ -3019,7 +3019,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 </div>
               )}
 
-            <div className="relative">
+            <div className="relative" data-composer-stash={stashCommandEnabled ? "" : undefined}>
               <ComposerPromptEditor
                 editorRef={composerEditorRef}
                 value={
@@ -3057,7 +3057,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
                 disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
-                stashEnabled={stashCommandEnabled}
               />
               {showMobilePendingAnswerActions ? (
                 <div

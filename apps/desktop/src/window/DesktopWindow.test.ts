@@ -519,25 +519,23 @@ describe("DesktopWindow", () => {
         }
 
         const executeJavaScript = vi.fn(() => Promise.resolve(true));
-        contextMenu(
-          { preventDefault: vi.fn() },
-          {
-            x: 40,
-            y: 60,
-            frame: { executeJavaScript },
-            isEditable: true,
-            misspelledWord: "",
-            dictionarySuggestions: [],
-            linkURL: "",
-            mediaType: "none",
-            editFlags: {
-              canCut: true,
-              canCopy: true,
-              canPaste: true,
-              canSelectAll: true,
-            },
+        const params = {
+          x: 40,
+          y: 60,
+          frame: { executeJavaScript },
+          isEditable: true,
+          misspelledWord: "",
+          dictionarySuggestions: [],
+          linkURL: "",
+          mediaType: "none",
+          editFlags: {
+            canCut: true,
+            canCopy: true,
+            canPaste: true,
+            canSelectAll: true,
           },
-        );
+        };
+        contextMenu({ preventDefault: vi.fn() }, params);
 
         const { template } = yield* Deferred.await(composerPopup);
         assert.deepEqual(executeJavaScript.mock.calls, [
@@ -554,25 +552,7 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.send.mock.calls, [[MENU_ACTION_CHANNEL, "composer.stash"]]);
 
         executeJavaScript.mockResolvedValueOnce(false);
-        contextMenu(
-          { preventDefault: vi.fn() },
-          {
-            x: 40,
-            y: 60,
-            frame: { executeJavaScript },
-            isEditable: true,
-            misspelledWord: "",
-            dictionarySuggestions: [],
-            linkURL: "",
-            mediaType: "none",
-            editFlags: {
-              canCut: true,
-              canCopy: true,
-              canPaste: true,
-              canSelectAll: true,
-            },
-          },
-        );
+        contextMenu({ preventDefault: vi.fn() }, params);
         const otherTemplate = (yield* Deferred.await(otherPopup)).template;
         assert.isUndefined(otherTemplate.find((item) => item.label === "Stash"));
       }).pipe(Effect.provide(layer));
