@@ -74,7 +74,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { resolveDesktopMcpPath } from "../../desktopControl/desktopMcpBinary.ts";
+import { resolveEnabledDesktopMcp } from "../../desktopControl/resolveEnabledDesktopMcp.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -1670,7 +1670,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   );
   // Resolved once here rather than per turn: the bundled binary does not move,
   // and this is where FileSystem/Path are in context.
-  const desktopMcpPath = yield* resolveDesktopMcpPath();
+  const desktopMcp = yield* resolveEnabledDesktopMcp();
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -4171,11 +4171,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               },
             }
           : {}),
-        ...(desktopMcpPath
+        ...(desktopMcp
           ? {
               "t3-desktop": {
                 type: "stdio" as const,
-                command: desktopMcpPath,
+                command: desktopMcp.path,
+                ...(desktopMcp.env.length > 0
+                  ? {
+                      env: Object.fromEntries(
+                        desktopMcp.env.map((entry) => [entry.name, entry.value]),
+                      ),
+                    }
+                  : {}),
               },
             }
           : {}),

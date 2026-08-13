@@ -13,14 +13,16 @@ use uiautomation::UIElement;
 use uiautomation::inputs::{Keyboard, Mouse, MouseButton};
 use uiautomation::patterns::{UIInvokePattern, UITextPattern, UIValuePattern};
 use uiautomation::types::{Handle, Point as UIPoint};
-use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::core::BOOL;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowThreadProcessId, IsWindowVisible, SW_RESTORE, SetForegroundWindow,
-    ShowWindow,
+    ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, EnumWindows,
+    GetWindowThreadProcessId, IsWindowVisible, PostMessageW, ScreenToClient, SW_RESTORE,
+    SetForegroundWindow, ShowWindow, WindowFromPoint, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+    WM_RBUTTONDOWN, WM_RBUTTONUP,
 };
 
 use super::{Desktop, DesktopError, Point, Result, ScrollDirection, format_app_list};
@@ -111,6 +113,61 @@ impl WindowsDesktop {
             )
         };
         search.found
+    }
+
+    /// Pack client coordinates into an `lParam` for mouse window messages.
+    fn pack_client_lparam(x: i32, y: i32) -> LPARAM {
+        let lo = (x as u16) as u32;
+        let hi = (y as u16) as u32;
+        LPARAM(((hi << 16) | lo) as isize)
+    }
+
+    /// Resolve the deepest visible child HWND under a screen point.
+    fn hwnd_at_screen(x: i32, y: i32) -> Option<HWND> {
+        let point = POINT { x, y };
+        let top = unsafe { WindowFromPoint(point) };
+        if top.0.is_null() {
+            return None;
+        }
+        let mut client = point;
+        if !unsafe { ScreenToClient(top, &mut client) }.as_bool() {
+            return Some(top);
+        }
+        let child = unsafe {
+            ChildWindowFromPointEx(top, client, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED)
+        };
+        if child.0.is_null() {
+            Some(top)
+        } else {
+            Some(child)
+        }
+    }
+
+    /// Deliver a left/right click via posted mouse messages so the system
+    /// cursor does not move. Many Win32 apps honor this; Chromium and
+    /// DirectInput often do not — callers fall back to the cursor path.
+    fn background_click(x: f64, y: f64, right: bool) -> bool {
+        let sx = x.round() as i32;
+        let sy = y.round() as i32;
+        let Some(hwnd) = Self::hwnd_at_screen(sx, sy) else {
+            return false;
+        };
+        let mut client = POINT { x: sx, y: sy };
+        if !unsafe { ScreenToClient(hwnd, &mut client) }.as_bool() {
+            return false;
+        }
+        let lp = Self::pack_client_lparam(client.x, client.y);
+        // MK_LBUTTON = 0x0001, MK_RBUTTON = 0x0002
+        let (down, up, mk) = if right {
+            (WM_RBUTTONDOWN, WM_RBUTTONUP, 0x0002usize)
+        } else {
+            (WM_LBUTTONDOWN, WM_LBUTTONUP, 0x0001usize)
+        };
+        // Prime hover state; some controls ignore down without a prior move.
+        let _ = unsafe { PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), lp) };
+        let down_ok = unsafe { PostMessageW(Some(hwnd), down, WPARAM(mk), lp) }.is_ok();
+        let up_ok = unsafe { PostMessageW(Some(hwnd), up, WPARAM(0), lp) }.is_ok();
+        down_ok && up_ok
     }
 
     fn scroll_wheel(horizontal: bool, notches: i32) -> Result<()> {
@@ -369,6 +426,11 @@ impl Desktop for WindowsDesktop {
         }
 
         let (x, y) = self.point_coordinates(target)?;
+        // Prefer window-message delivery so the user's cursor stays put.
+        if click_count <= 1 && Self::background_click(x, y, false) {
+            return Ok(format!("clicked at ({x:.0}, {y:.0}) in background"));
+        }
+
         let mouse = Mouse::default();
         let point = UIPoint::new(x as i32, y as i32);
         for _ in 0..click_count.max(1) {
@@ -377,7 +439,7 @@ impl Desktop for WindowsDesktop {
                 .map_err(|error| DesktopError::new(format!("click failed: {error}")))?;
         }
         Ok(format!(
-            "clicked at ({:.0}, {:.0}){}",
+            "clicked at ({:.0}, {:.0}) via cursor{}",
             x,
             y,
             if click_count > 1 {
@@ -390,10 +452,13 @@ impl Desktop for WindowsDesktop {
 
     fn right_click(&mut self, target: Point) -> Result<String> {
         let (x, y) = self.point_coordinates(target)?;
+        if Self::background_click(x, y, true) {
+            return Ok(format!("right-clicked at ({x:.0}, {y:.0}) in background"));
+        }
         Mouse::default()
             .right_click(&UIPoint::new(x as i32, y as i32))
             .map_err(|error| DesktopError::new(format!("right click failed: {error}")))?;
-        Ok(format!("right-clicked at ({x:.0}, {y:.0})"))
+        Ok(format!("right-clicked at ({x:.0}, {y:.0}) via cursor"))
     }
 
     fn drag(&mut self, from: Point, to: Point) -> Result<String> {

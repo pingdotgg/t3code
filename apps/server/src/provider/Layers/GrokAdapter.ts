@@ -34,7 +34,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { resolveDesktopMcpPath } from "../../desktopControl/desktopMcpBinary.ts";
+import { resolveEnabledDesktopMcp } from "../../desktopControl/resolveEnabledDesktopMcp.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -229,7 +229,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("grok");
     // Desktop control ships with the macOS app; undefined elsewhere.
-    const desktopMcpPath = yield* resolveDesktopMcpPath();
+    const desktopMcp = yield* resolveEnabledDesktopMcp();
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -594,8 +594,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         },
                       ],
                     },
-                    ...(desktopMcpPath
-                      ? [{ name: "t3-desktop", command: desktopMcpPath, args: [], env: [] }]
+                    ...(desktopMcp
+                      ? [
+                          {
+                            name: "t3-desktop",
+                            command: desktopMcp.path,
+                            args: [],
+                            env: [...desktopMcp.env],
+                          },
+                        ]
                       : []),
                   ],
                 }
