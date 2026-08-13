@@ -45,4 +45,32 @@ describe("createAndroidSelectableMarkdownRenderers", () => {
       expect(child.props.parentIsText).toBe(true);
     },
   );
+
+  it("preserves distinct paragraph and heading styles", () => {
+    const renderers = createAndroidSelectableMarkdownRenderers({
+      paragraph: { color: "#111111" },
+      heading: () => ({ color: "#222222" }),
+    });
+    const Renderer = () => null;
+    const baseProps = {
+      children: null,
+      Renderer,
+    };
+    const paragraph = renderers.paragraph?.({
+      ...baseProps,
+      node: { type: "paragraph", children: [] },
+    });
+    const heading = renderers.heading?.({
+      ...baseProps,
+      level: 2,
+      node: { type: "heading", children: [] },
+    });
+
+    expect(isValidElement(paragraph) && paragraph.props).toMatchObject({
+      style: { color: "#111111" },
+    });
+    expect(isValidElement(heading) && heading.props).toMatchObject({
+      style: { color: "#222222" },
+    });
+  });
 });
