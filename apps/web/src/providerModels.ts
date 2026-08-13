@@ -93,15 +93,18 @@ export function getProviderModelCapabilities(
 }
 
 // The opencode "plan" agent is only reachable while legacy plan mode is on.
-// With it off, drop the option so it cannot be selected or dispatched.
+// With it off, drop the option so it cannot be selected or dispatched, and
+// drop the descriptor entirely when nothing remains selectable.
 function withoutPlanAgentOption(caps: ModelCapabilities): ModelCapabilities {
   return {
     ...caps,
-    optionDescriptors: (caps.optionDescriptors ?? []).map((descriptor) =>
-      descriptor.type === "select" && descriptor.id === "agent"
-        ? { ...descriptor, options: descriptor.options.filter((option) => option.id !== "plan") }
-        : descriptor,
-    ),
+    optionDescriptors: (caps.optionDescriptors ?? []).flatMap((descriptor) => {
+      if (descriptor.type !== "select" || descriptor.id !== "agent") {
+        return [descriptor];
+      }
+      const options = descriptor.options.filter((option) => option.id !== "plan");
+      return options.length > 0 ? [{ ...descriptor, options }] : [];
+    }),
   };
 }
 
