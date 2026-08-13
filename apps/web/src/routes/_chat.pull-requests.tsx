@@ -1142,10 +1142,15 @@ function PullRequestsRouteView() {
       group.entries.map((entry) => [pullRequestEntryKey(entry), entry] as const),
     ),
   );
-  const requestedStatsKeys = useRef(new Set<string>());
-  const [statsTargets, setStatsTargets] = useState<
-    ReadonlyArray<EnvironmentQueryTarget<PullRequestListStatsInput>>
-  >([]);
+  const requestedStatsKeys = useRef({ key: filterKey, values: new Set<string>() });
+  if (requestedStatsKeys.current.key !== filterKey) {
+    requestedStatsKeys.current = { key: filterKey, values: new Set() };
+  }
+  const [statsTargetState, setStatsTargetState] = useState<{
+    readonly key: string;
+    readonly targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListStatsInput>>;
+  }>({ key: filterKey, targets: [] });
+  const statsTargets = statsTargetState.key === filterKey ? statsTargetState.targets : [];
   const statsObserver = useRef<IntersectionObserver | null>(null);
   const registerStatsRow = useCallback((node: HTMLButtonElement | null) => {
     if (node === null || typeof IntersectionObserver === "undefined") return;
@@ -1160,10 +1165,11 @@ function PullRequestsRouteView() {
             if (!item.isIntersecting) continue;
             statsObserver.current?.unobserve(item.target);
             const key = (item.target as HTMLElement).dataset.pullRequestStatsKey;
-            if (key === undefined || requestedStatsKeys.current.has(key)) continue;
+            const requested = requestedStatsKeys.current;
+            if (key === undefined || requested.values.has(key)) continue;
             const entry = entriesByStatsKey.current.get(key);
             if (entry === undefined) continue;
-            requestedStatsKeys.current.add(key);
+            requested.values.add(key);
             const refs = refsByEnvironment.get(entry.environmentId) ?? [];
             refs.push({
               projectId: entry.projectId,
@@ -1173,13 +1179,16 @@ function PullRequestsRouteView() {
             refsByEnvironment.set(entry.environmentId, refs);
           }
           if (refsByEnvironment.size === 0) return;
-          setStatsTargets((current) => [
-            ...current,
-            ...[...refsByEnvironment].map(([environmentId, refs]) => ({
-              environmentId,
-              input: { refs },
-            })),
-          ]);
+          setStatsTargetState((current) => ({
+            key: requestedStatsKeys.current.key,
+            targets: [
+              ...(current.key === requestedStatsKeys.current.key ? current.targets : []),
+              ...[...refsByEnvironment].map(([environmentId, refs]) => ({
+                environmentId,
+                input: { refs },
+              })),
+            ],
+          }));
         },
         { rootMargin: "480px" },
       );
@@ -1187,7 +1196,6 @@ function PullRequestsRouteView() {
     statsObserver.current.observe(node);
     return () => statsObserver.current?.unobserve(node);
   }, []);
-  useEffect(() => () => statsObserver.current?.disconnect(), []);
 
   const statsQuery = usePullRequestListStats(statsTargets);
   // Adding or removing one row keys a fresh stats query with nothing in it yet, so the counts
