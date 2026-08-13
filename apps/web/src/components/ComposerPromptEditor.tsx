@@ -882,6 +882,7 @@ interface ComposerPromptEditorProps {
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
+  stashEnabled?: boolean;
   placeholder: string;
   className?: string;
   onRemoveTerminalContext: (contextId: string) => void;
@@ -1531,6 +1532,7 @@ function ComposerPromptEditorInner({
   terminalContexts,
   skills,
   disabled,
+  stashEnabled = false,
   placeholder,
   className,
   onRemoveTerminalContext,
@@ -1758,6 +1760,7 @@ function ComposerPromptEditorInner({
                 className,
               )}
               data-testid="composer-editor"
+              data-composer-stash={stashEnabled ? "" : undefined}
               aria-placeholder={placeholder}
               placeholder={<span />}
               onPaste={onPaste}
@@ -1793,6 +1796,7 @@ export function ComposerPromptEditor({
   terminalContexts,
   skills,
   disabled,
+  stashEnabled = false,
   placeholder,
   className,
   onRemoveTerminalContext,
@@ -1831,6 +1835,7 @@ export function ComposerPromptEditor({
         terminalContexts={terminalContexts}
         skills={skills}
         disabled={disabled}
+        stashEnabled={stashEnabled}
         placeholder={placeholder}
         onRemoveTerminalContext={onRemoveTerminalContext}
         onChange={onChange}

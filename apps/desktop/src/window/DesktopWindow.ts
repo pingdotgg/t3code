@@ -504,7 +504,36 @@ export const make = Effect.gen(function* () {
         { role: "selectAll", enabled: params.editFlags.canSelectAll },
       );
 
-      void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+      const showContextMenu = (includeComposerStash: boolean) => {
+        if (includeComposerStash) {
+          menuTemplate.push(
+            { type: "separator" },
+            {
+              label: "Stash",
+              accelerator: "CmdOrCtrl+S",
+              click: () => window.webContents.send(MENU_ACTION_CHANNEL, "composer.stash"),
+            },
+          );
+        }
+
+        void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+      };
+
+      if (!params.isEditable || !params.frame) {
+        showContextMenu(false);
+        return;
+      }
+
+      const x = Math.trunc(params.x);
+      const y = Math.trunc(params.y);
+      void params.frame
+        .executeJavaScript(
+          `document.elementFromPoint(${x}, ${y})?.closest("[data-composer-stash]") !== null`,
+        )
+        .then(
+          (isComposerTarget) => showContextMenu(isComposerTarget === true),
+          () => showContextMenu(false),
+        );
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
