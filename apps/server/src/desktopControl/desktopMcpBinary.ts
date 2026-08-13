@@ -8,16 +8,17 @@ export const DESKTOP_MCP_EXECUTABLE_NAME = "t3-desktop-mcp";
 /**
  * Locate the bundled desktop-control MCP server.
  *
- * macOS only: the server drives the Accessibility API, which has no counterpart
- * elsewhere. Resolves to undefined when the binary is absent — the normal case on
- * Linux and Windows, and in checkouts where `pnpm build:desktop-mcp` has not run
- * yet. Callers treat undefined as "do not offer the tools" rather than an error,
- * so there is no failure channel worth typing here.
+ * Every platform ships a binary of this name: macOS builds the Swift package in
+ * `native/t3-desktop-mcp`, Windows and Linux build the Rust crate in
+ * `native/t3-desktop-mcp-rs`. Resolves to undefined when the binary is absent —
+ * an unsupported platform, or a checkout where it has not been built yet.
+ * Callers treat undefined as "do not offer the tools" rather than an error, so
+ * there is no failure channel worth typing here.
  */
 export const resolveDesktopMcpPath = Effect.fn("desktopControl.resolveDesktopMcpPath")(
   function* () {
     const platform = yield* HostProcessPlatform;
-    if (platform !== "darwin") {
+    if (platform !== "darwin" && platform !== "win32" && platform !== "linux") {
       return undefined;
     }
 
@@ -26,15 +27,24 @@ export const resolveDesktopMcpPath = Effect.fn("desktopControl.resolveDesktopMcp
     const path = yield* Path.Path;
 
     const override = environment.T3CODE_DESKTOP_MCP_PATH;
+    // Windows keeps the extension; the staged directory name does not.
+    const executableName =
+      platform === "win32" ? `${DESKTOP_MCP_EXECUTABLE_NAME}.exe` : DESKTOP_MCP_EXECUTABLE_NAME;
     const candidates = [
       ...(override ? [override] : []),
       // Packaged: staged into app Resources beside the server bundle.
-      path.resolve(import.meta.dirname, DESKTOP_MCP_EXECUTABLE_NAME, DESKTOP_MCP_EXECUTABLE_NAME),
+      path.resolve(import.meta.dirname, DESKTOP_MCP_EXECUTABLE_NAME, executableName),
+      path.resolve(import.meta.dirname, "..", DESKTOP_MCP_EXECUTABLE_NAME, executableName),
+      // Dev: cargo output for the Windows/Linux crate.
       path.resolve(
         import.meta.dirname,
-        "..",
-        DESKTOP_MCP_EXECUTABLE_NAME,
-        DESKTOP_MCP_EXECUTABLE_NAME,
+        "../../../../native/t3-desktop-mcp-rs/target/release",
+        executableName,
+      ),
+      path.resolve(
+        import.meta.dirname,
+        "../../../native/t3-desktop-mcp-rs/target/release",
+        executableName,
       ),
       // Dev: SwiftPM output, multi-arch build first then single-arch.
       path.resolve(

@@ -28,7 +28,33 @@ describe("desktopMcpBinary", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("returns undefined off macOS even when an override is set", () =>
+  it.effect("resolves the override on Linux and Windows too", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-mcp-binary-",
+      });
+
+      // Windows ships the .exe; the other platforms do not.
+      for (const [platform, name] of [
+        ["linux", "t3-desktop-mcp"],
+        ["win32", "t3-desktop-mcp.exe"],
+      ] as const) {
+        const binaryPath = `${baseDir}/${name}`;
+        yield* fileSystem.writeFileString(binaryPath, "binary");
+
+        const resolved = yield* resolveDesktopMcpPath().pipe(
+          Effect.provideService(HostProcessPlatform, platform),
+          Effect.provideService(HostProcessEnvironment, {
+            T3CODE_DESKTOP_MCP_PATH: binaryPath,
+          }),
+        );
+        assert.equal(resolved, binaryPath);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("returns undefined on platforms with no desktop backend", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -37,7 +63,9 @@ describe("desktopMcpBinary", () => {
       const binaryPath = `${baseDir}/t3-desktop-mcp`;
       yield* fileSystem.writeFileString(binaryPath, "binary");
 
-      for (const platform of ["linux", "win32"] as const) {
+      // Neither backend covers these, so the tools must not be offered even
+      // when someone points the override at a binary.
+      for (const platform of ["freebsd", "aix"] as const) {
         const resolved = yield* resolveDesktopMcpPath().pipe(
           Effect.provideService(HostProcessPlatform, platform),
           Effect.provideService(HostProcessEnvironment, {

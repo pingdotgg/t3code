@@ -1645,6 +1645,73 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
   },
 );
 
+/**
+ * Build and stage the Windows/Linux desktop-control MCP server.
+ *
+ * macOS is served by the Swift package in `native/t3-desktop-mcp`; this is the
+ * Rust crate covering the other two. Both emit a binary called
+ * `t3-desktop-mcp`, so the server's resolver treats every platform the same.
+ */
+const stageDesktopMcpRust = Effect.fn("stageDesktopMcpRust")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manifestPath = path.join(input.repoRoot, "native/t3-desktop-mcp-rs/Cargo.toml");
+  const executableName =
+    input.platform === "win" ? `${DESKTOP_MCP_EXECUTABLE_NAME}.exe` : DESKTOP_MCP_EXECUTABLE_NAME;
+  // The desktop server has the same per-platform target matrix as the resource
+  // monitor, so it reuses that mapping rather than growing a parallel one.
+  const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
+
+  const destinationDirectory = path.join(input.stageResourcesDir, DESKTOP_MCP_EXECUTABLE_NAME);
+  const destinationPath = path.join(destinationDirectory, executableName);
+  yield* fs.remove(destinationDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
+  yield* fs.makeDirectory(destinationDirectory, { recursive: true });
+
+  for (const rustTarget of rustTargets) {
+    const spawnCommand = yield* resolveSpawnCommand("cargo", [
+      "build",
+      "--locked",
+      "--release",
+      "--manifest-path",
+      manifestPath,
+      "--target",
+      rustTarget,
+    ]);
+    yield* runCommand(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        cwd: input.repoRoot,
+        shell: spawnCommand.shell,
+      }),
+      {
+        label: `cargo build desktop mcp (${rustTarget})`,
+        verbose: input.verbose,
+      },
+    );
+
+    const binaryPath = path.join(
+      input.repoRoot,
+      "native/t3-desktop-mcp-rs/target",
+      rustTarget,
+      "release",
+      executableName,
+    );
+    if (!(yield* fs.exists(binaryPath))) {
+      return yield* new DesktopMcpBuildOutputMissingError({
+        candidates: [binaryPath],
+        arch: input.arch,
+      });
+    }
+    yield* fs.copyFile(binaryPath, destinationPath);
+    yield* fs.chmod(destinationPath, 0o755);
+  }
+});
+
 const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
@@ -2836,6 +2903,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* stageDesktopMcp({
       repoRoot,
       stageResourcesDir,
+      arch: options.arch,
+      verbose: options.verbose,
+    });
+  } else {
+    yield* stageDesktopMcpRust({
+      repoRoot,
+      stageResourcesDir,
+      platform: options.platform,
       arch: options.arch,
       verbose: options.verbose,
     });
