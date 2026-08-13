@@ -12,6 +12,7 @@ vi.mock("@expo/ui/swift-ui", () => ({
 }));
 
 vi.mock("@expo/ui/swift-ui/modifiers", () => ({
+  aspectRatio: (value: unknown) => ({ aspectRatio: value }),
   containerBackground: (color: unknown, container: unknown) => ({
     containerBackground: { color, container },
   }),
@@ -315,6 +316,7 @@ describe("AgentActivity widget layout", () => {
     expect(mediumJson).toContain("3 active agents");
     expect(mediumJson).toContain("arrow.up.right");
     expect(mediumJson).not.toContain("folder.fill");
+    expect(mediumJson).toContain('"aspectRatio":{"contentMode":"fit"}');
     expect(mediumJson).toContain("arrow.triangle.2.circlepath");
     expect(mediumJson).toContain("checkmark.circle.fill");
     expect(mediumJson).toContain("First project");

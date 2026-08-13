@@ -1,6 +1,7 @@
 import { Divider, HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
 import type { ComponentProps, JSX } from "react";
 import {
+  aspectRatio,
   containerBackground,
   font,
   foregroundStyle,
@@ -196,10 +197,14 @@ export function AgentActivity(
   };
 
   // SF Symbols, like the logo, ignore frame/foregroundStyle applied directly to
-  // the image; size + tint them through a container the resizable symbol fills.
+  // the image; size + tint them through a container. Preserve the symbol's
+  // intrinsic aspect ratio when the resizable image fills that frame.
   const renderGlyph = (systemName: SFName, size: number, color: string) => (
     <HStack modifiers={[frame({ width: size, height: size }), foregroundStyle(color)]}>
-      <Image systemName={systemName} modifiers={[resizable()]} />
+      <Image
+        systemName={systemName}
+        modifiers={[resizable(), aspectRatio({ contentMode: "fit" })]}
+      />
     </HStack>
   );
 
