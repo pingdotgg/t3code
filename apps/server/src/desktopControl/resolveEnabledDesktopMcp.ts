@@ -1,9 +1,8 @@
 /**
  * Resolves the desktop MCP binary only when Computer Use is enabled in
- * server settings. Missing settings service → treat as enabled (dev/tests).
+ * server settings. Settings lookup failures fail closed (tools omitted).
  */
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveDesktopMcpPath } from "./desktopMcpBinary.ts";
@@ -20,24 +19,17 @@ export const resolveEnabledDesktopMcp = Effect.fn("desktopControl.resolveEnabled
       return undefined;
     }
 
-    const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-    const desktopControl = yield* Option.match(settingsService, {
-      onNone: () =>
-        Effect.succeed({
-          enabled: true,
-          agentCursorEnabled: true,
-          browserControlEnabled: true,
-        }),
-      onSome: (service) =>
-        service.getSettings.pipe(
-          Effect.map((settings) => settings.desktopControl),
-          Effect.orElseSucceed(() => ({
-            enabled: true,
-            agentCursorEnabled: true,
-            browserControlEnabled: true,
-          })),
-        ),
-    });
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const desktopControl = yield* settings.getSettings.pipe(
+      Effect.map((snapshot) => snapshot.desktopControl),
+      // Fail closed: never inject desktop MCP when we cannot confirm the user
+      // still has Computer Use enabled.
+      Effect.orElseSucceed(() => ({
+        enabled: false,
+        agentCursorEnabled: false,
+        browserControlEnabled: false,
+      })),
+    );
 
     if (!desktopControl.enabled) {
       return undefined;

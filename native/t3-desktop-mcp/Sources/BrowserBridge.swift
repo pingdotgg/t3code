@@ -33,23 +33,67 @@ enum BridgeOutcome {
 // MARK: - Length-prefixed framing (Chrome side)
 
 enum NativeMessaging {
-    /// Read one message: 4-byte native-endian length, then that many UTF-8 bytes.
-    static func read(_ handle: FileHandle) -> Data? {
-        guard let header = try? handle.read(upToCount: 4), header.count == 4 else { return nil }
-        let length = header.withUnsafeBytes { $0.load(as: UInt32.self) }
-        guard length > 0, length < 64 * 1024 * 1024 else { return nil }
-        guard let body = try? handle.read(upToCount: Int(length)), body.count == Int(length) else {
-            return nil
+    /// Read exactly `count` bytes, treating an empty read as EOF and a short
+    /// non-empty read as a fragment to keep accumulating.
+    private static func readExact(_ handle: FileHandle, count: Int) -> Data? {
+        var data = Data()
+        data.reserveCapacity(count)
+        while data.count < count {
+            let needed = count - data.count
+            guard let chunk = try? handle.read(upToCount: needed) else { return nil }
+            if chunk.isEmpty {
+                return nil
+            }
+            data.append(chunk)
         }
-        return body
+        return data
+    }
+
+    /// Read one message: 4-byte little-endian length, then that many UTF-8 bytes.
+    static func read(_ handle: FileHandle) -> Data? {
+        guard let header = readExact(handle, count: 4) else { return nil }
+        var lengthLE: UInt32 = 0
+        _ = withUnsafeMutableBytes(of: &lengthLE) { dest in
+            header.copyBytes(to: dest, count: 4)
+        }
+        let length = UInt32(littleEndian: lengthLE)
+        guard length > 0, length < 64 * 1024 * 1024 else { return nil }
+        return readExact(handle, count: Int(length))
     }
 
     static func write(_ handle: FileHandle, _ payload: Data) {
-        var length = UInt32(payload.count)
-        var framed = Data(bytes: &length, count: 4)
+        var lengthLE = UInt32(payload.count).littleEndian
+        var framed = Data()
+        withUnsafeBytes(of: &lengthLE) { framed.append(contentsOf: $0) }
         framed.append(payload)
         try? handle.write(contentsOf: framed)
     }
+}
+
+/// Write every byte, retrying EINTR and failing on other errors / short EOF.
+func writeAll(_ fd: Int32, _ data: Data) -> Bool {
+    data.withUnsafeBytes { rawBuffer -> Bool in
+        guard var ptr = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
+            return data.isEmpty
+        }
+        var remaining = data.count
+        while remaining > 0 {
+            let n = Darwin.write(fd, ptr, remaining)
+            if n < 0 {
+                if errno == EINTR { continue }
+                return false
+            }
+            if n == 0 { return false }
+            ptr += n
+            remaining -= n
+        }
+        return true
+    }
+}
+
+func enableNoSigPipe(_ fd: Int32) {
+    var on: Int32 = 1
+    _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
 }
 
 /// Fill in a `sockaddr_un` for the bridge path.
@@ -92,6 +136,7 @@ enum NativeHost {
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { exit(1) }
+        enableNoSigPipe(fd)
         var addr = bridgeAddress()
         let size = socklen_t(MemoryLayout<sockaddr_un>.size)
         let connected = withUnsafePointer(to: &addr) {
@@ -119,7 +164,7 @@ enum NativeHost {
         while let message = NativeMessaging.read(input) {
             var line = message
             line.append(0x0A)
-            _ = line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+            if !writeAll(fd, line) { exit(0) }
         }
         exit(0)
     }
@@ -171,6 +216,7 @@ final class BrowserBridge {
                     if errno == EINTR || errno == ECONNABORTED { continue }
                     return
                 }
+                enableNoSigPipe(client)
                 self?.serve(client)
             }
         }
@@ -217,6 +263,9 @@ final class BrowserBridge {
     func call(_ command: String, _ params: [String: Any] = [:], timeout: TimeInterval = 20)
         -> BridgeOutcome
     {
+        let semaphore = DispatchSemaphore(value: 0)
+        var outcome: BridgeOutcome = .failure("timed out")
+
         lock.lock()
         guard clientFD >= 0 else {
             lock.unlock()
@@ -225,23 +274,26 @@ final class BrowserBridge {
         nextID += 1
         let id = nextID
         let fd = clientFD
-        lock.unlock()
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var outcome: BridgeOutcome = .failure("timed out")
-        lock.lock()
+        let payload: [String: Any] = ["id": id, "command": command, "params": params]
+        guard var data = try? JSONSerialization.data(withJSONObject: payload) else {
+            lock.unlock()
+            return .failure("could not encode the command")
+        }
+        data.append(0x0A)
+        // Register before unlocking so a disconnect that races the write still
+        // drains this waiter with a disconnect failure instead of a timeout.
         pending[id] = { result in
             outcome = result
             semaphore.signal()
         }
         lock.unlock()
 
-        let payload: [String: Any] = ["id": id, "command": command, "params": params]
-        guard var data = try? JSONSerialization.data(withJSONObject: payload) else {
-            return .failure("could not encode the command")
+        if !writeAll(fd, data) {
+            lock.lock()
+            pending.removeValue(forKey: id)
+            lock.unlock()
+            return .failure("the browser extension disconnected")
         }
-        data.append(0x0A)
-        _ = data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
 
         if semaphore.wait(timeout: .now() + timeout) == .timedOut {
             lock.lock(); pending.removeValue(forKey: id); lock.unlock()

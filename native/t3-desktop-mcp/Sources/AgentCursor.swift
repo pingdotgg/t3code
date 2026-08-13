@@ -69,6 +69,9 @@ final class AgentCursor {
         lock.lock()
         defer { lock.unlock() }
         ensureRunning()
+        // If the overlay could not start, drop the event instead of queuing
+        // forever and growing `pending` for the lifetime of the MCP server.
+        guard connection != nil || listenerFD >= 0 else { return }
         var message: [String: Any] = ["x": Int(point.x), "y": Int(point.y)]
         if press { message["press"] = true }
         sendLocked(message)
@@ -238,9 +241,12 @@ final class AgentCursor {
     }
 
     private func tearDownLocked() {
-        listenerSource?.cancel()
-        listenerSource = nil
-        if listenerFD >= 0 {
+        // Cancel handler owns closing the listener FD — do not double-close.
+        if let source = listenerSource {
+            listenerSource = nil
+            listenerFD = -1
+            source.cancel()
+        } else if listenerFD >= 0 {
             close(listenerFD)
             listenerFD = -1
         }
@@ -268,8 +274,12 @@ private enum OverlayBundle {
         // Staged artifact: `…/t3-desktop-mcp/T3AgentCursor.app` beside the binary.
         let sibling = selfURL.deletingLastPathComponent().appendingPathComponent(overlayAppName)
         if isValidApp(sibling) {
-            refreshExecutable(in: sibling, from: selfURL)
-            return sibling
+            do {
+                try refreshExecutable(in: sibling, from: selfURL)
+                return sibling
+            } catch {
+                return isValidApp(sibling) ? sibling : nil
+            }
         }
 
         // Dev / unsigned: materialise under Application Support so Launch Services
@@ -311,12 +321,12 @@ private enum OverlayBundle {
             try overlayInfoPlist().write(to: plistURL, atomically: true, encoding: .utf8)
         }
 
-        refreshExecutable(in: appURL, from: executable)
+        try refreshExecutable(in: appURL, from: executable)
     }
 
     /// Keep the bundled binary in sync with the running MCP server so a rebuild
     /// is picked up without a manual wipe of Application Support.
-    private static func refreshExecutable(in appURL: URL, from executable: URL) {
+    private static func refreshExecutable(in appURL: URL, from executable: URL) throws {
         let fm = FileManager.default
         let dest = appURL
             .appendingPathComponent("Contents", isDirectory: true)
@@ -339,10 +349,17 @@ private enum OverlayBundle {
             needsCopy = true
         }
         guard needsCopy else { return }
-        try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? fm.removeItem(at: dest)
-        try? fm.copyItem(at: executable, to: dest)
-        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
+        try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Copy to a temp name first so a failed refresh never leaves dest deleted.
+        let temp = dest.deletingLastPathComponent()
+            .appendingPathComponent(".\(overlayExecutableName).new")
+        try? fm.removeItem(at: temp)
+        try fm.copyItem(at: executable, to: temp)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: temp.path)
+        if fm.fileExists(atPath: dest.path) {
+            try fm.removeItem(at: dest)
+        }
+        try fm.moveItem(at: temp, to: dest)
     }
 
     private static func overlayInfoPlist() -> String {
@@ -396,7 +413,10 @@ enum AgentCursorOverlay {
         // pointer never appeared for that click.
         controller.makeWindow()
         controller.listen()
-        application.run()
+        // NSApplication.delegate is weak; keep the controller alive for the run loop.
+        withExtendedLifetime(controller) {
+            application.run()
+        }
         exit(0)
     }
 }
@@ -406,6 +426,7 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
     private var panel: NSPanel?
     private var view: BubbleView?
     private var socketHandle: FileHandle?
+    private var socketBuffer = Data()
     private var animation: Timer?
     private var hideWork: DispatchWorkItem?
 
@@ -500,18 +521,22 @@ private final class OverlayController: NSObject, NSApplicationDelegate {
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         socketHandle = handle
         handle.readabilityHandler = { [weak self] handle in
+            guard let self else { return }
             let data = handle.availableData
             if data.isEmpty {
                 // The server exited; take the pointer with it.
                 DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
                 return
             }
-            for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
-                guard let payload = line.data(using: .utf8),
-                    let message = try? JSONSerialization.jsonObject(with: payload)
+            self.socketBuffer.append(data)
+            while let newline = self.socketBuffer.firstIndex(of: 0x0A) {
+                let line = self.socketBuffer[self.socketBuffer.startIndex..<newline]
+                self.socketBuffer = self.socketBuffer[self.socketBuffer.index(after: newline)...]
+                guard !line.isEmpty,
+                    let message = try? JSONSerialization.jsonObject(with: Data(line))
                         as? [String: Any]
                 else { continue }
-                DispatchQueue.main.async { self?.handle(message) }
+                DispatchQueue.main.async { self.handle(message) }
             }
         }
     }
