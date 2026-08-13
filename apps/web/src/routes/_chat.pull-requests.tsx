@@ -1152,8 +1152,10 @@ function PullRequestsRouteView() {
   }>({ key: filterKey, targets: [] });
   const statsTargets = statsTargetState.key === filterKey ? statsTargetState.targets : [];
   const statsObserver = useRef<IntersectionObserver | null>(null);
+  const statsRows = useRef(new Set<HTMLButtonElement>());
   const registerStatsRow = useCallback((node: HTMLButtonElement | null) => {
     if (node === null || typeof IntersectionObserver === "undefined") return;
+    statsRows.current.add(node);
     if (statsObserver.current === null) {
       statsObserver.current = new IntersectionObserver(
         (observed) => {
@@ -1194,8 +1196,14 @@ function PullRequestsRouteView() {
       );
     }
     statsObserver.current.observe(node);
-    return () => statsObserver.current?.unobserve(node);
+    return () => {
+      statsRows.current.delete(node);
+      statsObserver.current?.unobserve(node);
+    };
   }, []);
+  useEffect(() => {
+    for (const row of statsRows.current) statsObserver.current?.observe(row);
+  }, [filterKey]);
 
   const statsQuery = usePullRequestListStats(statsTargets);
   // Adding or removing one row keys a fresh stats query with nothing in it yet, so the counts
