@@ -10,7 +10,7 @@ import {
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSessionId,
+  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -50,6 +50,7 @@ import {
 import { makeSingleLayer as makeProviderAdapterRegistryLayer } from "./ProviderAdapterRegistry.ts";
 import {
   ProviderSessionManagerV2,
+  releasedProviderSession,
   layerWithOptions as providerSessionManagerLayerWithOptions,
 } from "./ProviderSessionManager.ts";
 
@@ -1810,6 +1811,109 @@ it.effect(
 
       yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
     }),
+);
+
+it("releasedProviderSession keeps lastError when the live process is reaped", () => {
+  const now = DateTime.makeUnsafe("2026-08-13T23:00:00Z");
+  const later = DateTime.makeUnsafe("2026-08-13T23:30:00Z");
+  const session = {
+    ...makeProviderSession({
+      providerSessionId: ProviderSessionId.make("provider-session-idle-last-error"),
+      now,
+    }),
+    status: "error" as const,
+    lastError: "event stream stalled",
+    lastErrorAt: now,
+  };
+
+  const idle = releasedProviderSession({
+    reason: "idle_timeout",
+    session,
+    now: later,
+  });
+  assert.equal(idle.status, "stopped");
+  assert.equal(idle.lastError, "event stream stalled");
+  assert.deepStrictEqual(idle.lastErrorAt, now);
+  assert.deepStrictEqual(idle.updatedAt, later);
+
+  const failed = releasedProviderSession({
+    reason: "runtime_error",
+    session,
+    now: later,
+    detail: "process exited",
+  });
+  assert.equal(failed.status, "error");
+  assert.equal(failed.lastError, "process exited");
+});
+
+it.effect("ProviderSessionManagerV2 keeps a projected lastError across idle release", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-idle-last-error",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-idle-last-error",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterQueue);
+      const errorAt = yield* DateTime.now;
+      yield* Queue.offer(adapterQueue!, {
+        type: "provider_session.updated",
+        driver: CODEX_DRIVER,
+        providerSession: {
+          ...runtime.providerSession,
+          status: "error",
+          lastError: "event stream stalled",
+          lastErrorAt: errorAt,
+          updatedAt: errorAt,
+        },
+      });
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 50; attempt++) {
+          const projection = yield* projectionStore.getThreadProjection(threadId);
+          if (projection.providerSessions.at(-1)?.lastError === "event stream stalled") {
+            return;
+          }
+          yield* Effect.yieldNow;
+        }
+        assert.fail("projected lastError never arrived");
+      });
+
+      yield* manager.release({
+        providerSessionId,
+        reason: "idle_timeout",
+      });
+
+      const afterIdle = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(afterIdle.providerSessions.at(-1)?.status, "stopped");
+      assert.equal(afterIdle.providerSessions.at(-1)?.lastError, "event stream stalled");
+      assert.deepStrictEqual(afterIdle.providerSessions.at(-1)?.lastErrorAt, errorAt);
+    });
+
+    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 uses the same release path for runtime failures", () =>

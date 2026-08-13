@@ -216,6 +216,28 @@ function releaseStatusFor(
   return reason === "runtime_error" ? "error" : "stopped";
 }
 
+export function releasedProviderSession(input: {
+  readonly reason: ProviderSessionReleaseReason;
+  readonly session: OrchestrationV2ProviderSession;
+  readonly now: DateTime.Utc;
+  readonly detail?: string | undefined;
+}): OrchestrationV2ProviderSession {
+  if (input.reason === "runtime_error") {
+    return {
+      ...input.session,
+      status: releaseStatusFor(input.reason),
+      updatedAt: input.now,
+      lastError: input.detail ?? "Provider runtime failed.",
+    };
+  }
+  return {
+    ...input.session,
+    status: releaseStatusFor(input.reason),
+    updatedAt: input.now,
+    lastError: input.session.lastError,
+  };
+}
+
 function releasedRuntimeRequestStatusFor(
   reason: ProviderSessionReleaseReason,
 ): OrchestrationV2RuntimeRequest["status"] {
@@ -487,6 +509,22 @@ export const layerWithOptions = (
           }
         });
 
+      const latestKnownProviderSession = (entry: LiveSessionEntry) =>
+        Effect.gen(function* () {
+          const sessionId = entry.runtime.providerSessionId;
+          for (const threadId of entry.attachedThreadIds) {
+            const projection = yield* projectionStore
+              .getThreadProjection(threadId)
+              .pipe(Effect.catch(() => Effect.succeed(null)));
+            if (projection === null) continue;
+            const projected = projection.providerSessions.findLast(
+              (session) => session.id === sessionId,
+            );
+            if (projected !== undefined) return projected;
+          }
+          return entry.runtime.providerSession;
+        });
+
       const writeReleasedSessionEvents = (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
@@ -494,20 +532,17 @@ export const layerWithOptions = (
       }) =>
         Effect.gen(function* () {
           const now = yield* DateTime.now;
-          const payload: OrchestrationV2ProviderSession = {
-            ...input.entry.runtime.providerSession,
-            status: releaseStatusFor(input.reason),
-            updatedAt: now,
-            lastError:
-              input.reason === "runtime_error"
-                ? (input.detail ?? "Provider runtime failed.")
-                : null,
-          };
+          const session = yield* latestKnownProviderSession(input.entry);
           yield* writeProviderSessionEvents({
             runtime: input.entry.runtime,
             threadIds: input.entry.attachedThreadIds,
             type: "provider-session.updated",
-            payload,
+            payload: releasedProviderSession({
+              reason: input.reason,
+              session,
+              now,
+              detail: input.detail,
+            }),
           });
         });
 
