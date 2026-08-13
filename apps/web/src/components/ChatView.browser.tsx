@@ -523,6 +523,7 @@ function toShellThread(thread: OrchestrationReadModel["threads"][number]) {
     interactionMode: thread.interactionMode,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    pullRequest: thread.pullRequest ?? null,
     latestTurn: thread.latestTurn,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
@@ -4300,6 +4301,77 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Keyboard activation should open the thread actions menu.",
       );
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens an associated pull request from the sidebar title mark without selecting the thread", async () => {
+    const secondaryThreadId = ThreadId.make("thread-secondary-project");
+    // Non-GitHub host so openPullRequestLink takes the external path instead of
+    // the in-app pull-request route, which would also change location.
+    const prUrl = "https://example.test/pr/205";
+    // Browser LocalApi falls back to window.open when desktopBridge is absent.
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    const snapshot = createSnapshotWithSecondaryProject({
+      includeArchivedSecondaryThread: false,
+    });
+    const withAssociatedPr: OrchestrationReadModel = {
+      ...snapshot,
+      threads: snapshot.threads.map((thread) =>
+        thread.id === THREAD_ID
+          ? {
+              ...thread,
+              pullRequest: {
+                number: 205,
+                title: "feat(web): clickable PR number after sidebar v1 titles",
+                url: prUrl,
+                baseBranch: "main",
+                headBranch: "feat/sidebar-v1-title-pr-link",
+                state: "open",
+              },
+            }
+          : thread,
+      ),
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withAssociatedPr,
+      initialPath: `/${LOCAL_ENVIRONMENT_ID}/${secondaryThreadId}`,
+    });
+
+    try {
+      expect(mounted.router.state.location.pathname).toBe(serverThreadPath(secondaryThreadId));
+
+      const prLink = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(`[data-testid="thread-pr-link-${THREAD_ID}"]`),
+        "Unable to find sidebar title PR mark.",
+      );
+      expect(prLink.textContent?.trim()).toBe("#205");
+
+      await page.getByTestId(`thread-pr-link-${THREAD_ID}`).click();
+      await vi.waitFor(
+        () => {
+          expect(openSpy).toHaveBeenCalledWith(prUrl, "_blank", "noopener,noreferrer");
+        },
+        { timeout: 4_000, interval: 16 },
+      );
+      expect(mounted.router.state.location.pathname).toBe(serverThreadPath(secondaryThreadId));
+
+      openSpy.mockClear();
+      prLink.focus();
+      await userEvent.keyboard("{Enter}");
+      await vi.waitFor(
+        () => {
+          expect(openSpy).toHaveBeenCalledWith(prUrl, "_blank", "noopener,noreferrer");
+        },
+        { timeout: 4_000, interval: 16 },
+      );
+      expect(mounted.router.state.location.pathname).toBe(serverThreadPath(secondaryThreadId));
+    } finally {
+      openSpy.mockRestore();
       await mounted.cleanup();
     }
   });

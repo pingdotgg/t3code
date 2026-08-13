@@ -814,29 +814,63 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               onClick={handleRenameInputClick}
             />
           ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
+            // Title + optional PR share one flex-1 slot so the #N mark sits
+            // immediately after the truncated title instead of drifting to the
+            // trailing icon cluster.
+            <span className="flex min-w-0 flex-1 items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      className="min-w-0 truncate font-medium text-foreground/90"
+                      style={{ fontSize: "var(--app-sidebar-font-size)" }}
+                      data-testid={`thread-title-${thread.id}`}
+                    >
+                      {thread.title}
+                    </span>
+                  }
+                />
+                {/* Project, worktree, PR and last-active moved off the row and
+                    into this tooltip — the row keeps title and status only. */}
+                <ThreadDetailsTooltip
+                  environmentLabel={isRemoteThread ? (threadEnvironmentLabel ?? "Remote") : null}
+                  projectCwd={threadProjectCwd ?? props.projectCwd ?? null}
+                  projectName={projectName ?? "Unknown project"}
+                  providerEntry={null}
+                  terminalProcessCount={runningTerminalIds.length}
+                  thread={thread}
+                />
+              </Tooltip>
+              {prStatus ? (
+                <>
                   <span
-                    className="min-w-0 flex-1 truncate font-medium text-foreground/90"
+                    aria-hidden="true"
+                    className="shrink-0 text-muted-foreground/55"
                     style={{ fontSize: "var(--app-sidebar-font-size)" }}
-                    data-testid={`thread-title-${thread.id}`}
                   >
-                    {thread.title}
+                    ·
                   </span>
-                }
-              />
-              {/* Project, worktree, PR and last-active moved off the row and
-                  into this tooltip — the row keeps title and status only. */}
-              <ThreadDetailsTooltip
-                environmentLabel={isRemoteThread ? (threadEnvironmentLabel ?? "Remote") : null}
-                projectCwd={threadProjectCwd ?? props.projectCwd ?? null}
-                projectName={projectName ?? "Unknown project"}
-                providerEntry={null}
-                terminalProcessCount={runningTerminalIds.length}
-                thread={thread}
-              />
-            </Tooltip>
+                  <button
+                    type="button"
+                    data-thread-selection-safe
+                    data-testid={`thread-pr-link-${thread.id}`}
+                    aria-label={prStatus.tooltip}
+                    title={prStatus.tooltip}
+                    className={cn(
+                      "shrink-0 cursor-pointer font-mono tabular-nums outline-hidden transition-colors hover:underline focus-visible:ring-1 focus-visible:ring-ring",
+                      prStatus.colorClass,
+                    )}
+                    style={{ fontSize: "var(--app-sidebar-font-size)" }}
+                    // Pinned rows put dnd-kit listeners on the parent <li>; without
+                    // this guard a slight move while clicking starts a drag.
+                    onPointerDown={stopPropagationOnPointerDown}
+                    onClick={handleOpenPrSelected}
+                  >
+                    #{prStatus.number}
+                  </button>
+                </>
+              ) : null}
+            </span>
           )}
           {discoveredPorts.length > 0 ? (
             <Tooltip>
