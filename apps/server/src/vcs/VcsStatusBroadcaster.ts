@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -182,7 +183,14 @@ function fingerprintStatusPart(status: unknown): string {
 }
 
 function localStatusIdentity(status: VcsStatusLocalResult): string {
-  return JSON.stringify({ isRepo: status.isRepo, refName: status.refName });
+  return (
+    status.coherenceToken ??
+    JSON.stringify({
+      isRepo: status.isRepo,
+      refName: status.refName,
+      hasPrimaryRemote: status.hasPrimaryRemote,
+    })
+  );
 }
 
 const normalizeCwd = (cwd: string) =>
@@ -191,7 +199,17 @@ const normalizeCwd = (cwd: string) =>
     Effect.orElseSucceed(() => cwd),
   );
 
-export const make = Effect.gen(function* () {
+interface MakeOptions {
+  readonly beforePublish?: (change: VcsStatusChange) => Effect.Effect<void, never>;
+  readonly afterRemoteCacheUpdate?: (input: {
+    readonly cwd: string;
+    readonly accepted: boolean;
+  }) => Effect.Effect<void, never>;
+}
+
+export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* (
+  makeOptions: MakeOptions = {},
+) {
   const workflow = yield* GitWorkflowService.GitWorkflowService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const fs = yield* FileSystem.FileSystem;
@@ -202,14 +220,35 @@ export const make = Effect.gen(function* () {
   const broadcasterScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
-  const cacheRef = yield* SynchronizedRef.make(new Map<string, CachedVcsStatus>());
+  const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
+  const transitionLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
   ) {
-    return yield* SynchronizedRef.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
+    return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
   });
+
+  const transitionLockFor = Effect.fn("VcsStatusBroadcaster.transitionLockFor")(function* (
+    cwd: string,
+  ) {
+    return yield* SynchronizedRef.modifyEffect(transitionLocksRef, (locks) => {
+      const existing = locks.get(cwd);
+      if (existing) {
+        return Effect.succeed([existing, locks] as const);
+      }
+      return Semaphore.make(1).pipe(
+        Effect.map((created) => [created, new Map(locks).set(cwd, created)] as const),
+      );
+    });
+  });
+
+  const publishChange = (change: VcsStatusChange) =>
+    Effect.gen(function* () {
+      yield* makeOptions.beforePublish?.(change) ?? Effect.void;
+      yield* PubSub.publish(changesPubSub, change);
+    });
 
   const cachedCompleteResult = (cached: CachedVcsStatus | null) =>
     cached?.local && cached.remote?.generation === cached.generation
@@ -222,38 +261,46 @@ export const make = Effect.gen(function* () {
         fingerprint: fingerprintStatusPart(local),
         value: local,
       } satisfies CachedValue<VcsStatusLocalResult>;
-      const update = yield* SynchronizedRef.modifyEffect(cacheRef, (cache) => {
-        const previous = cache.get(cwd) ?? { generation: 0, local: null, remote: null };
-        const refChanged =
-          previous.local !== null &&
-          localStatusIdentity(previous.local.value) !== localStatusIdentity(local);
-        const generation = previous.generation + (refChanged ? 1 : 0);
-        const nextCache = new Map(cache);
-        nextCache.set(cwd, {
-          ...previous,
-          generation,
-          local: nextLocal,
-          remote: refChanged ? null : previous.remote,
-        });
-        const result = {
-          generation,
-          refChanged,
-          shouldPublish: previous.local?.fingerprint !== nextLocal.fingerprint,
-        };
-        const publish =
-          options?.publish && result.shouldPublish
-            ? PubSub.publish(changesPubSub, {
-                cwd,
-                event: {
-                  _tag: "localUpdated" as const,
+      const lock = yield* transitionLockFor(cwd);
+      const update = yield* lock.withPermits(1)(
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const committed = yield* Ref.modify(cacheRef, (cache) => {
+              const previous = cache.get(cwd) ?? {
+                generation: 0,
+                local: null,
+                remote: null,
+              };
+              const refChanged =
+                previous.local !== null &&
+                localStatusIdentity(previous.local.value) !== localStatusIdentity(local);
+              const generation = previous.generation + (refChanged ? 1 : 0);
+              const nextCache = new Map(cache);
+              nextCache.set(cwd, {
+                ...previous,
+                generation,
+                local: nextLocal,
+                remote: refChanged ? null : previous.remote,
+              });
+              return [
+                {
                   generation,
-                  local,
+                  refChanged,
+                  shouldPublish: previous.local?.fingerprint !== nextLocal.fingerprint,
                 },
-              })
-            : Effect.void;
-        return publish.pipe(Effect.as([result, nextCache] as const));
-      });
-
+                nextCache,
+              ] as const;
+            });
+            if (options?.publish && committed.shouldPublish) {
+              yield* publishChange({
+                cwd,
+                event: { _tag: "localUpdated", generation: committed.generation, local },
+              });
+            }
+            return committed;
+          }),
+        ),
+      );
       if (update.refChanged) {
         yield* workflow.invalidateRemoteStatus(cwd);
       }
@@ -274,35 +321,52 @@ export const make = Effect.gen(function* () {
         fingerprint: fingerprintStatusPart(remote),
         value: remote,
       } satisfies CachedRemoteStatus;
-      const update = yield* SynchronizedRef.modifyEffect(cacheRef, (cache) => {
-        const previous = cache.get(cwd) ?? { generation: 0, local: null, remote: null };
-        if (previous.local === null || previous.generation !== generation) {
-          return Effect.succeed([{ accepted: false, shouldPublish: false }, cache] as const);
-        }
-        const nextCache = new Map(cache);
-        nextCache.set(cwd, {
-          ...previous,
-          remote: nextRemote,
-        });
-        const result = {
-          accepted: true,
-          shouldPublish:
-            previous.remote?.generation !== generation ||
-            previous.remote.fingerprint !== nextRemote.fingerprint,
-        };
-        const publish =
-          options?.publish && result.shouldPublish
-            ? PubSub.publish(changesPubSub, {
+      const lock = yield* transitionLockFor(cwd);
+      const update = yield* lock.withPermits(1)(
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const result = yield* Ref.modify(
+              cacheRef,
+              (
+                cache,
+              ): readonly [
+                { readonly accepted: boolean; readonly shouldPublish: boolean },
+                Map<string, CachedVcsStatus>,
+              ] => {
+                const previous = cache.get(cwd) ?? {
+                  generation: 0,
+                  local: null,
+                  remote: null,
+                };
+                if (previous.local === null || previous.generation !== generation) {
+                  return [{ accepted: false, shouldPublish: false }, cache] as const;
+                }
+                const nextCache = new Map(cache);
+                nextCache.set(cwd, { ...previous, remote: nextRemote });
+                return [
+                  {
+                    accepted: true,
+                    shouldPublish:
+                      previous.remote?.generation !== generation ||
+                      previous.remote.fingerprint !== nextRemote.fingerprint,
+                  },
+                  nextCache,
+                ] as const;
+              },
+            );
+            if (options?.publish && result.shouldPublish) {
+              yield* publishChange({
                 cwd,
-                event: {
-                  _tag: "remoteUpdated" as const,
-                  generation,
-                  remote,
-                },
-              })
-            : Effect.void;
-        return publish.pipe(Effect.as([result, nextCache] as const));
-      });
+                event: { _tag: "remoteUpdated", generation, remote },
+              });
+            }
+            return result;
+          }),
+        ),
+      );
+      yield* (
+        makeOptions.afterRemoteCacheUpdate?.({ cwd, accepted: update.accepted }) ?? Effect.void
+      );
 
       return update.accepted;
     },
@@ -318,52 +382,68 @@ export const make = Effect.gen(function* () {
       fingerprint: fingerprintStatusPart(local),
       value: local,
     } satisfies CachedValue<VcsStatusLocalResult>;
-    const update = yield* SynchronizedRef.modifyEffect(cacheRef, (cache) => {
-      const existing = cache.get(cwd) ?? null;
-      if (options && "expected" in options && existing !== options.expected) {
-        return Effect.succeed([
-          { accepted: false, generation: existing?.generation ?? 0, shouldPublish: false },
-          cache,
-        ] as const);
-      }
-      const previous = existing ?? { generation: 0, local: null, remote: null };
-      const refChanged =
-        previous.local === null ||
-        localStatusIdentity(previous.local.value) !== localStatusIdentity(local);
-      const generation = previous.generation + (refChanged ? 1 : 0);
-      const nextRemote = {
-        generation,
-        fingerprint: fingerprintStatusPart(remote),
-        value: remote,
-      } satisfies CachedRemoteStatus;
-      const nextCache = new Map(cache);
-      nextCache.set(cwd, {
-        generation,
-        local: nextLocal,
-        remote: nextRemote,
-      });
-      const result = {
-        accepted: true,
-        generation,
-        shouldPublish:
-          previous.local?.fingerprint !== nextLocal.fingerprint ||
-          previous.remote?.generation !== generation ||
-          previous.remote.fingerprint !== nextRemote.fingerprint,
-      };
-      const publish =
-        options?.publish && result.shouldPublish
-          ? PubSub.publish(changesPubSub, {
-              cwd,
-              event: {
-                _tag: "snapshot" as const,
-                generation,
-                local,
-                remote,
+    const lock = yield* transitionLockFor(cwd);
+    const update = yield* lock.withPermits(1)(
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          const result = yield* Ref.modify(
+            cacheRef,
+            (
+              cache,
+            ): readonly [
+              {
+                readonly accepted: boolean;
+                readonly generation: number;
+                readonly shouldPublish: boolean;
               },
-            })
-          : Effect.void;
-      return publish.pipe(Effect.as([result, nextCache] as const));
-    });
+              Map<string, CachedVcsStatus>,
+            ] => {
+              const existing = cache.get(cwd) ?? null;
+              if (options && "expected" in options && existing !== options.expected) {
+                return [
+                  {
+                    accepted: false,
+                    generation: existing?.generation ?? 0,
+                    shouldPublish: false,
+                  },
+                  cache,
+                ] as const;
+              }
+              const previous = existing ?? { generation: 0, local: null, remote: null };
+              const refChanged =
+                previous.local === null ||
+                localStatusIdentity(previous.local.value) !== localStatusIdentity(local);
+              const generation = previous.generation + (refChanged ? 1 : 0);
+              const nextRemote = {
+                generation,
+                fingerprint: fingerprintStatusPart(remote),
+                value: remote,
+              } satisfies CachedRemoteStatus;
+              const nextCache = new Map(cache);
+              nextCache.set(cwd, { generation, local: nextLocal, remote: nextRemote });
+              return [
+                {
+                  accepted: true,
+                  generation,
+                  shouldPublish:
+                    previous.local?.fingerprint !== nextLocal.fingerprint ||
+                    previous.remote?.generation !== generation ||
+                    previous.remote.fingerprint !== nextRemote.fingerprint,
+                },
+                nextCache,
+              ] as const;
+            },
+          );
+          if (options?.publish && result.shouldPublish) {
+            yield* publishChange({
+              cwd,
+              event: { _tag: "snapshot", generation: result.generation, local, remote },
+            });
+          }
+          return result;
+        }),
+      ),
+    );
 
     return update.accepted ? mergeGitStatusParts(local, remote) : null;
   });
@@ -702,5 +782,10 @@ export const make = Effect.gen(function* () {
     streamStatus,
   });
 });
+
+export const make = makeWithOptions();
+
+export const layerWithOptions = (options: MakeOptions) =>
+  Layer.effect(VcsStatusBroadcaster, makeWithOptions(options));
 
 export const layer = Layer.effect(VcsStatusBroadcaster, make);

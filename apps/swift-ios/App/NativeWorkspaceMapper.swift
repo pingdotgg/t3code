@@ -369,23 +369,30 @@ enum NativeWorkspaceMapper {
 
 struct NativeSourceControlStatusAccumulator {
     private var generation: Int?
+    private var acceptsLegacyRemote = false
     private var local: VCSLocalStatus?
     private var remote: VCSRemoteStatus?
 
     mutating func consume(_ event: VCSStatusEvent) -> FeatureSourceControlStatus? {
         switch event {
         case let .snapshot(nextGeneration, nextLocal, nextRemote):
-            if let generation, nextGeneration < generation { break }
+            if let generation, let nextGeneration, nextGeneration < generation { break }
             generation = nextGeneration
+            acceptsLegacyRemote = nextGeneration == nil
             local = nextLocal
             remote = nextRemote
         case let .localUpdated(nextGeneration, nextLocal):
-            if let generation, nextGeneration < generation { break }
-            if generation != nextGeneration { remote = nil }
+            if let generation, let nextGeneration, nextGeneration < generation { break }
+            if nextGeneration == nil || generation != nextGeneration { remote = nil }
             generation = nextGeneration
+            acceptsLegacyRemote = false
             local = nextLocal
         case let .remoteUpdated(nextGeneration, nextRemote):
-            guard generation == nextGeneration else { break }
+            if let nextGeneration {
+                guard generation == nextGeneration else { break }
+            } else {
+                guard acceptsLegacyRemote else { break }
+            }
             remote = nextRemote
         }
 

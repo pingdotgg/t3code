@@ -20,13 +20,13 @@ const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRe
 const decodeStatusStreamEvent = Schema.decodeUnknownSync(VcsStatusStreamEvent);
 
 describe("VcsStatusStreamEvent", () => {
-  it("requires a generation on status updates", () => {
-    expect(() =>
+  it("decodes legacy and generation-aware status updates", () => {
+    expect(
       decodeStatusStreamEvent({
         _tag: "remoteUpdated",
         remote: null,
       }),
-    ).toThrow();
+    ).toEqual({ _tag: "remoteUpdated", remote: null });
     expect(
       decodeStatusStreamEvent({
         _tag: "remoteUpdated",

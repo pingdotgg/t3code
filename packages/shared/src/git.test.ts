@@ -236,4 +236,29 @@ describe("applyGitStatusStreamState", () => {
     expect(updated?.status.aheadCount).toBe(2);
     expect(updated?.status.behindCount).toBe(1);
   });
+
+  it("supports a legacy snapshot remote update but fails closed after a local delta", () => {
+    const initial = applyGitStatusStreamState(null, {
+      _tag: "snapshot",
+      local,
+      remote: null,
+    });
+    const initialRemote = applyGitStatusStreamState(initial, {
+      _tag: "remoteUpdated",
+      remote,
+    });
+    const localOnly = applyGitStatusStreamState(initialRemote, {
+      _tag: "localUpdated",
+      local: { ...local, refName: "feature/legacy-next" },
+    });
+    const afterRemote = applyGitStatusStreamState(localOnly, {
+      _tag: "remoteUpdated",
+      remote: { ...remote, aheadCount: 99 },
+    });
+
+    expect(initial?.generation).toBeNull();
+    expect(initialRemote?.status.aheadCount).toBe(2);
+    expect(localOnly?.status.aheadCount).toBe(0);
+    expect(afterRemote).toEqual(localOnly);
+  });
 });

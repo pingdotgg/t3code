@@ -358,9 +358,9 @@ public struct VCSStatus: Codable, Equatable, Sendable {
 }
 
 public enum VCSStatusEvent: Decodable, Sendable {
-    case snapshot(generation: Int, local: VCSLocalStatus, remote: VCSRemoteStatus?)
-    case localUpdated(generation: Int, local: VCSLocalStatus)
-    case remoteUpdated(generation: Int, remote: VCSRemoteStatus?)
+    case snapshot(generation: Int?, local: VCSLocalStatus, remote: VCSRemoteStatus?)
+    case localUpdated(generation: Int?, local: VCSLocalStatus)
+    case remoteUpdated(generation: Int?, remote: VCSRemoteStatus?)
 
     private enum CodingKeys: String, CodingKey { case _tag, generation, local, remote }
 
@@ -370,18 +370,18 @@ public enum VCSStatusEvent: Decodable, Sendable {
         switch tag {
         case "snapshot":
             self = .snapshot(
-                generation: try container.decode(Int.self, forKey: .generation),
+                generation: try container.decodeIfPresent(Int.self, forKey: .generation),
                 local: try container.decode(VCSLocalStatus.self, forKey: .local),
                 remote: try container.decodeIfPresent(VCSRemoteStatus.self, forKey: .remote)
             )
         case "localUpdated":
             self = .localUpdated(
-                generation: try container.decode(Int.self, forKey: .generation),
+                generation: try container.decodeIfPresent(Int.self, forKey: .generation),
                 local: try container.decode(VCSLocalStatus.self, forKey: .local)
             )
         case "remoteUpdated":
             self = .remoteUpdated(
-                generation: try container.decode(Int.self, forKey: .generation),
+                generation: try container.decodeIfPresent(Int.self, forKey: .generation),
                 remote: try container.decodeIfPresent(VCSRemoteStatus.self, forKey: .remote)
             )
         default:

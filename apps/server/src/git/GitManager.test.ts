@@ -949,6 +949,50 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("local status coherence token tracks HEAD, primary remote, and upstream identity", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-coherence-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const replacementOriginDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const { manager } = yield* makeManager();
+
+      const initial = yield* manager.localStatus({ cwd: repoDir });
+      expect(initial.coherenceToken).toBeTruthy();
+
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(repoDir, "HEAD-MOVE.md"), "next\n");
+      yield* runGit(repoDir, ["add", "HEAD-MOVE.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Move head"]);
+      yield* manager.invalidateLocalStatus(repoDir);
+      const afterHeadMove = yield* manager.localStatus({ cwd: repoDir });
+      expect(afterHeadMove.coherenceToken).not.toBe(initial.coherenceToken);
+
+      yield* runGit(repoDir, ["remote", "remove", "origin"]);
+      yield* manager.invalidateLocalStatus(repoDir);
+      const afterPrimaryRemoteRemoval = yield* manager.localStatus({ cwd: repoDir });
+      expect(afterPrimaryRemoteRemoval.coherenceToken).not.toBe(afterHeadMove.coherenceToken);
+
+      yield* runGit(repoDir, ["remote", "add", "origin", replacementOriginDir]);
+      yield* manager.invalidateLocalStatus(repoDir);
+      const afterPrimaryRemoteAddition = yield* manager.localStatus({ cwd: repoDir });
+      expect(afterPrimaryRemoteAddition.coherenceToken).not.toBe(
+        afterPrimaryRemoteRemoval.coherenceToken,
+      );
+
+      yield* runGit(repoDir, ["remote", "add", "fork", originDir]);
+      yield* runGit(repoDir, ["fetch", "fork", "main"]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to=fork/main", "main"]);
+      yield* manager.invalidateLocalStatus(repoDir);
+      const afterUpstreamChange = yield* manager.localStatus({ cwd: repoDir });
+      expect(afterUpstreamChange.coherenceToken).not.toBe(
+        afterPrimaryRemoteAddition.coherenceToken,
+      );
+    }),
+  );
+
   it.effect("status skips the provider lookup for a branch that was never pushed", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -47,6 +47,29 @@ final class WorkspaceContractTests: XCTestCase {
         XCTAssertEqual(remote?.aheadCount, 1)
     }
 
+    func testVCSStatusEventDecodesLegacyGenerationlessShape() throws {
+        let data = Data(
+            """
+            {
+              "_tag": "remoteUpdated",
+              "remote": {
+                "hasUpstream": true,
+                "aheadCount": 1,
+                "behindCount": 0,
+                "pr": null
+              }
+            }
+            """.utf8
+        )
+
+        let event = try JSONDecoder.t3.decode(VCSStatusEvent.self, from: data)
+        guard case let .remoteUpdated(generation, remote) = event else {
+            return XCTFail("Expected remoteUpdated")
+        }
+        XCTAssertNil(generation)
+        XCTAssertEqual(remote?.aheadCount, 1)
+    }
+
     func testTerminalAttachEventsDecodeSnapshotAndOutputShapes() throws {
         let snapshotData = Data(
             """

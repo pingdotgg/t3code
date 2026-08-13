@@ -205,6 +205,7 @@ const VcsStatusLocalShape = {
   hasPrimaryRemote: Schema.Boolean,
   isDefaultRef: Schema.Boolean,
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  coherenceToken: Schema.optional(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
     files: Schema.Array(
@@ -241,16 +242,16 @@ export type VcsStatusResult = typeof VcsStatusResult.Type;
 
 export const VcsStatusStreamEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
-    generation: NonNegativeInt,
+    generation: Schema.optional(NonNegativeInt),
     local: VcsStatusLocalResult,
     remote: Schema.NullOr(VcsStatusRemoteResult),
   }),
   Schema.TaggedStruct("localUpdated", {
-    generation: NonNegativeInt,
+    generation: Schema.optional(NonNegativeInt),
     local: VcsStatusLocalResult,
   }),
   Schema.TaggedStruct("remoteUpdated", {
-    generation: NonNegativeInt,
+    generation: Schema.optional(NonNegativeInt),
     remote: Schema.NullOr(VcsStatusRemoteResult),
   }),
 ]);

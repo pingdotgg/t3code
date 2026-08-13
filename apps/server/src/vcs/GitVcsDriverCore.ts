@@ -76,6 +76,7 @@ const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
   isRepo: false,
+  headOid: null,
   hasOriginRemote: false,
   isDefaultBranch: false,
   branch: null,
@@ -1653,6 +1654,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     const statusStdout = statusResult.stdout;
 
+    let headOid: string | null = null;
     let refName: string | null = null;
     let upstreamRef: string | null = null;
     let aheadCount = 0;
@@ -1662,6 +1664,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const changedFilesWithoutNumstat = new Set<string>();
 
     for (const line of statusStdout.split(/\r?\n/g)) {
+      if (line.startsWith("# branch.oid ")) {
+        const value = line.slice("# branch.oid ".length).trim();
+        headOid = value === "(initial)" ? null : value;
+        continue;
+      }
       if (line.startsWith("# branch.head ")) {
         const value = line.slice("# branch.head ".length).trim();
         refName = value.startsWith("(") ? null : value;
@@ -1731,6 +1738,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     return {
       isRepo: true,
+      headOid,
       hasOriginRemote: hasPrimaryRemote,
       isDefaultBranch,
       branch: refName,

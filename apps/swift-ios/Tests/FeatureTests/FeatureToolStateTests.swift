@@ -73,6 +73,31 @@ struct FeatureToolStateTests {
     }
 
     @Test
+    func legacySourceControlClearsRemoteAndRejectsGenerationlessRemoteDelta() {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                generation: nil,
+                local: vcsLocal(refName: "feature/a"),
+                remote: nil
+            )
+        )
+        let initialRemote = accumulator.consume(
+            .remoteUpdated(generation: nil, remote: vcsRemote(aheadCount: 4))
+        )
+        let localOnly = accumulator.consume(
+            .localUpdated(generation: nil, local: vcsLocal(refName: "feature/b"))
+        )
+        let afterRemote = accumulator.consume(
+            .remoteUpdated(generation: nil, remote: vcsRemote(aheadCount: 99))
+        )
+
+        #expect(initialRemote?.aheadCount == 4)
+        #expect(localOnly == nil)
+        #expect(afterRemote == nil)
+    }
+
+    @Test
     func fileFilteringKeepsDirectoriesFirstAndHonorsHiddenFiles() {
         let entries = [
             FeatureFileEntry(path: "z.swift", name: "z.swift", kind: .file),

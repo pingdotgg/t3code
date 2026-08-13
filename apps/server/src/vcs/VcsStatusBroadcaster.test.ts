@@ -363,7 +363,13 @@ describe("VcsStatusBroadcaster", () => {
       remoteInvalidationCalls: 0,
     };
     let pendingRemote: Deferred.Deferred<VcsStatusRemoteResult | null> | null = null;
-    const testLayer = VcsStatusBroadcaster.layer.pipe(
+    let remoteCacheUpdated: Deferred.Deferred<boolean> | null = null;
+    const testLayer = VcsStatusBroadcaster.layerWithOptions({
+      afterRemoteCacheUpdate: ({ accepted }) =>
+        remoteCacheUpdated
+          ? Deferred.succeed(remoteCacheUpdated, accepted).pipe(Effect.ignore)
+          : Effect.void,
+    }).pipe(
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
@@ -391,6 +397,7 @@ describe("VcsStatusBroadcaster", () => {
 
     return Effect.gen(function* () {
       pendingRemote = yield* Deferred.make<VcsStatusRemoteResult | null>();
+      remoteCacheUpdated = yield* Deferred.make<boolean>();
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const scope = yield* Scope.make();
       const snapshotSeen = yield* Deferred.make<void>();
@@ -415,8 +422,7 @@ describe("VcsStatusBroadcaster", () => {
       state.currentLocalStatus = { ...baseLocalStatus, refName: "feature/new-ref" };
       yield* broadcaster.refreshLocalStatus("/repo");
       yield* Deferred.succeed(pendingRemote, baseRemoteStatus);
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
+      assert.isFalse(yield* Deferred.await(remoteCacheUpdated));
 
       assert.isTrue(Option.isNone(yield* Deferred.poll(remoteUpdateSeen)));
       yield* Scope.close(scope, Exit.void);
@@ -511,6 +517,93 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(testLayer));
   });
 
+  for (const [name, firstToken, confirmedToken] of [
+    ["same-branch HEAD move", "head-a|origin|origin/feature", "head-b|origin|origin/feature"],
+    ["primary remote removal", "head-a|origin|origin/feature", "head-a|none|origin/feature"],
+    ["upstream change", "head-a|origin|origin/feature", "head-a|origin|fork/feature"],
+  ] as const) {
+    it.effect(`retries a coherent read after a ${name}`, () => {
+      let localCall = 0;
+      let remoteCall = 0;
+      const first = { ...baseLocalStatus, coherenceToken: firstToken };
+      const confirmed = { ...baseLocalStatus, coherenceToken: confirmedToken };
+      const freshRemote = { ...baseRemoteStatus, aheadCount: 7 };
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(makeBackgroundPolicyLayer(() => true)),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () =>
+              Effect.sync(() => {
+                localCall += 1;
+                return localCall === 1 ? first : confirmed;
+              }),
+            remoteStatus: () =>
+              Effect.sync(() => {
+                remoteCall += 1;
+                return remoteCall === 1 ? baseRemoteStatus : freshRemote;
+              }),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+          }),
+        ),
+      );
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const status = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+        assert.equal(status.aheadCount, 7);
+        assert.equal(localCall, 4);
+        assert.equal(remoteCall, 2);
+      }).pipe(Effect.provide(testLayer));
+    });
+  }
+
+  it.effect("fails after three continuously changing coherence identities", () => {
+    let localCall = 0;
+    let remoteCall = 0;
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () =>
+            Effect.sync(() => ({
+              ...baseLocalStatus,
+              coherenceToken: `identity-${++localCall}`,
+            })),
+          remoteStatus: () =>
+            Effect.sync(() => {
+              remoteCall += 1;
+              return baseRemoteStatus;
+            }),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const exit = yield* broadcaster.getStatus({ cwd: "/repo" }).pipe(Effect.exit);
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.squash(exit.cause);
+        assert.instanceOf(failure, GitManagerError);
+        assert.equal(
+          (failure as GitManagerError).operation,
+          "VcsStatusBroadcaster.readCoherentStatus",
+        );
+      }
+      assert.equal(localCall, 6);
+      assert.equal(remoteCall, 3);
+    }).pipe(Effect.provide(testLayer));
+  });
+
   it.effect("builds the initial snapshot from one cached generation", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
@@ -530,7 +623,7 @@ describe("VcsStatusBroadcaster", () => {
             automaticRemoteRefreshInterval: Effect.succeed(Duration.zero),
             beforeInitialSnapshot: Effect.suspend(() => {
               state.currentLocalStatus = { ...baseLocalStatus, refName: "feature/new-ref" };
-              return broadcaster.refreshLocalStatus("/repo").pipe(Effect.asVoid);
+              return broadcaster.refreshLocalStatus("/repo").pipe(Effect.orDie, Effect.asVoid);
             }),
           },
         ),
@@ -590,6 +683,104 @@ describe("VcsStatusBroadcaster", () => {
       assert.equal(events.at(-1)?._tag, "localUpdated");
       yield* Deferred.succeed(invalidationGate, undefined);
       yield* Fiber.join(refresh);
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("commits a transition before publishing and serializes the next writer", () => {
+    const initial = { ...baseLocalStatus, coherenceToken: "stable" };
+    const localA = {
+      ...initial,
+      hasWorkingTreeChanges: true,
+      workingTree: {
+        files: [{ path: "a.ts", insertions: 1, deletions: 0 }],
+        insertions: 1,
+        deletions: 0,
+      },
+    };
+    const localB = {
+      ...initial,
+      hasWorkingTreeChanges: true,
+      workingTree: {
+        files: [{ path: "b.ts", insertions: 2, deletions: 0 }],
+        insertions: 2,
+        deletions: 0,
+      },
+    };
+    let currentLocal = initial;
+    let publicationGate: Deferred.Deferred<void> | null = null;
+    let firstPublicationStarted: Deferred.Deferred<void> | null = null;
+    let secondPublicationStarted: Deferred.Deferred<void> | null = null;
+    let publishCount = 0;
+    const events: VcsStatusStreamEvent[] = [];
+    const testLayer = VcsStatusBroadcaster.layerWithOptions({
+      beforePublish: (change) => {
+        if (change.event._tag !== "localUpdated") return Effect.void;
+        publishCount += 1;
+        if (publishCount === 1 && firstPublicationStarted && publicationGate) {
+          return Deferred.succeed(firstPublicationStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(publicationGate)),
+            Effect.asVoid,
+          );
+        }
+        return secondPublicationStarted
+          ? Deferred.succeed(secondPublicationStarted, undefined).pipe(Effect.ignore)
+          : Effect.void;
+      },
+    }).pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () => Effect.sync(() => currentLocal),
+          remoteStatus: () => Effect.succeed(baseRemoteStatus),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      publicationGate = yield* Deferred.make<void>();
+      firstPublicationStarted = yield* Deferred.make<void>();
+      secondPublicationStarted = yield* Deferred.make<void>();
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      const snapshotSeen = yield* Deferred.make<void>();
+      const scope = yield* Scope.make();
+      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
+        events.push(event);
+        return event._tag === "snapshot"
+          ? Deferred.succeed(snapshotSeen, undefined).pipe(Effect.ignore)
+          : Effect.void;
+      }).pipe(Effect.forkIn(scope));
+      yield* Deferred.await(snapshotSeen);
+
+      currentLocal = localA;
+      const writerA = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(firstPublicationStarted);
+      const duringPublish = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(duringPublish.workingTree.files[0]?.path, "a.ts");
+
+      currentLocal = localB;
+      const writerB = yield* broadcaster.refreshLocalStatus("/repo").pipe(Effect.forkScoped);
+      assert.isTrue(Option.isNone(yield* Deferred.poll(secondPublicationStarted)));
+
+      yield* Deferred.succeed(publicationGate, undefined);
+      yield* Deferred.await(secondPublicationStarted);
+      yield* Fiber.join(writerA);
+      yield* Fiber.join(writerB);
+      const finalStatus = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(finalStatus.workingTree.files[0]?.path, "b.ts");
+      assert.deepStrictEqual(
+        events
+          .filter((event) => event._tag === "localUpdated")
+          .map((event) =>
+            event._tag === "localUpdated" ? event.local.workingTree.files[0]?.path : null,
+          ),
+        ["a.ts", "b.ts"],
+      );
       yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.provide(testLayer));
   });

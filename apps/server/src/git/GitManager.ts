@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -849,6 +851,7 @@ export const make = Effect.gen(function* () {
   const normalizeStatusCacheKey = canonicalizeExistingPath;
   const nonRepositoryStatusDetails = {
     isRepo: false,
+    headOid: null,
     hasOriginRemote: false,
     isDefaultBranch: false,
     branch: null,
@@ -869,6 +872,23 @@ export const make = Effect.gen(function* () {
     const hostingProvider = details.isRepo
       ? yield* resolveHostingProvider(cwd, details.branch)
       : null;
+    const primaryRemoteUrlKey = details.isRepo
+      ? yield* gitCore.readConfigValue(cwd, "remote.origin.url").pipe(
+          Effect.map((url) => (url === null ? null : normalizeGitRemoteUrl(url))),
+          Effect.orElseSucceed(() => null),
+        )
+      : null;
+    const coherenceToken = NodeCrypto.createHash("sha256")
+      .update(
+        JSON.stringify({
+          isRepo: details.isRepo,
+          headOid: details.headOid,
+          refName: details.branch,
+          upstreamRef: details.upstreamRef,
+          primaryRemoteUrlKey,
+        }),
+      )
+      .digest("hex");
 
     return {
       isRepo: details.isRepo,
@@ -876,6 +896,7 @@ export const make = Effect.gen(function* () {
       hasPrimaryRemote: details.hasOriginRemote,
       isDefaultRef: details.isDefaultBranch,
       refName: details.branch,
+      coherenceToken,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
     } satisfies VcsStatusLocalResult;

@@ -285,7 +285,8 @@ export function applyGitStatusStreamEvent(
 }
 
 export interface GitStatusStreamState {
-  readonly generation: number;
+  readonly generation: number | null;
+  readonly acceptsLegacyRemote: boolean;
   readonly status: VcsStatusResult;
 }
 
@@ -293,32 +294,47 @@ export function applyGitStatusStreamState(
   current: GitStatusStreamState | null,
   event: VcsStatusStreamEvent,
 ): GitStatusStreamState | null {
-  if (current !== null && event.generation < current.generation) {
+  if (
+    current !== null &&
+    current.generation !== null &&
+    event.generation !== undefined &&
+    event.generation < current.generation
+  ) {
     return current;
   }
 
   switch (event._tag) {
     case "snapshot":
       return {
-        generation: event.generation,
+        generation: event.generation ?? null,
+        acceptsLegacyRemote: event.generation === undefined,
         status: mergeGitStatusParts(event.local, event.remote),
       };
     case "localUpdated": {
       const remote =
-        current !== null && current.generation === event.generation
+        event.generation !== undefined &&
+        current !== null &&
+        current.generation === event.generation
           ? toRemoteStatusPart(current.status)
           : null;
       return {
-        generation: event.generation,
+        generation: event.generation ?? null,
+        acceptsLegacyRemote: false,
         status: mergeGitStatusParts(event.local, remote),
       };
     }
     case "remoteUpdated":
-      if (current === null || current.generation !== event.generation) {
+      if (
+        current === null ||
+        (event.generation === undefined
+          ? !current.acceptsLegacyRemote
+          : current.generation !== event.generation)
+      ) {
         return current;
       }
       return {
-        generation: event.generation,
+        generation: event.generation ?? null,
+        acceptsLegacyRemote: current.acceptsLegacyRemote,
         status: mergeGitStatusParts(toLocalStatusPart(current.status), event.remote),
       };
   }
