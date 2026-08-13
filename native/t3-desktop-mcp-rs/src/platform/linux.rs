@@ -125,6 +125,74 @@ impl LinuxDesktop {
         ))
     }
 
+    /// Write text straight into an element through AT-SPI.
+    ///
+    /// Preferred over XTEST wherever it works: synthetic keys go to whatever
+    /// currently holds X11 focus, which under a compositor is not reliably the
+    /// element we were asked to type into. This addresses the element directly.
+    fn insert_text(&self, element: &ElementRef, text: &str, replace: bool) -> Result<()> {
+        let editable = block_on(
+            atspi::proxy::editable_text::EditableTextProxy::builder(self.bus()?.connection())
+                .destination(element.bus.clone())
+                .and_then(|builder| builder.path(element.path.clone()))
+                .map_err(|error| DesktopError::new(format!("bad element address: {error}")))?
+                .build(),
+        )
+        .map_err(|error| DesktopError::new(format!("element is not editable: {error}")))?;
+
+        if replace {
+            return match block_on(editable.set_text_contents(text)) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(DesktopError::new("the element refused the new contents")),
+                Err(error) => Err(DesktopError::new(format!("write failed: {error}"))),
+            };
+        }
+
+        // Append at the caret rather than the start, so repeated calls read the
+        // way a person typing would expect.
+        let caret = self.caret_offset(element).unwrap_or(0);
+        match block_on(editable.insert_text(caret, text, text.chars().count() as i32)) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(DesktopError::new("the element refused the text")),
+            Err(error) => Err(DesktopError::new(format!("write failed: {error}"))),
+        }
+    }
+
+    fn text_proxy<'a>(
+        &'a self,
+        element: &ElementRef,
+    ) -> Result<atspi::proxy::text::TextProxy<'a>> {
+        block_on(
+            atspi::proxy::text::TextProxy::builder(self.bus()?.connection())
+                .destination(element.bus.clone())
+                .and_then(|builder| builder.path(element.path.clone()))
+                .map_err(|error| DesktopError::new(format!("bad element address: {error}")))?
+                .build(),
+        )
+        .map_err(|error| DesktopError::new(format!("element exposes no text: {error}")))
+    }
+
+    fn caret_offset(&self, element: &ElementRef) -> Result<i32> {
+        let text = self.text_proxy(element)?;
+        block_on(text.caret_offset())
+            .map_err(|error| DesktopError::new(format!("could not read the caret: {error}")))
+    }
+
+    /// Ask the toolkit to focus an element, which also raises its window on most
+    /// desktops — the closest portable equivalent to activating an app.
+    fn grab_focus(&self, element: &ElementRef) -> Result<bool> {
+        let component = block_on(
+            atspi::proxy::component::ComponentProxy::builder(self.bus()?.connection())
+                .destination(element.bus.clone())
+                .and_then(|builder| builder.path(element.path.clone()))
+                .map_err(|error| DesktopError::new(format!("bad element address: {error}")))?
+                .build(),
+        )
+        .map_err(|error| DesktopError::new(format!("element cannot take focus: {error}")))?;
+        block_on(component.grab_focus())
+            .map_err(|error| DesktopError::new(format!("focus refused: {error}")))
+    }
+
     /// Run an element's first accessible action, which toolkits map to "press"
     /// for buttons, links and menu items.
     fn invoke(&self, element: &ElementRef) -> Result<()> {
@@ -516,12 +584,36 @@ impl Desktop for LinuxDesktop {
     }
 
     fn activate_app(&mut self, app: &str) -> Result<String> {
-        // Raising a window is the window manager's job and there is no portable
-        // way to ask; AT-SPI has no such verb either.
+        // There is no portable "raise this window" verb on Linux, but focusing
+        // the app's frame gets there on most desktops.
+        let applications = self.applications()?;
+        let lowered = app.to_lowercase();
+        let (reference, name, _) = applications
+            .into_iter()
+            .find(|(_, name, _)| name.to_lowercase().contains(&lowered))
+            .ok_or_else(|| {
+                DesktopError::new(format!("no app on the accessibility bus matches '{app}'"))
+            })?;
+
+        // The application object itself cannot take focus; its first frame can.
+        let frames = {
+            match self.proxy(&reference) {
+                Ok(proxy) => block_on(proxy.get_children()).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            }
+        };
+        for frame in frames {
+            let child = ElementRef {
+                bus: frame.name().map(|name| name.to_string()).unwrap_or_default(),
+                path: frame.path().to_string(),
+            };
+            if self.grab_focus(&child).unwrap_or(false) {
+                return Ok(format!("activated {name}"));
+            }
+        }
         Err(DesktopError::new(format!(
-            "activate_app is not available on Linux — no portable way to raise a window across \
-             window managers. Click {app} in its taskbar, or interact with it directly, since the \
-             other tools do not need it focused"
+            "{name} refused focus — window managers vary here. The other tools do not need it \
+             focused, so carry on without activating it"
         )))
     }
 
@@ -582,10 +674,20 @@ impl Desktop for LinuxDesktop {
     }
 
     fn type_text(&mut self, text: &str, element: Option<u32>) -> Result<String> {
+        // With a target element, write through AT-SPI: it does not depend on
+        // which window the compositor considers focused, so it is reliable where
+        // synthetic keys are not.
         if let Some(id) = element {
-            let (x, y) = self.center(&self.element(id)?)?;
-            self.move_pointer(x, y)?;
-            self.tap_button(BUTTON_LEFT)?;
+            let reference = self.element(id)?;
+            if self.insert_text(&reference, text, false).is_ok() {
+                return Ok(format!("typed {} characters into e{id}", text.chars().count()));
+            }
+            // Fall back to focusing and using the keyboard.
+            let _ = self.grab_focus(&reference);
+            if let Ok((x, y)) = self.center(&reference) {
+                let _ = self.move_pointer(x, y);
+                let _ = self.tap_button(BUTTON_LEFT);
+            }
         }
         // Force a round trip so the server has drained anything queued, then let
         // the target settle. Some toolkits still swallow the opening character
@@ -669,28 +771,35 @@ impl Desktop for LinuxDesktop {
 
     fn set_value(&mut self, element: u32, value: &str) -> Result<String> {
         let reference = self.element(element)?;
-        let proxy = block_on(
-            atspi::proxy::text::TextProxy::builder(self.bus()?.connection())
-                .destination(reference.bus.clone())
-                .and_then(|builder| builder.path(reference.path.clone()))
-                .map_err(|error| DesktopError::new(format!("bad element address: {error}")))?
-                .build(),
-        );
-        drop(proxy);
-        // AT-SPI's EditableText is not exposed by every toolkit, and a partial
-        // write is worse than none, so steer to the reliable path.
-        Err(DesktopError::new(format!(
-            "set_value is not supported on Linux — click e{element}, select all with \
-             press_key('a', ['ctrl']), then type_text(\"{}\")",
-            truncate(value, 40)
-        )))
+        self.insert_text(&reference, value, true).map_err(|error| {
+            DesktopError::new(format!(
+                "{error} — not every toolkit allows a direct write; click e{element}, select all \
+                 with press_key('a', ['ctrl']), then type_text"
+            ))
+        })?;
+        Ok(format!("set e{element} to \"{}\"", truncate(value, 80)))
     }
 
-    fn select_text(&mut self, element: u32, _start: usize, _length: Option<usize>) -> Result<String> {
-        Err(DesktopError::new(format!(
-            "select_text is not supported on Linux — click e{element} then use \
-             press_key('a', ['ctrl']) to select all"
-        )))
+    fn select_text(&mut self, element: u32, start: usize, length: Option<usize>) -> Result<String> {
+        let reference = self.element(element)?;
+        let text = self.text_proxy(&reference)?;
+        let total = block_on(text.character_count()).unwrap_or(0).max(0);
+        let start = i32::try_from(start).unwrap_or(i32::MAX).min(total);
+        let end = length
+            .and_then(|count| i32::try_from(count).ok())
+            .map_or(total, |count| start.saturating_add(count).min(total));
+
+        // Replace selection 0 when one exists; otherwise create it.
+        let applied = block_on(text.set_selection(0, start, end))
+            .unwrap_or(false)
+            || block_on(text.add_selection(start, end))
+                .map_err(|error| DesktopError::new(format!("selection failed: {error}")))?;
+        if !applied {
+            return Err(DesktopError::new(format!(
+                "e{element} refused the selection — click it then use press_key('a', ['ctrl'])"
+            )));
+        }
+        Ok(format!("selected {} characters in e{element}", end - start))
     }
 }
 
