@@ -227,6 +227,14 @@ function patchMainBundleInfoPlist(appBundlePath, iconPath, executableName) {
   setPlistString(infoPlistPath, "CFBundleIdentifier", APP_BUNDLE_ID);
   setPlistString(infoPlistPath, "CFBundleExecutable", executableName);
   setPlistString(infoPlistPath, "CFBundleIconFile", "icon.icns");
+  // Without this key macOS denies every Apple Event with errAEEventNotPermitted
+  // (-1743) and never shows the Automation prompt, so Codex Computer Use and any
+  // other MCP server we spawn silently fail to drive other apps.
+  setPlistString(
+    infoPlistPath,
+    "NSAppleEventsUsageDescription",
+    "This app needs to control other apps to run Computer Use automations you approve.",
+  );
   setPlistJson(infoPlistPath, "CFBundleURLTypes", [
     {
       CFBundleURLName: APP_BUNDLE_ID,

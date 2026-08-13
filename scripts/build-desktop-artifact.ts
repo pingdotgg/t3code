@@ -2024,6 +2024,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      // Without this key macOS denies every Apple Event with errAEEventNotPermitted
+      // (-1743) and never shows the Automation prompt, so Codex Computer Use and any
+      // other MCP server we spawn silently fail to drive other apps.
+      extendInfo: {
+        NSAppleEventsUsageDescription:
+          "This app needs to control other apps to run Computer Use automations you approve.",
+      },
       protocols: [
         {
           name: "T3 Code",
