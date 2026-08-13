@@ -5,6 +5,11 @@ import type {
 } from "@t3tools/contracts";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
 
+export type ApplyOrchestrationV2ProjectionEventOptions = {
+  readonly partialTimeline?: boolean;
+  readonly latestLocalTurnOrdinal?: number | null;
+};
+
 function upsertEntity<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
   item: T,
@@ -60,9 +65,43 @@ function activeVisibleTurnItems(
   return next === null ? rows : renumberVisibleItems(next);
 }
 
+function oldestLocalTurnOrdinal(
+  rows: OrchestrationV2ThreadProjection["visibleTurnItems"],
+): number | null {
+  let oldest: number | null = null;
+  for (const row of rows) {
+    if (row.visibility !== "local") continue;
+    if (oldest === null || row.item.ordinal < oldest) {
+      oldest = row.item.ordinal;
+    }
+  }
+  return oldest;
+}
+
+function shouldDropMissingPartialTurnItem(
+  projection: OrchestrationV2ThreadProjection,
+  item: OrchestrationV2TurnItem,
+  latestLocalTurnOrdinal: number | null | undefined,
+): boolean {
+  if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
+    return false;
+  }
+  if (
+    latestLocalTurnOrdinal !== null &&
+    latestLocalTurnOrdinal !== undefined &&
+    item.ordinal <= latestLocalTurnOrdinal
+  ) {
+    return true;
+  }
+  const oldest = oldestLocalTurnOrdinal(projection.visibleTurnItems);
+  return oldest !== null && item.ordinal < oldest;
+}
+
 function upsertVisibleTurnItem(
   projection: OrchestrationV2ThreadProjection,
   item: OrchestrationV2TurnItem,
+  partialTimeline: boolean,
+  latestLocalTurnOrdinal: number | null | undefined,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   const rows = projection.visibleTurnItems;
   const index = rows.findIndex((row) => row.sourceItemId === item.id);
@@ -83,6 +122,13 @@ function upsertVisibleTurnItem(
   ) {
     return rows;
   }
+  if (
+    index === -1 &&
+    partialTimeline &&
+    shouldDropMissingPartialTurnItem(projection, item, latestLocalTurnOrdinal)
+  ) {
+    return rows;
+  }
   const updated = index === -1 ? [...rows] : [...rows.slice(0, index), ...rows.slice(index + 1)];
   const insertionIndex = updated.findIndex(
     (row) =>
@@ -99,9 +145,12 @@ function upsertVisibleTurnItem(
 export function applyOrchestrationV2ProjectionEvent(
   projection: OrchestrationV2ThreadProjection | null,
   event: OrchestrationV2DomainEvent,
+  options?: ApplyOrchestrationV2ProjectionEventOptions,
 ): OrchestrationV2ThreadProjection | null {
   if (projection === null || event.threadId !== projection.thread.id) return projection;
 
+  const partialTimeline = options?.partialTimeline === true;
+  const latestLocalTurnOrdinal = options?.latestLocalTurnOrdinal;
   const base = { ...projection, updatedAt: event.occurredAt };
   switch (event.type) {
     case "thread.created":
@@ -163,12 +212,19 @@ export function applyOrchestrationV2ProjectionEvent(
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
+      if (
+        partialTimeline &&
+        !projection.turnItems.some((candidate) => candidate.id === event.payload.id) &&
+        shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal)
+      ) {
+        return projection;
+      }
       const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
       const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
       return {
         ...next,
         visibleTurnItems: shouldShowLocalTurnItem(next, event.payload)
-          ? upsertVisibleTurnItem(visible, event.payload)
+          ? upsertVisibleTurnItem(visible, event.payload, partialTimeline, latestLocalTurnOrdinal)
           : removeVisibleItem(visible.visibleTurnItems, event.payload.id),
       };
     }
