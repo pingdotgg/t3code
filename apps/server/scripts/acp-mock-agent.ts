@@ -19,6 +19,7 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitXAiSubagent = process.env.T3_ACP_EMIT_XAI_SUBAGENT === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
@@ -829,6 +830,59 @@ const program = Effect.gen(function* () {
           throw new Error("Expected accepted _x.ai/ask_user_question response answers.");
         }
 
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitXAiSubagent) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "spawn-subagent-tool-1",
+            title: "spawn_subagent",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              description: "Map current Cursor ACP",
+              prompt: "Research the Cursor adapter.",
+            },
+          },
+        });
+        writeJsonRpcNotification("_x.ai/session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "subagent_spawned",
+            subagent_id: "mock-subagent-1",
+            parent_session_id: requestedSessionId,
+            child_session_id: "mock-subagent-1",
+            subagent_type: "explore",
+            description: "Map current Cursor ACP",
+            role: "explore",
+            model: "grok-4.6",
+            capability_mode: "read-only",
+          },
+        });
+        writeJsonRpcNotification("_x.ai/session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "subagent_finished",
+            subagent_id: "mock-subagent-1",
+            child_session_id: "mock-subagent-1",
+            status: "completed",
+            tool_calls: 12,
+            turns: 1,
+            duration_ms: 1500,
+            tokens_used: 4096,
+            output: "Cursor still uses ACP. Grok should keep the shared stack.",
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "spawned an explorer" },
+          },
+        });
         return { stopReason: "end_turn" };
       }
 

@@ -1313,4 +1313,66 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       yield* adapter.stopSession(threadId);
     }),
   );
+
+  it.effect("maps xAI subagent spawn and finish onto the Agents task events", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-subagent-roster");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_XAI_SUBAGENT: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const started =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "task.started" }>>();
+      const completed =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "task.completed" }>>();
+      const toolTitles = yield* Ref.make<ReadonlyArray<string>>([]);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId)) {
+          return Effect.void;
+        }
+        if (event.type === "task.started") {
+          return Deferred.succeed(started, event).pipe(Effect.ignore);
+        }
+        if (event.type === "task.completed") {
+          return Deferred.succeed(completed, event).pipe(Effect.ignore);
+        }
+        if (
+          (event.type === "item.updated" || event.type === "item.completed") &&
+          typeof event.payload.title === "string"
+        ) {
+          return Ref.update(toolTitles, (titles) => [...titles, event.payload.title ?? ""]);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "use subagents", attachments: [] });
+
+      const startedEvent = yield* Deferred.await(started);
+      const completedEvent = yield* Deferred.await(completed);
+      assert.equal(String(startedEvent.payload.taskId), "mock-subagent-1");
+      assert.equal(startedEvent.payload.taskType, "local_agent");
+      assert.equal(startedEvent.payload.role, "explore");
+      assert.equal(startedEvent.payload.title, "Map current Cursor ACP");
+      assert.equal(startedEvent.payload.model, "grok-4.6");
+      assert.equal(completedEvent.payload.status, "completed");
+      assert.equal(completedEvent.payload.typedUsage?.totalTokens, 4096);
+      assert.equal(completedEvent.payload.typedUsage?.toolUses, 12);
+      assert.equal(
+        completedEvent.payload.summary,
+        "Cursor still uses ACP. Grok should keep the shared stack.",
+      );
+      const titles = yield* Ref.get(toolTitles);
+      assert.isFalse(titles.includes("spawn_subagent"));
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

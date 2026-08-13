@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -59,6 +60,81 @@ export const XAiAskUserQuestionRequest = Schema.Union([
   XAiAskUserQuestionParams,
   XAiWrappedAskUserQuestionParams,
 ]);
+
+const XAiSubagentSpawnedUpdate = Schema.Struct({
+  sessionUpdate: Schema.Literal("subagent_spawned"),
+  subagent_id: Schema.String,
+  child_session_id: Schema.optional(Schema.String),
+  parent_session_id: Schema.optional(Schema.String),
+  parent_prompt_id: Schema.optional(Schema.String),
+  subagent_type: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  role: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
+  capability_mode: Schema.optional(Schema.String),
+});
+
+const XAiSubagentFinishedUpdate = Schema.Struct({
+  sessionUpdate: Schema.Literal("subagent_finished"),
+  subagent_id: Schema.String,
+  child_session_id: Schema.optional(Schema.String),
+  status: Schema.optional(Schema.String),
+  tool_calls: Schema.optional(Schema.Number),
+  turns: Schema.optional(Schema.Number),
+  duration_ms: Schema.optional(Schema.Number),
+  tokens_used: Schema.optional(Schema.Number),
+  output: Schema.optional(Schema.String),
+});
+
+const XAiKnownSubagentUpdate = Schema.Union([XAiSubagentSpawnedUpdate, XAiSubagentFinishedUpdate]);
+const decodeXAiKnownSubagentUpdate = Schema.decodeUnknownOption(XAiKnownSubagentUpdate);
+
+export const XAiSessionUpdateNotification = Schema.Struct({
+  sessionId: Schema.String,
+  update: Schema.Unknown,
+});
+export type XAiSessionUpdateNotification = typeof XAiSessionUpdateNotification.Type;
+export type XAiKnownSubagentUpdate = typeof XAiKnownSubagentUpdate.Type;
+
+export function parseXAiKnownSubagentUpdate(update: unknown): XAiKnownSubagentUpdate | undefined {
+  const decoded = decodeXAiKnownSubagentUpdate(update);
+  return Option.isSome(decoded) ? decoded.value : undefined;
+}
+
+export const GROK_SUBAGENT_TASK_TYPE = "local_agent";
+const GROK_SUBAGENT_SUMMARY_LIMIT = 2000;
+
+export function isGrokSpawnSubagentToolTitle(title: string | undefined): boolean {
+  return title?.trim() === "spawn_subagent";
+}
+
+export function grokSubagentResultSummary(output: string | undefined): string | undefined {
+  const text = output?.trim();
+  if (!text) {
+    return undefined;
+  }
+  if (text.length <= GROK_SUBAGENT_SUMMARY_LIMIT) {
+    return text;
+  }
+  return `${text.slice(0, GROK_SUBAGENT_SUMMARY_LIMIT - 3).trimEnd()}...`;
+}
+
+export function grokSubagentCompletedStatus(
+  status: string | undefined,
+): "completed" | "failed" | "stopped" {
+  switch (status?.trim().toLowerCase()) {
+    case "failed":
+    case "error":
+      return "failed";
+    case "cancelled":
+    case "canceled":
+    case "interrupted":
+    case "stopped":
+      return "stopped";
+    default:
+      return "completed";
+  }
+}
 
 type XAiAskUserQuestionRequestParams = typeof XAiAskUserQuestionParams.Type;
 type XAiAskUserQuestionRequest = typeof XAiAskUserQuestionRequest.Type;

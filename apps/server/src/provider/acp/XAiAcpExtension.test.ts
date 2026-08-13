@@ -13,6 +13,9 @@ import {
   extractXAiAskUserQuestions,
   grokPromptCountForTurns,
   grokRewindTargetForTurnCount,
+  grokSubagentCompletedStatus,
+  grokSubagentResultSummary,
+  isGrokSpawnSubagentToolTitle,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
@@ -348,6 +351,15 @@ describe("Grok rewind and usage helpers", () => {
     expect(grokRewindTargetForTurnCount(points, 2)?.promptIndex).toBe(1);
     expect(grokRewindTargetForTurnCount(points, 4)).toBeUndefined();
     expect(grokPromptCountForTurns([{ items: [1] }, { items: [2, 3] }], 1)).toBe(2);
+  });
+
+  it("maps Grok subagent finish status and trims the result", () => {
+    expect(grokSubagentCompletedStatus("completed")).toBe("completed");
+    expect(grokSubagentCompletedStatus("failed")).toBe("failed");
+    expect(grokSubagentCompletedStatus("cancelled")).toBe("stopped");
+    expect(isGrokSpawnSubagentToolTitle("spawn_subagent")).toBe(true);
+    expect(isGrokSpawnSubagentToolTitle("read_file")).toBe(false);
+    expect(grokSubagentResultSummary(`  ${"a".repeat(2001)}  `)?.endsWith("...")).toBe(true);
   });
 
   it("reads Grok token usage from prompt _meta", () => {

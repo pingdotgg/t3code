@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
+  RuntimeTaskId,
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -68,14 +69,20 @@ import {
 import {
   extractGrokTokenUsage,
   extractXAiAskUserQuestions,
+  GROK_SUBAGENT_TASK_TYPE,
   grokPromptCountForTurns,
   grokRewindTargetForTurnCount,
+  grokSubagentCompletedStatus,
+  grokSubagentResultSummary,
+  isGrokSpawnSubagentToolTitle,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   parseGrokRewindExecute,
   parseGrokRewindPoints,
+  parseXAiKnownSubagentUpdate,
   promptResponseHasMissingXAiStopReason,
   XAiAskUserQuestionRequest,
+  XAiSessionUpdateNotification,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -132,6 +139,7 @@ interface GrokSessionContext {
   reasoningEffortMenus: Map<string, ReadonlyArray<string>>;
   maxTokensByModel: Map<string, number>;
   maxTokens: number | undefined;
+  spawnSubagentToolIds: Set<string>;
   stopped: boolean;
 }
 
@@ -238,6 +246,99 @@ export function grokPromptSettlementBelongsToContext(input: {
     (input.liveActiveTurnId === input.turnId || input.liveSessionActiveTurnId === input.turnId)
   );
 }
+
+const emitGrokSubagentSessionUpdate = (input: {
+  readonly threadId: ThreadId;
+  readonly method: string;
+  readonly params: XAiSessionUpdateNotification;
+  readonly sessions: ReadonlyMap<ThreadId, GrokSessionContext>;
+  readonly offerRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
+  readonly makeEventStamp: () => Effect.Effect<{ eventId: EventId; createdAt: string }>;
+  readonly logNative: (threadId: ThreadId, method: string, payload: unknown) => Effect.Effect<void>;
+}) =>
+  Effect.gen(function* () {
+    const update = parseXAiKnownSubagentUpdate(input.params.update);
+    if (update === undefined) {
+      return;
+    }
+    yield* input.logNative(input.threadId, input.method, input.params);
+    const turnId = resolveSessionCallbackTurnId(input.sessions, input.threadId);
+    const stamp = yield* input.makeEventStamp();
+
+    if (update.sessionUpdate === "subagent_spawned") {
+      const role = update.role?.trim() || update.subagent_type?.trim() || undefined;
+      const title = update.description?.trim() || undefined;
+      yield* input.offerRuntimeEvent({
+        type: "task.started",
+        ...stamp,
+        provider: PROVIDER,
+        threadId: input.threadId,
+        turnId,
+        payload: {
+          taskId: RuntimeTaskId.make(update.subagent_id),
+          taskType: GROK_SUBAGENT_TASK_TYPE,
+          ...(update.description?.trim() ? { description: update.description.trim() } : {}),
+          ...(title ? { title } : {}),
+          ...(role ? { role } : {}),
+          ...(update.model?.trim() ? { model: update.model.trim() } : {}),
+        },
+        raw: {
+          source: "acp.grok.extension",
+          method: input.method,
+          payload: input.params,
+        },
+      });
+      return;
+    }
+
+    const summary = grokSubagentResultSummary(update.output);
+    const totalTokens =
+      typeof update.tokens_used === "number" &&
+      Number.isFinite(update.tokens_used) &&
+      update.tokens_used >= 0
+        ? Math.trunc(update.tokens_used)
+        : undefined;
+    const toolUses =
+      typeof update.tool_calls === "number" &&
+      Number.isFinite(update.tool_calls) &&
+      update.tool_calls >= 0
+        ? Math.trunc(update.tool_calls)
+        : undefined;
+    const durationMs =
+      typeof update.duration_ms === "number" &&
+      Number.isFinite(update.duration_ms) &&
+      update.duration_ms >= 0
+        ? Math.trunc(update.duration_ms)
+        : undefined;
+    const typedUsage =
+      totalTokens !== undefined || toolUses !== undefined || durationMs !== undefined
+        ? {
+            totalTokens: totalTokens ?? 0,
+            ...(toolUses !== undefined ? { toolUses } : {}),
+            ...(durationMs !== undefined ? { durationMs } : {}),
+          }
+        : undefined;
+
+    yield* input.offerRuntimeEvent({
+      type: "task.completed",
+      ...stamp,
+      provider: PROVIDER,
+      threadId: input.threadId,
+      turnId,
+      payload: {
+        taskId: RuntimeTaskId.make(update.subagent_id),
+        status: grokSubagentCompletedStatus(update.status),
+        taskType: GROK_SUBAGENT_TASK_TYPE,
+        ...(summary ? { summary } : {}),
+        ...(typedUsage ? { typedUsage } : {}),
+      },
+      raw: {
+        source: "acp.grok.extension",
+        method: input.method,
+        payload: input.params,
+      },
+    });
+  });
 
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
   return Effect.gen(function* () {
@@ -683,6 +784,46 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 ),
               { discard: true },
             );
+            yield* Effect.forEach(
+              ["_x.ai/session/update", "x.ai/session/update"] as const,
+              (method) =>
+                Effect.all(
+                  [
+                    acp.handleExtNotification(method, XAiSessionUpdateNotification, (params) =>
+                      mapAcpCallbackFailure(
+                        emitGrokSubagentSessionUpdate({
+                          threadId: input.threadId,
+                          method,
+                          params,
+                          sessions,
+                          offerRuntimeEvent: (event) =>
+                            offerRuntimeEvent(event).pipe(Effect.asVoid),
+                          makeEventStamp: () => makeEventStamp().pipe(Effect.orDie),
+                          logNative: (threadId, loggedMethod, payload) =>
+                            logNative(threadId, loggedMethod, payload).pipe(Effect.orDie),
+                        }),
+                      ),
+                    ),
+                    acp.handleExtRequest(method, XAiSessionUpdateNotification, (params) =>
+                      mapAcpCallbackFailure(
+                        emitGrokSubagentSessionUpdate({
+                          threadId: input.threadId,
+                          method,
+                          params,
+                          sessions,
+                          offerRuntimeEvent: (event) =>
+                            offerRuntimeEvent(event).pipe(Effect.asVoid),
+                          makeEventStamp: () => makeEventStamp().pipe(Effect.orDie),
+                          logNative: (threadId, loggedMethod, payload) =>
+                            logNative(threadId, loggedMethod, payload).pipe(Effect.orDie),
+                        }).pipe(Effect.as({})),
+                      ),
+                    ),
+                  ],
+                  { discard: true },
+                ),
+              { discard: true },
+            );
             yield* acp.handleRequestPermission((params) =>
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
@@ -817,6 +958,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             maxTokens:
               (boundModelId ? maxTokensByModel.get(boundModelId) : undefined) ??
               currentGrokMaxTokensFromSessionSetup(started.sessionSetupResult),
+            spawnSubagentToolIds: new Set<string>(),
             stopped: false,
           };
 
@@ -884,6 +1026,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     );
                     return;
                   case "ToolCallUpdated":
+                    if (
+                      isGrokSpawnSubagentToolTitle(event.toolCall.title) ||
+                      ctx.spawnSubagentToolIds.has(event.toolCall.toolCallId)
+                    ) {
+                      ctx.spawnSubagentToolIds.add(event.toolCall.toolCallId);
+                      return;
+                    }
                     yield* offerRuntimeEvent(
                       makeAcpToolCallEvent({
                         stamp,
