@@ -342,6 +342,37 @@ describe("buildCursorProviderSnapshot", () => {
     });
   });
 
+  it("includes discovered Cursor skills on the snapshot", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "ready",
+          auth: { status: "authenticated", type: "Team", label: "Cursor Team Subscription" },
+        },
+        skills: [
+          {
+            name: "update-relevant-docs",
+            path: "/tmp/workspace/.cursor/skills/update-relevant-docs/SKILL.md",
+            enabled: true,
+            scope: "project",
+            description: "Update docs.",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      skills: [
+        {
+          name: "update-relevant-docs",
+          scope: "project",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
   it("preserves provider error state while appending discovery warnings", () => {
     expect(
       buildCursorProviderSnapshot({
@@ -444,6 +475,42 @@ describe("checkCursorProviderStatus", () => {
       auth: { status: "unknown" },
       message: cursorCliCommandMissingMessage,
     });
+  });
+
+  it("discovers project Cursor skills for the $ picker even when the CLI is missing", async () => {
+    const provider = await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-provider-skills-",
+        });
+        const workspace = path.join(tempDir, "workspace");
+        const skillDir = path.join(workspace, ".cursor", "skills", "update-relevant-docs");
+        yield* fileSystem.makeDirectory(skillDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(skillDir, "SKILL.md"),
+          ["---", "name: update-relevant-docs", "description: Update docs.", "---"].join("\n"),
+        );
+        return yield* checkCursorProviderStatus(
+          {
+            enabled: true,
+            binaryPath: missingCursorBinaryPath,
+            apiEndpoint: "",
+            customModels: [],
+          },
+          undefined,
+          workspace,
+        );
+      }),
+    );
+
+    expect(
+      provider.skills.some(
+        (skill) => skill.name === "update-relevant-docs" && skill.scope === "project",
+      ),
+    ).toBe(true);
   });
 
   it("passes the injected environment to ACP model discovery", async () => {
