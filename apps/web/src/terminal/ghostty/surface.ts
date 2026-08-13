@@ -405,6 +405,19 @@ export function isTerminalLinkPointerGesture(
     : event.ctrlKey && !event.metaKey;
 }
 
+/**
+ * macOS Ctrl+click is a secondary click. Chromium translates it to button 2
+ * before the page sees it, but engines that report button 0 (Firefox) must
+ * not let it start a new selection: the contextmenu that follows needs the
+ * existing selection intact.
+ */
+export function isTerminalMacSecondaryClick(
+  event: Pick<MouseEvent, "button" | "ctrlKey">,
+  platform = navigator.platform,
+): boolean {
+  return event.button === 0 && event.ctrlKey && isMacPlatform(platform);
+}
+
 export function shouldShowTerminalLinkHover(
   mouseTracking: boolean,
   linkModifierActive: boolean,
@@ -530,6 +543,13 @@ export class GhosttyTerminalSurface {
   private canvasConfigured = false;
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
+  // Codes whose press this surface encoded to the PTY. A release is only
+  // reportable for such a press: a keyup whose keydown was consumed elsewhere
+  // (for example by a native menu accelerator) must not inject a release-only
+  // Kitty sequence for a key the application never saw go down. Like the
+  // suppressions, entries survive blur so a key held across a focus move can
+  // still deliver its release.
+  private readonly encodedPressKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
   private wheelRemainder = 0;
   private dprMedia: MediaQueryList | null = null;
@@ -937,6 +957,7 @@ export class GhosttyTerminalSurface {
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
     this.suppressedKeyCodes.delete(event.code);
+    this.encodedPressKeyCodes.add(event.code);
     event.preventDefault();
     event.stopPropagation();
     this.options.onData(data);
@@ -945,6 +966,7 @@ export class GhosttyTerminalSurface {
   private readonly onKeyUp = (event: KeyboardEvent) => {
     this.updateLinkModifier(event);
     if (this.suppressedKeyCodes.delete(event.code)) return;
+    if (!this.encodedPressKeyCodes.delete(event.code)) return;
     if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
       return;
     }
@@ -1055,6 +1077,7 @@ export class GhosttyTerminalSurface {
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
+    if (isTerminalMacSecondaryClick(event)) return;
     if (event.button !== 0) return;
     if (isTerminalLinkPointerGesture(event)) {
       event.preventDefault();

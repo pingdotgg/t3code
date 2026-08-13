@@ -4,8 +4,11 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
+  shouldOpenTerminalSelectionContextMenu,
+  shouldRefocusTerminalAfterSelectionMenuDismissal,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
+  terminalSelectionMenuItems,
 } from "./ThreadTerminalDrawer";
 
 describe("resolveTerminalSelectionActionPosition", () => {
@@ -88,5 +91,62 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+});
+
+describe("terminalSelectionMenuItems", () => {
+  it("gives the Copy item the platform's terminal copy chord as accelerator", () => {
+    // On macOS the open native menu owns the keyboard, so the accelerator is
+    // what keeps Cmd+C copying while the menu is up.
+    expect(terminalSelectionMenuItems("MacIntel")).toEqual([
+      { id: "add-to-chat", label: "Add to chat" },
+      { id: "copy", label: "Copy", accelerator: "Cmd+C" },
+    ]);
+    // Plain Ctrl+C stays SIGINT off macOS, so the menu advertises Ctrl+Shift+C.
+    expect(terminalSelectionMenuItems("Win32")).toEqual([
+      { id: "add-to-chat", label: "Add to chat" },
+      { id: "copy", label: "Copy", accelerator: "Ctrl+Shift+C" },
+    ]);
+  });
+});
+
+describe("shouldOpenTerminalSelectionContextMenu", () => {
+  it("opens the selection menu only for a right-click with a Ghostty selection", () => {
+    expect(
+      shouldOpenTerminalSelectionContextMenu({ hasSelection: true, defaultPrevented: false }),
+    ).toBe(true);
+    expect(
+      shouldOpenTerminalSelectionContextMenu({ hasSelection: false, defaultPrevented: false }),
+    ).toBe(false);
+  });
+
+  it("leaves right-click to a mouse-reporting app that already claimed it", () => {
+    expect(
+      shouldOpenTerminalSelectionContextMenu({ hasSelection: true, defaultPrevented: true }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldRefocusTerminalAfterSelectionMenuDismissal", () => {
+  const terminalMount = (containsActive: boolean) => ({ contains: () => containsActive });
+  const element = {} as Element;
+  const body = {} as Element;
+
+  it("returns focus to the terminal when dismissal left focus in it or nowhere", () => {
+    expect(
+      shouldRefocusTerminalAfterSelectionMenuDismissal(terminalMount(true), element, body),
+    ).toBe(true);
+    expect(shouldRefocusTerminalAfterSelectionMenuDismissal(terminalMount(false), null, body)).toBe(
+      true,
+    );
+    expect(shouldRefocusTerminalAfterSelectionMenuDismissal(terminalMount(false), body, body)).toBe(
+      true,
+    );
+  });
+
+  it("keeps focus where the dismissing click put it", () => {
+    expect(
+      shouldRefocusTerminalAfterSelectionMenuDismissal(terminalMount(false), element, body),
+    ).toBe(false);
   });
 });

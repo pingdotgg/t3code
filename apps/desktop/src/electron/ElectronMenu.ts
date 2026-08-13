@@ -80,6 +80,10 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       disabled: sourceItem.disabled === true,
     };
 
+    if (typeof sourceItem.accelerator === "string" && sourceItem.accelerator.length > 0) {
+      normalizedItem.accelerator = sourceItem.accelerator;
+    }
+
     if (sourceItem.children) {
       const normalizedChildren = normalizeContextMenuItems(sourceItem.children);
       if (normalizedChildren.length === 0) {
@@ -152,6 +156,13 @@ export const make = Effect.gen(function* () {
         label: item.label,
         enabled: !item.disabled,
       };
+      // On macOS a key equivalent of an open menu fires while the menu is
+      // tracking, which is how a shortcut like Cmd+C stays functional while
+      // the selection menu owns the keyboard. A closed popup menu's
+      // accelerators are inert, so this never registers a global shortcut.
+      if (item.accelerator !== undefined) {
+        itemOption.accelerator = item.accelerator;
+      }
       if (item.children && item.children.length > 0) {
         itemOption.submenu = buildTemplate(item.children, complete);
       } else {

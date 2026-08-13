@@ -631,4 +631,152 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_wasm_free_opaque", terminalSlot);
     free(terminalOptions, 8);
   });
+
+  it("formats the installed selection as the copied value through the pinned options ABI", async () => {
+    const result = await WebAssembly.instantiate(
+      decodeWasmDataUrl(wasmDataUrl).buffer as ArrayBuffer,
+      { env: { log: () => {} } },
+    );
+    const instance = result instanceof WebAssembly.Instance ? result : result.instance;
+    const memory = instance.exports.memory as WebAssembly.Memory;
+    const call = (name: string, ...args: number[]) =>
+      (instance.exports[name] as WasmFunction)(...args);
+    const alloc = (size: number) => {
+      const pointer = call("ghostty_wasm_alloc_u8_array", size);
+      new Uint8Array(memory.buffer, pointer, size).fill(0);
+      return pointer;
+    };
+    const free = (pointer: number, size: number) =>
+      call("ghostty_wasm_free_u8_array", pointer, size);
+
+    const jsonPointer = call("ghostty_type_json");
+    const jsonBytes = new Uint8Array(memory.buffer, jsonPointer);
+    const layouts = JSON.parse(
+      new TextDecoder().decode(jsonBytes.subarray(0, jsonBytes.indexOf(0))),
+    ) as Record<string, { size: number; fields: Record<string, { offset: number; size: number }> }>;
+    const gridRefSize = layouts.GhosttyGridRef?.size;
+    const pointLayout = layouts.GhosttyPoint;
+    const selectionLayout = layouts.GhosttySelection;
+    if (!gridRefSize || !pointLayout || !selectionLayout) {
+      throw new Error("Ghostty selection layouts are missing");
+    }
+
+    const terminalOptions = alloc(8);
+    const terminalOptionsView = new DataView(memory.buffer, terminalOptions, 8);
+    terminalOptionsView.setUint16(0, 80, true);
+    terminalOptionsView.setUint16(2, 24, true);
+    terminalOptionsView.setUint32(4, 1_000, true);
+    const terminalSlot = call("ghostty_wasm_alloc_opaque");
+    expect(call("ghostty_terminal_new", 0, terminalSlot, terminalOptions)).toBe(0);
+    const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
+
+    const input = new TextEncoder().encode("line one alpha\r\nline two bravo\r\nline three\r\n$ ");
+    const inputPointer = alloc(input.length);
+    new Uint8Array(memory.buffer, inputPointer, input.length).set(input);
+    call("ghostty_terminal_vt_write", terminal, inputPointer, input.length);
+    free(inputPointer, input.length);
+
+    // A viewport-tagged grid ref, exactly as GhosttyTerminalCore.gridRef builds it.
+    const gridRef = (col: number, row: number) => {
+      const point = alloc(pointLayout.size);
+      const tagField = pointLayout.fields.tag;
+      const valueField = pointLayout.fields.value;
+      if (!tagField || !valueField) throw new Error("GhosttyPoint fields are missing");
+      new DataView(memory.buffer, point + tagField.offset, tagField.size).setUint32(0, 1, true);
+      const valueView = new DataView(memory.buffer, point + valueField.offset, valueField.size);
+      valueView.setUint16(0, col, true);
+      valueView.setUint32(4, row, true);
+      const ref = alloc(gridRefSize);
+      new DataView(memory.buffer, ref, 4).setUint32(0, gridRefSize, true);
+      expect(call("ghostty_terminal_grid_ref", terminal, point, ref)).toBe(0);
+      free(point, pointLayout.size);
+      return ref;
+    };
+
+    // Install a selection through option 21, as GhosttyTerminalCore.setSelection does.
+    const setSelection = (start: [number, number], end: [number, number]) => {
+      const startRef = gridRef(start[0], start[1]);
+      const endRef = gridRef(end[0], end[1]);
+      const selection = alloc(selectionLayout.size);
+      new DataView(memory.buffer, selection, 4).setUint32(0, selectionLayout.size, true);
+      const startField = selectionLayout.fields.start;
+      const endField = selectionLayout.fields.end;
+      if (!startField || !endField) throw new Error("GhosttySelection fields are missing");
+      new Uint8Array(memory.buffer, selection + startField.offset, startField.size).set(
+        new Uint8Array(memory.buffer, startRef, startField.size),
+      );
+      new Uint8Array(memory.buffer, selection + endField.offset, endField.size).set(
+        new Uint8Array(memory.buffer, endRef, endField.size),
+      );
+      expect(call("ghostty_terminal_set", terminal, 21, selection)).toBe(0);
+      free(startRef, gridRefSize);
+      free(endRef, gridRefSize);
+      free(selection, selectionLayout.size);
+    };
+
+    // The pinned 16-byte GhosttyTerminalSelectionFormatOptions layout from
+    // GhosttyTerminalCore.selectionText: plain output, unwrap and trim set, a
+    // null selection pointer meaning "the terminal's active selection".
+    const formatActiveSelection = () => {
+      const formatOptions = alloc(16);
+      const optionsView = new DataView(memory.buffer, formatOptions, 16);
+      optionsView.setUint32(0, 16, true);
+      optionsView.setUint8(8, 1);
+      optionsView.setUint8(9, 1);
+      const written = call("ghostty_wasm_alloc_usize");
+      const sizeResult = call(
+        "ghostty_terminal_selection_format_buf",
+        terminal,
+        formatOptions,
+        0,
+        0,
+        written,
+      );
+      const outputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
+      let text = "";
+      if (sizeResult === -3 && outputSize > 0) {
+        const output = alloc(outputSize);
+        expect(
+          call(
+            "ghostty_terminal_selection_format_buf",
+            terminal,
+            formatOptions,
+            output,
+            outputSize,
+            written,
+          ),
+        ).toBe(0);
+        const outputLength = new DataView(memory.buffer, written, 4).getUint32(0, true);
+        text = new TextDecoder().decode(new Uint8Array(memory.buffer, output, outputLength));
+        free(output, outputSize);
+      }
+      call("ghostty_wasm_free_usize", written);
+      free(formatOptions, 16);
+      return text;
+    };
+
+    // No active selection formats to nothing, which is what hasSelection()
+    // reads — Ctrl+C without a selection must stay terminal input.
+    expect(formatActiveSelection()).toBe("");
+
+    setSelection([0, 0], [7, 0]);
+    expect(formatActiveSelection()).toBe("line one");
+
+    // A multiline selection joins rows with newlines and trims per row.
+    setSelection([0, 0], [9, 2]);
+    expect(formatActiveSelection()).toBe("line one alpha\nline two bravo\nline three");
+
+    // Output arriving after the selection is installed must not corrupt the
+    // copied value; the terminal-owned selection tracks its cells.
+    const more = new TextEncoder().encode("later output\r\n");
+    const morePointer = alloc(more.length);
+    new Uint8Array(memory.buffer, morePointer, more.length).set(more);
+    call("ghostty_terminal_vt_write", terminal, morePointer, more.length);
+    free(morePointer, more.length);
+    expect(formatActiveSelection()).toBe("line one alpha\nline two bravo\nline three");
+
+    call("ghostty_terminal_free", terminal);
+    call("ghostty_wasm_free_opaque", terminalSlot);
+    free(terminalOptions, 8);
+  });
 });

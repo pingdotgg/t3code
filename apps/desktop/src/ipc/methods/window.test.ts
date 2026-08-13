@@ -7,8 +7,13 @@ import type * as Electron from "electron";
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { getLocalEnvironmentBootstraps, getWindowFullscreenState } from "./window.ts";
+import {
+  getLocalEnvironmentBootstraps,
+  getWindowFullscreenState,
+  writeClipboardText,
+} from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -141,6 +146,45 @@ describe("getWindowFullscreenState", () => {
       Effect.provide(
         Layer.mock(ElectronWindow.ElectronWindow)({
           currentMainOrFirst: Effect.succeed(Option.some(window)),
+        }),
+      ),
+    );
+  });
+});
+
+describe("writeClipboardText", () => {
+  it.effect("delegates the decoded text to the main-process clipboard", () => {
+    const copied: string[] = [];
+
+    return Effect.gen(function* () {
+      yield* writeClipboardText.handler("terminal selection\nline two");
+      assert.deepEqual(copied, ["terminal selection\nline two"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronShell.ElectronShell)({
+          copyText: (text) =>
+            Effect.sync(() => {
+              copied.push(text);
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects a non-string payload at the schema boundary", () => {
+    const copied: string[] = [];
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(writeClipboardText.handler(42));
+      assert.equal(exit._tag, "Failure");
+      assert.deepEqual(copied, []);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronShell.ElectronShell)({
+          copyText: (text) =>
+            Effect.sync(() => {
+              copied.push(text);
+            }),
         }),
       ),
     );

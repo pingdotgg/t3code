@@ -13,6 +13,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  type ContextMenuItem,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -32,7 +33,7 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
   GhosttyTerminalSurface,
@@ -234,6 +235,53 @@ export function resolveTerminalSelectionActionPosition(options: {
 
 export function terminalSelectionActionDelayForClickCount(clickCount: number): number {
   return clickCount >= 2 ? MULTI_CLICK_SELECTION_ACTION_DELAY_MS : 0;
+}
+
+export type TerminalSelectionMenuItemId = "add-to-chat" | "copy";
+
+/**
+ * Items for the selection menu. The Copy accelerator matches the platform's
+ * terminal copy chord: on macOS the open native menu owns the keyboard, so the
+ * accelerator is what keeps Cmd+C copying while the menu is up.
+ */
+export function terminalSelectionMenuItems(
+  platform = navigator.platform,
+): ContextMenuItem<TerminalSelectionMenuItemId>[] {
+  return [
+    { id: "add-to-chat", label: "Add to chat" },
+    {
+      id: "copy",
+      label: "Copy",
+      accelerator: isMacPlatform(platform) ? "Cmd+C" : "Ctrl+Shift+C",
+    },
+  ];
+}
+
+/**
+ * Whether a right-click should open the selection menu instead of the host's
+ * generic context menu. A mouse-reporting app owns right-click (the surface
+ * already prevented the event), and without a Ghostty selection the generic
+ * menu with its paste entries is the right one.
+ */
+export function shouldOpenTerminalSelectionContextMenu(options: {
+  hasSelection: boolean;
+  defaultPrevented: boolean;
+}): boolean {
+  return options.hasSelection && !options.defaultPrevented;
+}
+
+/**
+ * Whether dismissing the selection menu should return focus to the terminal
+ * input, so the keyboard copy shortcut keeps targeting the still-highlighted
+ * selection. When the dismissal moved focus elsewhere (the web fallback menu
+ * lets the dismissing click land), the user's new focus wins.
+ */
+export function shouldRefocusTerminalAfterSelectionMenuDismissal(
+  mount: { contains(node: Node | null): boolean },
+  activeElement: Element | null,
+  body: Element | null,
+): boolean {
+  return activeElement === null || activeElement === body || mount.contains(activeElement);
 }
 
 export function shouldHandleTerminalSelectionMouseUp(
@@ -482,7 +530,34 @@ export function TerminalViewport({
       };
       setupCleanups.push(clearSelectionAction);
 
-      const readSelectionAction = (): {
+      // The single Ghostty-aware copy operation. Every copy entry point — the
+      // terminal copy shortcut, the selection menu (opened automatically or
+      // from right-click), and the menu's own accelerator — lands here with
+      // the Ghostty selection as the value. The local clipboard API writes in
+      // the desktop main process: renderer clipboard writes need a focused
+      // document, and a copy driven from a native context menu (which macOS
+      // shows without activating the window) cannot rely on that.
+      const copySelectionText = async (text: string): Promise<void> => {
+        try {
+          if (localApi) {
+            await localApi.clipboard.writeText(text, "terminal selection");
+          } else {
+            await writeTextToClipboard(text, "terminal selection");
+          }
+        } catch (error) {
+          const activeTerminal = terminalRef.current;
+          if (!activeTerminal) return;
+          writeSystemMessage(
+            activeTerminal,
+            error instanceof Error ? error.message : "Unable to copy terminal selection",
+          );
+        }
+      };
+
+      const readSelectionAction = (explicitPointer?: {
+        x: number;
+        y: number;
+      }): {
         position: { x: number; y: number };
         clipboardText: string;
         selection: TerminalContextSelection;
@@ -502,8 +577,9 @@ export function TerminalViewport({
         const bounds = mountElement.getBoundingClientRect();
         const position = resolveTerminalSelectionActionPosition({
           bounds,
-          selectionRect: activeTerminal.getSelectionEndClientRect(),
-          pointer: selectionPointerRef.current,
+          // A right-click menu belongs at the cursor, not at the selection end.
+          selectionRect: explicitPointer ? null : activeTerminal.getSelectionEndClientRect(),
+          pointer: explicitPointer ?? selectionPointerRef.current,
         });
         return {
           position,
@@ -518,7 +594,7 @@ export function TerminalViewport({
         };
       };
 
-      const showSelectionAction = async () => {
+      const showSelectionAction = async (explicitPointer?: { x: number; y: number }) => {
         if (!localApi) {
           clearSelectionAction();
           return;
@@ -526,7 +602,7 @@ export function TerminalViewport({
         if (selectionActionMenuOpenRef.current) {
           return;
         }
-        const nextAction = readSelectionAction();
+        const nextAction = readSelectionAction(explicitPointer);
         if (!nextAction) {
           clearSelectionAction();
           return;
@@ -534,17 +610,11 @@ export function TerminalViewport({
         const requestId = ++selectionActionRequestIdRef.current;
         selectionActionMenuOpenRef.current = true;
         const clicked = await localApi.contextMenu
-          .show(
-            [
-              { id: "add-to-chat", label: "Add to chat" },
-              { id: "copy", label: "Copy" },
-            ],
-            nextAction.position,
-          )
+          .show(terminalSelectionMenuItems(), nextAction.position)
           .finally(() => {
             selectionActionMenuOpenRef.current = false;
           });
-        if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
+        if (requestId !== selectionActionRequestIdRef.current) {
           return;
         }
         switch (clicked) {
@@ -554,24 +624,28 @@ export function TerminalViewport({
             terminalRef.current?.focus();
             return;
           case "copy":
-            try {
-              await writeTextToClipboard(nextAction.clipboardText, "terminal selection");
-            } catch (error) {
-              if (requestId !== selectionActionRequestIdRef.current) {
-                return;
-              }
-              const activeTerminal = terminalRef.current;
-              if (activeTerminal) {
-                writeSystemMessage(
-                  activeTerminal,
-                  error instanceof Error ? error.message : "Unable to copy terminal selection",
-                );
-              }
-            }
+            await copySelectionText(nextAction.clipboardText);
             if (requestId === selectionActionRequestIdRef.current) {
               terminalRef.current?.focus();
             }
             return;
+          default: {
+            // Dismissal must not strand the still-highlighted selection: the
+            // terminal input is where the copy shortcut is handled, so give it
+            // focus back unless the dismissal itself focused something else.
+            const mountElement = containerRef.current;
+            if (
+              mountElement &&
+              shouldRefocusTerminalAfterSelectionMenuDismissal(
+                mountElement,
+                document.activeElement,
+                document.body,
+              )
+            ) {
+              terminalRef.current?.focus();
+            }
+            return;
+          }
         }
       };
 
@@ -669,14 +743,7 @@ export function TerminalViewport({
       }
 
       function handleCopy(text: string): void {
-        void writeTextToClipboard(text, "terminal selection").catch((error: unknown) => {
-          const activeTerminal = terminalRef.current;
-          if (!activeTerminal) return;
-          writeSystemMessage(
-            activeTerminal,
-            error instanceof Error ? error.message : "Unable to copy terminal selection",
-          );
-        });
+        void copySelectionText(text);
       }
 
       function handleData(data: string): void {
@@ -720,11 +787,30 @@ export function TerminalViewport({
         clearSelectionAction();
         selectionGestureActiveRef.current = event.button === 0;
       };
+      // Ghostty owns the selection in canvas state, which the host's generic
+      // context menu cannot see: its Copy is a DOM-selection role and stays
+      // disabled. With a selection, right-click opens the selection menu whose
+      // Copy formats the Ghostty selection instead.
+      const handleContextMenu = (event: MouseEvent) => {
+        if (!localApi) return;
+        if (
+          !shouldOpenTerminalSelectionContextMenu({
+            hasSelection: terminalRef.current?.hasSelection() === true,
+            defaultPrevented: event.defaultPrevented,
+          })
+        ) {
+          return;
+        }
+        event.preventDefault();
+        void showSelectionAction({ x: event.clientX, y: event.clientY });
+      };
       window.addEventListener("mouseup", handleMouseUp);
       mount.addEventListener("pointerdown", handlePointerDown);
+      mount.addEventListener("contextmenu", handleContextMenu);
       setupCleanups.push(() => {
         window.removeEventListener("mouseup", handleMouseUp);
         mount.removeEventListener("pointerdown", handlePointerDown);
+        mount.removeEventListener("contextmenu", handleContextMenu);
       });
 
       const themeObserver = new MutationObserver(() => {

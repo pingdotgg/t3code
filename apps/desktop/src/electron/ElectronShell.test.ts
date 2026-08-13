@@ -46,6 +46,15 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("writes copied text through the main-process clipboard", () =>
+    Effect.gen(function* () {
+      const electronShell = yield* ElectronShell.ElectronShell;
+      yield* electronShell.copyText("line one\nline two");
+
+      assert.deepEqual(writeTextMock.mock.calls, [["line one\nline two"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("returns false when Electron rejects openExternal", () =>
     Effect.gen(function* () {
       openExternalMock.mockRejectedValue(new Error("open failed"));

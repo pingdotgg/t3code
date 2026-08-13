@@ -261,6 +261,20 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// Main-process clipboard write. The renderer's navigator.clipboard refuses
+// writes while the document is unfocused, and macOS shows context menus on
+// inactive windows without activating them — so a menu-driven copy must not
+// depend on renderer focus.
+export const writeClipboardText = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.WRITE_CLIPBOARD_TEXT_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.writeClipboardText")(function* (text) {
+    const shell = yield* ElectronShell.ElectronShell;
+    yield* shell.copyText(text);
+  }),
+});
+
 /** Theme files are a few KB; anything larger returns empty text and lets the
  *  renderer reject it by size without the contents ever crossing the bridge. */
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;

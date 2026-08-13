@@ -113,6 +113,56 @@ describe("ElectronMenu", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("passes an item accelerator through to the native menu item", () =>
+    Effect.gen(function* () {
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => {
+          options.callback?.();
+        },
+      }));
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [
+          { id: "add-to-chat", label: "Add to chat" },
+          { id: "copy", label: "Copy", accelerator: "Cmd+C" },
+        ],
+        position: Option.none(),
+      });
+
+      const template = buildFromTemplateMock.mock.calls[0]?.[0] as
+        | Electron.MenuItemConstructorOptions[]
+        | undefined;
+      assert.isDefined(template);
+      assert.isUndefined(template[0]?.accelerator);
+      assert.equal(template[1]?.accelerator, "Cmd+C");
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("drops an empty accelerator instead of forwarding it", () =>
+    Effect.gen(function* () {
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => {
+          options.callback?.();
+        },
+      }));
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [{ id: "copy", label: "Copy", accelerator: "" }],
+        position: Option.none(),
+      });
+
+      const template = buildFromTemplateMock.mock.calls[0]?.[0] as
+        | Electron.MenuItemConstructorOptions[]
+        | undefined;
+      assert.isDefined(template);
+      assert.isUndefined(template[0]?.accelerator);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("defers popupTemplate side effects until the returned Effect runs", () =>
     Effect.gen(function* () {
       const popupMock = vi.fn();

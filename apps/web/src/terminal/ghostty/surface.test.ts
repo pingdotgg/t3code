@@ -10,6 +10,7 @@ import {
   isTerminalCompositionCommitInput,
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
+  isTerminalMacSecondaryClick,
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
   shouldBlinkTerminalCursor,
@@ -421,6 +422,18 @@ describe("isTerminalLinkPointerGesture", () => {
     expect(isTerminalLinkPointerGesture({ ctrlKey: false, metaKey: true }, "Linux x86_64")).toBe(
       false,
     );
+  });
+});
+
+describe("isTerminalMacSecondaryClick", () => {
+  it("treats a button-0 Ctrl+click as secondary only on macOS", () => {
+    // Firefox reports macOS Ctrl+click as button 0; starting a selection from
+    // it would destroy the selection the following contextmenu needs.
+    expect(isTerminalMacSecondaryClick({ button: 0, ctrlKey: true }, "MacIntel")).toBe(true);
+    expect(isTerminalMacSecondaryClick({ button: 0, ctrlKey: false }, "MacIntel")).toBe(false);
+    expect(isTerminalMacSecondaryClick({ button: 0, ctrlKey: true }, "Linux x86_64")).toBe(false);
+    // Chromium already delivers macOS Ctrl+click as button 2.
+    expect(isTerminalMacSecondaryClick({ button: 2, ctrlKey: true }, "MacIntel")).toBe(false);
   });
 });
 

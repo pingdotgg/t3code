@@ -110,6 +110,12 @@ export interface ContextMenuItem<T extends string = string> {
   header?: boolean;
   /** Icon keyword resolved by the web fallback. Stripped on desktop native menus. */
   icon?: string;
+  /**
+   * Electron accelerator for the desktop native menu item. On macOS the open
+   * menu owns the keyboard, so this is what lets the shortcut keep working
+   * while the menu is up. Ignored by the web fallback.
+   */
+  accelerator?: string;
   children?: readonly ContextMenuItem<T>[];
 }
 
@@ -120,6 +126,7 @@ export interface ContextMenuItemSchemaType {
   readonly disabled?: boolean;
   readonly header?: boolean;
   readonly icon?: string;
+  readonly accelerator?: string;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
 
@@ -130,6 +137,7 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   disabled: Schema.optionalKey(Schema.Boolean),
   header: Schema.optionalKey(Schema.Boolean),
   icon: Schema.optionalKey(Schema.String),
+  accelerator: Schema.optionalKey(Schema.String),
   children: Schema.optionalKey(
     Schema.Array(
       Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),
@@ -1048,6 +1056,13 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /**
+   * Main-process clipboard write. Renderer clipboard writes require a focused
+   * document, which a copy driven from a native context menu cannot rely on.
+   * Optional: older desktop builds lack it, and web callers fall back to
+   * navigator.clipboard.
+   */
+  writeClipboardText?: (text: string) => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
@@ -1165,6 +1180,15 @@ export interface LocalApi {
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
     ) => Promise<T | null>;
+  };
+  clipboard: {
+    /**
+     * Writes text to the system clipboard, throwing on failure. On desktop
+     * this runs in the main process, so it works while the renderer document
+     * is unfocused — the state a native context menu leaves behind. The
+     * optional target names what is being copied in browser error messages.
+     */
+    writeText: (text: string, target?: string) => Promise<void>;
   };
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;

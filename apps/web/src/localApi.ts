@@ -2,6 +2,7 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 
 import { requestConfirmDialog } from "./confirmDialog";
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { writeTextToClipboard } from "./hooks/useCopyToClipboard";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 
@@ -40,6 +41,14 @@ function createBrowserLocalApi(): LocalApi {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
+      },
+    },
+    clipboard: {
+      writeText: async (text, target) => {
+        if (window.desktopBridge?.writeClipboardText) {
+          return window.desktopBridge.writeClipboardText(text);
+        }
+        await writeTextToClipboard(text, target);
       },
     },
     persistence: {
