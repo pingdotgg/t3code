@@ -126,7 +126,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .floating-surface-motion:is([data-ending-style], [data-starting-style]),
-  .floating-surface-motion:has(:is([data-ending-style], [data-starting-style])) {
+  .floating-surface-motion:has(> :is([data-ending-style], [data-starting-style])) {
     opacity: 0;
     scale: 0.98;
   }
@@ -137,7 +137,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   @media (prefers-reduced-motion: reduce) {
     .floating-surface-motion,
-    .floating-surface-motion-resizable {
+    .floating-surface-motion:is([data-ending-style], [data-starting-style]),
+    .floating-surface-motion:has(> :is([data-ending-style], [data-starting-style])) {
       scale: 1;
       transition-property: opacity;
     }
