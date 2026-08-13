@@ -65,9 +65,16 @@ export class ManagedAgentRunError extends Schema.TaggedErrorClass<ManagedAgentRu
   "ManagedAgentRunError",
   {
     reason: Schema.Literals(["thread-not-found", "spawn-failed", "run-not-found", "not-owned"]),
-    message: TrimmedNonEmptyString,
+    threadId: Schema.optional(ThreadId),
+    agentId: Schema.optional(TrimmedNonEmptyString),
+    cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  override get message(): string {
+    const target = this.agentId ?? this.threadId ?? "managed agent";
+    return `Managed agent run failed (${this.reason}): ${target}`;
+  }
+}
 
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",

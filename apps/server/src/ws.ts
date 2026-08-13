@@ -352,7 +352,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
-  managedCodexExec: ManagedCodexExec.ManagedCodexExecShape,
+  managedCodexExec: ManagedCodexExec.ManagedCodexExec["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {

@@ -1,12 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProjectId, ThreadId, type ProviderRuntimeEvent } from "@t3tools/contracts";
+import {
+  ManagedAgentRunError,
+  ProjectId,
+  ThreadId,
+  type ProviderRuntimeEvent,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -22,6 +28,17 @@ import {
 } from "./Services/ProjectionSnapshotQuery.ts";
 
 describe("ManagedCodexExec", () => {
+  it("exposes runtime ingestion as a layer composition requirement", () => {
+    type Requirements = Layer.Services<typeof layer>;
+    const requiresRuntimeIngestion: unknown extends Requirements
+      ? false
+      : ProviderRuntimeIngestionService extends Requirements
+        ? true
+        : false = true;
+
+    expect(requiresRuntimeIngestion).toBe(true);
+  });
+
   it.effect("terminalizes signal exits and releases owned process handles", () =>
     Effect.gen(function* () {
       const exit = yield* Deferred.make<
@@ -232,6 +249,70 @@ describe("ManagedCodexExec", () => {
           summary: "Managed Codex exec failed before reporting an exit code",
         },
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps prompts out of spawn error messages while preserving the cause", () =>
+    Effect.gen(function* () {
+      const prompt = "TOP_SECRET_MANAGED_CODEX_PROMPT";
+      const spawnCause = PlatformError.systemError({
+        _tag: "NotFound",
+        module: "ChildProcess",
+        method: "spawn",
+        pathOrDescriptor: `codex exec ${prompt}`,
+      });
+      const spawner = ChildProcessSpawner.make(() => Effect.fail(spawnCause));
+      const snapshots = {
+        getThreadDetailById: () =>
+          Effect.succeed(
+            Option.some({
+              id: ThreadId.make("thread-1"),
+              projectId: ProjectId.make("project-1"),
+              worktreePath: "D:/repo/worktree",
+            }),
+          ),
+        getProjectShellById: () =>
+          Effect.succeed(
+            Option.some({ id: ProjectId.make("project-1"), workspaceRoot: "D:/repo" }),
+          ),
+      } as unknown as ProjectionSnapshotQueryShape;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(ProjectionSnapshotQuery, snapshots),
+        Layer.succeed(ProviderRuntimeIngestionService, {
+          start: () => Effect.void,
+          drain: Effect.void,
+          ingestRuntimeEvent: () => Effect.void,
+        }),
+      );
+
+      const context = yield* Layer.build(layer.pipe(Layer.provide(dependencies)));
+      const manager = yield* ManagedCodexExec.pipe(Effect.provide(context));
+      const result = yield* Effect.result(
+        manager.launch({
+          threadId: ThreadId.make("thread-1"),
+          prompt,
+          title: "Reviewer",
+        }),
+      );
+
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isSuccess(result)) {
+        return yield* Effect.die("Expected managed Codex spawn to fail");
+      }
+
+      const error = result.failure;
+      expect(error).toBeInstanceOf(ManagedAgentRunError);
+      expect(error).toMatchObject({
+        reason: "spawn-failed",
+        threadId: ThreadId.make("thread-1"),
+        cause: spawnCause,
+      });
+      expect(error.message).toBe("Managed agent run failed (spawn-failed): thread-1");
+      expect(error.message).not.toContain(prompt);
+      expect(String(error)).not.toContain(prompt);
+      expect(error.cause).toBe(spawnCause);
     }).pipe(Effect.scoped),
   );
 });

@@ -33,7 +33,7 @@ export interface ProviderRuntimeIngestionShape {
   readonly drain: Effect.Effect<void>;
 
   /** Explicit adapter boundary for T3-owned runtimes that do not use a provider session. */
-  readonly ingestRuntimeEvent?: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
+  readonly ingestRuntimeEvent: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
 }
 
 /**
