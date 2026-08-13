@@ -35,8 +35,7 @@ import {
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
-import { ProjectionCheckpointRefsRepositoryLive } from "../../persistence/Layers/ProjectionCheckpointRefs.ts";
-import { ProjectionCheckpointRefsRepository } from "../../persistence/Services/ProjectionCheckpointRefs.ts";
+import * as ProjectionCheckpointRefs from "../../persistence/ProjectionCheckpointRefs.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
@@ -482,7 +481,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
-    const projectionCheckpointRefsRepository = yield* ProjectionCheckpointRefsRepository;
+    const projectionCheckpointRefsRepository =
+      yield* ProjectionCheckpointRefs.ProjectionCheckpointRefsRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
@@ -1842,5 +1842,5 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
-  Layer.provideMerge(ProjectionCheckpointRefsRepositoryLive),
+  Layer.provideMerge(ProjectionCheckpointRefs.layer),
 );

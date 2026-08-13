@@ -205,13 +205,22 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         readonly workspaceRoot: string;
         readonly relativePath: string;
       } | null = null;
+      let normalizedAnyRoot = false;
+      let rootNormalizationError: AssetWorkspaceRootNormalizationError | null = null;
       let resolvedWithinAnyRoot = false;
       let pathValidationError: AssetWorkspacePathValidationError | null = null;
       for (const candidate of candidateRoots) {
-        const workspaceRoot = yield* workspacePaths
-          .normalizeWorkspaceRoot(candidate)
-          .pipe(Effect.orElseSucceed(() => null));
+        const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(candidate).pipe(
+          Effect.catch((cause) => {
+            rootNormalizationError ??= new AssetWorkspaceRootNormalizationError({
+              resource: input.resource,
+              cause,
+            });
+            return Effect.succeed(null);
+          }),
+        );
         if (!workspaceRoot) continue;
+        normalizedAnyRoot = true;
         const relativePath = path.isAbsolute(input.resource.path)
           ? path.relative(workspaceRoot, input.resource.path)
           : input.resource.path;
@@ -253,6 +262,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         break;
       }
       if (!matched) {
+        if (!normalizedAnyRoot && rootNormalizationError) {
+          return yield* Effect.fail<AssetWorkspaceRootNormalizationError>(rootNormalizationError);
+        }
         // Path sat outside every candidate root → keep the precise reason;
         // otherwise it resolved within a root but no file exists there.
         if (!resolvedWithinAnyRoot && pathValidationError) {

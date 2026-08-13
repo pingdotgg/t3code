@@ -41,8 +41,7 @@ import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import type { OrchestrationDispatchError } from "../Errors.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
-import { ProjectionCheckpointRefsRepositoryLive } from "../../persistence/Layers/ProjectionCheckpointRefs.ts";
-import { ProjectionCheckpointRefsRepository } from "../../persistence/Services/ProjectionCheckpointRefs.ts";
+import * as ProjectionCheckpointRefs from "../../persistence/ProjectionCheckpointRefs.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -90,7 +89,8 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
-  const projectionCheckpointRefsRepository = yield* ProjectionCheckpointRefsRepository;
+  const projectionCheckpointRefsRepository =
+    yield* ProjectionCheckpointRefs.ProjectionCheckpointRefsRepository;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -995,5 +995,5 @@ const make = Effect.gen(function* () {
 });
 
 export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make).pipe(
-  Layer.provideMerge(ProjectionCheckpointRefsRepositoryLive),
+  Layer.provideMerge(ProjectionCheckpointRefs.layer),
 );

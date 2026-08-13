@@ -3,12 +3,11 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ProjectionCheckpointRefsRepository } from "../Services/ProjectionCheckpointRefs.ts";
-import { ProjectionCheckpointRefsRepositoryLive } from "./ProjectionCheckpointRefs.ts";
-import { SqlitePersistenceMemory } from "./Sqlite.ts";
+import * as ProjectionCheckpointRefs from "./ProjectionCheckpointRefs.ts";
+import { SqlitePersistenceMemory } from "./Layers/Sqlite.ts";
 
 const layer = it.layer(
-  ProjectionCheckpointRefsRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+  ProjectionCheckpointRefs.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
 );
 
 const turnCount = (n: number) => NonNegativeInt.make(n);
@@ -16,7 +15,7 @@ const turnCount = (n: number) => NonNegativeInt.make(n);
 layer("ProjectionCheckpointRefsRepository", (it) => {
   it.effect("stores and lists per-root refs for a checkpoint, ordered by repo root", () =>
     Effect.gen(function* () {
-      const repository = yield* ProjectionCheckpointRefsRepository;
+      const repository = yield* ProjectionCheckpointRefs.ProjectionCheckpointRefsRepository;
       const threadId = ThreadId.make("thread-refs-1");
 
       yield* repository.replaceForCheckpoint({
@@ -42,7 +41,7 @@ layer("ProjectionCheckpointRefsRepository", (it) => {
 
   it.effect("replaceForCheckpoint replaces the prior set (no stale rows)", () =>
     Effect.gen(function* () {
-      const repository = yield* ProjectionCheckpointRefsRepository;
+      const repository = yield* ProjectionCheckpointRefs.ProjectionCheckpointRefsRepository;
       const threadId = ThreadId.make("thread-refs-2");
 
       yield* repository.replaceForCheckpoint({
@@ -71,7 +70,7 @@ layer("ProjectionCheckpointRefsRepository", (it) => {
 
   it.effect("isolates checkpoints by turn count and deletes by thread", () =>
     Effect.gen(function* () {
-      const repository = yield* ProjectionCheckpointRefsRepository;
+      const repository = yield* ProjectionCheckpointRefs.ProjectionCheckpointRefsRepository;
       const threadId = ThreadId.make("thread-refs-3");
 
       yield* repository.replaceForCheckpoint({

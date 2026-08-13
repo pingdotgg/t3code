@@ -1,17 +1,60 @@
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { CheckpointRef, NonNegativeInt, ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
-import { toPersistenceSqlError } from "../Errors.ts";
-import {
-  DeleteCheckpointRefsByThreadIdInput,
-  ListCheckpointRefsInput,
-  ProjectionCheckpointRef,
+import { toPersistenceSqlError, type ProjectionRepositoryError } from "./Errors.ts";
+
+export const ProjectionCheckpointRef = Schema.Struct({
+  threadId: ThreadId,
+  checkpointTurnCount: NonNegativeInt,
+  repoRoot: Schema.String,
+  checkpointRef: CheckpointRef,
+});
+export type ProjectionCheckpointRef = typeof ProjectionCheckpointRef.Type;
+
+export const ReplaceCheckpointRefsInput = Schema.Struct({
+  threadId: ThreadId,
+  checkpointTurnCount: NonNegativeInt,
+  refs: Schema.Array(
+    Schema.Struct({
+      repoRoot: Schema.String,
+      checkpointRef: CheckpointRef,
+    }),
+  ),
+});
+export type ReplaceCheckpointRefsInput = typeof ReplaceCheckpointRefsInput.Type;
+
+export const ListCheckpointRefsInput = Schema.Struct({
+  threadId: ThreadId,
+  checkpointTurnCount: NonNegativeInt,
+});
+export type ListCheckpointRefsInput = typeof ListCheckpointRefsInput.Type;
+
+export const DeleteCheckpointRefsByThreadIdInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type DeleteCheckpointRefsByThreadIdInput = typeof DeleteCheckpointRefsByThreadIdInput.Type;
+
+export class ProjectionCheckpointRefsRepository extends Context.Service<
   ProjectionCheckpointRefsRepository,
-} from "../Services/ProjectionCheckpointRefs.ts";
+  {
+    readonly replaceForCheckpoint: (
+      input: ReplaceCheckpointRefsInput,
+    ) => Effect.Effect<void, ProjectionRepositoryError>;
+    readonly listByCheckpoint: (
+      input: ListCheckpointRefsInput,
+    ) => Effect.Effect<ReadonlyArray<ProjectionCheckpointRef>, ProjectionRepositoryError>;
+    readonly deleteByThreadId: (
+      input: DeleteCheckpointRefsByThreadIdInput,
+    ) => Effect.Effect<void, ProjectionRepositoryError>;
+  }
+>()("t3/persistence/ProjectionCheckpointRefs/ProjectionCheckpointRefsRepository") {}
 
-const makeProjectionCheckpointRefsRepository = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const deleteForCheckpoint = SqlSchema.void({
@@ -118,14 +161,11 @@ const makeProjectionCheckpointRefsRepository = Effect.gen(function* () {
       ),
     );
 
-  return {
+  return ProjectionCheckpointRefsRepository.of({
     replaceForCheckpoint,
     listByCheckpoint,
     deleteByThreadId,
-  } satisfies ProjectionCheckpointRefsRepository["Service"];
+  });
 });
 
-export const ProjectionCheckpointRefsRepositoryLive = Layer.effect(
-  ProjectionCheckpointRefsRepository,
-  makeProjectionCheckpointRefsRepository,
-);
+export const layer = Layer.effect(ProjectionCheckpointRefsRepository, make);
