@@ -165,7 +165,6 @@ export function ThemeEditorPanel({
   const isEditing = editingTheme !== null;
   const [name, setName] = useState("");
   const [activeAppearance, setActiveAppearance] = useState<ThemeAppearance>(initialAppearance);
-  const [sidebarArtwork, setSidebarArtwork] = useState(false);
   const [isAdvanced, setIsAdvanced] = useState(false);
   const [colorsByAppearance, setColorsByAppearance] = useState<ThemeEditorColorsByAppearance>(() =>
     getThemeEditorColorsByAppearance(),
@@ -179,7 +178,6 @@ export function ThemeEditorPanel({
   const [isInspecting, setIsInspecting] = useState(false);
   const [selectedRole, setSelectedRole] = useState<ThemeColorRole | null>(null);
   const [usageCount, setUsageCount] = useState<number | null>(null);
-  const previousMergeTargetIdRef = useRef<string | null>(null);
   // Null parks the panel at its default corner; a value is a dragged spot,
   // kept clamped so the header can always be grabbed again.
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -230,7 +228,6 @@ export function ThemeEditorPanel({
     };
     window.addEventListener("resize", clamp);
     return () => window.removeEventListener("resize", clamp);
-    // oxlint-disable-next-line exhaustive-deps -- clampPosition reads live layout only.
   }, [isMinimized, open]);
 
   // The draft only reaches the live app once this open has been seeded;
@@ -261,9 +258,6 @@ export function ThemeEditorPanel({
 
       setName(editingTheme?.label ?? seedName ?? "");
       setActiveAppearance(nextAppearance);
-      // Artwork is opt-in for new themes, including duplicates. Editing keeps
-      // the theme's existing choice.
-      setSidebarArtwork(editingTheme?.sidebarArtwork === true);
       // Themes saved by the guided editor carry the managed flag; anything
       // else (imports, hand-edited files, older saves) opens in advanced mode
       // so guided regeneration cannot silently discard hand-tuned colors. A
@@ -321,18 +315,6 @@ export function ThemeEditorPanel({
   const mergeTargetId = mergeTarget?.id ?? null;
   const takenAppearancesKey = takenAppearances.join(",");
   useEffect(() => {
-    if (previousMergeTargetIdRef.current === mergeTargetId) return;
-    previousMergeTargetIdRef.current = mergeTargetId;
-    // A matching name makes that existing theme the surviving merge target.
-    // Seed theme-level options from it so adding a palette or renaming onto it
-    // does not silently reset them. Leaving the merge restores the edited
-    // theme's option (or the off-by-default choice for a new theme).
-    setSidebarArtwork(
-      mergeTarget ? mergeTarget.sidebarArtwork === true : editingTheme?.sidebarArtwork === true,
-    );
-  }, [editingTheme, mergeTarget, mergeTargetId]);
-
-  useEffect(() => {
     if (isEditing || mergeTargetId === null) return;
     const taken = takenAppearancesKey.split(",").filter(Boolean) as ThemeAppearance[];
     if (taken.length !== 1) return;
@@ -347,8 +329,8 @@ export function ThemeEditorPanel({
   // comes back when the editor closes, including on cancel.
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
-    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance, sidebarArtwork);
-  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open, sidebarArtwork]);
+    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
+  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -628,7 +610,7 @@ export function ThemeEditorPanel({
     [activeAppearance, editingTheme, selectedRole],
   );
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = () => {
     if (!name.trim()) {
       setError("Name your theme first.");
       return;
@@ -663,8 +645,8 @@ export function ThemeEditorPanel({
           return;
         }
         mergedAppearance = editedModes[0] ?? null;
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
             name: mergeTarget.label,
@@ -674,10 +656,10 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
             },
-            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-        );
+          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+        });
         retiredTheme = editingTheme;
         try {
           removeCustomTheme(editingTheme.id);
@@ -695,8 +677,8 @@ export function ThemeEditorPanel({
       } else if (editingTheme) {
         const baseAppearance = editingTheme.appearance;
         const variantAppearance = baseAppearance === "light" ? "dark" : "light";
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: editingTheme.id,
             name,
@@ -705,10 +687,10 @@ export function ThemeEditorPanel({
             ...(getThemeModes(editingTheme).length > 1
               ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
               : {}),
-            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
-        );
+          ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
+        });
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
           setError(
@@ -721,8 +703,8 @@ export function ThemeEditorPanel({
         // survives when every palette in the theme came from the guided
         // editor.
         mergedAppearance = activeAppearance;
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
             name: mergeTarget.label,
@@ -732,10 +714,10 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               [activeAppearance]: colorsForSave[activeAppearance],
             },
-            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-        );
+          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+        });
       } else {
         savedTheme = installCustomTheme(
           parseThemeFile({
@@ -743,7 +725,6 @@ export function ThemeEditorPanel({
             name,
             appearance: activeAppearance,
             colors: colorsForSave[activeAppearance],
-            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
         );
@@ -784,20 +765,7 @@ export function ThemeEditorPanel({
             : "Could not create the theme.",
       );
     }
-  }, [
-    activeAppearance,
-    colorsByAppearance,
-    editingTheme,
-    isAdvanced,
-    isEditing,
-    mergeTarget,
-    name,
-    onOpenChange,
-    onSaved,
-    sidebarArtwork,
-    simpleColorsDirtyByAppearance,
-    takenAppearances,
-  ]);
+  };
 
   const renderNameField = () => (
     <label className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
@@ -852,20 +820,6 @@ export function ThemeEditorPanel({
         {renderAppearanceButton("dark")}
       </div>
     </div>
-  );
-
-  const renderSidebarArtworkToggle = () => (
-    <label className="grid cursor-pointer grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium">Sidebar artwork</span>
-      <span className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-        <span>Show T3 Code environment artwork</span>
-        <Switch
-          aria-label="Allow sidebar artwork with this theme"
-          checked={sidebarArtwork}
-          onCheckedChange={(checked) => setSidebarArtwork(Boolean(checked))}
-        />
-      </span>
-    </label>
   );
 
   const renderColorsHeader = () => (
@@ -1124,7 +1078,6 @@ export function ThemeEditorPanel({
               </p>
             ) : null}
             {renderAppearanceButtons()}
-            {renderSidebarArtworkToggle()}
             <div className="space-y-3">
               {renderColorsHeader()}
               {renderColorFields()}

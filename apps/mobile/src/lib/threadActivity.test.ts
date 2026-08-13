@@ -12,11 +12,106 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  isPendingUserInputOptionSelected,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "./threadActivity";
+
+const singleSelectQuestion = {
+  id: "runtime",
+  header: "Runtime",
+  question: "Which runtime should be used?",
+  options: [
+    { label: "Go", description: "One binary" },
+    { label: "Node.js", description: "Reuse TypeScript" },
+  ],
+  multiSelect: false,
+} as const;
+
+const multiSelectQuestion = {
+  id: "scope",
+  header: "Scope",
+  question: "Which data should be collected?",
+  options: [
+    { label: "Orders", description: "Receipts" },
+    { label: "Listings", description: "Inventory" },
+  ],
+  multiSelect: true,
+} as const;
+
+describe("pending user input answers", () => {
+  it("replaces single-select options and toggles multi-select options", () => {
+    expect(
+      togglePendingUserInputOptionSelection(
+        singleSelectQuestion,
+        { selectedOptionLabels: ["Go"] },
+        "Node.js",
+      ),
+    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Node.js"] });
+
+    const orders = togglePendingUserInputOptionSelection(multiSelectQuestion, undefined, "Orders");
+    const ordersAndListings = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      orders,
+      "Listings",
+    );
+    expect(ordersAndListings).toEqual({
+      customAnswer: "",
+      selectedOptionLabels: ["Orders", "Listings"],
+    });
+    expect(
+      togglePendingUserInputOptionSelection(multiSelectQuestion, ordersAndListings, "Orders"),
+    ).toEqual({ customAnswer: "", selectedOptionLabels: ["Listings"] });
+
+    const paddedOrders = togglePendingUserInputOptionSelection(
+      multiSelectQuestion,
+      undefined,
+      "  Orders  ",
+    );
+    expect(paddedOrders).toEqual({ customAnswer: "", selectedOptionLabels: ["Orders"] });
+    expect(
+      togglePendingUserInputOptionSelection(multiSelectQuestion, paddedOrders, "  Orders  "),
+    ).toEqual({ customAnswer: "" });
+  });
+
+  it("builds array answers for multi-select questions", () => {
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, multiSelectQuestion], {
+        runtime: { selectedOptionLabels: ["Go"] },
+        scope: { selectedOptionLabels: ["Orders", "Listings"] },
+      }),
+    ).toEqual({
+      runtime: "Go",
+      scope: ["Orders", "Listings"],
+    });
+  });
+
+  it("clears selected options while a custom answer is active", () => {
+    expect(
+      setPendingUserInputCustomAnswer(
+        { selectedOptionLabels: ["Orders", "Listings"] },
+        "Orders first",
+      ),
+    ).toEqual({ customAnswer: "Orders first" });
+  });
+
+  it("matches selected chips against normalized option labels", () => {
+    expect(
+      isPendingUserInputOptionSelected({ selectedOptionLabels: ["Orders"] }, "  Orders  "),
+    ).toBe(true);
+    expect(
+      isPendingUserInputOptionSelected(
+        { selectedOptionLabels: ["Orders"], customAnswer: "Orders first" },
+        "  Orders  ",
+      ),
+    ).toBe(false);
+  });
+});
 
 function makeActivity(
   input: Partial<OrchestrationThreadActivity> &
