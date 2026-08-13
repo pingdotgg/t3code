@@ -108,6 +108,27 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("resolves the exact file path used by open in folder", () => {
+    expect(resolveMarkdownFileLinkMeta("src/file%20name.ts:12:4", "/repo/project")).toMatchObject({
+      filePath: "/repo/project/src/file name.ts",
+      targetPath: "/repo/project/src/file name.ts:12:4",
+      line: 12,
+      column: 4,
+    });
+    expect(resolveMarkdownFileLinkMeta("/tmp/report.ts:9", "/repo/project")).toMatchObject({
+      filePath: "/tmp/report.ts",
+      targetPath: "/tmp/report.ts:9",
+      line: 9,
+    });
+  });
+
+  it("resolves missing paths without requiring browser-side file access", () => {
+    expect(resolveMarkdownFileLinkMeta("src/not-created-yet.ts", "/repo/project")).toMatchObject({
+      filePath: "/repo/project/src/not-created-yet.ts",
+      workspaceRelativePath: "src/not-created-yet.ts",
+    });
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(
