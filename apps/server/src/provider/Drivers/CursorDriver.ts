@@ -126,7 +126,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         env: processEnv,
       });
 
-      const { cwd } = yield* ServerConfig;
       const adapter = yield* makeCursorAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
@@ -135,7 +134,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
-        Effect.flatMap((draft) => augmentProviderSnapshotWithAgentSkills(draft, cwd)),
+        Effect.flatMap((draft) => augmentProviderSnapshotWithAgentSkills(draft)),
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

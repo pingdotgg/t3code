@@ -72,6 +72,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 30_000,
       idleTtlMs: 5 * 60_000,
     }),
+    listAgentSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:list-agent-skills",
+      tag: WS_METHODS.projectsListAgentSkills,
+      staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),
     create: createEnvironmentCommand(runtime, {

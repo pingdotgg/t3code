@@ -43,7 +43,7 @@ it.layer(NodeServices.layer)("augmentProviderSnapshotWithAgentSkills", (it) => {
       const workspace = path.join(tempDir, "workspace");
 
       const draft = emptyDraft();
-      const result = yield* augmentProviderSnapshotWithAgentSkills(draft, workspace, {
+      const result = yield* augmentProviderSnapshotWithAgentSkills(draft, {
         homeDirectory: agentsHome,
       });
 
@@ -54,37 +54,31 @@ it.layer(NodeServices.layer)("augmentProviderSnapshotWithAgentSkills", (it) => {
     }),
   );
 
-  it.effect("attaches discovered skills with project winning on collision", () =>
+  it.effect("attaches discovered user skills to the draft", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-augment-skills-" });
       const agentsHome = path.join(tempDir, "agents-home");
-      const workspace = path.join(tempDir, "workspace");
 
       yield* writeSkill(
         path.join(agentsHome, ".agents", "skills"),
-        "shared-skill",
-        ["---", "name: shared-skill", "description: User agents skill.", "---"].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
-        "shared-skill",
-        ["---", "name: shared-skill", "description: Project agents skill.", "---"].join("\n"),
+        "agent-browser",
+        ["---", "name: agent-browser", "description: Browser automation.", "---"].join("\n"),
       );
 
       const draft = emptyDraft();
-      const result = yield* augmentProviderSnapshotWithAgentSkills(draft, workspace, {
+      const result = yield* augmentProviderSnapshotWithAgentSkills(draft, {
         homeDirectory: agentsHome,
       });
 
       assert.notStrictEqual(result, draft);
       assert.equal(result.skills.length, 1);
-      assert.equal(result.skills[0]?.scope, "project");
-      assert.equal(result.skills[0]?.description, "Project agents skill.");
+      assert.equal(result.skills[0]?.scope, "user");
+      assert.equal(result.skills[0]?.description, "Browser automation.");
       assert.equal(
         result.skills[0]?.path,
-        path.join(workspace, ".agents", "skills", "shared-skill", "SKILL.md"),
+        path.join(agentsHome, ".agents", "skills", "agent-browser", "SKILL.md"),
       );
     }),
   );

@@ -131,19 +131,3 @@ export const discoverProjectAgentSkills = Effect.fn("discoverProjectAgentSkills"
     { directory: path.join(workspaceRoot, ".agents", "skills"), scope: "project" },
   ]);
 });
-
-/**
- * Enumerate portable skills from the user home and optional workspace cwd.
- */
-export const discoverAgentSkills = Effect.fn("discoverAgentSkills")(function* (
-  cwd?: string,
-  options?: { readonly homeDirectory?: string },
-): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
-  const path = yield* Path.Path;
-  const homeDirectory = options?.homeDirectory ?? NodeOS.homedir();
-
-  return yield* scanFilesystemSkillRoots([
-    { directory: path.join(homeDirectory, ".agents", "skills"), scope: "user" },
-    ...(cwd ? [{ directory: path.join(cwd, ".agents", "skills"), scope: "project" as const }] : []),
-  ]);
-});

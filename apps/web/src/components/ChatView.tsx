@@ -350,6 +350,19 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+
+/** Merge user-scoped snapshot skills with project-scoped skills (project wins on name). */
+function mergeProviderSkills(
+  user: ServerProvider["skills"] | undefined,
+  project: ServerProvider["skills"] | undefined,
+): ServerProvider["skills"] {
+  if (!project?.length) return user ?? EMPTY_PROVIDER_SKILLS;
+  if (!user?.length) return project;
+  const byName = new Map<string, ServerProvider["skills"][number]>();
+  for (const skill of user) byName.set(skill.name, skill);
+  for (const skill of project) byName.set(skill.name, skill);
+  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -2659,6 +2672,19 @@ function ChatViewContent(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const activeProviderDriver = activeProviderStatus?.driver;
+  const projectSkillsQuery = useEnvironmentQuery(
+    activeThreadEnvironmentId && activeWorkspaceRoot && activeProviderDriver
+      ? projectEnvironment.listAgentSkills({
+          environmentId: activeThreadEnvironmentId,
+          input: { cwd: activeWorkspaceRoot, provider: activeProviderDriver },
+        })
+      : null,
+  );
+  const composerSkills = useMemo(
+    () => mergeProviderSkills(activeProviderStatus?.skills, projectSkillsQuery.data?.skills),
+    [activeProviderStatus?.skills, projectSkillsQuery.data?.skills],
+  );
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
@@ -6244,7 +6270,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={composerSkills}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerOverlayHeight}

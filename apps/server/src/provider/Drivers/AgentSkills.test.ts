@@ -5,9 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import {
-  discoverAgentSkills,
   discoverProjectAgentSkills,
   discoverUserAgentSkills,
+  scanFilesystemSkillRoots,
 } from "./AgentSkills.ts";
 
 const writeSkill = Effect.fn(function* (
@@ -26,13 +26,12 @@ const isolatedDiscoveryOptions = (tempDir: string) => ({
   homeDirectory: `${tempDir}/isolated-home`,
 });
 
-it.layer(NodeServices.layer)("discoverAgentSkills", (it) => {
-  it.effect("discovers user and project skills with frontmatter metadata", () =>
+it.layer(NodeServices.layer)("AgentSkills", (it) => {
+  it.effect("discoverUserAgentSkills parses frontmatter metadata for user skills", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-skills-" });
-      const workspace = path.join(tempDir, "workspace");
       const agentsHome = path.join(tempDir, "agents-home");
 
       yield* writeSkill(
@@ -40,13 +39,8 @@ it.layer(NodeServices.layer)("discoverAgentSkills", (it) => {
         "agent-browser",
         ["---", "name: agent-browser", "description: Browser automation.", "---"].join("\n"),
       );
-      yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
-        "test-t3-app",
-        ["---", "name: test-t3-app", "description: Test the web app.", "---"].join("\n"),
-      );
 
-      const skills = yield* discoverAgentSkills(workspace, { homeDirectory: agentsHome });
+      const skills = yield* discoverUserAgentSkills({ homeDirectory: agentsHome });
 
       assert.deepEqual(skills, [
         {
@@ -55,13 +49,6 @@ it.layer(NodeServices.layer)("discoverAgentSkills", (it) => {
           enabled: true,
           scope: "user",
           description: "Browser automation.",
-        },
-        {
-          name: "test-t3-app",
-          path: path.join(workspace, ".agents", "skills", "test-t3-app", "SKILL.md"),
-          enabled: true,
-          scope: "project",
-          description: "Test the web app.",
         },
       ]);
     }),
@@ -86,7 +73,10 @@ it.layer(NodeServices.layer)("discoverAgentSkills", (it) => {
         ["---", "name: shared-skill", "description: Project agents skill.", "---"].join("\n"),
       );
 
-      const skills = yield* discoverAgentSkills(workspace, { homeDirectory: agentsHome });
+      const skills = yield* scanFilesystemSkillRoots([
+        { directory: path.join(agentsHome, ".agents", "skills"), scope: "user" },
+        { directory: path.join(workspace, ".agents", "skills"), scope: "project" as const },
+      ]);
 
       assert.equal(skills.length, 1);
       assert.equal(skills[0]?.scope, "project");
@@ -107,7 +97,7 @@ it.layer(NodeServices.layer)("discoverAgentSkills", (it) => {
       yield* fs.makeDirectory(skillsDir, { recursive: true });
       yield* fs.writeFileString(path.join(skillsDir, "README.md"), "not a skill");
 
-      const skills = yield* discoverAgentSkills(undefined, { homeDirectory: agentsHome });
+      const skills = yield* discoverUserAgentSkills({ homeDirectory: agentsHome });
 
       assert.deepEqual(
         skills.map((skill) => skill.name),
@@ -122,11 +112,15 @@ it.layer(NodeServices.layer)("discoverAgentSkills", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-skills-" });
+      const workspace = path.join(tempDir, "workspace");
 
-      const skills = yield* discoverAgentSkills(
-        path.join(tempDir, "missing-workspace"),
-        isolatedDiscoveryOptions(tempDir),
+      yield* writeSkill(
+        path.join(workspace, ".agents", "skills"),
+        "project-only",
+        ["---", "name: project-only", "description: Project.", "---"].join("\n"),
       );
+
+      const skills = yield* discoverUserAgentSkills(isolatedDiscoveryOptions(tempDir));
 
       assert.deepEqual(skills, []);
     }),
