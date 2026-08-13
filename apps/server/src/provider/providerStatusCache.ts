@@ -10,7 +10,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { deduplicateDevinProviderModels } from "./Layers/DevinProvider.ts";
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
@@ -59,16 +58,10 @@ export const hydrateCachedProvider = (input: {
 
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
 
-  const isDevin = input.cachedProvider.driver === ProviderDriverKind.make("devin");
-  const cachedModels = isDevin
-    ? deduplicateDevinProviderModels(input.cachedProvider.models)
-    : input.cachedProvider.models;
-  const merged = mergeProviderModels(input.fallbackProvider.models, cachedModels);
+  const merged = mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models);
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
-    models: isDevin
-      ? merged.toSorted((left, right) => left.name.localeCompare(right.name))
-      : merged,
+    models: merged,
     installed: input.cachedProvider.installed,
     version: input.cachedProvider.version,
     status: input.cachedProvider.status,

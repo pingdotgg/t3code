@@ -43,8 +43,9 @@ Binary path: devin
 Home path: ~/.devin_personal
 ```
 
-T3 Code expands `~` in the `Home path`, creates the directory if it does not exist, and sets
-`DEVIN_HOME` before launching Devin.
+T3 Code expands `~` in the `Home path`, resolves it to an absolute path, and sets
+`DEVIN_HOME` before launching Devin. It does not create the directory; Devin CLI or the user
+is responsible for ensuring it exists.
 
 ## Binary Path And The `devin-desktop` Fallback
 
@@ -101,9 +102,9 @@ Devin token usage is reported in real time during a conversation and aggregated 
 
 ## Can I Switch Models In An Existing Thread?
 
-Yes, when the Devin session advertises the requested model. T3 Code sends a `session/set_model` ACP
-request when the model picker changes. If Devin rejects the model, the request fails with the
-provider error shown in the UI.
+Yes, when the Devin session advertises the requested model. T3 Code sends a `session/set_config_option`
+ACP request for the model config option when the model picker changes. If Devin rejects the model,
+the request fails with the provider error shown in the UI.
 
 ## Can I Switch Accounts In An Existing Thread?
 

@@ -15,6 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -38,9 +39,9 @@ import { resolveEffectiveDevinBinary } from "../Drivers/DevinBinary.ts";
 
 const DEVIN_PRESENTATION = {
   displayName: "Devin",
-  badgeLabel: "Beta",
+  badgeLabel: "Early Access",
   showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
+  requiresNewThreadForModelChange: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -58,10 +59,8 @@ const DEVIN_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
-export function buildInitialDevinProviderSnapshot(
-  devinSettings: DevinSettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
+export const buildInitialDevinProviderSnapshot = Effect.fn("buildInitialDevinProviderSnapshot")(
+  function* (devinSettings: DevinSettings) {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = devinModelsFromSettings(devinSettings.customModels);
 
@@ -94,8 +93,8 @@ export function buildInitialDevinProviderSnapshot(
         message: "Checking Devin CLI availability...",
       },
     });
-  });
-}
+  },
+);
 
 function devinModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
@@ -104,21 +103,41 @@ function devinModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-interface DevinModelVariantJson {
-  readonly model_uid?: unknown;
-  readonly label?: unknown;
-  readonly family_label?: unknown;
-  readonly family_uid?: unknown;
-  readonly cost_summary?: unknown;
-  readonly max_context_tokens?: unknown;
-}
+const DevinModelVariantSchema = Schema.Struct({
+  model_uid: Schema.optional(Schema.String),
+  label: Schema.optional(Schema.String),
+  family_label: Schema.optional(Schema.String),
+  family_uid: Schema.optional(Schema.String),
+  cost_summary: Schema.optional(Schema.String),
+  max_context_tokens: Schema.optional(Schema.Number),
+  slug: Schema.optional(Schema.String),
+});
 
-interface DevinModelFamilyJson {
-  readonly family_label?: unknown;
-  readonly family_uid?: unknown;
-  readonly slug?: unknown;
-  readonly variants?: unknown;
-}
+type DevinModelVariant = typeof DevinModelVariantSchema.Type;
+
+const DevinModelFamilySchema = Schema.Struct({
+  family_label: Schema.optional(Schema.String),
+  family_uid: Schema.optional(Schema.String),
+  slug: Schema.optional(Schema.String),
+  variants: Schema.Array(DevinModelVariantSchema),
+});
+
+type DevinModelFamily = typeof DevinModelFamilySchema.Type;
+
+const DevinFamilyRecordSchema = Schema.Struct({
+  families: Schema.Array(DevinModelFamilySchema),
+});
+
+const DevinFamilyListSchema = Schema.Array(DevinModelFamilySchema);
+const DevinVariantListSchema = Schema.Array(DevinModelVariantSchema);
+
+const DevinModelsListJson = Schema.Union([
+  DevinFamilyRecordSchema,
+  DevinFamilyListSchema,
+  DevinVariantListSchema,
+]);
+
+const decodeDevinModelsListJson = Schema.decodeUnknownOption(DevinModelsListJson);
 
 const DEVIN_VARIANT_SUFFIXES = new Set([
   "none",
@@ -138,11 +157,7 @@ const DEVIN_VARIANT_SUFFIXES = new Set([
   "1000000",
 ]);
 
-const DEVIN_VARIANT_NAME_TOKENS = new Set([...DEVIN_VARIANT_SUFFIXES]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const DEVIN_VARIANT_NAME_TOKENS = new Set(DEVIN_VARIANT_SUFFIXES);
 
 function isDevinVariantSuffixToken(token: string): boolean {
   return DEVIN_VARIANT_SUFFIXES.has(token.toLowerCase());
@@ -152,14 +167,9 @@ function isDevinVariantNameToken(token: string): boolean {
   return DEVIN_VARIANT_NAME_TOKENS.has(token.toLowerCase().replace(/[,]/g, ""));
 }
 
-function isDevinFamilyRecord(value: unknown): value is DevinModelFamilyJson {
-  return isRecord(value) && Array.isArray((value as { variants?: unknown }).variants);
-}
-
-function buildDevinVariantDescription(variant: DevinModelVariantJson): string | undefined {
-  const contextTokens =
-    typeof variant.max_context_tokens === "number" ? variant.max_context_tokens : undefined;
-  const costSummary = typeof variant.cost_summary === "string" ? variant.cost_summary : undefined;
+function buildDevinVariantDescription(variant: DevinModelVariant): string | undefined {
+  const contextTokens = variant.max_context_tokens;
+  const costSummary = variant.cost_summary;
 
   const parts: string[] = [];
   if (contextTokens) {
@@ -172,11 +182,8 @@ function buildDevinVariantDescription(variant: DevinModelVariantJson): string | 
   return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
-function buildDevinFamilyDescription(family: DevinModelFamilyJson): string | undefined {
-  const variants = Array.isArray(family.variants)
-    ? (family.variants as ReadonlyArray<DevinModelVariantJson>)
-    : [];
-  const first = variants[0];
+function buildDevinFamilyDescription(family: DevinModelFamily): string | undefined {
+  const first = family.variants[0];
   if (!first) {
     return undefined;
   }
@@ -249,24 +256,21 @@ function normalizeDevinReasoningValue(label: string): string {
 function buildDevinReasoningDescriptor(
   familyName: string,
   familyUid: string,
-  variants: ReadonlyArray<DevinModelVariantJson>,
+  variants: ReadonlyArray<DevinModelVariant>,
 ): ProviderOptionDescriptor | undefined {
   const effectiveFamilyUid = familyUid;
   const options: Array<ProviderOptionChoice> = [];
 
   for (const variant of variants) {
-    const modelUid = typeof variant.model_uid === "string" ? variant.model_uid.trim() : "";
+    const modelUid = variant.model_uid?.trim() ?? "";
     if (!modelUid) {
       continue;
     }
     const suffix = resolveDevinVariantSuffix(effectiveFamilyUid, modelUid);
-    if (suffix === undefined && typeof variant.label !== "string") {
+    if (suffix === undefined && variant.label === undefined) {
       continue;
     }
-    const label = buildDevinVariantOptionLabel(
-      typeof variant.label === "string" ? variant.label : undefined,
-      familyName,
-    );
+    const label = buildDevinVariantOptionLabel(variant.label, familyName);
     options.push({
       id: normalizeDevinReasoningValue(label),
       label,
@@ -337,13 +341,10 @@ function isOpaqueDevinModelId(modelUid: string): boolean {
   return /^MODEL_/i.test(modelUid) || modelUid.includes("_");
 }
 
-function resolveDevinFamilySlugFromVariant(variant: DevinModelVariantJson): string | undefined {
-  const familyUid = typeof variant.family_uid === "string" ? variant.family_uid.trim() : "";
-  const modelUid = typeof variant.model_uid === "string" ? variant.model_uid.trim() : "";
-  const slug =
-    typeof (variant as { slug?: unknown }).slug === "string"
-      ? ((variant as { slug?: unknown }).slug as string).trim()
-      : "";
+function resolveDevinFamilySlugFromVariant(variant: DevinModelVariant): string | undefined {
+  const familyUid = variant.family_uid?.trim() ?? "";
+  const modelUid = variant.model_uid?.trim() ?? "";
+  const slug = variant.slug?.trim() ?? "";
 
   // Prefer explicit family or model slugs; only strip variants from raw model_uids.
   const rawSlug = familyUid || slug || modelUid;
@@ -356,8 +357,8 @@ function resolveDevinFamilySlugFromVariant(variant: DevinModelVariantJson): stri
   }
 
   const fromModelUid = resolveDevinFamilyBaseSlug(modelUid);
-  const familyLabel = typeof variant.family_label === "string" ? variant.family_label.trim() : "";
-  const label = typeof variant.label === "string" ? variant.label.trim() : "";
+  const familyLabel = variant.family_label?.trim() ?? "";
+  const label = variant.label?.trim() ?? "";
 
   const baseName = familyLabel || (label ? resolveDevinFamilyNameFromLabel(label) : undefined);
   const fromLabel = baseName ? resolveDevinAcpBaseModelId(slugifyFamilyName(baseName)) : undefined;
@@ -376,13 +377,13 @@ function resolveDevinFamilySlugFromVariant(variant: DevinModelVariantJson): stri
   return fromModelUid;
 }
 
-function resolveDevinFamilyNameFromVariant(variant: DevinModelVariantJson): string | undefined {
-  const familyLabel = typeof variant.family_label === "string" ? variant.family_label.trim() : "";
+function resolveDevinFamilyNameFromVariant(variant: DevinModelVariant): string | undefined {
+  const familyLabel = variant.family_label?.trim() ?? "";
   if (familyLabel) {
     return familyLabel;
   }
 
-  const label = typeof variant.label === "string" ? variant.label.trim() : "";
+  const label = variant.label?.trim() ?? "";
   if (!label) {
     return undefined;
   }
@@ -419,21 +420,14 @@ export function deduplicateDevinProviderModels(
 }
 
 function parseDevinModelFamilyList(
-  families: ReadonlyArray<DevinModelFamilyJson>,
+  families: ReadonlyArray<DevinModelFamily>,
 ): ReadonlyArray<ServerProviderModel> {
   const seen = new Set<string>();
   const models: Array<ServerProviderModel> = [];
 
   for (const family of families) {
-    const familyRecord = family as DevinModelFamilyJson;
-    const rawSlug =
-      typeof familyRecord.slug === "string"
-        ? familyRecord.slug
-        : typeof familyRecord.family_uid === "string"
-          ? familyRecord.family_uid
-          : "";
-    const familyName =
-      typeof familyRecord.family_label === "string" ? familyRecord.family_label : "";
+    const rawSlug = family.slug ?? family.family_uid;
+    const familyName = family.family_label?.trim() ?? "";
 
     if (!rawSlug) {
       continue;
@@ -445,15 +439,12 @@ function parseDevinModelFamilyList(
     }
     seen.add(slug);
 
-    const variants = Array.isArray(familyRecord.variants)
-      ? (familyRecord.variants as ReadonlyArray<DevinModelVariantJson>)
-      : [];
-    const description = buildDevinFamilyDescription(familyRecord);
-    const resolvedFamilyName = familyName.trim() || slug;
+    const description = buildDevinFamilyDescription(family);
+    const resolvedFamilyName = familyName || slug;
     const reasoningDescriptor = buildDevinReasoningDescriptor(
       resolvedFamilyName,
-      typeof familyRecord.family_uid === "string" ? familyRecord.family_uid : slug,
-      variants,
+      family.family_uid ?? slug,
+      family.variants,
     );
 
     models.push({
@@ -471,35 +462,33 @@ function parseDevinModelFamilyList(
 }
 
 function parseDevinModelVariantList(
-  variants: ReadonlyArray<DevinModelVariantJson>,
+  variants: ReadonlyArray<DevinModelVariant>,
 ): ReadonlyArray<ServerProviderModel> {
   const groups = new Map<
     string,
     {
       readonly name: string;
       readonly familyUid: string | undefined;
-      readonly variants: Array<DevinModelVariantJson>;
+      readonly variants: Array<DevinModelVariant>;
     }
   >();
 
   for (const variant of variants) {
-    const variantRecord = variant as DevinModelVariantJson;
-    const slug = resolveDevinFamilySlugFromVariant(variantRecord);
+    const slug = resolveDevinFamilySlugFromVariant(variant);
     if (!slug) {
       continue;
     }
 
     const existing = groups.get(slug);
     if (existing) {
-      existing.variants.push(variantRecord);
+      existing.variants.push(variant);
       continue;
     }
 
     const name =
-      resolveDevinFamilyNameFromVariant(variantRecord) || resolveDevinAcpBaseModelId(slug) || slug;
-    const familyUid =
-      typeof variantRecord.family_uid === "string" ? variantRecord.family_uid : undefined;
-    groups.set(slug, { name, familyUid, variants: [variantRecord] });
+      resolveDevinFamilyNameFromVariant(variant) || resolveDevinAcpBaseModelId(slug) || slug;
+    const familyUid = variant.family_uid;
+    groups.set(slug, { name, familyUid, variants: [variant] });
   }
 
   const models: Array<ServerProviderModel> = [];
@@ -535,29 +524,26 @@ function parseDevinModelsJson(output: string): ReadonlyArray<ServerProviderModel
     return [];
   }
 
-  const familyRecords =
-    parsed &&
-    typeof parsed === "object" &&
-    Array.isArray((parsed as { families?: unknown }).families)
-      ? (parsed as { families: ReadonlyArray<unknown> }).families
-      : undefined;
-
-  if (familyRecords && familyRecords.length > 0) {
-    if (isDevinFamilyRecord(familyRecords[0])) {
-      return parseDevinModelFamilyList(familyRecords as ReadonlyArray<DevinModelFamilyJson>);
-    }
-    return parseDevinModelVariantList(familyRecords as ReadonlyArray<DevinModelVariantJson>);
+  const result = decodeDevinModelsListJson(parsed);
+  if (Option.isNone(result)) {
+    return [];
   }
 
-  const topLevelArray = Array.isArray(parsed) ? parsed : undefined;
-  if (topLevelArray && topLevelArray.length > 0) {
-    if (isDevinFamilyRecord(topLevelArray[0])) {
-      return parseDevinModelFamilyList(topLevelArray as ReadonlyArray<DevinModelFamilyJson>);
-    }
-    return parseDevinModelVariantList(topLevelArray as ReadonlyArray<DevinModelVariantJson>);
+  const list = result.value;
+  if ("families" in list) {
+    return parseDevinModelFamilyList(list.families);
   }
 
-  return [];
+  if (!Array.isArray(list) || list.length === 0) {
+    return [];
+  }
+
+  const first = list[0];
+  if ("variants" in first && Array.isArray(first.variants)) {
+    return parseDevinModelFamilyList(list as ReadonlyArray<DevinModelFamily>);
+  }
+
+  return parseDevinModelVariantList(list as ReadonlyArray<DevinModelVariant>);
 }
 
 function parseDevinModelsText(output: string): ReadonlyArray<ServerProviderModel> {
@@ -764,9 +750,11 @@ export const checkDevinProviderStatus = Effect.fn("checkDevinProviderStatus")(fu
     ),
     Effect.orElseSucceed(() => [] as ReadonlyArray<ServerProviderModel>),
   );
+  const deduplicatedDiscoveredModels =
+    discoveredModels.length > 0 ? deduplicateDevinProviderModels(discoveredModels) : [];
   const models =
-    discoveredModels.length > 0
-      ? devinModelsFromSettings(devinSettings.customModels, discoveredModels)
+    deduplicatedDiscoveredModels.length > 0
+      ? devinModelsFromSettings(devinSettings.customModels, deduplicatedDiscoveredModels)
       : fallbackModels;
 
   return buildServerProvider({

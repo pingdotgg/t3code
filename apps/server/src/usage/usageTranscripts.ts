@@ -6,7 +6,10 @@
  *
  * @module usageTranscripts
  */
-import type { UsageProviderKind, UsageTokenTotals } from "@t3tools/contracts";
+import type { UsageProviderKind } from "@t3tools/contracts";
+import { UsageTokenTotals } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 export interface UsageRecord {
   readonly provider: UsageProviderKind;
@@ -67,15 +70,44 @@ export function totalTokens(totals: UsageTokenTotals): number {
  * a 30-day window this skips roughly half the lines outright and is worth about
  * an order of magnitude.
  */
+const PROVIDER_MIGHT_CARRY_USAGE: Record<UsageProviderKind, (line: string) => boolean> = {
+  claude: (line) => line.includes('"usage"'),
+  devin: (line) => line.includes('"devin_usage"'),
+  codex: (line) =>
+    line.includes('"token_count"') ||
+    line.includes('"turn_context"') ||
+    line.includes('"session_meta"'),
+};
+
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
-  if (provider === "claude") return line.includes('"usage"');
-  if (provider === "devin") return line.includes('"devin_usage"');
-  return line.includes('"token_count"');
+  return PROVIDER_MIGHT_CARRY_USAGE[provider](line);
 }
 
 /* -------------------------------------------------------------------------- */
 /* Claude Code                                                                */
 /* -------------------------------------------------------------------------- */
+
+const ClaudeUsageMessageSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  model: Schema.String,
+  usage: Schema.Struct({
+    input_tokens: Schema.optional(Schema.Number),
+    cache_read_input_tokens: Schema.optional(Schema.Number),
+    cache_creation_input_tokens: Schema.optional(Schema.Number),
+    output_tokens: Schema.optional(Schema.Number),
+  }),
+});
+
+const ClaudeUsageLineSchema = Schema.Struct({
+  type: Schema.Literal("assistant"),
+  timestamp: Schema.String,
+  requestId: Schema.optional(Schema.String),
+  sessionId: Schema.optional(Schema.String),
+  message: ClaudeUsageMessageSchema,
+  costUSD: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+
+const decodeClaudeUsageLine = Schema.decodeUnknownOption(ClaudeUsageLineSchema);
 
 /**
  * Parses one line of a Claude Code transcript.
@@ -92,48 +124,38 @@ export function parseClaudeLine(line: string): UsageRecord | null {
   } catch {
     return null;
   }
-  if (typeof parsed !== "object" || parsed === null) return null;
 
-  const record = parsed as Record<string, unknown>;
-  if (record["type"] !== "assistant") return null;
+  const result = decodeClaudeUsageLine(parsed);
+  if (Option.isNone(result)) return null;
+  const record = result.value;
 
-  const message = record["message"];
-  if (typeof message !== "object" || message === null) return null;
-  const messageRecord = message as Record<string, unknown>;
-
-  const usage = messageRecord["usage"];
-  if (typeof usage !== "object" || usage === null) return null;
-  const usageRecord = usage as Record<string, unknown>;
-
-  const timestampMs = parseTimestampMs(record["timestamp"]);
+  const timestampMs = parseTimestampMs(record.timestamp);
   if (timestampMs === null) return null;
 
-  const model = typeof messageRecord["model"] === "string" ? messageRecord["model"] : "";
-  if (model.length === 0) return null;
-
-  const messageId = typeof messageRecord["id"] === "string" ? messageRecord["id"] : null;
-  const requestId = typeof record["requestId"] === "string" ? record["requestId"] : null;
+  const messageId = record.message.id ?? null;
+  const requestId = record.requestId ?? null;
   // Matches ccusage: prefer the message/request pair, fall back to whichever
   // half exists. Records with neither cannot be de-duplicated.
   const dedupeKey =
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
-  const cost = record["costUSD"];
-
   return {
     provider: "claude",
     timestampMs,
-    model,
-    sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
+    model: record.message.model,
+    sessionId: record.sessionId ?? "",
     totals: {
-      uncachedInputTokens: int(usageRecord["input_tokens"]),
-      cachedInputTokens: int(usageRecord["cache_read_input_tokens"]),
-      cacheCreationTokens: int(usageRecord["cache_creation_input_tokens"]),
-      outputTokens: int(usageRecord["output_tokens"]),
+      uncachedInputTokens: int(record.message.usage.input_tokens),
+      cachedInputTokens: int(record.message.usage.cache_read_input_tokens),
+      cacheCreationTokens: int(record.message.usage.cache_creation_input_tokens),
+      outputTokens: int(record.message.usage.output_tokens),
       // Anthropic folds thinking tokens into output and does not break them out.
       reasoningTokens: 0,
     },
-    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
+    reportedCostUsd:
+      record.costUSD !== undefined && record.costUSD !== null && Number.isFinite(record.costUSD)
+        ? record.costUSD
+        : null,
     dedupeKey,
   };
 }
@@ -179,16 +201,66 @@ export function initialCodexScanState(): CodexScanState {
  */
 const FORK_COPY_MAX_GAP_MS = 1000;
 
+const CodexRecordSchema = Schema.Struct({
+  type: Schema.String,
+  timestamp: Schema.String,
+  payload: Schema.Unknown,
+});
+
+const decodeCodexRecord = Schema.decodeUnknownOption(CodexRecordSchema);
+
+const CodexSessionMetaPayloadSchema = Schema.Struct({
+  id: Schema.optional(Schema.String),
+  session_id: Schema.optional(Schema.String),
+  forked_from_id: Schema.optional(Schema.String),
+  source: Schema.optional(
+    Schema.Struct({
+      subagent: Schema.optional(
+        Schema.Struct({
+          thread_spawn: Schema.optional(
+            Schema.Struct({
+              parent_thread_id: Schema.optional(Schema.String),
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+});
+
+type CodexSessionMetaPayload = typeof CodexSessionMetaPayloadSchema.Type;
+
+const decodeCodexSessionMetaPayload = Schema.decodeUnknownOption(CodexSessionMetaPayloadSchema);
+
+const CodexTurnContextPayloadSchema = Schema.Struct({
+  model: Schema.optional(Schema.String),
+});
+
+const decodeCodexTurnContextPayload = Schema.decodeUnknownOption(CodexTurnContextPayloadSchema);
+
+const CodexLastTokenUsageSchema = Schema.Struct({
+  input_tokens: Schema.optional(Schema.Number),
+  cached_input_tokens: Schema.optional(Schema.Number),
+  cache_write_input_tokens: Schema.optional(Schema.Number),
+  output_tokens: Schema.optional(Schema.Number),
+  reasoning_output_tokens: Schema.optional(Schema.Number),
+});
+
+const CodexTokenCountPayloadSchema = Schema.Struct({
+  type: Schema.Literal("token_count"),
+  info: Schema.Struct({
+    last_token_usage: CodexLastTokenUsageSchema,
+  }),
+});
+
+const decodeCodexTokenCountPayload = Schema.decodeUnknownOption(CodexTokenCountPayloadSchema);
+
 /** Whether a `session_meta` payload marks the rollout as a fork or subagent. */
-function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
-  if (typeof payload["forked_from_id"] === "string") return true;
-  const source = payload["source"];
-  if (typeof source !== "object" || source === null) return false;
-  const subagent = (source as Record<string, unknown>)["subagent"];
-  if (typeof subagent !== "object" || subagent === null) return false;
-  const spawn = (subagent as Record<string, unknown>)["thread_spawn"];
-  if (typeof spawn !== "object" || spawn === null) return false;
-  return typeof (spawn as Record<string, unknown>)["parent_thread_id"] === "string";
+function isForkedSessionMeta(payload: CodexSessionMetaPayload): boolean {
+  if (payload.forked_from_id !== undefined && payload.forked_from_id.length > 0) {
+    return true;
+  }
+  return payload.source?.subagent?.thread_spawn?.parent_thread_id !== undefined;
 }
 
 /**
@@ -199,61 +271,62 @@ function isForkedSessionMeta(payload: Record<string, unknown>): boolean {
  * reconciles with the session's final `total_token_usage`, provided
  * consecutive duplicate events are dropped, which this does.
  */
-export function parseCodexLine(line: string, state: CodexScanState): UsageRecord | null {
+export function parseCodexLine(line: string, state?: CodexScanState): UsageRecord | null {
+  if (!state) return null;
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
   } catch {
     return null;
   }
-  if (typeof parsed !== "object" || parsed === null) return null;
 
-  const record = parsed as Record<string, unknown>;
-  const payload = record["payload"];
-  if (typeof payload !== "object" || payload === null) return null;
-  const payloadRecord = payload as Record<string, unknown>;
-  const payloadType = payloadRecord["type"];
+  const recordResult = decodeCodexRecord(parsed);
+  if (Option.isNone(recordResult)) return null;
+  const record = recordResult.value;
 
-  if (record["type"] === "session_meta") {
+  if (record.type === "session_meta") {
+    const payloadResult = decodeCodexSessionMetaPayload(record.payload);
+    if (Option.isNone(payloadResult)) return null;
+    const payload = payloadResult.value;
+
     // Only the first meta describes this file's own session. A forked rollout
     // repeats the ancestors' metas right after it; letting those through would
     // reassign every subsequent record to an ancestor session.
     if (state.sawSessionMeta) return null;
     state.sawSessionMeta = true;
-    const id = payloadRecord["id"] ?? payloadRecord["session_id"];
-    if (typeof id === "string") state.sessionId = id;
-    const metaTimestampMs = parseTimestampMs(record["timestamp"]);
-    if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
+    const id = payload.id ?? payload.session_id;
+    if (id !== undefined) state.sessionId = id;
+    const metaTimestampMs = parseTimestampMs(record.timestamp);
+    if (metaTimestampMs !== null && isForkedSessionMeta(payload)) {
       state.suppressingForkCopies = true;
       state.forkCopyAnchorMs = metaTimestampMs;
     }
     return null;
   }
 
-  if (record["type"] === "turn_context") {
-    if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
+  if (record.type === "turn_context") {
+    const payloadResult = decodeCodexTurnContextPayload(record.payload);
+    if (Option.isNone(payloadResult)) return null;
+    const payload = payloadResult.value;
+    if (payload.model !== undefined) state.model = payload.model;
     return null;
   }
 
-  if (payloadType !== "token_count") return null;
+  const tokenPayloadResult = decodeCodexTokenCountPayload(record.payload);
+  if (Option.isNone(tokenPayloadResult)) return null;
+  const tokenPayload = tokenPayloadResult.value;
 
-  const info = payloadRecord["info"];
-  if (typeof info !== "object" || info === null) return null;
-  const last = (info as Record<string, unknown>)["last_token_usage"];
-  if (typeof last !== "object" || last === null) return null;
-  const lastRecord = last as Record<string, unknown>;
-
-  // Only an event that is otherwise eligible may consume the duplicate
-  // signature. A token_count arriving before its turn_context (no model yet)
-  // must not poison it, or the re-emitted copy after the model is known would
-  // be skipped as a duplicate and those tokens never counted.
-  const timestampMs = parseTimestampMs(record["timestamp"]);
+  // token_count
+  const timestampMs = parseTimestampMs(record.timestamp);
   if (timestampMs === null) return null;
   if (state.model.length === 0) return null;
 
+  const last = tokenPayload.info.last_token_usage;
+
   // Codex re-emits an unchanged token_count on some stream boundaries. Summing
   // those would double count, so identical consecutive payloads are skipped.
-  const signature = JSON.stringify(lastRecord);
+  const signature = JSON.stringify(last);
   if (signature === state.lastUsageSignature) return null;
   state.lastUsageSignature = signature;
 
@@ -268,10 +341,10 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     state.suppressingForkCopies = false;
   }
 
-  const inputTokens = int(lastRecord["input_tokens"]);
-  const cachedInputTokens = int(lastRecord["cached_input_tokens"]);
-  const cacheCreationTokens = int(lastRecord["cache_write_input_tokens"]);
-  const outputTokens = int(lastRecord["output_tokens"]);
+  const inputTokens = int(last.input_tokens);
+  const cachedInputTokens = int(last.cached_input_tokens);
+  const cacheCreationTokens = int(last.cache_write_input_tokens);
+  const outputTokens = int(last.output_tokens);
 
   const totals: UsageTokenTotals = {
     // Codex reports `input_tokens` inclusive of the cached portion.
@@ -280,7 +353,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     cacheCreationTokens,
     outputTokens,
     // Reported inside output_tokens, surfaced separately for the token mix.
-    reasoningTokens: Math.min(outputTokens, int(lastRecord["reasoning_output_tokens"])),
+    reasoningTokens: Math.min(outputTokens, int(last.reasoning_output_tokens)),
   };
 
   if (totalTokens(totals) === 0) return null;
@@ -303,6 +376,18 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
 /* Devin                                                                      */
 /* -------------------------------------------------------------------------- */
 
+const DevinUsageLineSchema = Schema.Struct({
+  type: Schema.Literal("devin_usage"),
+  timestamp: Schema.String,
+  sessionId: Schema.optional(Schema.String),
+  turnId: Schema.optional(Schema.String),
+  model: Schema.String,
+  totals: UsageTokenTotals,
+  reportedCostUsd: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+
+const decodeDevinUsageLine = Schema.decodeUnknownOption(DevinUsageLineSchema);
+
 /**
  * Parses one line from a Devin usage transcript written by T3 Code.
  *
@@ -316,43 +401,31 @@ export function parseDevinLine(line: string): UsageRecord | null {
   } catch {
     return null;
   }
-  if (typeof parsed !== "object" || parsed === null) return null;
 
-  const record = parsed as Record<string, unknown>;
-  if (record["type"] !== "devin_usage") return null;
+  const result = decodeDevinUsageLine(parsed);
+  if (Option.isNone(result)) return null;
+  const record = result.value;
 
-  const timestampMs = parseTimestampMs(record["timestamp"]);
+  const timestampMs = parseTimestampMs(record.timestamp);
   if (timestampMs === null) return null;
 
-  const sessionId = typeof record["sessionId"] === "string" ? record["sessionId"] : "";
-  const turnId = typeof record["turnId"] === "string" ? record["turnId"] : "";
-  const model = typeof record["model"] === "string" ? record["model"] : "";
-  if (model.length === 0) return null;
+  const sessionId = record.sessionId?.trim() ?? "";
+  const turnId = record.turnId?.trim() ?? "";
 
-  const totals = record["totals"];
-  if (typeof totals !== "object" || totals === null) return null;
-  const totalsRecord = totals as Record<string, unknown>;
-
-  const cost = record["reportedCostUsd"];
-
-  const result: UsageRecord = {
+  return {
     provider: "devin",
     timestampMs,
-    model,
+    model: record.model,
     sessionId,
-    totals: {
-      uncachedInputTokens: int(totalsRecord["uncachedInputTokens"]),
-      cachedInputTokens: int(totalsRecord["cachedInputTokens"]),
-      cacheCreationTokens: int(totalsRecord["cacheCreationTokens"]),
-      outputTokens: int(totalsRecord["outputTokens"]),
-      reasoningTokens: int(totalsRecord["reasoningTokens"]),
-    },
-    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
+    totals: record.totals,
+    reportedCostUsd:
+      record.reportedCostUsd !== undefined &&
+      record.reportedCostUsd !== null &&
+      Number.isFinite(record.reportedCostUsd)
+        ? record.reportedCostUsd
+        : null,
     dedupeKey: sessionId.length > 0 && turnId.length > 0 ? `${sessionId}:${turnId}` : null,
   };
-
-  if (totalTokens(result.totals) === 0) return null;
-  return result;
 }
 
 export { EMPTY_TOTALS };

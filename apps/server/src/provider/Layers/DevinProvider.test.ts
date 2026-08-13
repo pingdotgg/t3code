@@ -8,15 +8,18 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { DevinSettings } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   buildInitialDevinProviderSnapshot,
   checkDevinProviderStatus,
+  deduplicateDevinProviderModels,
   parseDevinModelsList,
 } from "./DevinProvider.ts";
 
 const decodeDevinSettings = Schema.decodeSync(DevinSettings);
+const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 
 function isWindows(platform: string) {
   return platform === "win32";
@@ -121,7 +124,7 @@ describe("buildInitialDevinProviderSnapshot", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Devin");
-      expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.requiresNewThreadForModelChange).toBe(false);
     }),
   );
 });
@@ -620,6 +623,110 @@ it.layer(NodeServices.layer)("parseDevinModelsList", (it) => {
       { id: "max", label: "Max" },
       { id: "no-thinking", label: "No Thinking" },
       { id: "no-thinking-1m", label: "No Thinking 1M" },
+    ]);
+  });
+});
+
+describe("deduplicateDevinProviderModels", () => {
+  it("collapses variant models into one entry per family", () => {
+    const models = deduplicateDevinProviderModels([
+      {
+        slug: "claude-opus-5-medium",
+        name: "Claude Opus 5 Medium",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "claude-opus-5-low",
+        name: "Claude Opus 5 Low",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "claude-opus-5-high",
+        name: "Claude Opus 5 High",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "gpt-5-6-sol-none",
+        name: "GPT-5.6 Sol No Thinking",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "gpt-5-6-sol-high",
+        name: "GPT-5.6 Sol High Thinking",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "adaptive",
+        name: "Adaptive",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+    ]);
+
+    expect(models.map((m) => ({ slug: m.slug, name: m.name }))).toEqual([
+      { slug: "adaptive", name: "Adaptive" },
+      { slug: "claude-opus-5", name: "Claude Opus 5" },
+      { slug: "gpt-5-6-sol", name: "GPT-5.6 Sol" },
+    ]);
+  });
+
+  it("derives family slugs from legacy opaque model ids", () => {
+    const models = deduplicateDevinProviderModels([
+      {
+        slug: "MODEL_PRIVATE_11",
+        name: "Claude Haiku 4.5",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "MODEL_PRIVATE_2",
+        name: "Claude Sonnet 4.5",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "MODEL_GPT_5_2_LOW",
+        name: "GPT-5.2 Low Thinking",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "MODEL_GPT_5_2_MEDIUM",
+        name: "GPT-5.2 Medium Thinking",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "claude-fable-5",
+        name: "Claude Fable 5",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "adaptive",
+        name: "Adaptive",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+      {
+        slug: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        isCustom: false,
+        capabilities: emptyCapabilities,
+      },
+    ]);
+
+    expect(models.map((m) => ({ slug: m.slug, name: m.name }))).toEqual([
+      { slug: "adaptive", name: "Adaptive" },
+      { slug: "claude-fable-5", name: "Claude Fable 5" },
+      { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
+      { slug: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+      { slug: "gpt-5-2", name: "GPT-5.2" },
     ]);
   });
 });

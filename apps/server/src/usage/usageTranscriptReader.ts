@@ -19,12 +19,37 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import {
   initialCodexScanState,
-  mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
   parseDevinLine,
+  type CodexScanState,
   type UsageRecord,
 } from "./usageTranscripts.ts";
+
+interface TranscriptHandler {
+  readonly mightCarryUsage: (line: string) => boolean;
+  readonly createState?: () => CodexScanState;
+  readonly parseLine: (line: string, state?: CodexScanState) => UsageRecord | null;
+}
+
+const PROVIDER_TRANSCRIPT_HANDLERS: Record<UsageProviderKind, TranscriptHandler> = {
+  claude: {
+    mightCarryUsage: (line) => line.includes('"usage"'),
+    parseLine: parseClaudeLine,
+  },
+  codex: {
+    mightCarryUsage: (line) =>
+      line.includes('"token_count"') ||
+      line.includes('"turn_context"') ||
+      line.includes('"session_meta"'),
+    createState: initialCodexScanState,
+    parseLine: parseCodexLine,
+  },
+  devin: {
+    mightCarryUsage: (line) => line.includes('"devin_usage"'),
+    parseLine: parseDevinLine,
+  },
+};
 
 export interface TranscriptFile {
   readonly path: string;
@@ -108,7 +133,8 @@ export async function readTranscriptRecords(
   provider: UsageProviderKind,
 ): Promise<readonly UsageRecord[] | null> {
   const records: UsageRecord[] = [];
-  const codexState = initialCodexScanState();
+  const handler = PROVIDER_TRANSCRIPT_HANDLERS[provider];
+  const state = handler.createState?.();
 
   try {
     const lines = NodeReadline.createInterface({
@@ -117,28 +143,8 @@ export async function readTranscriptRecords(
     });
 
     for await (const line of lines) {
-      if (provider === "codex") {
-        if (
-          !mightCarryUsage(line, provider) &&
-          !line.includes('"turn_context"') &&
-          !line.includes('"session_meta"')
-        ) {
-          continue;
-        }
-        const record = parseCodexLine(line, codexState);
-        if (record !== null) records.push(record);
-        continue;
-      }
-
-      if (provider === "devin") {
-        if (!mightCarryUsage(line, provider)) continue;
-        const record = parseDevinLine(line);
-        if (record !== null) records.push(record);
-        continue;
-      }
-
-      if (!mightCarryUsage(line, provider)) continue;
-      const record = parseClaudeLine(line);
+      if (!handler.mightCarryUsage(line)) continue;
+      const record = handler.parseLine(line, state);
       if (record !== null) records.push(record);
     }
   } catch {
