@@ -122,6 +122,167 @@ effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fall
   );
 });
 
+effectIt("Windows listener probe builds the process-name map once", () =>
+  Effect.gen(function* () {
+    let seenCommand: string | undefined;
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              seenCommand = input.args.at(-1);
+              return Effect.succeed({
+                stdout: "127.0.0.1|5173|4242|node\n",
+                stderr: "",
+                code: 0,
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              });
+            },
+          }),
+          Layer.succeed(Net.NetService, {
+            canListenOnHost: () => Effect.succeed(true),
+            isPortAvailableOnLoopback: () => Effect.succeed(true),
+            reserveLoopbackPort: () => Effect.succeed(40_000),
+            findAvailablePort: (preferred) => Effect.succeed(preferred),
+          }),
+          Layer.succeed(HostProcessPlatform, "win32"),
+        ),
+      ),
+    );
+
+    const servers = yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      return yield* scanner.scan();
+    }).pipe(Effect.provide(layer), Effect.scoped);
+
+    expect(seenCommand).toBe(PortScanner.WINDOWS_LISTENER_COMMAND);
+    // Regression for #5900: never call Get-Process -Id per listener.
+    expect(seenCommand).toContain("$m = @{}");
+    expect(seenCommand).not.toMatch(/Get-Process\s+-Id/);
+    expect(servers).toEqual([
+      {
+        host: "localhost",
+        port: 5173,
+        url: "http://localhost:5173",
+        processName: "node",
+        pid: 4242,
+        terminal: null,
+      },
+    ]);
+  }),
+);
+
+effectIt("Windows listener probe cools down after a timeout", () =>
+  Effect.gen(function* () {
+    let probeRuns = 0;
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: () => {
+              probeRuns += 1;
+              return Effect.fail(
+                new ProcessRunner.ProcessTimeoutError({
+                  command: "powershell.exe",
+                  argumentCount: 4,
+                  timeoutMs: 5_000,
+                }),
+              );
+            },
+          }),
+          Layer.succeed(Net.NetService, {
+            canListenOnHost: () => Effect.succeed(true),
+            isPortAvailableOnLoopback: () => Effect.succeed(true),
+            reserveLoopbackPort: () => Effect.succeed(40_000),
+            findAvailablePort: (preferred) => Effect.succeed(preferred),
+          }),
+          Layer.succeed(HostProcessPlatform, "win32"),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      // First scan hits the probe and records a wall-clock cooldown.
+      yield* scanner.scan();
+      expect(probeRuns).toBe(1);
+      // Immediate re-scans (retain, subscribe, poll) must not re-spawn PowerShell.
+      yield* scanner.scan();
+      yield* scanner.scan();
+      expect(probeRuns).toBe(1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  }),
+);
+
+effectIt("Windows listener probe is single-flight under concurrent scan()", () =>
+  Effect.gen(function* () {
+    let probeRuns = 0;
+    let releaseProbe: (() => void) | undefined;
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: () => {
+              probeRuns += 1;
+              return Effect.tryPromise({
+                try: async () => {
+                  await probeGate;
+                  return {
+                    stdout: "127.0.0.1|5173|4242|node\n",
+                    stderr: "",
+                    code: 0,
+                    timedOut: false,
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                    stdoutInvalidUtf8: false,
+                    stderrInvalidUtf8: false,
+                  };
+                },
+                catch: (cause) =>
+                  new ProcessRunner.ProcessReadError({
+                    command: "powershell.exe",
+                    argumentCount: 4,
+                    stream: "stdout",
+                    cause,
+                  }),
+              });
+            },
+          }),
+          Layer.succeed(Net.NetService, {
+            canListenOnHost: () => Effect.succeed(true),
+            isPortAvailableOnLoopback: () => Effect.succeed(true),
+            reserveLoopbackPort: () => Effect.succeed(40_000),
+            findAvailablePort: (preferred) => Effect.succeed(preferred),
+          }),
+          Layer.succeed(HostProcessPlatform, "win32"),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const first = scanner.scan().pipe(Effect.forkChild);
+      // Second claim must skip while the first probe is in flight.
+      yield* Effect.yieldNow();
+      const second = yield* scanner.scan();
+      expect(probeRuns).toBe(1);
+      // Common-port fallback while the expensive probe is busy.
+      expect(second.every((server) => server.processName === null)).toBe(true);
+
+      releaseProbe?.();
+      yield* first;
+      expect(probeRuns).toBe(1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  }),
+);
+
 effectIt("does not swallow process probe defects", () =>
   Effect.gen(function* () {
     const defect = new Error("unexpected process probe defect");
@@ -153,5 +314,64 @@ effectIt("does not swallow process probe interruption", () =>
     if (Exit.isFailure(exit)) {
       expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     }
+  }),
+);
+
+effectIt("clears Windows listener probe in-flight flag after interruption", () =>
+  Effect.gen(function* () {
+    let probeRuns = 0;
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: () => {
+              probeRuns += 1;
+              if (probeRuns === 1) {
+                return Effect.interrupt;
+              }
+              return Effect.succeed({
+                stdout: "127.0.0.1|5173|4242|node\n",
+                stderr: "",
+                code: 0,
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              });
+            },
+          }),
+          Layer.succeed(Net.NetService, {
+            canListenOnHost: () => Effect.succeed(true),
+            isPortAvailableOnLoopback: () => Effect.succeed(true),
+            reserveLoopbackPort: () => Effect.succeed(40_000),
+            findAvailablePort: (preferred) => Effect.succeed(preferred),
+          }),
+          Layer.succeed(HostProcessPlatform, "win32"),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const first = yield* scanner.scan().pipe(Effect.exit);
+      expect(Exit.isFailure(first)).toBe(true);
+      if (Exit.isFailure(first)) {
+        expect(Cause.hasInterruptsOnly(first.cause)).toBe(true);
+      }
+      // Release must clear inFlight; otherwise every later scan would skip.
+      const second = yield* scanner.scan();
+      expect(probeRuns).toBe(2);
+      expect(second).toEqual([
+        {
+          host: "localhost",
+          port: 5173,
+          url: "http://localhost:5173",
+          processName: "node",
+          pid: 4242,
+          terminal: null,
+        },
+      ]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
   }),
 );
