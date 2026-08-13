@@ -231,6 +231,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         isEnvironmentUnavailable ||
         !hasSendableContent
       }
+      title="Send message. Alt+Enter sends to a new thread."
       aria-label={
         isEnvironmentUnavailable
           ? "Environment disconnected"

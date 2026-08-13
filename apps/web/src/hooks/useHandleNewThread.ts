@@ -82,6 +82,7 @@ export function useNewThreadHandler() {
          * keep mint-fresh semantics.
          */
         carryComposerContent?: boolean;
+        navigate?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -312,11 +313,13 @@ export function useNewThreadHandler() {
           ) {
             return opened;
           }
-          await router.navigate({
-            to: "/draft/$draftId",
-            params: { draftId: emptyStoredDraftThread.draftId },
-            replace: options?.replace ?? false,
-          });
+          if (options?.navigate !== false) {
+            await router.navigate({
+              to: "/draft/$draftId",
+              params: { draftId: emptyStoredDraftThread.draftId },
+              replace: options?.replace ?? false,
+            });
+          }
           return opened;
         })();
       }
@@ -386,11 +389,13 @@ export function useNewThreadHandler() {
             ...pickExplicitWorkspaceOptions(options),
           });
           carryComposerContentTo(racedDraft.draftId);
-          await router.navigate({
-            to: "/draft/$draftId",
-            params: { draftId: racedDraft.draftId },
-            replace: options?.replace ?? false,
-          });
+          if (options?.navigate !== false) {
+            await router.navigate({
+              to: "/draft/$draftId",
+              params: { draftId: racedDraft.draftId },
+              replace: options?.replace ?? false,
+            });
+          }
           return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
         }
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
@@ -419,11 +424,13 @@ export function useNewThreadHandler() {
         }
         carryComposerContentTo(draftId);
 
-        await router.navigate({
-          to: "/draft/$draftId",
-          params: { draftId },
-          replace: options?.replace ?? false,
-        });
+        if (options?.navigate !== false) {
+          await router.navigate({
+            to: "/draft/$draftId",
+            params: { draftId },
+            replace: options?.replace ?? false,
+          });
+        }
         return { draftId, threadId };
       })();
     },

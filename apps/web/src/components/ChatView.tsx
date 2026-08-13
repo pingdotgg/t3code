@@ -202,6 +202,7 @@ import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  type DraftThreadState,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
@@ -4876,6 +4877,7 @@ function ChatViewContent(props: ChatViewProps) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    destination: "current" | "new-thread" = "current",
   ) => {
     e?.preventDefault();
     const notifyDirectAnnotationAttached = () => {
@@ -4968,7 +4970,12 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
-    if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
+    if (
+      destination === "current" &&
+      !directAnnotation &&
+      showPlanFollowUpPrompt &&
+      activeProposedPlan
+    ) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -5026,24 +5033,83 @@ function ChatViewContent(props: ChatViewProps) {
       );
       return;
     }
-    const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+
+    let newThreadDraft: DraftThreadState | null = null;
+    let newThreadDraftId: DraftId | null = null;
+    if (destination === "new-thread") {
+      sendInFlightRef.current = true;
+      const newDraftResult = await settlePromise(() =>
+        handleNewThread(scopeProjectRef(activeProject.environmentId, activeProject.id), {
+          navigate: false,
+        }),
+      );
+      if (newDraftResult._tag === "Success" && newDraftResult.value) {
+        newThreadDraftId = newDraftResult.value.draftId;
+        newThreadDraft = useComposerDraftStore.getState().getDraftSession(newThreadDraftId);
+      }
+      if (!newThreadDraft) {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+        const error =
+          newDraftResult._tag === "Failure"
+            ? squashAtomCommandFailure(newDraftResult)
+            : "The new thread draft could not be created.";
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start a new thread",
+            description:
+              error instanceof Error ? error.message : "The new thread draft could not be created.",
+          }),
+        );
+        return;
+      }
+    }
+
+    const threadIdForSend = newThreadDraft?.threadId ?? activeThread.id;
+    const isFirstMessage =
+      newThreadDraft !== null || !isServerThread || activeThread.messages.length === 0;
+    const branchForSend = newThreadDraft ? newThreadDraft.branch : activeThreadBranch;
+    const worktreePathForSend = newThreadDraft
+      ? newThreadDraft.worktreePath
+      : activeThread.worktreePath;
+    const envModeForSend = newThreadDraft
+      ? resolveSendEnvMode({ requestedEnvMode: newThreadDraft.envMode, isGitRepo })
+      : sendEnvMode;
+    const startFromOriginForSend = newThreadDraft
+      ? newThreadDraft.startFromOrigin
+      : startFromOrigin;
+    const runtimeModeForSend = newThreadDraft?.runtimeMode ?? runtimeMode;
+    const interactionModeForSend = newThreadDraft?.interactionMode ?? interactionMode;
     const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
+      isFirstMessage && envModeForSend === "worktree" && !worktreePathForSend
+        ? branchForSend
         : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
-      setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      isFirstMessage && envModeForSend === "worktree" && !worktreePathForSend;
+    if (shouldCreateWorktree && !branchForSend) {
+      const error = "Select a base branch before sending in New worktree mode.";
+      if (newThreadDraft) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Could not send to a new thread",
+            description: error,
+          }),
+        );
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+      } else {
+        setThreadError(threadIdForSend, error);
+      }
       return;
     }
 
     sendInFlightRef.current = true;
-    if (isDraftHeroState && activeThreadKey) {
+    if (!newThreadDraft && isDraftHeroState && activeThreadKey) {
       let resolveDockStarted: (() => void) | undefined;
       const dockStarted = new Promise<void>((resolve) => {
         resolveDockStarted = resolve;
@@ -5058,7 +5124,9 @@ function ChatViewContent(props: ChatViewProps) {
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
     }
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    if (!newThreadDraft) {
+      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    }
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -5103,35 +5171,37 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    // Sending always returns to the live edge. The new row becomes the
-    // anchored end-space target so it lands near the top while the response
-    // streams into the reserved space below it.
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "anchoring-new-turn";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
-    pendingTimelineAnchorRef.current = messageIdForSend;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor({
-      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-      messageId: messageIdForSend,
-    });
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        turnId: null,
-        createdAt: messageCreatedAt,
-        updatedAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
-    setThreadError(threadIdForSend, null);
+    if (!newThreadDraft) {
+      // Sending always returns to the live edge. The new row becomes the
+      // anchored end-space target so it lands near the top while the response
+      // streams into the reserved space below it.
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "anchoring-new-turn";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      setTimelineLiveFollowEnabled(true);
+      pendingTimelineAnchorRef.current = messageIdForSend;
+      activeTimelineAnchorIndexRef.current = null;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      setTimelineAnchor({
+        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        messageId: messageIdForSend,
+      });
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          turnId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      setThreadError(threadIdForSend, null);
+    }
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
         expiredTerminalContextCount,
@@ -5177,7 +5247,7 @@ function ChatViewContent(props: ChatViewProps) {
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
     // Auto-title from first message
-    if (isFirstMessage && isServerThread) {
+    if (isFirstMessage && isServerThread && !newThreadDraft) {
       const titleResult = await updateThreadMetadata({
         environmentId,
         input: {
@@ -5190,7 +5260,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
 
-    if (failure === null && isServerThread) {
+    if (failure === null && isServerThread && !newThreadDraft) {
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
@@ -5198,8 +5268,8 @@ function ChatViewContent(props: ChatViewProps) {
         ...(localCheckoutBranchMismatch
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
-        runtimeMode,
-        interactionMode,
+        runtimeMode: runtimeModeForSend,
+        interactionMode: interactionModeForSend,
       });
       if (settingsResult._tag === "Failure") {
         failure = settingsResult;
@@ -5214,19 +5284,19 @@ function ChatViewContent(props: ChatViewProps) {
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
-        isLocalDraftThread || baseBranchForWorktree
+        newThreadDraft || isLocalDraftThread || baseBranchForWorktree
           ? {
-              ...(isLocalDraftThread
+              ...(newThreadDraft || isLocalDraftThread
                 ? {
                     createThread: {
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
-                      runtimeMode,
-                      interactionMode,
-                      branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
-                      createdAt: activeThread.createdAt,
+                      runtimeMode: runtimeModeForSend,
+                      interactionMode: interactionModeForSend,
+                      branch: branchForSend,
+                      worktreePath: worktreePathForSend,
+                      createdAt: newThreadDraft?.createdAt ?? activeThread.createdAt,
                     },
                   }
                 : {}),
@@ -5236,14 +5306,16 @@ function ChatViewContent(props: ChatViewProps) {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
                       branch: buildTemporaryWorktreeBranchName(randomHex),
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      ...(startFromOriginForSend ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
                   }
                 : {}),
             }
           : undefined;
-      beginLocalDispatch({ preparingWorktree: false });
+      if (!newThreadDraft) {
+        beginLocalDispatch({ preparingWorktree: false });
+      }
       const startResult = await startThreadTurn({
         environmentId,
         input: {
@@ -5256,8 +5328,8 @@ function ChatViewContent(props: ChatViewProps) {
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
-          runtimeMode,
-          interactionMode,
+          runtimeMode: runtimeModeForSend,
+          interactionMode: interactionModeForSend,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
@@ -5266,7 +5338,9 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        acknowledgeActiveThreadWoke();
+        if (!newThreadDraft) {
+          acknowledgeActiveThreadWoke();
+        }
       }
     }
 
@@ -5308,11 +5382,49 @@ function ChatViewContent(props: ChatViewProps) {
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
-        setThreadError(
-          threadIdForSend,
-          error instanceof Error ? error.message : "Failed to send message.",
+        const description = error instanceof Error ? error.message : "Failed to send message.";
+        if (newThreadDraft) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not send to a new thread",
+              description,
+            }),
+          );
+        } else {
+          setThreadError(threadIdForSend, description);
+        }
+      }
+    }
+    if (turnStartSucceeded && newThreadDraft && newThreadDraftId) {
+      await settlePromise(() =>
+        waitForStartedServerThread(
+          scopeThreadRef(newThreadDraft.environmentId, threadIdForSend),
+          2_000,
+        ),
+      );
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      const navigateResult = await settlePromise(() =>
+        navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(newThreadDraftId),
+        }),
+      );
+      if (navigateResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(navigateResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "New thread started",
+            description:
+              error instanceof Error
+                ? `The thread started, but could not be opened: ${error.message}`
+                : "The thread started, but could not be opened.",
+          }),
         );
       }
+      return;
     }
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {
@@ -5322,6 +5434,9 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  const onSendToNewThread = (e?: { preventDefault: () => void }) =>
+    onSend(e, undefined, "new-thread");
 
   const onInterrupt = async () => {
     if (!activeThread) return;
@@ -6386,6 +6501,7 @@ function ChatViewContent(props: ChatViewProps) {
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}
+                            onSendToNewThread={onSendToNewThread}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}

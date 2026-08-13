@@ -11,11 +11,23 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-export function shouldSubmitComposerOnEnter(input: {
+export type ComposerEnterAction = "send" | "send-new-thread";
+
+export function resolveComposerEnterAction(input: {
   isMobileViewport: boolean;
   shiftKey: boolean;
-}): boolean {
-  return !input.isMobileViewport && !input.shiftKey;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+}): ComposerEnterAction | null {
+  if (
+    input.isMobileViewport ||
+    input.shiftKey ||
+    (input.altKey && (input.ctrlKey || input.metaKey))
+  ) {
+    return null;
+  }
+  return input.altKey ? "send-new-thread" : "send";
 }
 
 const isInlineTokenSegment = (

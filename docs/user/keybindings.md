@@ -55,6 +55,10 @@ characters and uses SQLite's ASCII case-insensitive matching.
 The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
 always matches the build you are running. Use that rather than a copied list.
 
+Composer shortcuts are fixed interactions and do not appear in the keybindings list. On desktop,
+`Enter` sends to the current thread, `Alt+Enter` sends to a new thread in the same project, and
+`Shift+Enter` inserts a newline.
+
 Note that `chat.new` and `chat.newLocal` both create a thread through the same path. A new thread
 inherits the project you were in, along with model and mode selections. Branch, worktree, and
 environment mode always come from your configured defaults, not from the thread you were looking
