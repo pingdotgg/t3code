@@ -74,7 +74,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { resolveEnabledDesktopMcp } from "../../desktopControl/resolveEnabledDesktopMcp.ts";
+import { makeResolveEnabledDesktopMcp } from "../../desktopControl/resolveEnabledDesktopMcp.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -1644,6 +1644,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+  // Re-resolve per session (settings toggles) without widening startSession's R.
+  const resolveDesktopMcp = yield* makeResolveEnabledDesktopMcp();
 
   const createQuery =
     options?.createQuery ??
@@ -4100,9 +4102,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         serverConfig.attachmentsDir,
       ];
       // Desktop MCP is offered when the platform binary resolves and Computer
-      // Use is enabled in settings. Resolve per session so Settings toggles
-      // apply without restarting the app.
-      const desktopMcp = yield* resolveEnabledDesktopMcp();
+      // Use is enabled. Re-resolve per session so Settings toggles apply without
+      // restarting the app.
+      const desktopMcp = yield* resolveDesktopMcp();
       const mcpServers = {
         ...(mcpSession
           ? {
