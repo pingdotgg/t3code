@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -84,7 +85,10 @@ async function readJsonLines(filePath: string) {
 
 const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-grok-adapter-test-",
-}).pipe(Layer.provideMerge(NodeServices.layer));
+}).pipe(
+  Layer.provideMerge(ServerSettingsService.layerTest()),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const makeTestAdapter = (binaryPath: string, options?: Parameters<typeof makeGrokAdapter>[1]) =>
   makeGrokAdapter(decodeGrokSettings({ binaryPath }), options).pipe(Effect.orDie);
