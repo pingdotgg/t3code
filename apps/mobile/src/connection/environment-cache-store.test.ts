@@ -1,5 +1,6 @@
 import { ORCHESTRATION_CACHE_SCHEMA_VERSION } from "@t3tools/client-runtime/platform";
 import {
+  CommandId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -74,6 +75,10 @@ const SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
       settledOverride: null,
       settledAt: NOW,
       lastVisitedAt: null,
+      titleRegeneration: {
+        requestId: CommandId.make("title-regeneration-1"),
+        startedAt: NOW,
+      },
       deletedAt: null,
     },
   ],
@@ -203,6 +208,9 @@ describe("mobile SQLite environment cache store", () => {
 
       expect(DateTime.formatIso(shell.threads[0]!.updatedAt)).toBe("2026-07-29T12:00:00.000Z");
       expect(DateTime.formatIso(shell.threads[0]!.latestUserMessageAt!)).toBe(
+        "2026-07-29T12:00:00.000Z",
+      );
+      expect(DateTime.formatIso(shell.threads[0]!.titleRegeneration!.startedAt)).toBe(
         "2026-07-29T12:00:00.000Z",
       );
       expect(DateTime.formatIso(thread.projection.thread.updatedAt)).toBe(
