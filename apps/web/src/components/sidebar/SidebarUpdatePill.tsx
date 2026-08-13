@@ -277,15 +277,15 @@ function SidebarUpdateControl() {
               type="button"
               aria-label={tooltip}
               aria-disabled={disabled || isActionPending || undefined}
-              disabled={isActionPending && !isDownloading}
+              disabled={(disabled || isActionPending) && !isDownloading}
               className={cn(
                 "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60",
-                isDownloading ? "cursor-default" : "cursor-pointer",
+                isDownloading ? "cursor-default" : "enabled:cursor-pointer",
                 isDownloading
                   ? "bg-transparent text-update-foreground hover:bg-update/8"
                   : isUpdateState
-                    ? "bg-update-surface text-update-foreground hover:bg-update/12"
-                    : "text-[var(--sidebar-icon-color)] hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                    ? "bg-update-surface text-update-foreground enabled:hover:bg-update/12"
+                    : "text-[var(--sidebar-icon-color)] enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground",
               )}
               onClick={handleAction}
             >
