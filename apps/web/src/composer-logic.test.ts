@@ -6,6 +6,7 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  parseParallelAgentComposerCommand,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
   shouldSubmitComposerOnEnter,
@@ -356,6 +357,24 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
+  });
+});
+
+describe("parseParallelAgentComposerCommand", () => {
+  it("parses the sub-task prompt", () => {
+    expect(parseParallelAgentComposerCommand("/parallel Fix the backend tests")).toBe(
+      "Fix the backend tests",
+    );
+    expect(parseParallelAgentComposerCommand("  /Parallel   multi\nline prompt ")).toBe(
+      "multi\nline prompt",
+    );
+  });
+
+  it("returns null for a bare /parallel or unrelated text", () => {
+    expect(parseParallelAgentComposerCommand("/parallel")).toBeNull();
+    expect(parseParallelAgentComposerCommand("/parallel   ")).toBeNull();
+    expect(parseParallelAgentComposerCommand("/parallelism is nice")).toBeNull();
+    expect(parseParallelAgentComposerCommand("run /parallel later")).toBeNull();
   });
 });
 

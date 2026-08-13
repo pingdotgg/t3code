@@ -76,6 +76,7 @@ import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
+  parseParallelAgentComposerCommand,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
 import {
@@ -4866,6 +4867,110 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  // Spawns a parallel agent for a `/parallel <prompt>` submission: a sibling
+  // thread linked to this one that works the sub-task concurrently with the
+  // composer's currently selected provider/model. The server reports the
+  // spawn and the child's outcome back into this thread's activity log.
+  const spawnParallelAgent = async (subtaskPrompt: string): Promise<boolean> => {
+    if (
+      !activeThread ||
+      !activeProject ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      activeEnvironmentUnavailable ||
+      sendInFlightRef.current
+    ) {
+      return false;
+    }
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!sendCtx?.providerAvailable) {
+      return false;
+    }
+    const createdAt = new Date().toISOString();
+    const childThreadId = newThreadId();
+    const childTitle = truncate(subtaskPrompt);
+    const outgoingPrompt = formatOutgoingPrompt({
+      provider: sendCtx.selectedProvider,
+      model: sendCtx.selectedModel,
+      models: sendCtx.selectedProviderModels,
+      effort: sendCtx.selectedPromptEffort,
+      text: subtaskPrompt,
+    });
+    // Parallel agents get their own worktree off the parent's branch so
+    // simultaneous edits don't fight over one checkout. Without git there is
+    // no isolation to offer: the child shares the parent's workspace.
+    const worktreeBaseBranch = isGitRepo ? activeThreadBranch : null;
+    sendInFlightRef.current = true;
+    beginLocalDispatch({ preparingWorktree: worktreeBaseBranch !== null });
+    const startResult = await startThreadTurn({
+      environmentId,
+      input: {
+        threadId: childThreadId,
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: outgoingPrompt,
+          attachments: [],
+        },
+        modelSelection: sendCtx.selectedModelSelection,
+        titleSeed: childTitle,
+        runtimeMode,
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: activeProject.id,
+            title: childTitle,
+            modelSelection: sendCtx.selectedModelSelection,
+            runtimeMode,
+            interactionMode: "default",
+            branch: activeThreadBranch,
+            worktreePath: worktreeBaseBranch !== null ? null : activeThread.worktreePath,
+            parentThreadId: activeThread.id,
+            createdAt,
+          },
+          ...(worktreeBaseBranch !== null
+            ? {
+                prepareWorktree: {
+                  projectCwd: activeProject.workspaceRoot,
+                  baseBranch: worktreeBaseBranch,
+                  branch: buildTemporaryWorktreeBranchName(randomHex),
+                },
+                runSetupScript: true,
+              }
+            : {}),
+        },
+        createdAt,
+      },
+    });
+    sendInFlightRef.current = false;
+    resetLocalDispatch();
+    if (startResult._tag === "Failure") {
+      if (!isAtomCommandInterrupted(startResult)) {
+        const error = squashAtomCommandFailure(startResult);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not start parallel agent",
+            description:
+              error instanceof Error
+                ? error.message
+                : "An error occurred while spawning the parallel agent.",
+          }),
+        );
+      }
+      return false;
+    }
+    toastManager.add(
+      stackedThreadToast({
+        type: "success",
+        title: "Parallel agent started",
+        description: childTitle,
+      }),
+    );
+    return true;
+  };
+
   const onSend = async (
     e?: { preventDefault: () => void },
     directAnnotation?: {
@@ -4994,6 +5099,47 @@ function ChatViewContent(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      return;
+    }
+    // `/parallel <prompt>` runs the prompt on a parallel agent in a linked
+    // sibling thread instead of this one. Text-only: attachments and contexts
+    // stay in the composer so nothing is silently dropped.
+    const parallelAgentPrompt = directAnnotation
+      ? null
+      : parseParallelAgentComposerCommand(trimmed);
+    if (parallelAgentPrompt !== null) {
+      const hasNonTextContent =
+        composerImages.length > 0 ||
+        sendableComposerTerminalContexts.length > 0 ||
+        composerElementContexts.length > 0 ||
+        composerPreviewAnnotations.length > 0 ||
+        composerReviewComments.length > 0;
+      if (hasNonTextContent) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "/parallel is text-only",
+            description: "Remove attachments and contexts before spawning a parallel agent.",
+          }),
+        );
+        return;
+      }
+      if (!isServerThread) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Start this thread first",
+            description: "/parallel spawns agents from an existing thread they can report back to.",
+          }),
+        );
+        return;
+      }
+      const spawned = await spawnParallelAgent(parallelAgentPrompt);
+      if (spawned) {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
       return;
     }
     if (!hasSendableContent) {

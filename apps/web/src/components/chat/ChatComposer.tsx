@@ -1045,6 +1045,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: "/model",
           description: "Switch response model for this thread",
         },
+        {
+          id: "slash:parallel",
+          type: "slash-command",
+          command: "parallel",
+          label: "/parallel",
+          description: "Run a prompt on a parallel agent in a linked thread",
+        },
         ...(planModeUiEnabled
           ? ([
               {
@@ -1685,6 +1692,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           if (applied) {
             setComposerHighlightedItemId(null);
             setIsComposerModelPickerOpen(true);
+          }
+          return;
+        }
+        if (item.command === "parallel") {
+          // Keep the command in the prompt: the sub-task text follows it and
+          // send-time parsing spawns the parallel agent.
+          const replacement = "/parallel ";
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
           }
           return;
         }

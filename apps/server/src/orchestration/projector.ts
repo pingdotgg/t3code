@@ -50,7 +50,7 @@ function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error"
  * leaves the "running" status, or null while the session is (re)starting or
  * running and the turn must stay unsettled.
  */
-function settledTurnStateForSessionStatus(
+export function settledTurnStateForSessionStatus(
   status: OrchestrationSession["status"],
 ): "completed" | "interrupted" | "error" | null {
   switch (status) {
@@ -297,6 +297,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            parentThreadId: payload.parentThreadId ?? null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,

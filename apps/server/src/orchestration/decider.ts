@@ -3,6 +3,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -11,6 +12,7 @@ import type * as PlatformError from "effect/PlatformError";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
+  findThreadById,
   listThreadsByProjectId,
   requireActiveProjectWorkspaceRootAbsent,
   requireProject,
@@ -20,7 +22,7 @@ import {
   requireThreadAbsent,
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
-import { projectEvent } from "./projector.ts";
+import { projectEvent, settledTurnStateForSessionStatus } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -170,6 +172,101 @@ function withEventBase(
       ),
     ),
   );
+}
+
+// Cap on the assistant text copied into the parent's activity payload: enough
+// to read the child's outcome in the parent thread without ballooning the
+// parent's activity list on the wire.
+const PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS = 4_000;
+
+/**
+ * The parent-thread activity for a parallel agent whose running turn this
+ * session write settles, or null when the write is not a parallel-agent turn
+ * end. The turn-settling condition mirrors the projector's: the child's
+ * latest turn is still "running" and the new session status maps to a settled
+ * state, so the activity fires exactly once per child turn.
+ */
+function parallelAgentFinishedActivityEvent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: Extract<OrchestrationCommand, { type: "thread.session.set" }>;
+  readonly thread: OrchestrationThread;
+}): Effect.Effect<
+  Omit<OrchestrationEvent, "sequence"> | null,
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  return Effect.gen(function* () {
+    const { readModel, command, thread } = input;
+    const parentThreadId = thread.parentThreadId ?? null;
+    if (parentThreadId === null) {
+      return null;
+    }
+    const settledState = settledTurnStateForSessionStatus(command.session.status);
+    if (settledState === null) {
+      return null;
+    }
+    const finishedTurn = thread.latestTurn;
+    if (finishedTurn === null || finishedTurn.state !== "running") {
+      return null;
+    }
+    const parentThread = findThreadById(readModel, parentThreadId);
+    if (parentThread === undefined || parentThread.deletedAt !== null) {
+      return null;
+    }
+    let resultText: string | null = null;
+    for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
+      const message = thread.messages[index];
+      if (
+        message !== undefined &&
+        message.role === "assistant" &&
+        message.turnId === finishedTurn.turnId &&
+        message.text.trim().length > 0
+      ) {
+        resultText = message.text;
+        break;
+      }
+    }
+    const outcome =
+      settledState === "error"
+        ? ({ kind: "parallel-agent.failed", tone: "error", verb: "failed" } as const)
+        : settledState === "interrupted"
+          ? ({ kind: "parallel-agent.interrupted", tone: "info", verb: "was interrupted" } as const)
+          : ({ kind: "parallel-agent.completed", tone: "info", verb: "finished" } as const);
+    return {
+      ...(yield* withEventBase({
+        aggregateKind: "thread",
+        aggregateId: parentThread.id,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+      })),
+      type: "thread.activity-appended",
+      payload: {
+        threadId: parentThread.id,
+        activity: {
+          id: EventId.make(`parallel-agent:finished:${thread.id}:${finishedTurn.turnId}`),
+          tone: outcome.tone,
+          kind: outcome.kind,
+          summary: `Parallel agent ${outcome.verb}: ${thread.title}`,
+          payload: {
+            childThreadId: thread.id,
+            childTitle: thread.title,
+            turnId: finishedTurn.turnId,
+            state: settledState,
+            ...(resultText === null
+              ? {}
+              : {
+                  detail:
+                    resultText.length > PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS
+                      ? `${resultText.slice(0, PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS)}…`
+                      : resultText,
+                }),
+          },
+          turnId: null,
+          createdAt: command.createdAt,
+        },
+      },
+    };
+  });
 }
 
 type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
@@ -360,7 +457,34 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      return {
+      const parentThreadId = command.parentThreadId ?? null;
+      if (parentThreadId !== null && parentThreadId === command.threadId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' cannot be its own parallel-agent parent.`,
+        });
+      }
+      const parentThread =
+        parentThreadId === null
+          ? null
+          : yield* requireThread({
+              readModel,
+              command,
+              threadId: parentThreadId,
+            });
+      if (parentThread !== null && parentThread.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Parent thread '${parentThread.id}' belongs to a different project than '${command.projectId}'.`,
+        });
+      }
+      if (parentThread !== null && parentThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Parent thread '${parentThread.id}' is deleted and cannot spawn parallel agents.`,
+        });
+      }
+      const threadCreatedEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -377,10 +501,41 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          parentThreadId,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
       };
+      if (parentThread === null) {
+        return threadCreatedEvent;
+      }
+      // The spawn is part of the parent's conversation: record it there so
+      // the shared thread shows which parallel agents it kicked off.
+      const spawnActivityEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: parentThread.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: parentThread.id,
+          activity: {
+            id: EventId.make(`parallel-agent:started:${command.threadId}`),
+            tone: "info",
+            kind: "parallel-agent.started",
+            summary: `Parallel agent started: ${command.title}`,
+            payload: {
+              childThreadId: command.threadId,
+              childTitle: command.title,
+            },
+            turnId: null,
+            createdAt: command.createdAt,
+          },
+        },
+      };
+      return [spawnActivityEvent, threadCreatedEvent];
     }
 
     case "thread.delete": {
@@ -1182,6 +1337,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           session: command.session,
         },
       };
+      // A parallel agent's turn end is the parent's news: when this session
+      // write settles the child's running turn, surface the outcome (and the
+      // final assistant text) into the parent thread's activity log. Mirrors
+      // the projector's turn-settling condition so it fires once per turn.
+      const parallelAgentFinishedEvent = yield* parallelAgentFinishedActivityEvent({
+        readModel,
+        command,
+        thread,
+      });
       // Only a session coming alive is activity worth waking a settled thread
       // for — status writes like ready/stopped/error arrive after the fact and
       // must not fight a user's explicit settle. Snooze is deliberately NOT
@@ -1194,7 +1358,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command.session.status === "starting" || command.session.status === "running";
       // Real activity resets ANY override (settled wakes, active unpins).
       if (thread.settledOverride === null || !isSessionActivity) {
-        return sessionSetEvent;
+        return parallelAgentFinishedEvent === null
+          ? sessionSetEvent
+          : [parallelAgentFinishedEvent, sessionSetEvent];
       }
       const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
@@ -1210,6 +1376,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+      // isSessionActivity and a settling turn are mutually exclusive, so the
+      // unsettle path never carries a parallel-agent finish.
       return [unsettledEvent, sessionSetEvent];
     }
 

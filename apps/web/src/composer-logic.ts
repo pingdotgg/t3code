@@ -2,7 +2,7 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "parallel";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -264,7 +264,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+): Exclude<ComposerSlashCommand, "model" | "parallel"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
@@ -272,6 +272,18 @@ export function parseStandaloneComposerSlashCommand(
   const command = match[1]?.toLowerCase();
   if (command === "plan") return "plan";
   return "default";
+}
+
+/**
+ * The sub-task prompt of a `/parallel <prompt>` composer submission, or null
+ * when the text is not a parallel-agent command. A bare `/parallel` with no
+ * prompt also returns null so it sends as plain text instead of spawning an
+ * agent with nothing to do.
+ */
+export function parseParallelAgentComposerCommand(text: string): string | null {
+  const match = /^\/parallel\s+(\S[\s\S]*)$/i.exec(text.trim());
+  const prompt = match?.[1]?.trim();
+  return prompt !== undefined && prompt.length > 0 ? prompt : null;
 }
 
 export function replaceTextRange(
