@@ -328,7 +328,7 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
-  it("includes quotes and fenced code in the same selectable string", () => {
+  it("preserves quotes and fenced code in document runs", () => {
     const node: MarkdownNode = {
       type: "document",
       children: [
@@ -414,6 +414,39 @@ describe("nativeMarkdownListItemBlocks", () => {
 });
 
 describe("nativeMarkdownDocumentChunks", () => {
+  it("renders plain blockquotes as rich blocks so their marker spans wrapped lines", () => {
+    const blockquote: MarkdownNode = {
+      type: "blockquote",
+      beg: 0,
+      end: 120,
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "text",
+              content:
+                "Persistent random per-result keys are the strongest design, even when this text wraps.",
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(
+      nativeMarkdownDocumentChunks({
+        type: "document",
+        children: [blockquote],
+      }),
+    ).toEqual([
+      {
+        kind: "rich",
+        key: "rich:blockquote:0:120",
+        node: blockquote,
+      },
+    ]);
+  });
+
   it("keeps headings and plain lists in one selectable document", () => {
     const document: MarkdownNode = {
       type: "document",
