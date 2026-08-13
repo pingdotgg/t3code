@@ -80,7 +80,8 @@ export function AgentActivity(
   const useCompactWidget =
     widgetFamily === "systemSmall" ||
     widgetFamily === "accessoryCircular" ||
-    widgetFamily === "accessoryInline";
+    widgetFamily === "accessoryInline" ||
+    widgetFamily === "accessoryRectangular";
   // expo-widgets 56 stopped applying this natively. iOS 17+ home-screen
   // widgets that omit it render "Please adopt containerBackground API".
   const homeScreenBackground = isHomeScreenWidget ? [containerBackground("clear", "widget")] : [];
@@ -322,8 +323,8 @@ export function AgentActivity(
       {row4 ? renderCompactRow(row4) : null}
     </VStack>
   );
-  // Compact card for the watchOS Smart Stack + CarPlay (the `.small` family)
-  // and the home-screen systemSmall widget.
+  // Compact card for the watchOS Smart Stack + CarPlay (the `.small` family),
+  // the home-screen systemSmall widget, and lock-screen accessory families.
   const bannerSmall = (
     <VStack
       alignment="leading"

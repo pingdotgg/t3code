@@ -290,6 +290,16 @@ describe("AgentActivity widget layout", () => {
     expect(smallJson).toContain('"containerBackground":{"color":"clear","container":"widget"}');
     expect(smallJson).toContain('"all":10');
     expect(smallJson).not.toContain('"all":14');
+
+    const accessory = AgentActivity({ ...props, activities: [makeRow({})] }, {
+      ...environment,
+      widgetFamily: "accessoryRectangular",
+    } as never);
+    const accessoryJson = JSON.stringify(accessory);
+    expect(accessory).not.toHaveProperty("banner");
+    expect(accessoryJson).toContain('"containerBackground":{"color":"clear","container":"widget"}');
+    expect(accessoryJson).toContain('"all":10');
+    expect(accessoryJson).not.toContain('"all":14');
   });
 
   it("does not apply containerBackground to the Live Activity layout", () => {
