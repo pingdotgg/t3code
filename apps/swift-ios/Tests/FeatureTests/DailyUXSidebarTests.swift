@@ -189,6 +189,24 @@ struct DailyUXSidebarTests {
         #expect(!eligible)
     }
 
+    @Test
+    func fractionalSecondUserMessageBlocksSettlementProjection() {
+        let eligible = FeatureSettlementProjection.canSettle(
+            FeatureSettlementProjectionInput(
+                hasPendingApprovals: false,
+                hasPendingUserInput: false,
+                sessionStatus: nil,
+                latestUserMessageAt: "1970-01-24T03:32:50.000Z",
+                latestTurnRequestedAt: nil,
+                latestTurnStartedAt: nil,
+                latestTurnCompletedAt: nil
+            ),
+            now: now
+        )
+
+        #expect(!eligible)
+    }
+
     @Test(arguments: [FeatureThreadState.working, .monitoring])
     func backgroundOnlyShellsRemainSettlementEligible(state: FeatureThreadState) {
         let eligible = FeatureSettlementProjection.canSettle(
@@ -298,6 +316,24 @@ struct DailyUXSidebarTests {
 
         explicitlyUnsupported.pinnedAt = now
         #expect(explicitlyUnsupported.canTogglePin)
+    }
+
+    @Test
+    func pinnedBlockedThreadCanFullSwipeToUnpin() {
+        let pinned = thread(
+            id: "pinned-blocked",
+            created: -20,
+            updated: -10,
+            state: .queued,
+            pinned: -5,
+            settlementEligible: false
+        )
+
+        #expect(
+            HomeThreadSwipeActions.kinds(for: pinned, isArchived: false, now: now).first
+                == .unpin
+        )
+        #expect(HomeThreadSwipeActions.allowsFullSwipe(for: pinned, isArchived: false, now: now))
     }
 
     @Test

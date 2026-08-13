@@ -336,8 +336,16 @@ enum FeatureSettlementProjection {
     }
 
     private static func parseDate(_ value: String) -> Date? {
-        try? Date(value, strategy: .iso8601)
+        fractionalDateFormatter.date(from: value) ?? dateFormatter.date(from: value)
     }
+
+    private static let fractionalDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let dateFormatter = ISO8601DateFormatter()
 }
 
 public enum FeatureMessageRole: String, Sendable, Codable {

@@ -16,8 +16,10 @@ enum HomeThreadSwipeActions {
         isArchived: Bool,
         now: Date
     ) -> Bool {
-        if isArchived || !thread.canToggleSettlement { return true }
-        return thread.isEffectivelySettled(at: now) || thread.canSettle
+        switch kinds(for: thread, isArchived: isArchived, now: now).first {
+        case .restore, .unpin, .settle, .reopen: true
+        case .archive, .delete, nil: false
+        }
     }
 
     static func kinds(
