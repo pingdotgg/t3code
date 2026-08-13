@@ -19,7 +19,7 @@ const spawn = vi.fn(() => ({
   onExit: vi.fn(() => ({ dispose: vi.fn() })),
 }));
 
-vi.mock("node-pty", () => ({ spawn }));
+vi.mock("@lydell/node-pty", () => ({ spawn }));
 
 const testLayer = NodePtyAdapter.layer.pipe(
   Layer.provide(
@@ -85,6 +85,66 @@ it.effect("preserves a caller-provided TERM in the spawn env on win32", () =>
       },
     ]);
   }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("resolves the spawn helper from the platform package", () =>
+  Effect.gen(function* () {
+    const wrapperPackageJsonPath =
+      "/Applications/T3.app/Contents/Resources/app.asar/node_modules.asar/@lydell/node-pty/package.json";
+    const packedHelperPath =
+      "/Applications/T3.app/Contents/Resources/app.asar/node_modules.asar/@lydell/node-pty-darwin-arm64/spawn-helper";
+    const resolve = vi.fn((request: string) => {
+      if (request === "@lydell/node-pty/package.json") return wrapperPackageJsonPath;
+      if (request === "@lydell/node-pty-darwin-arm64/spawn-helper") return packedHelperPath;
+      throw new Error(`Unexpected module request: ${request}`);
+    });
+    const createRequire = vi.fn((_filename: string | URL) => ({ resolve }));
+
+    const helperPath = yield* NodePtyAdapter.resolveNodePtySpawnHelperPath(createRequire);
+
+    assert.equal(
+      helperPath,
+      "/Applications/T3.app/Contents/Resources/app.asar.unpacked/node_modules.asar.unpacked/@lydell/node-pty-darwin-arm64/spawn-helper",
+    );
+    assert.deepEqual(createRequire.mock.calls[1], [wrapperPackageJsonPath]);
+    assert.deepEqual(resolve.mock.calls, [
+      ["@lydell/node-pty/package.json"],
+      ["@lydell/node-pty-darwin-arm64/spawn-helper"],
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcessPlatform, "darwin"),
+        Layer.succeed(HostProcessArchitecture, "arm64"),
+      ),
+    ),
+  ),
+);
+
+it.effect("preserves an already-unpacked spawn helper path", () =>
+  Effect.gen(function* () {
+    const wrapperPackageJsonPath =
+      "/Applications/T3.app/Contents/Resources/app.asar.unpacked/node_modules.asar.unpacked/@lydell/node-pty/package.json";
+    const unpackedHelperPath =
+      "/Applications/T3.app/Contents/Resources/app.asar.unpacked/node_modules.asar.unpacked/@lydell/node-pty-darwin-arm64/spawn-helper";
+    const resolve = vi.fn((request: string) => {
+      if (request === "@lydell/node-pty/package.json") return wrapperPackageJsonPath;
+      if (request === "@lydell/node-pty-darwin-arm64/spawn-helper") return unpackedHelperPath;
+      throw new Error(`Unexpected module request: ${request}`);
+    });
+    const createRequire = vi.fn((_filename: string | URL) => ({ resolve }));
+
+    const helperPath = yield* NodePtyAdapter.resolveNodePtySpawnHelperPath(createRequire);
+
+    assert.equal(helperPath, unpackedHelperPath);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(HostProcessPlatform, "darwin"),
+        Layer.succeed(HostProcessArchitecture, "arm64"),
+      ),
+    ),
+  ),
 );
 
 it.effect("reports native module load failures as structured startup defects", () =>
