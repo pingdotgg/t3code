@@ -2,7 +2,6 @@ import {
   PullRequestAction,
   type PullRequestCheck,
   type PullRequestComment,
-  type PullRequestDetail,
   type PullRequestDetailView,
   type PullRequestReviewThread,
 } from "@t3tools/contracts";
@@ -10,6 +9,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildAddSelectionToAgentHandoff,
+  classifyPullRequestChecks,
+  describePullRequestChecks,
+  resolveThreadPanelPullRequestAction,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
@@ -32,15 +34,11 @@ import {
   pullRequestHandoffLabels,
   pullRequestReviewOutcome,
   readableFailure,
-  readPullRequestDetailSnapshot,
-  resolveDisplayedPullRequestDetail,
-  resolvePullRequestPrimaryControl,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   buildPullRequestTimeline,
   describePullRequestState,
   editPullRequestThreadComment,
-  writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -148,54 +146,6 @@ describe("review thread comment pages", () => {
 describe("pull request action menu", () => {
   it("keeps the group divider when auto-merge is the only action", () => {
     expect(pullRequestActionMenuHasGroup(false, true, false)).toBe(true);
-  });
-});
-
-describe("pull request primary control", () => {
-  const open = {
-    state: "open" as const,
-    isDraft: false,
-    mergeability: "mergeable" as const,
-    checksState: "passing" as const,
-    autoMergeEnabled: false,
-    hasMergeMethod: true,
-    canMerge: true,
-    canMarkReady: true,
-    canEnableAutoMerge: true,
-  };
-
-  it("moves pending and failing checks to auto-merge", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, checksState: "pending" })).toBe(
-      "enable-auto-merge",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, checksState: "failing" })).toBe(
-      "enable-auto-merge",
-    );
-  });
-
-  it("does not offer auto-merge while the host state is unknown", () => {
-    expect(
-      resolvePullRequestPrimaryControl({
-        ...open,
-        checksState: "pending",
-        autoMergeEnabled: undefined,
-      }),
-    ).toBe("merge");
-  });
-
-  it("keeps armed and terminal states in the merge button slot", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, autoMergeEnabled: true })).toBe(
-      "auto-merge-armed",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, state: "merged" })).toBe("merged");
-    expect(resolvePullRequestPrimaryControl({ ...open, state: "closed" })).toBe("closed");
-  });
-
-  it("keeps conflicts and drafts actionable before merge", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, mergeability: "conflicting" })).toBe(
-      "resolve",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, isDraft: true })).toBe("ready");
   });
 });
 
@@ -1296,9 +1246,7 @@ describe("which actions need the host read again after they run", () => {
     // Imported from the contract rather than hand-listed, so a new PullRequestAction fails this
     // test until somebody decides which side of the diff it belongs on.
     expect(PullRequestAction.literals.map(pullRequestActionNeedsHostRefresh)).toEqual(
-      PullRequestAction.literals.map(
-        (action) => action === "update-branch" || action === "approve-workflows",
-      ),
+      PullRequestAction.literals.map((action) => action === "update-branch"),
     );
   });
 
@@ -1315,109 +1263,103 @@ describe("which actions need the host read again after they run", () => {
       "enable-auto-merge",
       "disable-auto-merge",
       "merge",
-      "revert",
     ] as const) {
       expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
     }
   });
 });
 
-describe("cached pull request detail", () => {
-  const reference = { projectId: "project-1", repository: "acme/web", number: 7 };
-  const detail = (overrides: Partial<PullRequestDetail> = {}): PullRequestDetail =>
+describe("the compact row's single action slot", () => {
+  const check = (status: PullRequestCheck["status"]): PullRequestCheck => ({
+    name: "ci",
+    status,
+    description: null,
+    url: null,
+  });
+  const openDetail = (
+    overrides: Partial<Parameters<typeof resolveThreadPanelPullRequestAction>[0] & object> = {},
+  ) =>
     ({
-      provider: "github",
-      capabilities: {
-        diff: true,
-        comment: true,
-        actions: ["merge"],
-        mergeMethods: ["merge"],
-        search: true,
-        review: {
-          inlineComment: true,
-          reply: true,
-          resolve: true,
-          verdicts: ["comment", "approve", "request-changes"],
-        },
-        reviewers: { request: true, listCandidates: true },
-      },
-      viewerPermissions: {
-        actions: ["merge"],
-        comment: true,
-        resolve: true,
-        verdicts: ["comment", "approve", "request-changes"],
-        requestReviewers: true,
-      },
-      projectId: "project-1",
-      projectTitle: "web",
-      workspaceRoot: "/repo",
-      repository: "acme/web",
-      number: 7,
-      title: "Cache the title",
-      body: "who made it",
-      url: "https://github.com/acme/web/pull/7",
-      author: { login: "octocat", name: null, avatarUrl: "https://avatars.example/octocat" },
       state: "open",
       isDraft: false,
       mergeability: "mergeable",
-      additions: 12,
-      deletions: 3,
-      changedFiles: 2,
-      headBranch: "feat/cache",
-      baseBranch: "main",
-      createdAt: "2026-07-01T00:00:00.000Z",
-      updatedAt: "2026-07-02T00:00:00.000Z",
-      mergedAt: null,
-      closedAt: null,
-      reviewers: [],
-      labels: [],
-      checks: [],
-      mergeCapabilities: { merge: true, squash: true, rebase: true },
+      capabilities: {
+        actions: ["merge", "ready", "draft", "close", "reopen"],
+        mergeMethods: ["merge", "squash"],
+      } as unknown as PullRequestDetailView["capabilities"],
+      viewerPermissions: {
+        actions: ["merge", "ready", "draft", "close", "reopen"],
+      } as unknown as PullRequestDetailView["viewerPermissions"],
+      mergeCapabilities: { merge: true, squash: true, rebase: false },
+      checks: [check("success")],
       ...overrides,
-    }) as PullRequestDetail;
+    }) as NonNullable<Parameters<typeof resolveThreadPanelPullRequestAction>[0]>;
 
-  const makeStorage = () => {
-    const held = new Map<string, string>();
-    return {
-      getItem: (key: string) => held.get(key) ?? null,
-      setItem: (key: string, value: string) => void held.set(key, value),
-    };
-  };
-
-  it("hydrates the last title, author, and counts so a reopen does not ghost the tab", () => {
-    const storage = makeStorage();
-    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
-    const snapshot = readPullRequestDetailSnapshot(storage, "env-1", reference);
-    expect(snapshot?.title).toBe("Cache the title");
-    expect(snapshot?.author?.login).toBe("octocat");
-    expect(snapshot?.additions).toBe(12);
-    expect(snapshot?.deletions).toBe(3);
+  it("offers Merge only for a clean pull request whose checks pass", () => {
+    expect(resolveThreadPanelPullRequestAction(openDetail())).toBe("merge");
+    expect(resolveThreadPanelPullRequestAction(openDetail({ checks: [] }))).toBe("merge");
   });
 
-  it("keeps a cached tab painted while the live read replaces the counts", () => {
-    const cached = detail();
-    const live = detail({ additions: 40, deletions: 9, title: "Cache the title" });
-    expect(resolveDisplayedPullRequestDetail({ live, cached, reference })?.additions).toBe(40);
-    expect(resolveDisplayedPullRequestDetail({ live: null, cached, reference })?.additions).toBe(
-      12,
-    );
-  });
-
-  it("does not paint another change request's snapshot", () => {
+  it("holds the slot while checks run rather than offering a merge that races them", () => {
     expect(
-      resolveDisplayedPullRequestDetail({
-        live: null,
-        cached: detail({ number: 8 }),
-        reference,
-      }),
+      resolveThreadPanelPullRequestAction(
+        openDetail({ checks: [check("success"), check("pending")] }),
+      ),
     ).toBeNull();
-    expect(readPullRequestDetailSnapshot(makeStorage(), "env-2", reference)).toBeNull();
   });
 
-  it("shrugs off corrupt storage and no storage at all", () => {
-    const storage = makeStorage();
-    storage.setItem("t3.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
-    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
-    expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
+  it("ranks conflicts above everything, then draft, then failing checks", () => {
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({ mergeability: "conflicting", isDraft: true, checks: [check("failure")] }),
+      ),
+    ).toBe("resolve");
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({ isDraft: true, checks: [check("failure")] }),
+      ),
+    ).toBe("ready");
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({ checks: [check("failure"), check("pending")] }),
+      ),
+    ).toBe("fix");
+  });
+
+  it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({
+          viewerPermissions: {
+            actions: [],
+          } as unknown as PullRequestDetailView["viewerPermissions"],
+        }),
+      ),
+    ).toBeNull();
+    expect(resolveThreadPanelPullRequestAction(openDetail({ state: "merged" }))).toBeNull();
+    expect(resolveThreadPanelPullRequestAction(null)).toBeNull();
+  });
+
+  it("describes every live facet of the checks at once", () => {
+    expect(describePullRequestChecks([])).toBe("No checks reported");
+    expect(describePullRequestChecks([check("success"), check("success")])).toBe(
+      "All checks passed",
+    );
+    expect(describePullRequestChecks([check("success"), check("skipped")])).toBe("1 of 2 passing");
+    expect(
+      describePullRequestChecks([
+        ...Array.from({ length: 7 }, () => check("pending")),
+        ...Array.from({ length: 8 }, () => check("success")),
+        check("failure"),
+      ]),
+    ).toBe("7 of 16 running · 1 failed");
+    expect(describePullRequestChecks([check("failure"), check("success")])).toBe("1 of 2 failing");
+  });
+
+  it("reads the checks as one word, failing outranking running", () => {
+    expect(classifyPullRequestChecks([])).toBe("none");
+    expect(classifyPullRequestChecks([check("success"), check("skipped")])).toBe("passing");
+    expect(classifyPullRequestChecks([check("success"), check("pending")])).toBe("pending");
+    expect(classifyPullRequestChecks([check("pending"), check("cancelled")])).toBe("failing");
   });
 });

@@ -204,6 +204,68 @@ export function resolvePullRequestPrimaryAction(
   return allowedPullRequestMergeMethods(detail).length > 0 ? "merge" : null;
 }
 
+/** The checks as one word. Failing outranks running: a red run is already worth acting on. */
+export type PullRequestChecksState = "none" | "pending" | "failing" | "passing";
+
+export function classifyPullRequestChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+): PullRequestChecksState {
+  if (checks.length === 0) return "none";
+  if (checks.some((check) => check.status === "failure" || check.status === "cancelled")) {
+    return "failing";
+  }
+  if (checks.some((check) => check.status === "pending")) return "pending";
+  return "passing";
+}
+
+/**
+ * The checks with every live facet, unlike the single-facet summary: a run with failures in it
+ * still says how much is in flight — "7 of 16 running · 1 failed" — because both numbers change
+ * what a reader does next.
+ */
+export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
+  if (checks.length === 0) return "No checks reported";
+  const failed = checks.filter(
+    (check) => check.status === "failure" || check.status === "cancelled",
+  ).length;
+  const pending = checks.filter((check) => check.status === "pending").length;
+  const passed = checks.filter((check) => check.status === "success").length;
+  const parts: string[] = [];
+  if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
+  if (failed > 0) {
+    parts.push(pending > 0 ? `${failed} failed` : `${failed} of ${checks.length} failing`);
+  }
+  if (parts.length === 0) {
+    return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+  }
+  return parts.join(" · ");
+}
+
+export type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
+
+/**
+ * Which single action the thread panel's compact pull request row offers, ranked by what
+ * unblocks the merge next: conflicts stop everything, a draft is not up for review yet, failing
+ * checks want fixing, and only a clean open pull request earns Merge. While checks run the slot
+ * stays empty — the row shows their progress instead of an action that would race them.
+ */
+export function resolveThreadPanelPullRequestAction(
+  detail: (PullRequestActionableDetail & Pick<PullRequestDetail, "checks">) | null,
+): ThreadPanelPullRequestAction | null {
+  if (detail === null || detail.state !== "open") return null;
+  if (isPullRequestConflicting(detail)) return "resolve";
+  if (detail.isDraft) {
+    return canPerformPullRequestAction(detail, "ready") ? "ready" : null;
+  }
+  const checks = classifyPullRequestChecks(detail.checks);
+  if (checks === "failing") return "fix";
+  if (checks === "pending") return null;
+  return canPerformPullRequestAction(detail, "merge") &&
+    allowedPullRequestMergeMethods(detail).length > 0
+    ? "merge"
+    : null;
+}
+
 /** Chronological ascending, oldest to newest — reversed for the "newest" reading order. */
 export function orderPullRequestComments<T extends { readonly createdAt: string }>(
   comments: ReadonlyArray<T>,
