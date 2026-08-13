@@ -91,6 +91,7 @@ import {
   hasActionableProposedPlan,
   isLatestTurnSettled,
 } from "../session-logic";
+import { resolveAgentGlyphStatus, resolveLastToolHint } from "./agent-glyph";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import {
@@ -2293,6 +2294,34 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const agentGlyphStatus = useMemo(
+    () =>
+      resolveAgentGlyphStatus({
+        sessionStatus: activeThread?.session?.status ?? null,
+        latestTurnState: activeLatestTurn?.state ?? null,
+        isPreparing: isWorking,
+        hasPendingApproval: pendingApprovals.length > 0,
+        hasPendingUserInput: pendingUserInputs.length > 0,
+        hasThreadError: Boolean(threadError),
+        reviewFocused:
+          rightPanelOpen &&
+          (activeRightPanelKind === "diff" || activeRightPanelKind === "pull-request"),
+        lastTool: resolveLastToolHint(threadActivities, activeLatestTurn?.turnId ?? null),
+      }),
+    [
+      activeLatestTurn?.state,
+      activeLatestTurn?.turnId,
+      activeRightPanelKind,
+      activeThread?.session?.status,
+      isWorking,
+      pendingApprovals.length,
+      pendingUserInputs.length,
+      rightPanelOpen,
+      threadActivities,
+      threadError,
+    ],
+  );
+  const sessionRunning = activeThread?.session?.status === "running";
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -6186,6 +6215,8 @@ function ChatViewContent(props: ChatViewProps) {
             availableEditors={availableEditors}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
+            agentGlyphStatus={agentGlyphStatus}
+            sessionRunning={sessionRunning}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
             onAddProjectScript={saveProjectScript}

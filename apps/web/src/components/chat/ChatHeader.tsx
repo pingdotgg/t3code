@@ -41,6 +41,7 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
+import { AgentGlyph, type AgentGlyphStatus } from "~/components/agent-glyph";
 import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
@@ -62,6 +63,8 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
+  agentGlyphStatus: AgentGlyphStatus;
+  sessionRunning: boolean;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -116,6 +119,8 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   rightPanelOpen,
   gitCwd,
+  agentGlyphStatus,
+  sessionRunning,
   onOpenPullRequest,
   onNewThreadInProject,
   onRunProjectScript,
@@ -218,6 +223,7 @@ export const ChatHeader = memo(function ChatHeader({
       className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3"
       onContextMenu={handleHeaderContextMenu}
     >
+      <AgentGlyph status={agentGlyphStatus} sessionRunning={sessionRunning} />
       <WorkspaceBreadcrumb ariaLabel="Thread breadcrumb" className="flex-1">
         {/* The project always leads the header: knowing which project a
             thread lives in is priority zero, and the thread title alone
