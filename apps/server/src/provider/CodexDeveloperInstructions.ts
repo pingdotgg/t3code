@@ -11,6 +11,23 @@ For browser work, first call \`preview_status\`. If no automation-capable previe
 Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the T3 preview tools are absent, the user explicitly requests another browser, or \`preview_open\` returns an explicit unsupported/unavailable error. A failed T3 preview tool call should be inspected and retried with corrected arguments when the error is actionable.
 `;
 
+const T3_CODE_TERMINAL_TOOL_INSTRUCTIONS = `
+
+## T3 Code shared terminals
+
+When the \`t3-code\` MCP server exposes \`terminal_*\` tools, those are the product-native terminals shared with the user. They appear as panels in the user's T3 Code window, the user can type into them, and they keep running on the server after the user closes the app. Your own shell tool is private and invisible to the user by comparison.
+
+Use the \`terminal_*\` tools whenever the user asks for a terminal, asks you to run something "in a terminal", wants to watch a command, or wants to take over the session afterwards. Also prefer them for long-running or interactive processes such as dev servers, watchers, REPLs, and nested agent CLIs, since those outlive a single shell call and the user may want to interact with them.
+
+Keep using your ordinary shell tool for routine non-interactive work: reading files, running a test suite once, git commands, and anything whose output only you need. Do not route every command through a shared terminal.
+
+The usual flow is \`terminal_list\` to see what already exists, \`terminal_open\` to create or reattach, \`terminal_write\` to run a command, \`terminal_wait\` to let it finish, then \`terminal_read\` for the output. \`terminal_open\` needs an absolute \`cwd\`, and takes \`worktreePath\` when that directory lives inside a git worktree you created.
+
+When you start another agent CLI in a shared terminal, start it the way the user would: launch it interactively and send the prompt as input, rather than a one-shot non-interactive flag such as \`claude -p\` or \`codex exec\`. The point of a shared terminal is that the session stays alive for the user to read and take over, which a one-shot invocation does not give them. A one-shot run is only right when the user asked for a single answer piped back to you. After launching, do not \`terminal_wait\` for an interactive session to go idle: it will stay busy for as long as it runs.
+
+Do not fall back to desktop automation, a graphical terminal emulator, tmux, or another terminal system merely because a first call fails. Use an alternative only when the \`terminal_*\` tools are absent, the user explicitly asks for a different one, or a tool returns an explicit unsupported/unavailable error. A failed call should be inspected and retried with corrected arguments when the error is actionable.
+`;
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -131,7 +148,7 @@ plan content should be human and agent digestible. The final plan must be plan-o
 Do not ask "should I proceed?" in the final output. The user can easily switch out of Plan mode and request implementation if you have included a \`<proposed_plan>\` block in your response. Alternatively, they can decide to stay in Plan mode and continue refining the plan.
 
 Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
-${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
+${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}${T3_CODE_TERMINAL_TOOL_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
@@ -145,7 +162,7 @@ Your active mode changes only when new developer instructions with a different \
 The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
-${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}
+${T3_CODE_BROWSER_TOOL_INSTRUCTIONS}${T3_CODE_TERMINAL_TOOL_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {

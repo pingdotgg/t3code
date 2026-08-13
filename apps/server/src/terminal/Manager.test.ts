@@ -296,6 +296,23 @@ it.layer(
     }),
   );
 
+  it.effect("gives concurrent openNewTerminal its own session", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const { terminalId: _ignored, ...withoutId } = openInput();
+
+      const opened = yield* Effect.all(
+        [manager.openNewTerminal(withoutId), manager.openNewTerminal(withoutId)],
+        { concurrency: "unbounded" },
+      );
+
+      // Allocating the id outside the thread lock would let both callers pick
+      // the same free id, so the second would reattach instead of spawning.
+      assert.equal(new Set(opened.map((snapshot) => snapshot.terminalId)).size, 2);
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
   it.effect("attaches to running sessions without restarting them", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -1590,6 +1607,47 @@ it.layer(
         ),
         "1200 millis",
       );
+    }),
+  );
+
+  it.effect("reads terminal metadata and snapshots without subscribing", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput({ threadId: "thread-1" }));
+      yield* manager.open(openInput({ threadId: "thread-2", terminalId: "term-2" }));
+
+      const roster = yield* manager.readAllTerminalMetadata();
+      expect(
+        roster.map((terminal) => `${terminal.threadId}/${terminal.terminalId}`).sort(),
+      ).toEqual([`thread-1/${DEFAULT_TERMINAL_ID}`, "thread-2/term-2"]);
+
+      const single = yield* manager.readTerminalMetadata({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+      });
+      expect(single).toMatchObject({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        hasRunningSubprocess: false,
+      });
+
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+      process.emitData("hello\n");
+      yield* waitFor(
+        manager
+          .readTerminalSnapshot({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID })
+          .pipe(Effect.map((snapshot) => snapshot?.history === "hello\n")),
+      );
+
+      yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      const closedRef = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+      expect(yield* manager.readTerminalMetadata(closedRef)).toBeNull();
+      expect(yield* manager.readTerminalSnapshot(closedRef)).toBeNull();
+      expect(
+        yield* manager.readTerminalMetadata({ threadId: "thread-1", terminalId: "term-9" }),
+      ).toBeNull();
     }),
   );
 
