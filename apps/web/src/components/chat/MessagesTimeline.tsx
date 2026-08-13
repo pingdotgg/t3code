@@ -1155,48 +1155,34 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   useEffect(() => {
     if (!selectionAction) return;
 
-    const dismissIfSelectionMoved = () => {
-      const root = markdownRootRef.current;
-      const selection = window.getSelection();
-      const range = selection?.rangeCount === 1 ? selection.getRangeAt(0) : null;
-      if (
-        !root ||
-        !selection ||
-        selection.isCollapsed ||
-        !range ||
-        !root.contains(range.startContainer) ||
-        !root.contains(range.endContainer)
-      ) {
-        setSelectionAction(null);
-      }
-    };
     const dismiss = () => setSelectionAction(null);
 
-    document.addEventListener("selectionchange", dismissIfSelectionMoved);
+    document.addEventListener("selectionchange", captureSelection);
     document.addEventListener("scroll", dismiss, true);
     window.addEventListener("resize", dismiss);
     return () => {
-      document.removeEventListener("selectionchange", dismissIfSelectionMoved);
+      document.removeEventListener("selectionchange", captureSelection);
       document.removeEventListener("scroll", dismiss, true);
       window.removeEventListener("resize", dismiss);
     };
-  }, [selectionAction]);
+  }, [captureSelection, selectionAction]);
 
   return (
     <>
-      <div
-        ref={markdownRootRef}
-        className="relative min-w-0 px-1 py-0.5"
-        onKeyUp={scheduleSelectionCapture}
-        onPointerUp={scheduleSelectionCapture}
-      >
-        <ChatMarkdown
-          text={messageText}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          isStreaming={Boolean(row.message.streaming)}
-          skills={ctx.skills}
-        />
+      <div className="relative min-w-0 px-1 py-0.5">
+        <div
+          ref={markdownRootRef}
+          onKeyUp={scheduleSelectionCapture}
+          onPointerUp={scheduleSelectionCapture}
+        >
+          <ChatMarkdown
+            text={messageText}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={Boolean(row.message.streaming)}
+            skills={ctx.skills}
+          />
+        </div>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
