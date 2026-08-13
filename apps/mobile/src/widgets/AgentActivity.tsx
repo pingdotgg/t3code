@@ -315,8 +315,8 @@ export function AgentActivity(
     ];
     const homeSummaryTint = allDone && !hasRows ? secondaryForeground : headerTint;
     const homeSummary = attentionSuffix || agentsLabel;
-    const renderHomeProjectIcon = (size: number) =>
-      renderGlyph("folder.fill", size, secondaryForeground);
+    const renderHomeStatusIcon = (row: AgentActivityRowProps, size: number) =>
+      renderGlyph(phaseSymbol(row.phase), size, phaseTint(row.phase));
 
     if (widgetFamily === "systemSmall") {
       return (
@@ -360,7 +360,7 @@ export function AgentActivity(
           )}
           {heroRow ? (
             <HStack spacing={5} alignment="center">
-              {renderHomeProjectIcon(11)}
+              {renderHomeStatusIcon(heroRow, 11)}
               <Text
                 modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
               >
@@ -386,7 +386,7 @@ export function AgentActivity(
 
     const renderHomeRow = (row: AgentActivityRowProps) => (
       <HStack spacing={9} alignment="center">
-        {renderHomeProjectIcon(17)}
+        {renderHomeStatusIcon(row, 17)}
         <VStack alignment="leading" spacing={1}>
           <Text
             modifiers={[

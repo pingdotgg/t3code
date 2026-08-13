@@ -283,7 +283,7 @@ describe("AgentActivity widget layout", () => {
     expect(JSON.stringify(layout.minimal)).toContain("xmark.octagon.fill");
   });
 
-  it("renders branded, top-aligned home-screen layouts", () => {
+  it("renders branded, top-aligned home-screen layouts with status icons", () => {
     const medium = AgentActivity(
       {
         ...props,
@@ -294,6 +294,8 @@ describe("AgentActivity widget layout", () => {
             threadId: "thread-2",
             threadTitle: "Second thread",
             projectTitle: "Second project",
+            phase: "completed",
+            status: "Done",
           }),
           makeRow({
             threadId: "thread-3",
@@ -312,7 +314,11 @@ describe("AgentActivity widget layout", () => {
     expect(mediumJson).toContain("Code");
     expect(mediumJson).toContain("3 active agents");
     expect(mediumJson).toContain("arrow.up.right");
-    expect(mediumJson).toContain("folder.fill");
+    expect(mediumJson).not.toContain("folder.fill");
+    expect(mediumJson).toContain("arrow.triangle.2.circlepath");
+    expect(mediumJson).toContain("checkmark.circle.fill");
+    expect(mediumJson).toContain("First project");
+    expect(mediumJson).toContain("Second project");
     expect(mediumJson.indexOf("T3Mark")).toBeLessThan(mediumJson.indexOf("First thread"));
     expect(mediumJson.indexOf("First thread")).toBeLessThan(mediumJson.indexOf("Second thread"));
     expect(mediumJson).not.toContain("Overflow thread");
@@ -328,7 +334,9 @@ describe("AgentActivity widget layout", () => {
     expect(smallJson).toContain("T3Mark");
     expect(smallJson).toContain("Code");
     expect(smallJson).toContain("1 active agent");
-    expect(smallJson).toContain("folder.fill");
+    expect(smallJson).not.toContain("folder.fill");
+    expect(smallJson).toContain("arrow.triangle.2.circlepath");
+    expect(smallJson).toContain("Project");
     expect(smallJson.indexOf("T3Mark")).toBeLessThan(smallJson.indexOf("Thread"));
     expect(smallJson).not.toContain('"all":10');
     expect(smallJson).not.toContain('"all":14');
