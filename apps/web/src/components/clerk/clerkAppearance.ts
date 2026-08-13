@@ -5,12 +5,12 @@ import type { ClerkProviderProps } from "@clerk/react";
  * portaled sign-in and profile surfaces without remounting Clerk. */
 export const clerkAppearance = {
   variables: {
-    // Clerk reuses its primary color for filled buttons and bare links. The
-    // app's update foreground is the palette's action hue cast for readable
-    // text, while the card surface provides the inverse filled-control pair.
-    colorPrimary: "var(--update-foreground)",
-    colorPrimaryForeground: "var(--card)",
-    colorDanger: "var(--error)",
+    // Clerk reuses its primary color for filled buttons and bare links. Bind
+    // both to this tree's action tokens; later nightlies use --update-* /
+    // --error from the theme library we have not ported.
+    colorPrimary: "var(--primary)",
+    colorPrimaryForeground: "var(--primary-foreground)",
+    colorDanger: "var(--destructive)",
     colorSuccess: "var(--success)",
     colorWarning: "var(--warning)",
     colorNeutral: "var(--foreground)",
@@ -25,10 +25,10 @@ export const clerkAppearance = {
     colorRing: "var(--ring)",
   },
   elements: {
-    formFieldErrorText: { color: "var(--error-foreground)" },
+    formFieldErrorText: { color: "var(--destructive-foreground)" },
     formFieldWarningText: { color: "var(--warning-foreground)" },
     formFieldSuccessText: { color: "var(--success-foreground)" },
-    otpCodeFieldErrorText: { color: "var(--error-foreground)" },
+    otpCodeFieldErrorText: { color: "var(--destructive-foreground)" },
     otpCodeFieldSuccessText: { color: "var(--success-foreground)" },
   },
 } satisfies NonNullable<ClerkProviderProps["appearance"]>;
