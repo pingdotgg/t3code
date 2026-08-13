@@ -18,7 +18,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   menuOpen: boolean;
   onToggleMenu: () => void;
 }) {
-  if (props.count === 0) return null;
+  if (props.count === 0 || props.menuOpen) return null;
 
   return (
     <button
