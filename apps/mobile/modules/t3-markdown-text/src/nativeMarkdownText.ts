@@ -661,6 +661,7 @@ function appendDocumentBlock(
 function containsRichBlock(node: MarkdownNode): boolean {
   if (
     node.type === "code_block" ||
+    node.type === "blockquote" ||
     node.type === "table" ||
     node.type === "image" ||
     node.type === "horizontal_rule" ||
