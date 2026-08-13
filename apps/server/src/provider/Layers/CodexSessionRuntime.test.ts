@@ -7,6 +7,7 @@ import { describe } from "vite-plus/test";
 import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
+import spawnMetadataFixture from "../testFixtures/codexCollabSpawnMetadata.json" with { type: "json" };
 
 import {
   buildCodexDeveloperInstructions,
@@ -19,6 +20,7 @@ import {
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
+  readCollabSpawnMetadata,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
@@ -35,6 +37,26 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
     NodeAssert.equal(
       error.message,
       "Failed to generate Codex App Server identifier for provider-event.",
+    );
+  });
+});
+
+describe("readCollabSpawnMetadata", () => {
+  it("reads the requested model and effort from the correlated spawn tool call", () => {
+    NodeAssert.deepStrictEqual(
+      readCollabSpawnMetadata(
+        spawnMetadataFixture as unknown as Parameters<typeof readCollabSpawnMetadata>[0],
+      ),
+      [
+        [
+          "019fcfd6-2883-77e0-9013-4410ede70371",
+          {
+            parentThreadId: "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+            model: "gpt-5.6-luna",
+            effort: "low",
+          },
+        ],
+      ],
     );
   });
 });

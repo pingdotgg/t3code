@@ -508,6 +508,31 @@ describe("deriveAgentPanelModel", () => {
       "managed-grandchild",
     ]);
   });
+
+  it("reconstructs native hierarchy when retention kept only a terminal child row", () => {
+    const retained = fold([
+      activity("task.started", { taskId: "native-parent", title: "Parent" }),
+      activity("task.updated", {
+        taskId: "native-child",
+        title: "Reviewer",
+        role: "reviewer",
+        parentAgentId: "native-parent",
+        status: "interrupted",
+        agentSource: "provider",
+        cancellationOwner: "provider",
+      }),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents: retained });
+    expect(model.directAgents.map((agent) => agent.id)).toEqual(["native-parent"]);
+    expect(model.childrenByParentId.get("native-parent")?.map((agent) => agent.id)).toEqual([
+      "native-child",
+    ]);
+    expect(retained.find((agent) => agent.id === "native-child")).toMatchObject({
+      parentAgentId: "native-parent",
+      status: "interrupted",
+    });
+  });
 });
 
 describe("workflowCardMembers", () => {

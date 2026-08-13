@@ -18,6 +18,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -27,6 +28,7 @@ import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 interface ManagedRun {
   readonly threadId: string;
   readonly child: ChildProcessSpawner.ChildProcessHandle;
+  readonly cancellationLock: Semaphore.Semaphore;
   cancelled: boolean;
 }
 
@@ -178,7 +180,13 @@ export const layer = Layer.effect(
             ),
           );
 
-        const run: ManagedRun = { threadId: input.threadId, child, cancelled: false };
+        const cancellationLock = yield* Semaphore.make(1);
+        const run: ManagedRun = {
+          threadId: input.threadId,
+          child,
+          cancellationLock,
+          cancelled: false,
+        };
         runs.set(agentId, run);
         const linkage = {
           taskId: agentId,
@@ -238,15 +246,20 @@ export const layer = Layer.effect(
               concurrency: "unbounded",
             });
             const exitResult = yield* Effect.result(child.exitCode);
-            runs.delete(agentId);
+            const cancelled = yield* run.cancellationLock.withPermit(
+              Effect.sync(() => {
+                runs.delete(agentId);
+                return run.cancelled;
+              }),
+            );
             yield* emit(input.threadId, "task.completed", {
               ...linkage,
-              status: run.cancelled
+              status: cancelled
                 ? "stopped"
                 : Result.isSuccess(exitResult) && Number(exitResult.success) === 0
                   ? "completed"
                   : "failed",
-              summary: run.cancelled
+              summary: cancelled
                 ? "Cancelled by T3"
                 : Result.isFailure(exitResult)
                   ? "Managed Codex exec failed before reporting an exit code"
@@ -276,15 +289,25 @@ export const layer = Layer.effect(
             message: `Managed agent ${input.agentId} does not belong to thread ${input.threadId}.`,
           });
         }
-        run.cancelled = true;
-        yield* run.child.kill({ killSignal: "SIGTERM", forceKillAfter: "3 seconds" }).pipe(
-          Effect.mapError(
-            () =>
-              new ManagedAgentRunError({
-                reason: "not-owned",
-                message: `Managed agent ${input.agentId} could not be cancelled.`,
-              }),
-          ),
+        yield* run.cancellationLock.withPermit(
+          Effect.gen(function* () {
+            if (runs.get(input.agentId) !== run) {
+              return yield* new ManagedAgentRunError({
+                reason: "run-not-found",
+                message: `Managed agent ${input.agentId} is not running.`,
+              });
+            }
+            yield* run.child.kill({ killSignal: "SIGTERM", forceKillAfter: "3 seconds" }).pipe(
+              Effect.mapError(
+                () =>
+                  new ManagedAgentRunError({
+                    reason: "not-owned",
+                    message: `Managed agent ${input.agentId} could not be cancelled.`,
+                  }),
+              ),
+            );
+            run.cancelled = true;
+          }),
         );
         return { cancelled: true };
       },

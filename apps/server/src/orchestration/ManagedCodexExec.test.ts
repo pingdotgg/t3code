@@ -38,6 +38,12 @@ describe("ManagedCodexExec", () => {
         method: "exitCode",
         description: "Process interrupted due to receipt of signal: 'SIGTERM'",
       });
+      const failedKillError = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "kill",
+        description: "Failed to kill child process",
+      });
       const cancelledHandle = ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1234),
         exitCode: Deferred.await(exit),
@@ -68,7 +74,28 @@ describe("ManagedCodexExec", () => {
         getInputFd: () => Sink.drain,
         getOutputFd: () => Stream.empty,
       });
-      const handles = [cancelledHandle, unexpectedExitHandle];
+      const failedKillExit = yield* Deferred.make<
+        ChildProcessSpawner.ExitCode,
+        PlatformError.PlatformError
+      >();
+      const failedKillHandle = ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1236),
+        exitCode: Deferred.await(failedKillExit),
+        isRunning: Effect.succeed(true),
+        kill: () =>
+          Effect.gen(function* () {
+            yield* Deferred.fail(failedKillExit, signalExitError);
+            return yield* failedKillError;
+          }),
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+      const handles = [cancelledHandle, unexpectedExitHandle, failedKillHandle];
       const spawner = ChildProcessSpawner.make((command) =>
         Effect.sync(() => {
           spawnedCommand = command;
@@ -183,6 +210,28 @@ describe("ManagedCodexExec", () => {
           manager.cancel({ threadId: ThreadId.make("thread-1"), agentId: unexpectedExit.agentId }),
         ),
       ).toMatchObject({ _tag: "Failure", failure: { reason: "run-not-found" } });
+
+      const failedCancellation = yield* manager.launch({
+        threadId: ThreadId.make("thread-1"),
+        prompt: "Review cancellation behavior",
+        title: "Reviewer",
+      });
+      expect(
+        yield* Effect.result(
+          manager.cancel({
+            threadId: ThreadId.make("thread-1"),
+            agentId: failedCancellation.agentId,
+          }),
+        ),
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "not-owned" } });
+      expect(yield* Queue.take(terminals)).toMatchObject({
+        type: "task.completed",
+        payload: {
+          taskId: failedCancellation.agentId,
+          status: "failed",
+          summary: "Managed Codex exec failed before reporting an exit code",
+        },
+      });
     }).pipe(Effect.scoped),
   );
 });

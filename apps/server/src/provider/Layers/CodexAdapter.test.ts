@@ -512,6 +512,48 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("keeps native parent and model metadata on retained terminal agent rows", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-child-closed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/closed",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          agentThreadId: "native-child",
+          parentThreadId: "native-parent",
+          nickname: "reviewer",
+          role: "reviewer",
+          model: "gpt-5.6-luna",
+          effort: "low",
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") return;
+      NodeAssert.equal(firstEvent.value.type, "task.updated");
+      if (firstEvent.value.type !== "task.updated") return;
+      NodeAssert.deepStrictEqual(firstEvent.value.payload, {
+        taskId: "native-child",
+        status: "interrupted",
+        role: "reviewer",
+        title: "reviewer",
+        model: "gpt-5.6-luna",
+        effort: "low",
+        parentAgentId: "native-parent",
+        timelineBypass: true,
+        agentSource: "provider",
+        cancellationOwner: "provider",
+      });
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
