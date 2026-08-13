@@ -1789,6 +1789,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsRefreshEntries]: (input) =>
+          observeRpcEffect(WS_METHODS.projectsRefreshEntries, workspaceEntries.refresh(input.cwd), {
+            "rpc.aggregate": "workspace",
+          }),
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,

@@ -7,11 +7,12 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
 const EMPTY_PROJECT_FILE_PATH = "";
@@ -127,12 +128,21 @@ export function useProjectEntriesQuery(
 ): ProjectQueryState<ProjectListEntriesResult> {
   const atom = getProjectEntriesQueryAtom(environmentId, cwd);
   const result = useAtomValue(atom);
-  const refreshAtom = useAtomRefresh(atom);
-  const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshEntries = useAtomCommand(projectEnvironment.refreshEntries, {
+    reportFailure: false,
+  });
+  const refresh = useCallback(() => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    void refreshEntries({ environmentId, input: { cwd } }).finally(() => {
+      setIsRefreshing(false);
+    });
+  }, [cwd, environmentId, isRefreshing, refreshEntries]);
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error: errorMessage(result),
-    isPending: result.waiting,
+    isPending: result.waiting || isRefreshing,
     refresh,
   };
 }

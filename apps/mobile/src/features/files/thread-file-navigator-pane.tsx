@@ -15,6 +15,7 @@ import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 
@@ -40,6 +41,19 @@ export function ThreadFileNavigatorPane(props: {
     }),
   );
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
+  const [isRefreshingEntries, setIsRefreshingEntries] = useState(false);
+  const refreshEntries = useAtomCommand(projectEnvironment.refreshEntries, {
+    reportFailure: false,
+  });
+  const handleRefreshEntries = useCallback(() => {
+    if (isRefreshingEntries) return;
+    setIsRefreshingEntries(true);
+    void refreshEntries({ environmentId: props.environmentId, input: { cwd: props.cwd } }).finally(
+      () => {
+        setIsRefreshingEntries(false);
+      },
+    );
+  }, [isRefreshingEntries, props.cwd, props.environmentId, refreshEntries]);
   const handlePreviewFile = useCallback(
     (relativePath: string) => {
       preloadWorkspaceFileContents({
@@ -58,25 +72,25 @@ export function ThreadFileNavigatorPane(props: {
           accessibilityLabel: "Refresh files",
           icon: { name: "arrow.clockwise", type: "sfSymbol" as const },
           identifier: "thread-file-navigator-refresh",
-          onPress: entriesQuery.refresh,
+          onPress: handleRefreshEntries,
           sharesBackground: false,
           tintColor: foregroundColor,
           type: "button" as const,
           width: 44,
         },
       ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
-    [entriesQuery.refresh, foregroundColor],
+    [foregroundColor, handleRefreshEntries],
   );
 
   const fileTree = (
     <FileTreeBrowser
       entries={entriesData?.entries ?? []}
       error={entriesQuery.error}
-      isPending={entriesQuery.isPending}
+      isPending={entriesQuery.isPending || isRefreshingEntries}
       searchQuery={searchQuery}
       selectedPath={props.selectedPath}
       onPreviewFile={handlePreviewFile}
-      onRefresh={entriesQuery.refresh}
+      onRefresh={handleRefreshEntries}
       onSelectFile={props.onSelectFile}
     />
   );
@@ -150,7 +164,7 @@ export function ThreadFileNavigatorPane(props: {
             accessibilityLabel="Refresh files"
             hitSlop={8}
             className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
-            onPress={entriesQuery.refresh}
+            onPress={handleRefreshEntries}
           >
             <SymbolView name="arrow.clockwise" size={14} tintColor={iconColor} type="monochrome" />
           </Pressable>
