@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildFixFindingsPrompt,
   buildPullRequestTimeline,
   buildResolveConflictsPrompt,
   countResolvedReviewThreads,
@@ -176,6 +177,25 @@ describe("pull request timeline", () => {
     ).toEqual(["merged", "comment", "commit", "opened"]);
   });
 
+  it("drops a body that is nothing but a bot's HTML comment, and keeps one that says more", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      comments: [
+        { ...TIMELINE_SOURCE.comments[0]!, body: "<!-- MURMUR_IGNORE -->" },
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          id: "c2",
+          body: "<!-- summarize by coderabbit.ai -->\nNeeds a test.",
+          createdAt: "2026-07-04T00:00:00Z",
+        },
+      ],
+    });
+    expect(events.find((event) => event.id === "c1")?.body).toBeNull();
+    expect(events.find((event) => event.id === "c2")?.body).toBe(
+      "<!-- summarize by coderabbit.ai -->\nNeeds a test.",
+    );
+  });
+
   it("groups conversation sections without crossing commits or PR updates", () => {
     const events = buildPullRequestTimeline(TIMELINE_SOURCE);
     expect(groupPullRequestTimelineConversations(events).map((row) => row.kind)).toEqual([
@@ -210,5 +230,86 @@ describe("handoffs and failures", () => {
     expect(readableFailure(new Error("GitHub CLI command failed."), "Check write access.")).toBe(
       "Check write access.",
     );
+  });
+
+  const findingsBase = {
+    provider: "github" as const,
+    host: "github.com",
+    number: 42,
+    title: "Add the page",
+    url: "https://github.com/acme/app/pull/42",
+    headBranch: "feat/page",
+    baseBranch: "main",
+    reviewThreads: [] as PullRequestReviewThread[],
+    comments: [] as PullRequestComment[],
+    checks: [],
+    commentsTruncated: false,
+    canResolve: true,
+  };
+
+  it("omits a thread whose comments are only HTML markers", () => {
+    const prompt = buildFixFindingsPrompt({
+      ...findingsBase,
+      reviewThreads: [
+        {
+          id: "t1",
+          path: "src/app.ts",
+          line: 12,
+          side: "right",
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: "rc1",
+              author: { login: "reviewer", name: null, avatarUrl: null },
+              body: "<!-- MURMUR_IGNORE -->",
+              createdAt: "2026-07-02T00:00:00Z",
+              url: null,
+            },
+          ],
+        },
+      ],
+    });
+    expect(prompt).toContain("No unresolved review findings were returned");
+    expect(prompt).not.toContain("MURMUR_IGNORE");
+  });
+
+  it("does not treat a general issue comment as a review finding", () => {
+    const prompt = buildFixFindingsPrompt({
+      ...findingsBase,
+      comments: [
+        {
+          id: "c1",
+          kind: "issue-comment",
+          author: { login: "octocat", name: null, avatarUrl: null },
+          body: "please also update the docs",
+          createdAt: "2026-07-03T00:00:00Z",
+          url: null,
+          path: null,
+          reviewState: null,
+        },
+      ],
+    });
+    expect(prompt).not.toContain("update the docs");
+  });
+
+  it("carries a review submitted with words but no line", () => {
+    const prompt = buildFixFindingsPrompt({
+      ...findingsBase,
+      comments: [
+        {
+          id: "r1",
+          kind: "review",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "This breaks SSO auth, revert the middleware change.",
+          createdAt: "2026-07-03T00:00:00Z",
+          url: null,
+          path: null,
+          reviewState: "CHANGES_REQUESTED",
+        },
+      ],
+    });
+    expect(prompt).toContain("revert the middleware change");
+    expect(prompt).not.toContain("No unresolved review findings");
   });
 });

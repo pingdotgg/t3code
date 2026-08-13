@@ -1,14 +1,13 @@
 import type {
   PullRequestAction,
   PullRequestMergeMethod,
-  PullRequestRef,
   PullRequestReviewThread,
 } from "@t3tools/contracts";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -53,7 +52,7 @@ import {
   pullRequestUrlHost,
   readableFailure,
 } from "./pullRequestDetail.logic";
-import { parseUnifiedDiff } from "./pullRequestDiffParse";
+import type { ParsedDiffFile } from "./pullRequestDiffParse";
 import {
   formatDiffStat,
   pullRequestCheckStatusLabel,
@@ -64,7 +63,9 @@ import {
 import { parseRoutePositiveInt, type PullRequestDetailRouteParams } from "./pullRequestNavigation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestStateBadge } from "./PullRequestStateBadge";
+import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
 import { usePullRequestHandoff } from "./usePullRequestHandoff";
+import { useResolvedPullRequestReference } from "./useResolvedPullRequestReference";
 
 type DetailTab = "overview" | "conversation" | "files";
 
@@ -87,14 +88,13 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
   const insets = useSafeAreaInsets();
   const iconColor = useThemeColor("--color-icon");
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
-  const projectId = ProjectId.make(props.route.params.projectId);
   const number = parseRoutePositiveInt(props.route.params.number);
-  const repository = props.route.params.repository;
-  const reference: PullRequestRef | null =
-    number === null ? null : { projectId, repository, number };
+  const reference = useResolvedPullRequestReference(props.route.params);
+  const repository = reference?.repository ?? props.route.params.repository ?? "";
   const [tab, setTab] = useState<DetailTab>("overview");
   const [actionPending, setActionPending] = useState(false);
   const { pendingKind, startHandoff } = usePullRequestHandoff();
+  const skipFocusRefresh = useRef(true);
 
   const detailQuery = useEnvironmentQuery(
     reference === null ? null : pullRequestEnvironment.detail({ environmentId, input: reference }),
@@ -104,11 +104,11 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
       ? null
       : pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
-  const diffQuery = useEnvironmentQuery(
-    reference === null || tab !== "files"
-      ? null
-      : pullRequestEnvironment.diff({ environmentId, input: reference }),
-  );
+  const diffSlices = usePullRequestDiffSlices({
+    environmentId,
+    reference,
+    enabled: reference !== null && tab === "files",
+  });
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
@@ -120,18 +120,36 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
       ? null
       : composePullRequestDetailView(detailQuery.data, activityQuery.data);
   const presentation = detail === null ? null : resolvePullRequestState(detail);
-  const files = useMemo(
-    () => (diffQuery.data?.patch ? parseUnifiedDiff(diffQuery.data.patch) : []),
-    [diffQuery.data],
-  );
 
-  const refresh = useCallback(async () => {
-    if (reference === null) return;
-    await invalidate({ environmentId, input: { reference } });
+  const refetch = useCallback(() => {
     detailQuery.refresh();
     activityQuery.refresh();
-    diffQuery.refresh();
-  }, [activityQuery, detailQuery, diffQuery, environmentId, invalidate, reference]);
+    diffSlices.refresh();
+  }, [activityQuery, detailQuery, diffSlices]);
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
+
+  const refresh = useCallback(
+    async (scope: "one" | "all" = "one") => {
+      if (reference === null) return;
+      await invalidate({
+        environmentId,
+        input: scope === "all" ? {} : { reference },
+      });
+      refetchRef.current();
+    },
+    [environmentId, invalidate, reference],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (skipFocusRefresh.current) {
+        skipFocusRefresh.current = false;
+        return;
+      }
+      refetchRef.current();
+    }, []),
+  );
 
   const can = useCallback(
     (action: PullRequestAction) =>
@@ -158,7 +176,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
           return;
         }
         Alert.alert(ACTION_SUCCESS_LABELS[action]);
-        await refresh();
+        await refresh("all");
       } finally {
         setActionPending(false);
       }
@@ -175,7 +193,8 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
   }, [detail]);
 
   const confirmMerge = useCallback(() => {
-    if (mergeMethods.length <= 1) {
+    if (mergeMethods.length === 0) return;
+    if (mergeMethods.length === 1) {
       void perform("merge", mergeMethods[0]);
       return;
     }
@@ -289,7 +308,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
         onPress: () =>
           navigation.navigate("PullRequestReviewers", {
             environmentId: String(environmentId),
-            projectId: String(projectId),
+            projectId: props.route.params.projectId,
             repository,
             number: String(number),
           }),
@@ -324,7 +343,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
     number,
     openOnHost,
     perform,
-    projectId,
+    props.route.params.projectId,
     refresh,
     repository,
   ]);
@@ -352,15 +371,24 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
   );
 
   const conflicting = detail?.mergeability === "conflicting";
-  const canMerge = detail !== null && detail.state === "open" && !detail.isDraft && can("merge");
+  const canMerge =
+    detail !== null &&
+    detail.state === "open" &&
+    !detail.isDraft &&
+    can("merge") &&
+    mergeMethods.length > 0;
   const busy = actionPending || pendingKind !== null;
 
-  if (number === null) {
+  if (number === null || reference === null) {
     return (
       <View className="flex-1 items-center justify-center bg-sheet px-8">
         <EmptyState
           title="Pull request not found"
-          detail="This link does not name a pull request."
+          detail={
+            number === null
+              ? "This link does not name a pull request."
+              : "This link does not name a repository. Open the pull request from the list, or from a project that has a repository identity."
+          }
         />
       </View>
     );
@@ -494,7 +522,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
                 onRequestReviewers={() =>
                   navigation.navigate("PullRequestReviewers", {
                     environmentId: String(environmentId),
-                    projectId: String(projectId),
+                    projectId: props.route.params.projectId,
                     repository,
                     number: String(number),
                   })
@@ -502,86 +530,102 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
               />
             ) : null}
             {tab === "conversation" ? (
-              <ConversationTab
-                busy={busy}
-                conversation={conversation}
-                detail={detail}
-                timeline={timeline}
-                onComment={() =>
-                  navigation.navigate("PullRequestComment", {
-                    environmentId: String(environmentId),
-                    projectId: String(projectId),
-                    repository,
-                    number: String(number),
-                    mode: "comment",
-                  })
-                }
-                onFixThread={(thread) =>
-                  void handoff(
-                    `finding:thread:${thread.id}`,
-                    buildFixFindingPrompt({
-                      provider: detail.provider,
-                      host: pullRequestUrlHost(detail.url) ?? detail.repository,
-                      number: detail.number,
-                      title: detail.title,
-                      url: detail.url,
-                      headBranch: detail.headBranch,
-                      baseBranch: detail.baseBranch,
-                      finding: { kind: "thread", thread },
-                      canResolve:
-                        detail.viewerPermissions.resolve && detail.capabilities.review.resolve,
-                    }),
-                  )
-                }
-                onReply={(threadId) =>
-                  navigation.navigate("PullRequestComment", {
-                    environmentId: String(environmentId),
-                    projectId: String(projectId),
-                    repository,
-                    number: String(number),
-                    mode: "reply",
-                    threadId,
-                  })
-                }
-                onReview={() =>
-                  navigation.navigate("PullRequestComment", {
-                    environmentId: String(environmentId),
-                    projectId: String(projectId),
-                    repository,
-                    number: String(number),
-                    mode: "review",
-                  })
-                }
-                onToggleResolved={async (thread, resolved) => {
-                  if (reference === null) return;
-                  const result = await setThreadResolution({
-                    environmentId,
-                    input: { ...reference, threadId: thread.id, resolved },
-                  });
-                  if (AsyncResult.isFailure(result)) {
-                    Alert.alert(
-                      resolved ? "Could not resolve" : "Could not unresolve",
-                      readableFailure(
-                        squashAtomCommandFailure(result),
-                        "The host refused to change this conversation.",
-                      ),
-                    );
-                    return;
+              activityQuery.isPending && activityQuery.data === null ? (
+                <View className="items-center py-16">
+                  <ActivityIndicator color={iconColor} />
+                </View>
+              ) : activityQuery.error && activityQuery.data === null ? (
+                <EmptyState
+                  title="Could not load the conversation"
+                  detail={activityQuery.error}
+                  actionLabel="Retry"
+                  onAction={() => activityQuery.refresh()}
+                />
+              ) : (
+                <ConversationTab
+                  busy={busy}
+                  conversation={conversation}
+                  detail={detail}
+                  timeline={timeline}
+                  onComment={() =>
+                    navigation.navigate("PullRequestComment", {
+                      environmentId: String(environmentId),
+                      projectId: props.route.params.projectId,
+                      repository,
+                      number: String(number),
+                      mode: "comment",
+                    })
                   }
-                  activityQuery.refresh();
-                }}
-              />
+                  onFixThread={(thread) =>
+                    void handoff(
+                      `finding:thread:${thread.id}`,
+                      buildFixFindingPrompt({
+                        provider: detail.provider,
+                        host: pullRequestUrlHost(detail.url) ?? detail.repository,
+                        number: detail.number,
+                        title: detail.title,
+                        url: detail.url,
+                        headBranch: detail.headBranch,
+                        baseBranch: detail.baseBranch,
+                        finding: { kind: "thread", thread },
+                        canResolve:
+                          detail.viewerPermissions.resolve && detail.capabilities.review.resolve,
+                      }),
+                    )
+                  }
+                  onReply={(threadId) =>
+                    navigation.navigate("PullRequestComment", {
+                      environmentId: String(environmentId),
+                      projectId: props.route.params.projectId,
+                      repository,
+                      number: String(number),
+                      mode: "reply",
+                      threadId,
+                    })
+                  }
+                  onReview={() =>
+                    navigation.navigate("PullRequestComment", {
+                      environmentId: String(environmentId),
+                      projectId: props.route.params.projectId,
+                      repository,
+                      number: String(number),
+                      mode: "review",
+                    })
+                  }
+                  onToggleResolved={async (thread, resolved) => {
+                    const result = await setThreadResolution({
+                      environmentId,
+                      input: { ...reference, threadId: thread.id, resolved },
+                    });
+                    if (AsyncResult.isFailure(result)) {
+                      Alert.alert(
+                        resolved ? "Could not resolve" : "Could not unresolve",
+                        readableFailure(
+                          squashAtomCommandFailure(result),
+                          "The host refused to change this conversation.",
+                        ),
+                      );
+                      return;
+                    }
+                    await invalidate({ environmentId, input: { reference } });
+                    activityQuery.refresh();
+                  }}
+                />
+              )
             ) : null}
             {tab === "files" ? (
               <FilesTab
-                error={diffQuery.error}
-                files={files}
-                loading={diffQuery.isPending && files.length === 0}
-                truncated={diffQuery.data?.truncated === true}
+                error={diffSlices.error}
+                files={diffSlices.files}
+                loading={diffSlices.loading}
+                loadingMore={diffSlices.loadingMore}
+                nextCursor={diffSlices.nextCursor}
+                truncated={diffSlices.truncated}
+                onLoadMore={diffSlices.loadMore}
                 onOpenFile={(path) =>
                   navigation.navigate("PullRequestDiff", {
                     environmentId: String(environmentId),
-                    projectId: String(projectId),
+                    projectId: props.route.params.projectId,
                     repository,
                     number: String(number),
                     path,
@@ -654,7 +698,7 @@ export function PullRequestDetailScreen(props: PullRequestDetailScreenProps) {
                   onPress={() =>
                     navigation.navigate("PullRequestComment", {
                       environmentId: String(environmentId),
-                      projectId: String(projectId),
+                      projectId: props.route.params.projectId,
                       repository,
                       number: String(number),
                       mode: "review",
@@ -916,10 +960,13 @@ function ConversationTab(props: {
 }
 
 function FilesTab(props: {
-  readonly files: ReturnType<typeof parseUnifiedDiff>;
+  readonly files: ReadonlyArray<ParsedDiffFile>;
   readonly loading: boolean;
+  readonly loadingMore: boolean;
   readonly error: string | null;
   readonly truncated: boolean;
+  readonly nextCursor: string | null;
+  readonly onLoadMore: () => void;
   readonly onOpenFile: (path: string) => void;
 }) {
   const muted = String(useThemeColor("--color-icon-subtle"));
@@ -930,7 +977,7 @@ function FilesTab(props: {
       </View>
     );
   }
-  if (props.error) {
+  if (props.error && props.files.length === 0) {
     return <EmptyState title="Could not load the diff" detail={props.error} />;
   }
   if (props.files.length === 0) {
@@ -975,6 +1022,19 @@ function FilesTab(props: {
           );
         })}
       </View>
+      {props.nextCursor !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={props.loadingMore}
+          onPress={props.onLoadMore}
+          className="items-center rounded-full bg-subtle px-4 py-3"
+        >
+          <Text className="text-sm font-t3-bold text-foreground">
+            {props.loadingMore ? "Loading more files…" : "Load more files"}
+          </Text>
+        </Pressable>
+      ) : null}
+      {props.error ? <Text className="text-xs text-foreground-muted">{props.error}</Text> : null}
     </View>
   );
 }

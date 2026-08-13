@@ -3,6 +3,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   EnvironmentId,
   ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useNavigation } from "@react-navigation/native";
@@ -10,6 +11,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
 import { Alert } from "react-native";
 
+import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildModelOptions, resolveDefaultableModelSelection } from "../../lib/modelOptions";
 import { gitEnvironment } from "../../state/git";
 import { useProjects, useServerConfigs } from "../../state/entities";
@@ -78,12 +80,14 @@ export function usePullRequestHandoff() {
 
       setPendingKind(input.kind);
       try {
+        const turnMetadata = makeTurnCommandMetadata();
         const prepared = await preparePullRequestThread({
           environmentId: input.environmentId,
           input: {
             cwd: project.workspaceRoot,
             reference: input.url,
             mode: "worktree",
+            threadId: ThreadId.make(turnMetadata.threadId),
           },
         });
         if (AsyncResult.isFailure(prepared)) {
@@ -114,6 +118,7 @@ export function usePullRequestHandoff() {
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           initialMessageText: input.prompt,
           initialAttachments: [],
+          turnMetadata,
         });
         if (created._tag === "Failure") {
           Alert.alert(

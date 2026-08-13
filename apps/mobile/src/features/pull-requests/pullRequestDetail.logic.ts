@@ -23,7 +23,8 @@ export function orderPullRequestComments<T extends { readonly createdAt: string 
   comments: ReadonlyArray<T>,
   order: "newest" | "oldest",
 ): ReadonlyArray<T> {
-  return order === "newest" ? comments.toReversed() : comments;
+  // Copy then reverse: Hermes does not ship Array#toReversed.
+  return order === "newest" ? [...comments].reverse() : comments;
 }
 
 /**
@@ -58,13 +59,12 @@ export function groupPullRequestConversation(
   if (unseenThreads.length === 0) return items;
   const activityAt = (item: PullRequestConversationItem): string =>
     item.kind === "comment" ? item.comment.createdAt : threadActivityAt(item.thread, order);
-  return [
-    ...items,
-    ...unseenThreads.map((thread) => ({ kind: "thread" as const, thread })),
-  ].toSorted((left, right) => {
-    const cmp = activityAt(left).localeCompare(activityAt(right));
-    return order === "newest" ? -cmp : cmp;
-  });
+  return [...items, ...unseenThreads.map((thread) => ({ kind: "thread" as const, thread }))].sort(
+    (left, right) => {
+      const cmp = activityAt(left).localeCompare(activityAt(right));
+      return order === "newest" ? -cmp : cmp;
+    },
+  );
 }
 
 function threadActivityAt(thread: PullRequestReviewThread, order: "newest" | "oldest"): string {
@@ -248,7 +248,7 @@ export function buildPullRequestTimeline(
           },
         ]
       : []),
-  ].toSorted((left, right) => right.at.localeCompare(left.at));
+  ].sort((left, right) => right.at.localeCompare(left.at));
 }
 
 const FINDING_LIMIT = 20;
@@ -434,15 +434,16 @@ export function buildFixFindingsPrompt(input: {
   readonly canResolve: boolean;
 }): string {
   const threads = input.reviewThreads.filter(
-    (thread) => !thread.isResolved && thread.comments.length > 0,
+    (thread) =>
+      !thread.isResolved && thread.comments.some((comment) => visibleBody(comment.body) !== null),
   );
   const attached = new Set(
-    threads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
+    input.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
   const unattachable = input.comments
     .filter(
       (comment) =>
-        comment.kind !== "issue-comment" &&
+        (comment.kind === "review" || comment.kind === "review-comment") &&
         visibleBody(comment.body) !== null &&
         !attached.has(comment.id),
     )

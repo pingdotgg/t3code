@@ -344,6 +344,7 @@ function PullRequestsHeader(props: {
   return (
     <>
       <NativeStackScreenOptions
+        optionsVersion={filterMenu.items}
         options={{
           unstable_headerToolbarItems: usesCompactMailToolbar
             ? () => [
@@ -444,6 +445,25 @@ function PullRequestsHeader(props: {
                 </NativeHeaderToolbar.MenuAction>
               ))}
             </NativeHeaderToolbar.Menu>
+            {props.hosts.length > 1 ? (
+              <NativeHeaderToolbar.Menu title="Host">
+                <NativeHeaderToolbar.MenuAction
+                  isOn={props.selectedHost === undefined}
+                  onPress={() => props.onHostChange(undefined)}
+                >
+                  <NativeHeaderToolbar.Label>Every host</NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
+                {props.hosts.map((host) => (
+                  <NativeHeaderToolbar.MenuAction
+                    key={host.host}
+                    isOn={props.selectedHost === host.host}
+                    onPress={() => props.onHostChange(host.host)}
+                  >
+                    <NativeHeaderToolbar.Label>{host.host}</NativeHeaderToolbar.Label>
+                  </NativeHeaderToolbar.MenuAction>
+                ))}
+              </NativeHeaderToolbar.Menu>
+            ) : null}
           </NativeHeaderToolbar.Menu>
         </NativeHeaderToolbar>
       )}
@@ -552,6 +572,14 @@ export function PullRequestsScreen(props: {
           <ActivityIndicator color={refreshTint} />
           <Text className="mt-3 text-sm text-foreground-muted">Checking this environment…</Text>
         </View>
+      );
+    }
+    if (props.environments.length === 0) {
+      return (
+        <EmptyState
+          title="No environments"
+          detail="Connect an environment, then pull requests from its projects appear here."
+        />
       );
     }
     if (!props.supported) {

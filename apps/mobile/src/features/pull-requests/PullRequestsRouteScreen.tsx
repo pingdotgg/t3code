@@ -6,8 +6,8 @@ import type {
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
-import { useNavigation } from "@react-navigation/native";
-import { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -82,16 +82,15 @@ export function PullRequestsRouteScreen() {
     (environment) => environment.environmentId === selectedEnvironmentId,
   );
   const capabilityKnown =
-    selectedEnvironmentId !== null && serverConfigs.has(selectedEnvironmentId);
+    selectedEnvironmentId === null || serverConfigs.has(selectedEnvironmentId);
   const supported = selected?.supported === true;
-  const scopedProjects = useMemo(
-    () =>
-      projects
-        .filter((project) => project.environmentId === selectedEnvironmentId)
-        .map((project) => ({ id: project.id, title: project.title }))
-        .toSorted((left, right) => left.title.localeCompare(right.title)),
-    [projects, selectedEnvironmentId],
-  );
+  const scopedProjects = useMemo(() => {
+    const next = projects
+      .filter((project) => project.environmentId === selectedEnvironmentId)
+      .map((project) => ({ id: project.id, title: project.title }));
+    next.sort((left, right) => left.title.localeCompare(right.title));
+    return next;
+  }, [projects, selectedEnvironmentId]);
   const list = usePullRequestList({
     environmentId: selectedEnvironmentId,
     supported,
@@ -103,6 +102,18 @@ export function PullRequestsRouteScreen() {
     projects: scopedProjects,
     projectsKnown: selectedEnvironmentId !== null,
   });
+  const skipFocusRefresh = useRef(true);
+  const refreshQueriesRef = useRef(list.refreshQueries);
+  refreshQueriesRef.current = list.refreshQueries;
+  useFocusEffect(
+    useCallback(() => {
+      if (skipFocusRefresh.current) {
+        skipFocusRefresh.current = false;
+        return;
+      }
+      refreshQueriesRef.current();
+    }, []),
+  );
 
   return (
     <PullRequestsScreen

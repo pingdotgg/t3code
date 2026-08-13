@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseRoutePositiveInt, resolveNativePullRequestTarget } from "./pullRequestNavigation";
+import {
+  parseRoutePositiveInt,
+  resolveNativePullRequestTarget,
+  resolvePullRequestRouteRepository,
+} from "./pullRequestNavigation";
 
 describe("parseRoutePositiveInt", () => {
   it("accepts a linking string or a navigate() number", () => {
@@ -56,6 +60,45 @@ describe("resolveNativePullRequestTarget", () => {
         projectId: "project-1",
         url: "https://example.com/change/99",
         number: 99,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolvePullRequestRouteRepository", () => {
+  it("prefers the navigate extra when it is present", () => {
+    expect(
+      resolvePullRequestRouteRepository({
+        repository: "acme/app",
+        environmentId: "env-1",
+        projectId: "project-1",
+        projects: [],
+      }),
+    ).toBe("acme/app");
+  });
+
+  it("fills in the project's repository identity when the extra is missing", () => {
+    expect(
+      resolvePullRequestRouteRepository({
+        environmentId: "env-1",
+        projectId: "project-1",
+        projects: [
+          {
+            environmentId: "env-1",
+            id: "project-1",
+            repositoryIdentity: { displayName: "acme/app", owner: "acme", name: "app" },
+          },
+        ],
+      }),
+    ).toBe("acme/app");
+  });
+
+  it("returns null when neither the extra nor the project can name the repository", () => {
+    expect(
+      resolvePullRequestRouteRepository({
+        environmentId: "env-1",
+        projectId: "project-1",
+        projects: [{ environmentId: "env-1", id: "project-1", repositoryIdentity: null }],
       }),
     ).toBeNull();
   });

@@ -146,8 +146,8 @@ export function partitionPullRequestsWithPriority(
     right.updatedAt.localeCompare(left.updatedAt);
   return (
     [
-      { key: "reviewRequested", entries: [...reviewByKey.values()].toSorted(byRecency) },
-      { key: "authored", entries: [...authoredByKey.values()].toSorted(byRecency) },
+      { key: "reviewRequested", entries: [...reviewByKey.values()].sort(byRecency) },
+      { key: "authored", entries: [...authoredByKey.values()].sort(byRecency) },
       { key: "others", entries: others },
     ] as const
   )
@@ -212,7 +212,8 @@ export function rankPullRequestMatches(
   query: string,
 ): ReadonlyArray<PullRequestListEntry> {
   if (query.trim().length === 0) return entries;
-  return entries.toSorted((left, right) => {
+  // Copy then sort: Hermes does not ship Array#toSorted.
+  return [...entries].sort((left, right) => {
     const byScore = scorePullRequestMatch(right, query) - scorePullRequestMatch(left, query);
     return byScore !== 0 ? byScore : right.updatedAt.localeCompare(left.updatedAt);
   });

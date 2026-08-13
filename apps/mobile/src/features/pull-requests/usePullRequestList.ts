@@ -65,6 +65,7 @@ export function usePullRequestList(input: {
   }>({ key: filterKey, size: PAGE_SIZE, cursors: null });
   const pageSize = page.key === filterKey ? page.size : PAGE_SIZE;
   const sentCursors = page.key === filterKey ? page.cursors : null;
+  const partitionLimit = sentCursors !== null || pageSize > PAGE_SIZE ? MAX_PAGE_SIZE : PAGE_SIZE;
 
   useEffect(() => {
     setPage({ key: filterKey, size: PAGE_SIZE, cursors: null });
@@ -109,7 +110,7 @@ export function usePullRequestList(input: {
           input: {
             state: input.state,
             involvement: "authored",
-            limit: PAGE_SIZE,
+            limit: partitionLimit,
             ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
             ...(input.host ? { host: input.host } : {}),
           },
@@ -123,7 +124,7 @@ export function usePullRequestList(input: {
           input: {
             state: input.state,
             involvement: "reviewing",
-            limit: PAGE_SIZE,
+            limit: partitionLimit,
             ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
             ...(input.host ? { host: input.host } : {}),
           },
@@ -218,7 +219,7 @@ export function usePullRequestList(input: {
           (entry) => !held.has(`${entry.host}:${entry.repository}#${entry.number}`),
         );
         const appended = rankPullRequestMatches(
-          arrived.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+          [...arrived].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
           sentQuery,
         );
         return { key: filterKey, entries: [...previous.entries, ...appended] };
@@ -280,6 +281,13 @@ export function usePullRequestList(input: {
     refreshList,
     reviewingQuery,
   ]);
+
+  const refreshQueries = useCallback(() => {
+    refreshList();
+    baselineQuery.refresh();
+    authoredQuery.refresh();
+    reviewingQuery.refresh();
+  }, [authoredQuery, baselineQuery, refreshList, reviewingQuery]);
 
   const viewers = listData?.viewers ?? EMPTY_VIEWERS;
   const feedEntries = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
@@ -358,6 +366,7 @@ export function usePullRequestList(input: {
       (canContinue || (listData?.truncated === true && pageSize < MAX_PAGE_SIZE)),
     loadMore,
     refreshFromHost,
+    refreshQueries,
     refreshStats: statsQuery.refresh,
     typedQuery,
     sentQuery,

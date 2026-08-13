@@ -3,6 +3,7 @@ import { useCallback } from "react";
 import { Alert } from "react-native";
 
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { useServerConfigs } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { resolveNativePullRequestTarget } from "./pullRequestNavigation";
 
@@ -12,6 +13,7 @@ import { resolveNativePullRequestTarget } from "./pullRequestNavigation";
  */
 export function useOpenNativePullRequest() {
   const navigation = useNavigation();
+  const serverConfigs = useServerConfigs();
   const { selectedThread, selectedThreadProject } = useThreadSelection();
 
   return useCallback(
@@ -27,8 +29,11 @@ export function useOpenNativePullRequest() {
       }
       const environmentId = selectedThread?.environmentId;
       const projectId = selectedThread?.projectId;
+      const pullRequestsSupported =
+        environmentId !== undefined &&
+        serverConfigs.get(environmentId)?.environment.capabilities.pullRequests === true;
       const target =
-        environmentId !== undefined && projectId !== undefined
+        pullRequestsSupported && environmentId !== undefined && projectId !== undefined
           ? resolveNativePullRequestTarget({
               environmentId: String(environmentId),
               projectId: String(projectId),
@@ -49,6 +54,6 @@ export function useOpenNativePullRequest() {
         Alert.alert("Unable to open PR", "The pull request could not be opened.");
       }
     },
-    [navigation, selectedThread, selectedThreadProject],
+    [navigation, selectedThread, selectedThreadProject, serverConfigs],
   );
 }

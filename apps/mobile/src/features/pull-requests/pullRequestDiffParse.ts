@@ -17,8 +17,75 @@ export interface ParsedDiffFile {
   readonly lines: ReadonlyArray<ParsedDiffLine>;
 }
 
-const GIT_HEADER = /^diff --git a\/(.+) b\/(.+)$/u;
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
+const GIT_HEADER_PREFIX = "diff --git ";
+
+function stripGitAbPrefix(path: string): string {
+  return path.startsWith("a/") || path.startsWith("b/") ? path.slice(2) : path;
+}
+
+/** Git C-quotes paths that contain spaces or special characters. */
+function unquoteGitPath(token: string): string {
+  if (!token.startsWith('"')) {
+    return stripGitAbPrefix(token);
+  }
+  let out = "";
+  for (let i = 1; i < token.length; i++) {
+    const ch = token[i];
+    if (ch === '"') break;
+    if (ch === "\\" && i + 1 < token.length) {
+      i += 1;
+      const next = token[i]!;
+      out += next === "n" ? "\n" : next === "t" ? "\t" : next;
+      continue;
+    }
+    out += ch;
+  }
+  return stripGitAbPrefix(out);
+}
+
+function readGitHeaderToken(rest: string, start: number): { token: string; next: number } | null {
+  let i = start;
+  while (rest[i] === " ") i += 1;
+  if (i >= rest.length) return null;
+  if (rest[i] === '"') {
+    let j = i + 1;
+    while (j < rest.length) {
+      if (rest[j] === "\\") {
+        j += 2;
+        continue;
+      }
+      if (rest[j] === '"') {
+        return { token: rest.slice(i, j + 1), next: j + 1 };
+      }
+      j += 1;
+    }
+    return { token: rest.slice(i), next: rest.length };
+  }
+  let j = i;
+  while (j < rest.length && rest[j] !== " ") j += 1;
+  return { token: rest.slice(i, j), next: j };
+}
+
+function parseGitHeader(line: string): { oldPath: string; newPath: string } | null {
+  if (!line.startsWith(GIT_HEADER_PREFIX)) return null;
+  const rest = line.slice(GIT_HEADER_PREFIX.length);
+  const first = readGitHeaderToken(rest, 0);
+  if (first === null) return null;
+  const second = readGitHeaderToken(rest, first.next);
+  if (second === null) return null;
+  return {
+    oldPath: unquoteGitPath(first.token),
+    newPath: unquoteGitPath(second.token),
+  };
+}
+
+function parseDiffSidePath(raw: string, prefix: "--- " | "+++ "): string | null {
+  if (!raw.startsWith(prefix)) return null;
+  const rest = raw.slice(prefix.length);
+  if (rest === "/dev/null") return "/dev/null";
+  return unquoteGitPath(rest);
+}
 
 /**
  * Split a unified patch into files and numbered lines. Binary / empty files still appear as
@@ -57,12 +124,12 @@ export function parseUnifiedDiff(patch: string): ReadonlyArray<ParsedDiffFile> {
   };
 
   for (const raw of patch.split("\n")) {
-    const gitHeader = GIT_HEADER.exec(raw);
+    const gitHeader = parseGitHeader(raw);
     if (gitHeader) {
       flush();
       current = {
-        oldPath: gitHeader[1] ?? "",
-        newPath: gitHeader[2] ?? "",
+        oldPath: gitHeader.oldPath,
+        newPath: gitHeader.newPath,
         additions: 0,
         deletions: 0,
         lines: [],
@@ -73,14 +140,10 @@ export function parseUnifiedDiff(patch: string): ReadonlyArray<ParsedDiffFile> {
     }
     if (current === null) continue;
     if (raw.startsWith("+++ ") || raw.startsWith("--- ") || raw.startsWith("index ")) {
-      if (raw.startsWith("--- ") && raw.slice(4) !== "/dev/null") {
-        current.oldPath = raw.slice(6).replace(/^\s/u, "") || current.oldPath;
-        if (current.oldPath.startsWith("a/")) current.oldPath = current.oldPath.slice(2);
-      }
-      if (raw.startsWith("+++ ") && raw.slice(4) !== "/dev/null") {
-        current.newPath = raw.slice(6).replace(/^\s/u, "") || current.newPath;
-        if (current.newPath.startsWith("b/")) current.newPath = current.newPath.slice(2);
-      }
+      const oldPath = parseDiffSidePath(raw, "--- ");
+      if (oldPath !== null && oldPath !== "/dev/null") current.oldPath = oldPath;
+      const newPath = parseDiffSidePath(raw, "+++ ");
+      if (newPath !== null && newPath !== "/dev/null") current.newPath = newPath;
       current.lines.push({ kind: "meta", text: raw, oldLine: null, newLine: null });
       continue;
     }

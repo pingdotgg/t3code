@@ -34,6 +34,23 @@ diff --git a/src/b.ts b/src/b.ts
     expect(files[0]?.lines.some((line) => line.kind === "add" && line.text === "added")).toBe(true);
   });
 
+  it("parses quoted git headers with spaces and unescapes them", () => {
+    const files = parseUnifiedDiff(`diff --git "a/src/foo bar.ts" "b/src/foo bar.ts"
+--- "a/src/foo bar.ts"
++++ "b/src/foo bar.ts"
+@@ -1 +1 @@
+-old
++new
+diff --git "a/src/quote\\"d.ts" "b/src/quote\\"d.ts"
+--- "a/src/quote\\"d.ts"
++++ "b/src/quote\\"d.ts"
+@@ -1 +1 @@
+-old
++new
+`);
+    expect(files.map((file) => file.displayPath)).toEqual(["src/foo bar.ts", 'src/quote"d.ts']);
+  });
+
   it("keeps a header-only binary file in the list", () => {
     const files = parseUnifiedDiff(`diff --git a/icon.png b/icon.png
 Binary files a/icon.png and b/icon.png differ

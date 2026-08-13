@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -23,7 +23,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { pullRequestEnvironment } from "../../state/pullRequests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { readableFailure } from "./pullRequestDetail.logic";
-import { parseRoutePositiveInt, type PullRequestDetailRouteParams } from "./pullRequestNavigation";
+import { type PullRequestDetailRouteParams } from "./pullRequestNavigation";
+import { useResolvedPullRequestReference } from "./useResolvedPullRequestReference";
 
 type PullRequestReviewersSheetProps = StaticScreenProps<PullRequestDetailRouteParams>;
 
@@ -31,22 +32,21 @@ export function PullRequestReviewersSheet(props: PullRequestReviewersSheetProps)
   const navigation = useNavigation();
   const iconColor = useThemeColor("--color-icon");
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
-  const projectId = ProjectId.make(props.route.params.projectId);
-  const number = parseRoutePositiveInt(props.route.params.number);
-  const repository = props.route.params.repository;
+  const reference = useResolvedPullRequestReference(props.route.params);
   const [query, setQuery] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const candidatesQuery = useEnvironmentQuery(
-    number === null
+    reference === null
       ? null
       : pullRequestEnvironment.reviewerCandidates({
           environmentId,
-          input: { projectId, repository, number },
+          input: reference,
         }),
   );
   const requestReviewers = useAtomCommand(pullRequestEnvironment.requestReviewers, {
     reportFailure: false,
   });
+  const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const needle = query.trim().toLowerCase();
   const candidates = useMemo(
     () =>
@@ -102,18 +102,16 @@ export function PullRequestReviewersSheet(props: PullRequestReviewersSheetProps)
               {candidates.map((candidate, index) => (
                 <Pressable
                   key={candidate.id}
-                  disabled={pendingId !== null || number === null}
+                  disabled={pendingId !== null || reference === null}
                   onPress={() => {
-                    if (number === null) return;
+                    if (reference === null) return;
                     void (async () => {
                       setPendingId(candidate.id);
                       try {
                         const result = await requestReviewers({
                           environmentId,
                           input: {
-                            projectId,
-                            repository,
-                            number,
+                            ...reference,
                             reviewers: [{ id: candidate.id, kind: candidate.kind }],
                             requested: !candidate.isRequested,
                           },
@@ -128,6 +126,7 @@ export function PullRequestReviewersSheet(props: PullRequestReviewersSheetProps)
                           );
                           return;
                         }
+                        await invalidate({ environmentId, input: { reference } });
                         candidatesQuery.refresh();
                       } finally {
                         setPendingId(null);

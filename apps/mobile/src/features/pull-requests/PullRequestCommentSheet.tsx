@@ -1,5 +1,5 @@
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -12,17 +12,19 @@ import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { cn } from "../../lib/cn";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { pullRequestEnvironment } from "../../state/pullRequests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { readableFailure } from "./pullRequestDetail.logic";
-import { parseRoutePositiveInt, type PullRequestCommentRouteParams } from "./pullRequestNavigation";
+import { type PullRequestCommentRouteParams } from "./pullRequestNavigation";
+import { useResolvedPullRequestReference } from "./useResolvedPullRequestReference";
 
 const VERDICT_LABELS: Record<PullRequestReviewVerdict, string> = {
   comment: "Comment",
   approve: "Approve",
   "request-changes": "Request changes",
 };
+
+const COMMENT_BODY_MAX_LENGTH = 65_536;
 
 type PullRequestCommentSheetProps = StaticScreenProps<PullRequestCommentRouteParams>;
 
@@ -31,9 +33,7 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
   const insets = useSafeAreaInsets();
   const isAndroid = Platform.OS === "android";
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
-  const projectId = ProjectId.make(props.route.params.projectId);
-  const number = parseRoutePositiveInt(props.route.params.number);
-  const repository = props.route.params.repository;
+  const reference = useResolvedPullRequestReference(props.route.params);
   const mode = props.route.params.mode;
   const threadId = props.route.params.threadId;
   const [body, setBody] = useState("");
@@ -46,18 +46,19 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
   const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {
     reportFailure: false,
   });
+  const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const title = mode === "review" ? "Submit review" : mode === "reply" ? "Reply" : "Comment";
   const canSubmit =
-    number !== null &&
+    reference !== null &&
     !pending &&
+    body.length <= COMMENT_BODY_MAX_LENGTH &&
     (mode === "review" ? true : body.trim().length > 0) &&
     (mode !== "reply" || (threadId !== undefined && threadId.length > 0));
 
   const submit = useCallback(async () => {
-    if (number === null || !canSubmit) return;
+    if (reference === null || !canSubmit) return;
     setPending(true);
     try {
-      const reference = { projectId, repository, number };
       const result =
         mode === "review"
           ? await submitReview({
@@ -80,6 +81,7 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
         );
         return;
       }
+      await invalidate({ environmentId, input: { reference } });
       navigation.goBack();
     } finally {
       setPending(false);
@@ -89,12 +91,11 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
     canSubmit,
     comment,
     environmentId,
+    invalidate,
     mode,
     navigation,
-    number,
-    projectId,
+    reference,
     replyToThread,
-    repository,
     submitReview,
     threadId,
     verdict,
@@ -111,6 +112,7 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
         <AndroidSheetHeader title={title} onBack={() => navigation.goBack()} />
       ) : (
         <NativeStackScreenOptions
+          optionsVersion={[canSubmit, pending, title]}
           options={{
             title,
             headerRight: () => (
@@ -155,6 +157,7 @@ export function PullRequestCommentSheet(props: PullRequestCommentSheetProps) {
         <TextInput
           accessibilityLabel={title}
           autoFocus
+          maxLength={COMMENT_BODY_MAX_LENGTH}
           multiline
           onChangeText={setBody}
           placeholder={

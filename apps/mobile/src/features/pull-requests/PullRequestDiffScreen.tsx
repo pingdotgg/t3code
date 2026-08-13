@@ -1,6 +1,6 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useMemo } from "react";
+import { useEffect, useRef } from "react";
 import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -9,10 +9,10 @@ import { EmptyState } from "../../components/EmptyState";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { cn } from "../../lib/cn";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { useEnvironmentQuery } from "../../state/query";
-import { pullRequestEnvironment } from "../../state/pullRequests";
-import { parseUnifiedDiff, type DiffLineKind } from "./pullRequestDiffParse";
+import { type DiffLineKind } from "./pullRequestDiffParse";
 import { parseRoutePositiveInt, type PullRequestDiffRouteParams } from "./pullRequestNavigation";
+import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
+import { useResolvedPullRequestReference } from "./useResolvedPullRequestReference";
 
 const LINE_CLASS: Record<DiffLineKind, string> = {
   add: "bg-emerald-500/12",
@@ -36,24 +36,35 @@ export function PullRequestDiffScreen(props: PullRequestDiffScreenProps) {
   const navigation = useNavigation();
   const iconColor = useThemeColor("--color-icon");
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
-  const projectId = ProjectId.make(props.route.params.projectId);
   const number = parseRoutePositiveInt(props.route.params.number);
-  const repository = props.route.params.repository;
+  const reference = useResolvedPullRequestReference(props.route.params);
   const path = props.route.params.path;
-  const diffQuery = useEnvironmentQuery(
-    number === null
-      ? null
-      : pullRequestEnvironment.diff({
-          environmentId,
-          input: { projectId, repository, number },
-        }),
-  );
-  const files = useMemo(
-    () => (diffQuery.data?.patch ? parseUnifiedDiff(diffQuery.data.patch) : []),
-    [diffQuery.data],
-  );
-  const file = path === undefined ? files[0] : files.find((entry) => entry.displayPath === path);
+  const diff = usePullRequestDiffSlices({
+    environmentId,
+    reference,
+    enabled: reference !== null,
+  });
+  const file =
+    path === undefined ? diff.files[0] : diff.files.find((entry) => entry.displayPath === path);
+  const attemptedCursors = useRef(new Set<string>());
+  const scopeKey = reference
+    ? `${reference.projectId}:${reference.repository}:${reference.number}`
+    : "";
+
+  useEffect(() => {
+    attemptedCursors.current = new Set();
+  }, [scopeKey, path]);
+
+  useEffect(() => {
+    if (path === undefined || diff.loading || diff.loadingMore) return;
+    if (file !== undefined) return;
+    if (diff.nextCursor === null || attemptedCursors.current.has(diff.nextCursor)) return;
+    attemptedCursors.current.add(diff.nextCursor);
+    diff.loadMore();
+  }, [diff.loading, diff.loadingMore, diff.loadMore, diff.nextCursor, file, path]);
+
   const title = file?.displayPath ?? path ?? "Diff";
+  const waitingForSlice = file === undefined && (diff.loading || diff.loadingMore);
 
   return (
     <View className="flex-1 bg-sheet">
@@ -65,19 +76,26 @@ export function PullRequestDiffScreen(props: PullRequestDiffScreenProps) {
       ) : (
         <NativeStackScreenOptions options={{ title }} />
       )}
-      {diffQuery.isPending && file === undefined ? (
+      {number === null || reference === null ? (
+        <View className="flex-1 justify-center px-6">
+          <EmptyState
+            title="Pull request not found"
+            detail="This link does not name a pull request."
+          />
+        </View>
+      ) : waitingForSlice ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator color={iconColor} />
         </View>
-      ) : diffQuery.error && file === undefined ? (
+      ) : diff.error && file === undefined ? (
         <View className="flex-1 justify-center px-6">
-          <EmptyState title="Could not load this file" detail={diffQuery.error} />
+          <EmptyState title="Could not load this file" detail={diff.error} />
         </View>
       ) : file === undefined ? (
         <View className="flex-1 justify-center px-6">
           <EmptyState
-            title="File not in this slice"
-            detail="This path was not in the loaded diff."
+            title="File not in this diff"
+            detail="This path was not in the loaded slices."
           />
         </View>
       ) : (
