@@ -92,12 +92,14 @@ export class ProviderProbeError extends Schema.TaggedErrorClass<ProviderProbeErr
   "ProviderProbeError",
   {
     provider: Schema.String,
+    stage: Schema.String,
+    exitCode: Schema.optional(Schema.Number),
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Provider probe error (${this.provider}): ${this.detail}`;
+    return `Provider probe error (${this.provider}) in ${this.stage}: ${this.detail}`;
   }
 }
 
