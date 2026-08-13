@@ -27,6 +27,15 @@ const SERVER_NAME: &str = "t3-desktop";
 const SERVER_VERSION: &str = "0.1.0";
 
 fn main() {
+    // Chrome spawns this same binary as its native messaging host; in that mode
+    // the process is a relay, not a server.
+    if std::env::args().nth(1).as_deref() == Some("native-host") {
+        if let Err(error) = browser::run_native_host() {
+            eprintln!("t3-desktop-mcp: native host stopped: {error}");
+        }
+        return;
+    }
+
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
