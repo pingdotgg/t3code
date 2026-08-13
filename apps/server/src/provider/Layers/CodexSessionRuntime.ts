@@ -1311,23 +1311,30 @@ export const makeCodexSessionRuntime = (
           collabSpawnMetadata.set(childThreadId, metadata);
         }
         yield* Ref.set(collabSpawnMetadataRef, collabSpawnMetadata);
-        if (spawnMetadataEntries.length > 0) {
-          yield* Ref.update(collabChildAgentsRef, (current) => {
-            const next = new Map(current);
-            for (const [childThreadId, metadata] of spawnMetadataEntries) {
-              const child = next.get(childThreadId);
-              if (child) {
-                next.set(childThreadId, {
-                  ...child,
-                  parentThreadId: child.parentThreadId ?? metadata.parentThreadId,
-                  model: child.model ?? metadata.model,
-                  effort: child.effort ?? metadata.effort,
-                });
-              }
-            }
-            return next;
-          });
-        }
+        const enrichedChildren =
+          spawnMetadataEntries.length > 0
+            ? yield* Ref.modify(collabChildAgentsRef, (current) => {
+                const enriched: Array<CollabChildAgentState> = [];
+                const next = new Map(current);
+                for (const [childThreadId, metadata] of spawnMetadataEntries) {
+                  const child = next.get(childThreadId);
+                  if (child) {
+                    const enrichedChild = {
+                      ...child,
+                      // The correlated spawn tool call is authoritative; the
+                      // activity registration's parent can be only a routing
+                      // fallback captured before actual metadata arrived.
+                      parentThreadId: metadata.parentThreadId,
+                      model: child.model ?? metadata.model,
+                      effort: child.effort ?? metadata.effort,
+                    };
+                    next.set(childThreadId, enrichedChild);
+                    enriched.push(enrichedChild);
+                  }
+                }
+                return [enriched, next];
+              })
+            : [];
         // Interception FIRST: a registered v2 child is usually also in the
         // receiver-turn map (collabAgentToolCall.receiverThreadIds), and the
         // legacy suppressor below would drop its lifecycle before it could
@@ -1434,6 +1441,23 @@ export const makeCodexSessionRuntime = (
             : {}),
           ...(payload !== undefined ? { payload } : {}),
         });
+        // The correlated tool-call itself stays first in the provider stream.
+        // A separate identity patch then makes late spawn metadata durable:
+        // ingestion upserts it by canonical thread + child id, while replay
+        // folds it without changing an already-terminal lifecycle status.
+        yield* Effect.forEach(
+          enrichedChildren,
+          (enrichedChild) =>
+            emitEvent({
+              kind: "notification",
+              threadId: options.threadId,
+              method: "collabAgent/metadata",
+              ...(route.turnId ? { turnId: route.turnId } : {}),
+              ...(route.itemId ? { itemId: route.itemId } : {}),
+              payload: collabChildIdentity(enrichedChild),
+            }),
+          { discard: true },
+        );
       });
 
     const currentSessionProviderThreadId = Effect.map(Ref.get(sessionRef), currentProviderThreadId);

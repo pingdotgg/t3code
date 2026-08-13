@@ -548,6 +548,28 @@ function mapCollabAgentEvent(
   } as const;
 
   switch (event.method) {
+    case "collabAgent/metadata":
+      // Late spawn metadata is an identity-only patch. Do not synthesize a
+      // status (which could reopen a terminal child), or fallback identity
+      // fields that the correlated spawn call did not actually provide.
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: {
+            taskId,
+            ...(nickname ? { title: nickname } : pathLeaf ? { title: pathLeaf } : {}),
+            ...(typeof payload.role === "string" ? { role: payload.role } : {}),
+            ...(agentPath ? { agentPath } : {}),
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+            ...(parentAgentId ? { parentAgentId } : {}),
+            timelineBypass: true,
+            agentSource: "provider",
+            cancellationOwner: "provider",
+          },
+        },
+      ];
     case "collabAgent/started":
       return [
         {

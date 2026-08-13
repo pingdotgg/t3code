@@ -745,6 +745,34 @@ describe("terminal robustness", () => {
     expect(agents[0]!.title).toBe("Late");
   });
 
+  it("late metadata enriches a retained terminal row without reopening it", () => {
+    const agents = fold([
+      activity("task.updated", {
+        taskId: "native-child",
+        status: "interrupted",
+        timelineBypass: true,
+        agentSource: "provider",
+      }),
+      activity("task.updated", {
+        taskId: "native-child",
+        parentAgentId: "native-parent",
+        model: "gpt-5.6-luna",
+        effort: "low",
+        timelineBypass: true,
+        agentSource: "provider",
+      }),
+    ]);
+
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      id: "native-child",
+      status: "interrupted",
+      parentAgentId: "native-parent",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+  });
+
   it("a completion after a terminal task.updated still enriches result and usage", () => {
     // Claude commonly emits terminal task.updated before task.completed;
     // the completion carries the summary and final usage the update lacked.

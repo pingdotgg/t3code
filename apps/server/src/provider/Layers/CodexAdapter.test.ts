@@ -554,6 +554,49 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps late native spawn metadata to a correlated identity-only patch", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-collab-child-metadata"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/metadata",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("spawn-turn"),
+        itemId: asItemId("spawn-call"),
+        payload: {
+          agentThreadId: "native-child",
+          parentThreadId: "native-parent",
+          model: "gpt-5.6-luna",
+          effort: "low",
+        },
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") return;
+      NodeAssert.equal(firstEvent.value.type, "task.updated");
+      if (firstEvent.value.type !== "task.updated") return;
+      NodeAssert.deepStrictEqual(firstEvent.value.payload, {
+        taskId: "native-child",
+        model: "gpt-5.6-luna",
+        effort: "low",
+        parentAgentId: "native-parent",
+        timelineBypass: true,
+        agentSource: "provider",
+        cancellationOwner: "provider",
+      });
+      NodeAssert.deepStrictEqual(firstEvent.value.providerRefs, {
+        providerTurnId: "spawn-turn",
+        providerItemId: "spawn-call",
+      });
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
