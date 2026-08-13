@@ -28,8 +28,8 @@ const disabledDesktopControl = {
 } as const satisfies DesktopControlFlags;
 
 /**
- * Always acquire `ServerSettingsService` from the Effect environment (never
- * `Effect.serviceOption`). Callers that need R=never session methods should use
+ * Always acquire `ServerSettings.ServerSettingsService` from the Effect
+ * environment. Callers that need R=never session methods should use
  * `makeResolveEnabledDesktopMcp` instead of yielding this effect directly.
  */
 const readDesktopControlFlags = Effect.fn("desktopControl.readDesktopControlFlags")(function* () {
