@@ -103,7 +103,7 @@ impl BrowserBridge {
             }
             if reply.get("ok").and_then(Value::as_bool) == Some(true) {
                 let result = reply.get("result").cloned().unwrap_or(json!({}));
-                return Ok(describe(command, &result));
+                return Ok(describe(command, &result, args));
             }
             return Err(reply
                 .get("error")
@@ -180,14 +180,26 @@ fn normalise(command: &str, args: &Value) -> Value {
 }
 
 /// Render a reply as the tool text the macOS server produces.
-fn describe(command: &str, result: &Value) -> String {
+fn describe(command: &str, result: &Value, args: &Value) -> String {
     match command {
-        "open_tab" => format!(
-            "opened tab_id={} — {}  [{}]",
-            result.get("tabId").and_then(Value::as_i64).unwrap_or(-1),
-            result.get("title").and_then(Value::as_str).unwrap_or(""),
-            result.get("url").and_then(Value::as_str).unwrap_or("")
-        ),
+        // A freshly opened tab has not loaded yet, so the reply usually carries
+        // no title and no url. Echo the requested address instead of rendering
+        // an empty pair the model would read as a failed open.
+        "open_tab" => {
+            let tab = result.get("tabId").and_then(Value::as_i64).unwrap_or(-1);
+            let title = result.get("title").and_then(Value::as_str).unwrap_or("");
+            let url = result
+                .get("url")
+                .and_then(Value::as_str)
+                .filter(|url| !url.is_empty() && *url != "about:blank")
+                .or_else(|| args.get("url").and_then(Value::as_str))
+                .unwrap_or("about:blank");
+            if title.is_empty() {
+                format!("opened {url} in the agent tab group (tab_id={tab})")
+            } else {
+                format!("opened tab_id={tab} — {title}  [{url}]")
+            }
+        }
         "list_tabs" => describe_tabs(result),
         "snapshot" => describe_snapshot(result),
         "close_all_tabs" => {
@@ -376,8 +388,33 @@ mod tests {
 
     #[test]
     fn closing_nothing_is_reported_as_nothing() {
-        assert!(describe("close_all_tabs", &json!({ "closed": 0 })).contains("nothing to clean up"));
-        assert!(describe("close_all_tabs", &json!({ "closed": 1 })).contains("closed 1 agent tab "));
-        assert!(describe("close_all_tabs", &json!({ "closed": 3 })).contains("closed 3 agent tabs"));
+        let no_args = json!({});
+        assert!(describe("close_all_tabs", &json!({ "closed": 0 }), &no_args).contains("nothing to clean up"));
+        assert!(describe("close_all_tabs", &json!({ "closed": 1 }), &no_args).contains("closed 1 agent tab "));
+        assert!(describe("close_all_tabs", &json!({ "closed": 3 }), &no_args).contains("closed 3 agent tabs"));
+    }
+
+    #[test]
+    fn a_freshly_opened_tab_echoes_the_requested_url() {
+        // Chrome answers before the tab loads, so title and url come back empty;
+        // rendering that verbatim reads like the open failed.
+        let rendered = describe(
+            "open_tab",
+            &json!({ "tabId": 42 }),
+            &json!({ "url": "https://example.com" }),
+        );
+        assert!(rendered.contains("https://example.com"), "{rendered}");
+        assert!(rendered.contains("tab_id=42"), "{rendered}");
+        assert!(!rendered.contains("[]"), "empty url pair leaked: {rendered}");
+    }
+
+    #[test]
+    fn a_loaded_tab_reports_its_own_title() {
+        let rendered = describe(
+            "open_tab",
+            &json!({ "tabId": 7, "title": "Example Domain", "url": "https://example.com/" }),
+            &json!({}),
+        );
+        assert!(rendered.contains("Example Domain"), "{rendered}");
     }
 }
