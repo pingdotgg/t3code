@@ -275,6 +275,7 @@ export function useThreadOutboxDrain(): void {
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          createInChatScratch: creation.createInChatScratch === true,
         }),
       });
       return completeDelivery(deliveryResult);
@@ -334,7 +335,11 @@ export function useThreadOutboxDrain(): void {
         if (!isQueuedThreadCreationSendable(nextQueuedMessage)) {
           continue;
         }
-        if (creationProjectCwd === null && shellStatus !== "live") {
+        if (
+          creationProjectCwd === null &&
+          creation.createInChatScratch !== true &&
+          shellStatus !== "live"
+        ) {
           continue;
         }
       }
@@ -381,8 +386,8 @@ export function useThreadOutboxDrain(): void {
         return deliveryAction === "remove"
           ? removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined
-            ? creationProjectCwd !== null
-              ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd)
+            ? creation.createInChatScratch === true || creationProjectCwd !== null
+              ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd ?? "")
               : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
             : thread !== undefined
               ? sendQueuedMessage(nextQueuedMessage, thread)

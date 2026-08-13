@@ -88,6 +88,14 @@ A turn is complete when its session leaves `running` status, projected by
 `settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
 does not define turn end.
 
+Chats are ordinary threads under a hidden synthetic project (`kind: "chat"`), one per environment,
+with a scratch directory in T3 home as the workspace root and a per-thread scratch `worktreePath`.
+The shell hides that project and ships the threads; clients use `projectHasWorkspace` rather than
+null-checking the project. The server creates the project on read (`getOrCreateChatProject`) when
+bootstrap sets `createInChatScratch`. This is the same synthetic-project pattern as the Hermes
+experiment (`experiment/hermes-provider-ui`); that branch is not on main. See the
+[glossary](./glossary.md#chat--synthetic-chat-project).
+
 ## Drainable workers
 
 Follow-up work runs asynchronously in queue-backed workers built on [`DrainableWorker`][worker]:

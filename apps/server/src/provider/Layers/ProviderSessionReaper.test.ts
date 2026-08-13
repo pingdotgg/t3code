@@ -83,6 +83,7 @@ function makeReadModel(
         title: "Provider Reaper Project",
         workspaceRoot: "/tmp/provider-reaper-project",
         defaultModelSelection,
+        kind: "workspace" as const,
         scripts: [],
         createdAt: now,
         updatedAt: now,

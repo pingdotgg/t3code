@@ -67,6 +67,10 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import {
+  CHAT_DRAFT_PROJECT_ID,
+  projectHasWorkspace,
+} from "@t3tools/client-runtime/state/project-kind";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
   buildHomeProjectScopes,
@@ -81,6 +85,21 @@ const EMPTY_BRANCH_REFS: ReadonlyArray<VcsRef> = [];
 
 function pendingTaskDraftKey(messageId: string): string {
   return `pending-task:${messageId}`;
+}
+
+function makeChatDraftProject(environmentId: EnvironmentId): EnvironmentProject {
+  return {
+    environmentId,
+    id: CHAT_DRAFT_PROJECT_ID,
+    title: "Chats",
+    workspaceRoot: "chat",
+    kind: "chat",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  };
 }
 
 // The message id owned by the currently active editing session, tracked
@@ -156,6 +175,7 @@ type NewTaskFlowContextValue = {
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
   readonly setProject: (project: EnvironmentProject) => void;
+  readonly startChatDraft: (environmentId: EnvironmentId) => void;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly setSelectedModelKey: (
     key: string | null,
@@ -211,7 +231,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const selectedEnvironmentId =
     selectedEnvironmentIdOverride !== null &&
-    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
+    (projects.some((project) => project.environmentId === selectedEnvironmentIdOverride) ||
+      savedConnectionsById[selectedEnvironmentIdOverride] != null)
       ? selectedEnvironmentIdOverride
       : (projects[0]?.environmentId ?? null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
@@ -267,24 +288,36 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       workspaceRoot: creation.projectCwd ?? "",
       repositoryIdentity: null,
       defaultModelSelection: editingPendingTask.modelSelection ?? null,
+      kind: creation.createInChatScratch === true ? "chat" : "workspace",
       scripts: [],
       createdAt: editingPendingTask.createdAt,
       updatedAt: editingPendingTask.createdAt,
     };
   }, [editingPendingTask]);
 
-  const selectedProject =
-    projectsForEnvironment.find(
-      (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
-    ) ??
-    // While editing a queued task whose project shell is absent, keep the task
-    // pinned to its own project — falling through to an arbitrary first
-    // project would silently retarget it (and its reused turn identifiers).
-    (editingPendingProject !== null &&
-    selectedProjectKey ===
-      scopedProjectKey(editingPendingProject.environmentId, editingPendingProject.id)
-      ? editingPendingProject
-      : (projectsForEnvironment[0] ?? null));
+  const selectedProject = (() => {
+    const chatDraftSelected =
+      selectedEnvironmentId !== null &&
+      selectedProjectKey === scopedProjectKey(selectedEnvironmentId, CHAT_DRAFT_PROJECT_ID);
+    if (chatDraftSelected && selectedEnvironmentId !== null) {
+      return editingPendingProject?.kind === "chat"
+        ? editingPendingProject
+        : makeChatDraftProject(selectedEnvironmentId);
+    }
+    return (
+      projectsForEnvironment.find(
+        (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
+      ) ??
+      // While editing a queued task whose project shell is absent, keep the task
+      // pinned to its own project — falling through to an arbitrary first
+      // project would silently retarget it (and its reused turn identifiers).
+      (editingPendingProject !== null &&
+      selectedProjectKey ===
+        scopedProjectKey(editingPendingProject.environmentId, editingPendingProject.id)
+        ? editingPendingProject
+        : (projectsForEnvironment[0] ?? null))
+    );
+  })();
 
   // Only offer machines that actually host the currently selected repository, so
   // switching computers moves the same repo across machines instead of jumping to
@@ -332,10 +365,23 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         environmentLabel: environment.environmentLabel,
       });
     }
+    if (selectedProject?.kind === "chat") {
+      for (const environment of Object.values(savedConnectionsById)) {
+        if (seen.has(environment.environmentId)) {
+          continue;
+        }
+        seen.add(environment.environmentId);
+        result.push({
+          environmentId: environment.environmentId,
+          environmentLabel: environment.environmentLabel,
+        });
+      }
+    }
     return result;
   }, [
     projects,
     savedConnectionsById,
+    selectedProject?.kind,
     selectedRepositoryKey,
     selectedWorkspaceBasename,
     selectedProjectTitle,
@@ -358,7 +404,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // uses for new draft threads: per-project setting, then the repo's
   // checked-in t3.json, then the server's configured default.
   const t3ProjectFileQuery = useEnvironmentQuery(
-    selectedProject !== null && selectedProject.workspaceRoot !== ""
+    selectedProject !== null &&
+      projectHasWorkspace(selectedProject) &&
+      selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
@@ -525,10 +573,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () => ({
       environmentId: selectedProject?.environmentId ?? null,
       // `|| null` also skips the stand-in project's empty workspaceRoot.
-      cwd: selectedProject?.workspaceRoot || null,
+      cwd:
+        selectedProject !== null && projectHasWorkspace(selectedProject)
+          ? selectedProject.workspaceRoot || null
+          : null,
       query: null,
     }),
-    [selectedProject?.environmentId, selectedProject?.workspaceRoot],
+    [selectedProject],
   );
   const branchState = useBranches(branchTarget);
   const branchesLoading = branchState.isPending;
@@ -560,8 +611,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setSelectedProjectKey(nextProjectKey);
   }, []);
 
+  const startChatDraft = useCallback((environmentId: EnvironmentId) => {
+    setSelectedEnvironmentId(environmentId);
+    setSelectedProjectKey(scopedProjectKey(environmentId, CHAT_DRAFT_PROJECT_ID));
+  }, []);
+
   const selectEnvironment = useCallback(
     (environmentId: EnvironmentId) => {
+      if (selectedProject?.kind === "chat") {
+        startChatDraft(environmentId);
+        return;
+      }
       const projectsOnTarget = projects.filter(
         (project) => project.environmentId === environmentId,
       );
@@ -588,7 +648,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setSelectedEnvironmentId(environmentId);
       setSelectedProjectKey(match ? scopedProjectKey(match.environmentId, match.id) : null);
     },
-    [projects, selectedProject],
+    [projects, selectedProject, startChatDraft],
   );
 
   const setWorkspaceMode = useCallback(
@@ -754,10 +814,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const usingPendingSnapshot = selectedProject === editingPendingProject;
       const projectTitle = usingPendingSnapshot
         ? editingPendingTask?.creation?.projectTitle
-        : selectedProject.title;
+        : selectedProject.kind === "chat"
+          ? "Chats"
+          : selectedProject.title;
       const projectCwd = usingPendingSnapshot
         ? editingPendingTask?.creation?.projectCwd
-        : selectedProject.workspaceRoot;
+        : selectedProject.kind === "chat"
+          ? undefined
+          : selectedProject.workspaceRoot;
       return {
         environmentId: selectedProject.environmentId,
         threadId: ThreadId.make(metadata.threadId),
@@ -772,9 +836,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           projectId: selectedProject.id,
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
-          workspaceMode: mode,
-          branch: workspaceSelection?.branch ?? null,
-          worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
+          workspaceMode: selectedProject.kind === "chat" ? "local" : mode,
+          branch: selectedProject.kind === "chat" ? null : (workspaceSelection?.branch ?? null),
+          worktreePath:
+            selectedProject.kind === "chat" || mode === "worktree"
+              ? null
+              : (workspaceSelection?.worktreePath ?? null),
+          ...(selectedProject.kind === "chat" ? { createInChatScratch: true } : {}),
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
           // drain with the same origin mode the composer displayed.
@@ -918,6 +986,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       filteredBranches,
       reset,
       setProject,
+      startChatDraft,
       selectEnvironment,
       setSelectedModelKey,
       setWorkspaceMode,
@@ -974,6 +1043,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProjectKey,
       selectedWorktreePath,
       setProject,
+      startChatDraft,
       selectBranch,
       selectEnvironment,
       setInteractionMode,

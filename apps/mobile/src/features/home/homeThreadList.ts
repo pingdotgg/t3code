@@ -3,6 +3,7 @@ import {
   derivePhysicalProjectKey,
   deriveProjectGroupLabel,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { CHAT_DRAFT_PROJECT_ID } from "@t3tools/client-runtime/state/project-kind";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -145,6 +146,7 @@ const RECENT_THREAD_FALLBACK_COUNT = 3;
 
 export interface HomeThreadGroup {
   readonly key: string;
+  readonly kind: "project" | "chats";
   readonly title: string;
   readonly representative: EnvironmentProject;
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -166,6 +168,7 @@ export interface HomeThreadGroup {
 
 interface MutableHomeThreadGroup {
   readonly key: string;
+  readonly kind: "project" | "chats";
   readonly projects: EnvironmentProject[];
   readonly pendingTasks: PendingNewTask[];
   readonly threads: EnvironmentThreadShell[];
@@ -200,6 +203,25 @@ function selectRecentThreads(
   return recent.length > 0 ? recent : sortedThreads.slice(0, RECENT_THREAD_FALLBACK_COUNT);
 }
 
+function chatsGroupKey(environmentId: EnvironmentId): string {
+  return `chats:${environmentId}`;
+}
+
+function makeChatGroupRepresentative(environmentId: EnvironmentId): EnvironmentProject {
+  return {
+    environmentId,
+    id: CHAT_DRAFT_PROJECT_ID,
+    title: "Chats",
+    workspaceRoot: "chats",
+    kind: "chat",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  };
+}
+
 export function buildHomeThreadGroups(input: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -222,6 +244,7 @@ export function buildHomeThreadGroups(input: {
     groupTitleByKey.set(scope.key, scope.title);
     groups.set(scope.key, {
       key: scope.key,
+      kind: "project",
       projects: [...scope.projects],
       pendingTasks: [],
       threads: [],
@@ -244,6 +267,19 @@ export function buildHomeThreadGroups(input: {
       pendingTask.creation.projectId,
     );
     let groupKey = groupKeyByProjectKey.get(physicalKey);
+    if (!groupKey && pendingTask.creation.projectId === CHAT_DRAFT_PROJECT_ID) {
+      groupKey = chatsGroupKey(pendingTask.message.environmentId);
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          key: groupKey,
+          kind: "chats",
+          projects: [makeChatGroupRepresentative(pendingTask.message.environmentId)],
+          pendingTasks: [],
+          threads: [],
+        });
+      }
+      groupKeyByProjectKey.set(physicalKey, groupKey);
+    }
     if (!groupKey) {
       // The project shell is not loaded (environment offline / project gone).
       // A queued task must stay visible and deletable regardless, so build a
@@ -252,6 +288,7 @@ export function buildHomeThreadGroups(input: {
       groupKeyByProjectKey.set(physicalKey, groupKey);
       groups.set(groupKey, {
         key: groupKey,
+        kind: "project",
         projects: [
           {
             environmentId: pendingTask.message.environmentId,
@@ -261,6 +298,7 @@ export function buildHomeThreadGroups(input: {
               pendingTask.creation.projectCwd ?? String(pendingTask.creation.projectId),
             repositoryIdentity: null,
             defaultModelSelection: null,
+            kind: "workspace",
             scripts: [],
             createdAt: pendingTask.message.createdAt,
             updatedAt: pendingTask.message.createdAt,
@@ -282,11 +320,34 @@ export function buildHomeThreadGroups(input: {
     }
 
     const physicalKey = scopedProjectKey(thread.environmentId, thread.projectId);
-    const groupKey = groupKeyByProjectKey.get(physicalKey);
+    let groupKey = groupKeyByProjectKey.get(physicalKey);
     if (!groupKey) {
-      continue;
+      groupKey = chatsGroupKey(thread.environmentId);
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          key: groupKey,
+          kind: "chats",
+          projects: [makeChatGroupRepresentative(thread.environmentId)],
+          pendingTasks: [],
+          threads: [],
+        });
+      }
+      groupKeyByProjectKey.set(physicalKey, groupKey);
     }
     groups.get(groupKey)?.threads.push(thread);
+  }
+
+  if (input.environmentId !== null) {
+    const emptyChatsKey = chatsGroupKey(input.environmentId);
+    if (!groups.has(emptyChatsKey)) {
+      groups.set(emptyChatsKey, {
+        key: emptyChatsKey,
+        kind: "chats",
+        projects: [makeChatGroupRepresentative(input.environmentId)],
+        pendingTasks: [],
+        threads: [],
+      });
+    }
   }
 
   const query = input.searchQuery.trim().toLocaleLowerCase();
@@ -294,7 +355,12 @@ export function buildHomeThreadGroups(input: {
 
   for (const group of groups.values()) {
     const representative = group.projects[0];
-    if (!representative || (group.threads.length === 0 && group.pendingTasks.length === 0)) {
+    const keepEmptyChatsGroup =
+      group.kind === "chats" && input.environmentId !== null && query.length === 0;
+    if (
+      !representative ||
+      (!keepEmptyChatsGroup && group.threads.length === 0 && group.pendingTasks.length === 0)
+    ) {
       continue;
     }
 
@@ -323,7 +389,7 @@ export function buildHomeThreadGroups(input: {
           pendingTask.title.toLocaleLowerCase().includes(query),
         );
 
-    if (matchingThreads.length === 0 && matchingPendingTasks.length === 0) {
+    if (matchingThreads.length === 0 && matchingPendingTasks.length === 0 && !keepEmptyChatsGroup) {
       continue;
     }
 
@@ -357,15 +423,17 @@ export function buildHomeThreadGroups(input: {
 
     result.push({
       key: group.key,
-      title,
+      kind: group.kind,
+      title: group.kind === "chats" ? "Chats" : title,
       representative,
       projects: group.projects,
       pendingTasks: matchingPendingTasks,
       threads: sortedThreads,
       recentThreads,
-      newThreadTarget: group.key.startsWith("pending-project:")
-        ? null
-        : (lastActiveProject ?? representative),
+      newThreadTarget:
+        group.kind === "chats" || group.key.startsWith("pending-project:")
+          ? null
+          : (lastActiveProject ?? representative),
     });
   }
 
@@ -373,11 +441,13 @@ export function buildHomeThreadGroups(input: {
     result,
     Order.mapInput(
       Order.Struct({
+        kindRank: Order.Number,
         timestamp: Order.flip(Order.Number),
         title: Order.String,
         key: Order.String,
       }),
       (group: HomeThreadGroup) => ({
+        kindRank: group.kind === "chats" ? 0 : 1,
         timestamp: groupSortTimestamp(group, input.projectSortOrder),
         title: group.title,
         key: group.key,

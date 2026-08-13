@@ -34,8 +34,9 @@ Examples: `mod+j`, `mod+shift+d`, `ctrl+l`, `cmd+k`.
 
 ## Commands
 
-Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refresh`, and
-`chat.new`. Project scripts are addressable as `script.{id}.run`, for example `script.test.run`.
+Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refresh`,
+`chat.new`, and `chat.newChat`. Project scripts are addressable as `script.{id}.run`, for example
+`script.test.run`.
 
 `filePicker.toggle` opens file search for the active project and defaults to `mod+p`.
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
@@ -61,6 +62,9 @@ environment mode always come from your configured defaults, not from the thread 
 at. To keep a worktree, use the explicit "new thread in this worktree" action in the branch
 toolbar. The only difference between the two commands: with the current sidebar and more than one
 project, `chat.new` opens a project chooser first.
+
+`chat.newChat` starts a chat that is not attached to a project. It defaults to `mod+alt+n`. See
+[Chats](./chats.md).
 
 ## `when` Conditions
 

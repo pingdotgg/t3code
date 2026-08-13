@@ -4,7 +4,13 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import { CHAT_DRAFT_PROJECT_ID } from "@t3tools/client-runtime/state/project-kind";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type EnvironmentId,
+  type ScopedProjectRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -29,6 +35,7 @@ import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefau
 import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "./useSettings";
 
 interface NewThreadWorkspaceOptions {
@@ -36,6 +43,7 @@ interface NewThreadWorkspaceOptions {
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  createInChatScratch?: boolean;
 }
 
 // The workspace options the caller passed explicitly, shaped for the draft
@@ -47,6 +55,9 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
+    ...(options?.createInChatScratch !== undefined
+      ? { createInChatScratch: options.createInChatScratch }
+      : {}),
   };
 }
 
@@ -73,6 +84,7 @@ export function useNewThreadHandler() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
+        createInChatScratch?: boolean;
         replace?: boolean;
         /**
          * Move the viewed draft's typed content (prompt + images) into the
@@ -165,6 +177,9 @@ export function useNewThreadHandler() {
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
+        if (options?.createInChatScratch === true) {
+          return "local";
+        }
         const consultProjectFile = project !== undefined && project.defaultThreadEnvMode == null;
         return resolveDefaultThreadEnvMode({
           projectSetting: project?.defaultThreadEnvMode,
@@ -184,6 +199,7 @@ export function useNewThreadHandler() {
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
       const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+      const hasCreateInChatScratchOption = options?.createInChatScratch !== undefined;
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const storedDraftThreadRef = storedDraftThread
         ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -220,7 +236,8 @@ export function useNewThreadHandler() {
             hasBranchOption ||
             hasWorktreePathOption ||
             hasEnvModeOption ||
-            hasStartFromOriginOption;
+            hasStartFromOriginOption ||
+            hasCreateInChatScratchOption;
           // Resurrecting an empty stored draft must not resurrect its stale
           // context: explicit workspace options win outright; otherwise the
           // env context resets to the configured defaults so drafts seeded
@@ -334,7 +351,8 @@ export function useNewThreadHandler() {
           hasBranchOption ||
           hasWorktreePathOption ||
           hasEnvModeOption ||
-          hasStartFromOriginOption
+          hasStartFromOriginOption ||
+          hasCreateInChatScratchOption
         ) {
           setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
         }
@@ -407,6 +425,9 @@ export function useNewThreadHandler() {
             }),
           runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
+          ...(options?.createInChatScratch !== undefined
+            ? { createInChatScratch: options.createInChatScratch }
+            : {}),
         });
         applyStickyState(draftId);
         if (carryModelSelection) {
@@ -470,4 +491,26 @@ export function useHandleNewThread() {
     handleNewThread,
     routeThreadRef,
   };
+}
+
+export function useHandleNewChat() {
+  const handleNewThread = useNewThreadHandler();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+
+  return useCallback(
+    async (environmentId?: EnvironmentId) => {
+      const targetEnvironmentId = environmentId ?? primaryEnvironmentId;
+      if (!targetEnvironmentId) {
+        return null;
+      }
+      return handleNewThread(scopeProjectRef(targetEnvironmentId, CHAT_DRAFT_PROJECT_ID), {
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+        startFromOrigin: false,
+        createInChatScratch: true,
+      });
+    },
+    [handleNewThread, primaryEnvironmentId],
+  );
 }

@@ -276,6 +276,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             model: "gpt-5-codex",
           },
           faviconPath: null,
+          kind: "workspace" as const,
           scripts: [
             {
               id: "script-1",
@@ -396,6 +397,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             model: "gpt-5-codex",
           },
           faviconPath: null,
+          kind: "workspace" as const,
           scripts: [
             {
               id: "script-1",

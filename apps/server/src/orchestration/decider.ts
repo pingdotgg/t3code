@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PROJECT_KIND,
   EventId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -251,6 +252,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
           faviconPath: null,
+          kind: command.kind ?? DEFAULT_PROJECT_KIND,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,

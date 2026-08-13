@@ -12,6 +12,7 @@ import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import { projectHasWorkspace } from "@t3tools/client-runtime/state/project-kind";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -192,6 +193,7 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const hasWorkspace = projectHasWorkspace(selectedThreadProject);
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -620,12 +622,13 @@ function ThreadRouteContent(
         : undefined,
     onOpenFilesInspector:
       fileInspector.supported && selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: fileInspector.supported ? handleOpenGitInspector : undefined,
+    onOpenGitInspector:
+      hasWorkspace && fileInspector.supported ? handleOpenGitInspector : undefined,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(selectedThreadProject?.workspaceRoot),
-    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenTerminal: hasWorkspace && Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenFiles: hasWorkspace && Boolean(selectedThreadProject?.workspaceRoot),
     projectScripts: selectedThreadProject?.scripts ?? [],
     terminalSessions: terminalMenuSessions,
     showDirectFileControl: layout.usesSplitView,
@@ -637,6 +640,8 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const visibleThreadCenterHeaderItems = hasWorkspace ? threadCenterHeaderItems : [];
+  const visibleCompactRightHeaderItems = hasWorkspace ? compactRightHeaderItems : [];
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -696,18 +701,20 @@ function ThreadRouteContent(
         onPress: handleOpenFilesInspector,
       });
     }
-    if (selectedThreadProject?.workspaceRoot) {
+    if (hasWorkspace && selectedThreadProject?.workspaceRoot) {
       actions.push({
         accessibilityLabel: "Open terminal",
         icon: "terminal",
         onPress: () => handleOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: handleOpenGitInspector,
-    });
+    if (hasWorkspace) {
+      actions.push({
+        accessibilityLabel: "Open git controls",
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        onPress: handleOpenGitInspector,
+      });
+    }
     if (fileInspector.supported && selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Toggle inspector",
@@ -725,6 +732,7 @@ function ThreadRouteContent(
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
+    hasWorkspace,
   ]);
 
   // Deep links / cold starts land with Thread as the ONLY route, where the
@@ -761,7 +769,10 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
-      <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      <ThreadGitControls
+        {...threadGitControlProps}
+        showActionControls={showActionControls && hasWorkspace}
+      />
 
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 
@@ -787,7 +798,9 @@ function ThreadRouteContent(
           loadEarlier={loadEarlierTurns}
           activeThreadBusy={composer.activeThreadBusy}
           environmentId={selectedThread.environmentId}
-          projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
+          projectWorkspaceRoot={
+            hasWorkspace ? (selectedThreadProject?.workspaceRoot ?? null) : null
+          }
           threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           layoutVariant={layout.variant}
@@ -846,7 +859,10 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () =>
+                  layout.usesSplitView
+                    ? visibleThreadCenterHeaderItems
+                    : visibleCompactRightHeaderItems
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
         }}

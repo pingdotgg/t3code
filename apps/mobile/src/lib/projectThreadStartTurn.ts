@@ -38,6 +38,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly startFromOrigin: boolean;
   /** Generated temp branch for worktree mode; unused for local mode. */
   readonly worktreeBranchName: string;
+  readonly createInChatScratch?: boolean;
 }
 
 /**
@@ -47,7 +48,8 @@ export interface ProjectThreadStartTurnSpec {
  */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
   const title = deriveThreadTitleFromPrompt(spec.text);
-  const isWorktree = spec.workspaceMode === "worktree";
+  const isChat = spec.createInChatScratch === true;
+  const isWorktree = !isChat && spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
     threadId: ThreadId.make(spec.threadId),
@@ -68,9 +70,10 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
         modelSelection: spec.modelSelection,
         runtimeMode: spec.runtimeMode,
         interactionMode: spec.interactionMode,
-        branch: spec.branch,
-        worktreePath: isWorktree ? null : spec.worktreePath,
+        branch: isChat ? null : spec.branch,
+        worktreePath: isChat || isWorktree ? null : spec.worktreePath,
         createdAt: spec.createdAt,
+        ...(isChat ? { createInChatScratch: true } : {}),
       },
       ...(isWorktree
         ? {

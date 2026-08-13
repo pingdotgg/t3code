@@ -4,6 +4,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useMemo, type ComponentProps } from "react";
@@ -83,14 +84,17 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   readonly collapsed: boolean;
   readonly isFirst: boolean;
   readonly groupKey: string;
+  readonly groupKind?: "project" | "chats";
   readonly onGroupAction: (key: string, action: HomeGroupDisplayAction) => void;
   /** Project a quick new thread should target; null hides the button. */
   readonly newThreadTarget?: EnvironmentProject | null;
   readonly onNewThread?: (project: EnvironmentProject) => void;
+  readonly onNewChat?: (environmentId: EnvironmentId) => void;
 }) {
   const iconMutedColor = useThemeColor("--color-icon-muted");
-  const { groupKey, onGroupAction, onNewThread } = props;
+  const { groupKey, onGroupAction, onNewChat, onNewThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
+  const isChatsGroup = props.groupKind === "chats";
   const compact = props.variant === "compact";
   const handleToggle = useCallback(
     () => onGroupAction(groupKey, "toggle-collapsed"),
@@ -101,7 +105,12 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       onNewThread?.(newThreadTarget);
     }
   }, [newThreadTarget, onNewThread]);
-  const showNewThreadButton = onNewThread !== undefined && newThreadTarget !== null;
+  const handleNewChat = useCallback(() => {
+    onNewChat?.(props.project.environmentId);
+  }, [onNewChat, props.project.environmentId]);
+  const showNewThreadButton = isChatsGroup
+    ? onNewChat !== undefined
+    : onNewThread !== undefined && newThreadTarget !== null;
 
   // The new-thread button is a SIBLING of the collapse toggle, not a child:
   // nested touchables are unreachable to VoiceOver/TalkBack (the parent
@@ -126,21 +135,39 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
-        accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
+        accessibilityHint={
+          props.collapsed
+            ? isChatsGroup
+              ? "Expands chats"
+              : "Expands the project"
+            : isChatsGroup
+              ? "Collapses chats"
+              : "Collapses the project"
+        }
         className={
           compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"
         }
         hitSlop={{ ...verticalHitSlop, left: compact ? 20 : 12 }}
         onPress={handleToggle}
       >
-        <ProjectFavicon
-          environmentId={props.project.environmentId}
-          faviconPath={props.project.faviconPath}
-          open={!props.collapsed}
-          size={compact ? 22 : 18}
-          projectTitle={props.project.title}
-          workspaceRoot={props.project.workspaceRoot}
-        />
+        {isChatsGroup ? (
+          <SymbolView
+            name="text.bubble"
+            size={compact ? 20 : 16}
+            tintColor={iconMutedColor}
+            type="monochrome"
+            weight="medium"
+          />
+        ) : (
+          <ProjectFavicon
+            environmentId={props.project.environmentId}
+            faviconPath={props.project.faviconPath}
+            open={!props.collapsed}
+            size={compact ? 22 : 18}
+            projectTitle={props.project.title}
+            workspaceRoot={props.project.workspaceRoot}
+          />
+        )}
         <Text
           className={
             compact
@@ -163,10 +190,12 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
       </Pressable>
       {showNewThreadButton ? (
         <Pressable
-          accessibilityLabel={`Create new thread in ${props.title}`}
+          accessibilityLabel={
+            isChatsGroup ? "Create new chat" : `Create new thread in ${props.title}`
+          }
           accessibilityRole="button"
           hitSlop={{ ...verticalHitSlop, left: 10, right: 14 }}
-          onPress={handleNewThread}
+          onPress={isChatsGroup ? handleNewChat : handleNewThread}
           style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1, paddingLeft: 12 })}
         >
           <SymbolView

@@ -318,9 +318,36 @@ function mapProjectShellRow(
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
     faviconPath: row.faviconPath ?? null,
+    kind: row.kind,
     scripts: row.scripts,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function isChatProjectRow(
+  row: Pick<Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>, "kind">,
+): boolean {
+  return row.kind === "chat";
+}
+
+function mapProjectRow(
+  row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
+  repositoryIdentity: OrchestrationProject["repositoryIdentity"],
+): OrchestrationProject {
+  return {
+    id: row.projectId,
+    title: row.title,
+    workspaceRoot: row.workspaceRoot,
+    repositoryIdentity,
+    defaultModelSelection: row.defaultModelSelection,
+    defaultThreadEnvMode: row.defaultThreadEnvMode,
+    faviconPath: row.faviconPath ?? null,
+    kind: row.kind,
+    scripts: row.scripts,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt,
   };
 }
 
@@ -395,6 +422,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           favicon_path AS "faviconPath",
+          kind,
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -850,6 +878,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           favicon_path AS "faviconPath",
+          kind,
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -874,6 +903,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           favicon_path AS "faviconPath",
+          kind,
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -1544,19 +1574,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 { includeDeleted: true },
               );
 
-              const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) => ({
-                id: row.projectId,
-                title: row.title,
-                workspaceRoot: row.workspaceRoot,
-                repositoryIdentity: repositoryIdentities.get(row.projectId) ?? null,
-                defaultModelSelection: row.defaultModelSelection,
-                defaultThreadEnvMode: row.defaultThreadEnvMode,
-                faviconPath: row.faviconPath ?? null,
-                scripts: row.scripts,
-                createdAt: row.createdAt,
-                updatedAt: row.updatedAt,
-                deletedAt: row.deletedAt,
-              }));
+              const projects: ReadonlyArray<OrchestrationProject> = projectRows.map((row) =>
+                mapProjectRow(row, repositoryIdentities.get(row.projectId) ?? null),
+              );
 
               const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
                 id: row.threadId,
@@ -1683,6 +1703,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   defaultModelSelection: row.defaultModelSelection,
                   defaultThreadEnvMode: row.defaultThreadEnvMode,
                   faviconPath: row.faviconPath ?? null,
+                  kind: row.kind,
                   scripts: row.scripts,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
@@ -1893,7 +1914,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             const snapshot = {
               snapshotSequence: computeSnapshotSequence(stateRows),
               projects: Arr.filterMap(projectRows, (row) =>
-                row.deletedAt === null
+                row.deletedAt === null && !isChatProjectRow(row)
                   ? Result.succeed(
                       mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
                     )
@@ -2039,7 +2060,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             const snapshot = {
               snapshotSequence: computeSnapshotSequence(stateRows),
               projects: Arr.filterMap(projectRows, (row) =>
-                row.deletedAt === null && activeProjectIds.has(row.projectId)
+                row.deletedAt === null &&
+                activeProjectIds.has(row.projectId) &&
+                !isChatProjectRow(row)
                   ? Result.succeed(
                       mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
                     )
@@ -2166,23 +2189,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.flatMap((option) =>
           Option.isNone(option)
             ? Effect.succeed(Option.none<OrchestrationProject>())
-            : repositoryIdentityResolver.resolve(option.value.workspaceRoot).pipe(
-                Effect.map((repositoryIdentity) =>
-                  Option.some({
-                    id: option.value.projectId,
-                    title: option.value.title,
-                    workspaceRoot: option.value.workspaceRoot,
-                    repositoryIdentity,
-                    defaultModelSelection: option.value.defaultModelSelection,
-                    defaultThreadEnvMode: option.value.defaultThreadEnvMode,
-                    faviconPath: option.value.faviconPath ?? null,
-                    scripts: option.value.scripts,
-                    createdAt: option.value.createdAt,
-                    updatedAt: option.value.updatedAt,
-                    deletedAt: option.value.deletedAt,
-                  } satisfies OrchestrationProject),
+            : repositoryIdentityResolver
+                .resolve(option.value.workspaceRoot)
+                .pipe(
+                  Effect.map((repositoryIdentity) =>
+                    Option.some(mapProjectRow(option.value, repositoryIdentity)),
+                  ),
                 ),
-              ),
         ),
       );
 

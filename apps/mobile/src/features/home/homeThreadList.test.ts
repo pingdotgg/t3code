@@ -19,6 +19,7 @@ function makeProject(
     workspaceRoot: `/workspaces/${input.id}`,
     repositoryIdentity: null,
     defaultModelSelection: null,
+    kind: "workspace",
     scripts: [],
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
@@ -519,9 +520,9 @@ describe("buildHomeThreadGroups", () => {
 
     const groups = buildGroups(projects, threads, { environmentId: remoteEnvironmentId });
 
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.representative.environmentId).toBe(remoteEnvironmentId);
-    expect(groups[0]?.threads.map((thread) => thread.environmentId)).toEqual([remoteEnvironmentId]);
+    expect(groups.map((group) => group.kind)).toEqual(["chats", "project"]);
+    expect(groups[1]?.representative.environmentId).toBe(remoteEnvironmentId);
+    expect(groups[1]?.threads.map((thread) => thread.environmentId)).toEqual([remoteEnvironmentId]);
   });
 
   it("matches web repository, repository-path, and separate grouping modes", () => {
@@ -742,5 +743,64 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.projects).toHaveLength(2);
     expect(groups[0]?.newThreadTarget?.environmentId).toBe(desktopEnv);
     expect(groups[0]?.newThreadTarget?.id).toBe(desktopProject.id);
+  });
+
+  it("groups orphan threads under Chats per environment", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "t3code",
+    });
+    const chatThread = makeThread({
+      environmentId,
+      id: ThreadId.make("chat-1"),
+      projectId: ProjectId.make("hidden-chat-project"),
+      title: "A chat",
+      updatedAt: "2026-06-28T12:00:00.000Z",
+    });
+    const projectThread = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-1"),
+      projectId: project.id,
+      title: "A task",
+    });
+
+    const groups = buildGroups([project], [chatThread, projectThread]);
+    expect(groups.map((group) => group.kind)).toEqual(["chats", "project"]);
+    expect(groups[0]).toMatchObject({
+      kind: "chats",
+      title: "Chats",
+      newThreadTarget: null,
+    });
+    expect(groups[0]?.threads.map((thread) => thread.id)).toEqual([chatThread.id]);
+    expect(groups[1]?.threads.map((thread) => thread.id)).toEqual([projectThread.id]);
+  });
+
+  it("shows an empty Chats group only when an environment is selected", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "t3code",
+    });
+    const projectThread = makeThread({
+      environmentId,
+      id: ThreadId.make("thread-1"),
+      projectId: project.id,
+      title: "A task",
+    });
+
+    const allEnvironments = buildGroups([project], [projectThread]);
+    expect(allEnvironments.map((group) => group.kind)).toEqual(["project"]);
+
+    const filtered = buildGroups([project], [projectThread], { environmentId });
+    expect(filtered.map((group) => group.kind)).toEqual(["chats", "project"]);
+    expect(filtered[0]).toMatchObject({
+      kind: "chats",
+      title: "Chats",
+      threads: [],
+      newThreadTarget: null,
+    });
   });
 });

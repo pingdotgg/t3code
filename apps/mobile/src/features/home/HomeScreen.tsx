@@ -98,6 +98,7 @@ interface HomeScreenProps {
   readonly onAddConnection: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
+  readonly onNewChat: (environmentId: EnvironmentId) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
@@ -183,14 +184,14 @@ function deriveEmptyState(props: {
   if (props.projectCount === 0 && catalogState.hasLoadedShellSnapshot) {
     return {
       title: "No projects found",
-      detail: "The connected environment did not report any projects.",
+      detail: "Start a chat, or add a project to begin coding sessions.",
       loading: false,
     };
   }
 
   return {
     title: "No threads yet",
-    detail: "Create a task to start a new coding session in one of your connected projects.",
+    detail: "Start a chat or create a task in one of your connected projects.",
     loading: false,
   };
 }
@@ -938,6 +939,7 @@ export function HomeScreen(props: HomeScreenProps) {
               collapsed={item.collapsed}
               isFirst={item.isFirst}
               groupKey={item.group.key}
+              groupKind={item.group.kind}
               onGroupAction={updateGroupDisplay}
               // Aggregated groups (same repo across machines) have no single
               // target project, and `pending-project:` groups hold a placeholder
@@ -945,6 +947,7 @@ export function HomeScreen(props: HomeScreenProps) {
               // so the quick new-thread button is single-real-project only.
               newThreadTarget={item.group.newThreadTarget}
               onNewThread={props.onNewThreadInProject}
+              onNewChat={props.onNewChat}
               project={item.group.representative}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
               title={item.group.title}
@@ -1016,6 +1019,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onDeletePendingTask,
       props.onDeleteThread,
       props.onNewThreadInProject,
+      props.onNewChat,
       props.onSelectPendingTask,
       props.onSelectThread,
       props.searchQuery,
@@ -1062,8 +1066,20 @@ export function HomeScreen(props: HomeScreenProps) {
           <EmptyState
             title={emptyState.title}
             detail={emptyState.detail}
-            actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
-            onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
+            actionLabel={
+              !props.catalogState.hasReadyEnvironment ? "Add environment" : "Start a chat"
+            }
+            onAction={
+              !props.catalogState.hasReadyEnvironment
+                ? props.onAddConnection
+                : () => {
+                    const environmentId =
+                      props.selectedEnvironmentId ?? props.environments[0]?.environmentId;
+                    if (environmentId) {
+                      props.onNewChat(environmentId);
+                    }
+                  }
+            }
             variant="plain"
           />
           {emptyState.loading ? (

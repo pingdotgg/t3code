@@ -18,6 +18,7 @@ const stubProject = {
   workspaceRoot: "/workspace/test",
   repositoryIdentity: null,
   defaultModelSelection: null,
+  kind: "workspace",
   scripts: [],
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",

@@ -458,6 +458,20 @@ function AdaptiveWorkspaceLayoutContent(
     [navigation],
   );
 
+  const handleNewChat = useCallback(
+    (environmentId: EnvironmentId) => {
+      navigation.navigate("NewTaskSheet", {
+        screen: "NewTaskDraft",
+        params: {
+          environmentId: String(environmentId),
+          createInChatScratch: "true",
+          title: "New chat",
+        },
+      });
+    },
+    [navigation],
+  );
+
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
   );
@@ -536,6 +550,7 @@ function AdaptiveWorkspaceLayoutContent(
                 onOpenSettings={handleOpenSettings}
                 onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                 onNewThreadInProject={handleNewThreadInProject}
+                onNewChat={handleNewChat}
                 onSelectThread={handleSelectThread}
                 onSearchQueryChange={setPrimarySidebarSearchQuery}
                 searchQuery={primarySidebarSearchQuery}
