@@ -1,8 +1,9 @@
-import type {
-  PullRequestCheck,
-  PullRequestComment,
-  PullRequestDetailView,
-  PullRequestReviewThread,
+import {
+  PullRequestAction,
+  type PullRequestCheck,
+  type PullRequestComment,
+  type PullRequestDetailView,
+  type PullRequestReviewThread,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -15,9 +16,13 @@ import {
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
+  isThreadOwnPullRequest,
   orderPullRequestComments,
+  pullRequestActionNeedsHostRefresh,
   pullRequestFindingKey,
+  pullRequestHandoffLabels,
   readableFailure,
+  resolveBaseFreshness,
   buildPullRequestTimeline,
   describePullRequestState,
 } from "./pullRequestDetail.logic";
@@ -54,6 +59,28 @@ describe("pull request state description", () => {
     expect(describePullRequestState("open", false)).toBe("Ready for review");
     expect(describePullRequestState("merged", true)).toBe("Merged");
     expect(describePullRequestState("closed", false)).toBe("Closed");
+  });
+});
+
+describe("pull request handoff labels", () => {
+  it("names the open thread when actions write to its composer", () => {
+    expect(pullRequestHandoffLabels(true)).toEqual({
+      fixFinding: "Fix in this thread",
+      fixCheck: "Fix in this thread",
+      fixFindings: "Fix findings in this thread",
+      resolve: "Resolve in this thread",
+      resolveConflicts: "Resolve conflicts in this thread",
+    });
+  });
+
+  it("keeps the standalone pull request page labels", () => {
+    expect(pullRequestHandoffLabels(false)).toEqual({
+      fixFinding: "Fix in a thread",
+      fixCheck: "Fix",
+      fixFindings: "Fix findings in a thread",
+      resolve: "Resolve in a new thread",
+      resolveConflicts: "Resolve conflicts in a thread",
+    });
   });
 });
 
@@ -785,5 +812,128 @@ describe("a second ask into the same composer", () => {
       "file-comment:3",
       "pull-request-context:42",
     ]);
+  });
+});
+
+describe("how the branch stands against its base", () => {
+  const detail = (overrides: Record<string, unknown> = {}) =>
+    ({
+      state: "open",
+      mergeability: "mergeable",
+      baseComparison: "behind",
+      behindBy: 12,
+      capabilities: { updateMethods: ["merge", "rebase"] },
+      viewerPermissions: { updateMethods: ["merge", "rebase"] },
+      ...overrides,
+    }) as Parameters<typeof resolveBaseFreshness>[0];
+
+  it("offers both ways where the host and the reader both allow them", () => {
+    expect(resolveBaseFreshness(detail())).toEqual({ behindBy: 12, methods: ["merge", "rebase"] });
+  });
+
+  it("says nothing about a branch that is already current", () => {
+    expect(resolveBaseFreshness(detail({ baseComparison: "up-to-date" }))).toBeNull();
+  });
+
+  it("says nothing where the host could not compare, rather than claiming it is current", () => {
+    expect(resolveBaseFreshness(detail({ baseComparison: "unknown" }))).toBeNull();
+    expect(resolveBaseFreshness(detail({ baseComparison: undefined }))).toBeNull();
+  });
+
+  it("leaves a conflicting branch to the conflicts row", () => {
+    expect(resolveBaseFreshness(detail({ mergeability: "conflicting" }))).toBeNull();
+  });
+
+  it("says nothing where the host has no merge verdict yet", () => {
+    expect(resolveBaseFreshness(detail({ mergeability: "unknown" }))).toBeNull();
+  });
+
+  it("says nothing about a merged or closed pull request", () => {
+    expect(resolveBaseFreshness(detail({ state: "merged" }))).toBeNull();
+    expect(resolveBaseFreshness(detail({ state: "closed" }))).toBeNull();
+  });
+
+  it("narrows to what this reader may actually take", () => {
+    expect(
+      resolveBaseFreshness(detail({ viewerPermissions: { updateMethods: ["merge"] } }))?.methods,
+    ).toEqual(["merge"]);
+  });
+
+  it("still reports the news where the reader may take none of it", () => {
+    // Somebody reading another account's pull request is told why it is blocked without being
+    // offered a button the host would refuse.
+    expect(resolveBaseFreshness(detail({ viewerPermissions: {} }))).toEqual({
+      behindBy: 12,
+      methods: [],
+    });
+  });
+
+  it("reports a count only where the host counted", () => {
+    expect(resolveBaseFreshness(detail({ behindBy: undefined }))?.behindBy).toBeNull();
+  });
+});
+
+describe("whether the panel is showing the thread's own pull request", () => {
+  const surface = { projectId: "proj-a", repository: "acme/app", number: 7 };
+
+  it("matches on project, repository and number together", () => {
+    expect(
+      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/app", number: 7 }, surface),
+    ).toBe(true);
+  });
+
+  it("rejects a second checkout of the same repository under another project", () => {
+    expect(
+      isThreadOwnPullRequest({ projectId: "proj-b", repository: "acme/app", number: 7 }, surface),
+    ).toBe(false);
+  });
+
+  it("rejects another repository or another number", () => {
+    expect(
+      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/web", number: 7 }, surface),
+    ).toBe(false);
+    expect(
+      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/app", number: 8 }, surface),
+    ).toBe(false);
+  });
+
+  it("rejects a thread with no project or no pull request of its own", () => {
+    expect(
+      isThreadOwnPullRequest({ projectId: null, repository: "acme/app", number: 7 }, surface),
+    ).toBe(false);
+    expect(
+      isThreadOwnPullRequest(
+        { projectId: "proj-a", repository: "acme/app", number: null },
+        surface,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("which actions need the host read again after they run", () => {
+  it("classifies every action the contract knows about", () => {
+    // Imported from the contract rather than hand-listed, so a new PullRequestAction fails this
+    // test until somebody decides which side of the diff it belongs on.
+    expect(PullRequestAction.literals.map(pullRequestActionNeedsHostRefresh)).toEqual(
+      PullRequestAction.literals.map((action) => action === "update-branch"),
+    );
+  });
+
+  it("sends update-branch back to the host, having moved the head commit", () => {
+    expect(pullRequestActionNeedsHostRefresh("update-branch")).toBe(true);
+  });
+
+  it("leaves every action that only changes metadata to the cheaper detail refresh", () => {
+    for (const action of [
+      "ready",
+      "draft",
+      "close",
+      "reopen",
+      "enable-auto-merge",
+      "disable-auto-merge",
+      "merge",
+    ] as const) {
+      expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
+    }
   });
 });

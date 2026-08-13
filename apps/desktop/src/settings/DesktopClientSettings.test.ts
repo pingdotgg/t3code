@@ -16,6 +16,7 @@ const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   desktopNotificationsEnabled: true,
+  webPushNotificationsEnabled: false,
   desktopNotificationSound: true,
   desktopNotifyApprovalNeeded: true,
   desktopNotifyTaskCompleted: true,
@@ -47,6 +48,7 @@ const clientSettings: ClientSettings = {
   legacySidebarEnabled: false,
   timestampFormat: "24-hour",
   wordWrap: true,
+  browserModKeyFlip: true,
 };
 
 const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(ClientSettingsSchema));
