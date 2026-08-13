@@ -5,7 +5,6 @@ import {
   PullRequestAction,
   type PullRequestCheck,
   type PullRequestComment,
-  type PullRequestDetail,
   type PullRequestDetailView,
   type PullRequestReviewThread,
   type ThreadPullRequestLink,
@@ -16,6 +15,9 @@ import { buildMessageContext, reviewCommentContextReference } from "~/lib/compos
 
 import {
   buildAddSelectionToAgentHandoff,
+  classifyPullRequestChecks,
+  describePullRequestChecks,
+  resolveThreadPanelPullRequestAction,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildPullRequestReferenceContext,
@@ -38,17 +40,12 @@ import {
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   readableFailure,
-  readPullRequestDetailSnapshot,
-  resolveDisplayedPullRequestDetail,
-  resolvePullRequestReferenceHost,
-  resolvePullRequestPrimaryControl,
-  allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
+  describePullRequestState,
   editPullRequestThreadComment,
-  writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -201,51 +198,12 @@ describe("pull request action menu", () => {
   });
 });
 
-describe("pull request primary control", () => {
-  const open = {
-    state: "open" as const,
-    isDraft: false,
-    mergeability: "mergeable" as const,
-    checksState: "passing" as const,
-    autoMergeEnabled: false,
-    hasMergeMethod: true,
-    canMerge: true,
-    canMarkReady: true,
-    canEnableAutoMerge: true,
-  };
-
-  it("moves pending and failing checks to auto-merge", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, checksState: "pending" })).toBe(
-      "enable-auto-merge",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, checksState: "failing" })).toBe(
-      "enable-auto-merge",
-    );
-  });
-
-  it("does not offer auto-merge while the host state is unknown", () => {
-    expect(
-      resolvePullRequestPrimaryControl({
-        ...open,
-        checksState: "pending",
-        autoMergeEnabled: undefined,
-      }),
-    ).toBe("merge");
-  });
-
-  it("keeps armed and terminal states in the merge button slot", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, autoMergeEnabled: true })).toBe(
-      "auto-merge-armed",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, state: "merged" })).toBe("merged");
-    expect(resolvePullRequestPrimaryControl({ ...open, state: "closed" })).toBe("closed");
-  });
-
-  it("keeps conflicts and drafts actionable before merge", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, mergeability: "conflicting" })).toBe(
-      "resolve",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, isDraft: true })).toBe("ready");
+describe("pull request state description", () => {
+  it("keeps draft and conflicts orthogonal to the terminal states", () => {
+    expect(describePullRequestState("open", true)).toBe("Draft");
+    expect(describePullRequestState("open", false)).toBe("Ready for review");
+    expect(describePullRequestState("merged", true)).toBe("Merged");
+    expect(describePullRequestState("closed", false)).toBe("Closed");
   });
 });
 
@@ -1471,9 +1429,7 @@ describe("which actions need the host read again after they run", () => {
     // Imported from the contract rather than hand-listed, so a new PullRequestAction fails this
     // test until somebody decides which side of the diff it belongs on.
     expect(PullRequestAction.literals.map(pullRequestActionNeedsHostRefresh)).toEqual(
-      PullRequestAction.literals.map(
-        (action) => action === "update-branch" || action === "approve-workflows",
-      ),
+      PullRequestAction.literals.map((action) => action === "update-branch"),
     );
   });
 
@@ -1490,266 +1446,103 @@ describe("which actions need the host read again after they run", () => {
       "enable-auto-merge",
       "disable-auto-merge",
       "merge",
-      "revert",
     ] as const) {
       expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
     }
   });
 });
 
-describe("cached pull request detail", () => {
-  const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 7 };
-  const detail = (overrides: Partial<PullRequestDetail> = {}): PullRequestDetail =>
+describe("the compact row's single action slot", () => {
+  const check = (status: PullRequestCheck["status"]): PullRequestCheck => ({
+    name: "ci",
+    status,
+    description: null,
+    url: null,
+  });
+  const openDetail = (
+    overrides: Partial<Parameters<typeof resolveThreadPanelPullRequestAction>[0] & object> = {},
+  ) =>
     ({
-      provider: "github",
-      capabilities: {
-        diff: true,
-        comment: true,
-        actions: ["merge"],
-        mergeMethods: ["merge"],
-        search: true,
-        review: {
-          inlineComment: true,
-          reply: true,
-          resolve: true,
-          verdicts: ["comment", "approve", "request-changes"],
-        },
-        reviewers: { request: true, listCandidates: true },
-      },
-      viewerPermissions: {
-        actions: ["merge"],
-        comment: true,
-        resolve: true,
-        verdicts: ["comment", "approve", "request-changes"],
-        requestReviewers: true,
-      },
-      projectId: "project-1",
-      projectTitle: "web",
-      workspaceRoot: "/repo",
-      repository: "acme/web",
-      number: 7,
-      title: "Cache the title",
-      body: "who made it",
-      url: "https://github.com/acme/web/pull/7",
-      author: { login: "octocat", name: null, avatarUrl: "https://avatars.example/octocat" },
       state: "open",
       isDraft: false,
       mergeability: "mergeable",
-      additions: 12,
-      deletions: 3,
-      changedFiles: 2,
-      headBranch: "feat/cache",
-      baseBranch: "main",
-      createdAt: "2026-07-01T00:00:00.000Z",
-      updatedAt: "2026-07-02T00:00:00.000Z",
-      mergedAt: null,
-      closedAt: null,
-      reviewers: [],
-      labels: [],
-      checks: [],
-      mergeCapabilities: { merge: true, squash: true, rebase: true },
+      capabilities: {
+        actions: ["merge", "ready", "draft", "close", "reopen"],
+        mergeMethods: ["merge", "squash"],
+      } as unknown as PullRequestDetailView["capabilities"],
+      viewerPermissions: {
+        actions: ["merge", "ready", "draft", "close", "reopen"],
+      } as unknown as PullRequestDetailView["viewerPermissions"],
+      mergeCapabilities: { merge: true, squash: true, rebase: false },
+      checks: [check("success")],
       ...overrides,
-    }) as PullRequestDetail;
+    }) as NonNullable<Parameters<typeof resolveThreadPanelPullRequestAction>[0]>;
 
-  const makeStorage = () => {
-    const held = new Map<string, string>();
-    return {
-      getItem: (key: string) => held.get(key) ?? null,
-      setItem: (key: string, value: string) => void held.set(key, value),
-    };
-  };
-
-  it("hydrates the last title, author, and counts so a reopen does not ghost the tab", () => {
-    const storage = makeStorage();
-    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
-    const snapshot = readPullRequestDetailSnapshot(storage, "env-1", reference);
-    expect(snapshot?.title).toBe("Cache the title");
-    expect(snapshot?.author?.login).toBe("octocat");
-    expect(snapshot?.additions).toBe(12);
-    expect(snapshot?.deletions).toBe(3);
+  it("offers Merge only for a clean pull request whose checks pass", () => {
+    expect(resolveThreadPanelPullRequestAction(openDetail())).toBe("merge");
+    expect(resolveThreadPanelPullRequestAction(openDetail({ checks: [] }))).toBe("merge");
   });
 
-  it("reuses a host-qualified snapshot when reopening a thread link without a host", () => {
-    const storage = makeStorage();
-    writePullRequestDetailSnapshot(
-      storage,
-      "env-1",
-      { ...reference, host: "github.com" },
-      detail(),
-    );
-    const resolved = resolvePullRequestReferenceHost(reference, {
-      canonicalKey: "github.com/acme/web",
-      locator: {
-        source: "git-remote",
-        remoteName: "origin",
-        remoteUrl: "https://github.com/acme/web.git",
-      },
-      provider: "github",
-    });
-    expect(readPullRequestDetailSnapshot(storage, "env-1", resolved)?.title).toBe(
-      "Cache the title",
-    );
-    const explicit = { ...reference, host: "github.example.com" };
+  it("holds the slot while checks run rather than offering a merge that races them", () => {
     expect(
-      resolvePullRequestReferenceHost(explicit, {
-        canonicalKey: "github.com/acme/web",
-        locator: {
-          source: "git-remote",
-          remoteName: "origin",
-          remoteUrl: "https://github.com/acme/web.git",
-        },
-      }),
-    ).toBe(explicit);
-  });
-
-  it("leaves server-resolved Azure SSH references unchanged", () => {
-    expect(
-      resolvePullRequestReferenceHost(reference, {
-        canonicalKey: "ssh.dev.azure.com/v3/org/project/web",
-        locator: {
-          source: "git-remote",
-          remoteName: "origin",
-          remoteUrl: "git@ssh.dev.azure.com:v3/org/project/web",
-        },
-        provider: "azure-devops",
-      }),
-    ).toBe(reference);
-    expect(resolvePullRequestReferenceHost(reference, undefined)).toBe(reference);
-  });
-
-  it("hydrates legacy hostless snapshots only for the matching host", () => {
-    const storage = makeStorage();
-    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
-    expect(
-      readPullRequestDetailSnapshot(storage, "env-1", { ...reference, host: "github.com" })?.title,
-    ).toBe("Cache the title");
-    expect(
-      readPullRequestDetailSnapshot(storage, "env-1", {
-        ...reference,
-        host: "github.example.com",
-      }),
+      resolveThreadPanelPullRequestAction(
+        openDetail({ checks: [check("success"), check("pending")] }),
+      ),
     ).toBeNull();
   });
 
-  it("keeps Forgejo ports isolated when recovering legacy snapshots", () => {
-    const storage = makeStorage();
-    const cached = detail({
-      provider: "forgejo",
-      url: "https://forge.example:8443/acme/web/pulls/7",
-    });
-    writePullRequestDetailSnapshot(storage, "env-1", reference, cached);
-    const resolved = { ...reference, host: "forge.example:8443" };
-    expect(readPullRequestDetailSnapshot(storage, "env-1", resolved)?.title).toBe(cached.title);
+  it("ranks conflicts above everything, then draft, then failing checks", () => {
     expect(
-      readPullRequestDetailSnapshot(storage, "env-1", {
-        ...reference,
-        host: "forge.example:9443",
-      }),
-    ).toBeNull();
+      resolveThreadPanelPullRequestAction(
+        openDetail({ mergeability: "conflicting", isDraft: true, checks: [check("failure")] }),
+      ),
+    ).toBe("resolve");
     expect(
-      readPullRequestDetailSnapshot(storage, "env-1", {
-        ...reference,
-        host: "forge.example",
-      }),
-    ).toBeNull();
+      resolveThreadPanelPullRequestAction(
+        openDetail({ isDraft: true, checks: [check("failure")] }),
+      ),
+    ).toBe("ready");
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({ checks: [check("failure"), check("pending")] }),
+      ),
+    ).toBe("fix");
   });
 
-  it.each(["github", "gitlab"] as const)(
-    "retains portless %s snapshot identities for custom web ports",
-    (provider) => {
-      const storage = makeStorage();
-      const host = `${provider}.example.com`;
-      const hosted = { ...reference, host };
-      const cached = detail({
-        provider,
-        url: `https://${host}:8443/acme/web/${provider === "github" ? "pull" : "-/merge_requests"}/7`,
-      });
-      writePullRequestDetailSnapshot(storage, "env-1", hosted, cached);
-      expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)?.title).toBe(cached.title);
-    },
-  );
+  it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({
+          viewerPermissions: {
+            actions: [],
+          } as unknown as PullRequestDetailView["viewerPermissions"],
+        }),
+      ),
+    ).toBeNull();
+    expect(resolveThreadPanelPullRequestAction(openDetail({ state: "merged" }))).toBeNull();
+    expect(resolveThreadPanelPullRequestAction(null)).toBeNull();
+  });
 
-  it("keeps a cached tab painted while the live read replaces the counts", () => {
-    const cached = detail();
-    const live = detail({ additions: 40, deletions: 9, title: "Cache the title" });
-    expect(resolveDisplayedPullRequestDetail({ live, cached, reference })?.additions).toBe(40);
-    expect(resolveDisplayedPullRequestDetail({ live: null, cached, reference })?.additions).toBe(
-      12,
+  it("describes every live facet of the checks at once", () => {
+    expect(describePullRequestChecks([])).toBe("No checks reported");
+    expect(describePullRequestChecks([check("success"), check("success")])).toBe(
+      "All checks passed",
     );
-  });
-
-  it("does not paint another change request's snapshot", () => {
+    expect(describePullRequestChecks([check("success"), check("skipped")])).toBe("1 of 2 passing");
     expect(
-      resolveDisplayedPullRequestDetail({
-        live: null,
-        cached: detail({ number: 8 }),
-        reference,
-      }),
-    ).toBeNull();
-    expect(readPullRequestDetailSnapshot(makeStorage(), "env-2", reference)).toBeNull();
+      describePullRequestChecks([
+        ...Array.from({ length: 7 }, () => check("pending")),
+        ...Array.from({ length: 8 }, () => check("success")),
+        check("failure"),
+      ]),
+    ).toBe("7 of 16 running · 1 failed");
+    expect(describePullRequestChecks([check("failure"), check("success")])).toBe("1 of 2 failing");
   });
 
-  it("isolates stored and displayed details between hosts with the same repository and number", () => {
-    const storage = makeStorage();
-    const publicRef = { ...reference, host: "github.com" };
-    const enterpriseRef = { ...reference, host: "ghe.example.com" };
-    const publicDetail = detail();
-    const enterpriseDetail = detail({
-      title: "Enterprise change",
-      url: "https://ghe.example.com/acme/web/pull/7",
-    });
-    writePullRequestDetailSnapshot(storage, "env-1", publicRef, publicDetail);
-    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
-    writePullRequestDetailSnapshot(storage, "env-1", enterpriseRef, enterpriseDetail);
-    expect(readPullRequestDetailSnapshot(storage, "env-1", publicRef)?.title).toBe(
-      publicDetail.title,
-    );
-    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)?.title).toBe(
-      enterpriseDetail.title,
-    );
-    expect(
-      resolveDisplayedPullRequestDetail({
-        live: null,
-        cached: publicDetail,
-        reference: enterpriseRef,
-      }),
-    ).toBeNull();
-    expect(
-      resolveDisplayedPullRequestDetail({
-        live: null,
-        cached: enterpriseDetail,
-        reference: enterpriseRef,
-      }),
-    ).toBe(enterpriseDetail);
-    writePullRequestDetailSnapshot(storage, "env-1", enterpriseRef, publicDetail);
-    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
+  it("reads the checks as one word, failing outranking running", () => {
+    expect(classifyPullRequestChecks([])).toBe("none");
+    expect(classifyPullRequestChecks([check("success"), check("skipped")])).toBe("passing");
+    expect(classifyPullRequestChecks([check("success"), check("pending")])).toBe("pending");
+    expect(classifyPullRequestChecks([check("pending"), check("cancelled")])).toBe("failing");
   });
-
-  it("shrugs off corrupt storage and no storage at all", () => {
-    const storage = makeStorage();
-    storage.setItem("t3.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
-    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
-    expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
-    const hosted = { ...reference, host: "github.com" };
-    writePullRequestDetailSnapshot(storage, "env-1", hosted, detail({ url: "invalid url" }));
-    expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)).toBeNull();
-  });
-});
-
-describe("single-PR merge compatibility during stack discovery", () => {
-  it.each([
-    [false, true, false, null, true],
-    [false, false, true, null, true],
-    [true, false, true, null, false],
-    [true, false, false, "Lookup failed", false],
-    [true, true, false, null, false],
-    [true, false, false, null, true],
-  ] as const)(
-    "capability=%s stack=%s pending=%s error=%s permits=%s",
-    (supportsStackActions, hasStack, stackPending, stackError, allowed) => {
-      expect(
-        allowsSinglePullRequestMerge({ supportsStackActions, hasStack, stackPending, stackError }),
-      ).toBe(allowed);
-    },
-  );
 });
