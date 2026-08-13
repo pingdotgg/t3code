@@ -226,7 +226,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
  
  // appearance does not apply to the tvOS so we need to use lagacy customization
  #if TARGET_OS_TV
-@@ -637,10 +675,384 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -637,10 +675,458 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -391,40 +391,6 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +      ]];
 +      [chromeHostView bringSubviewToFront:toolbarHost];
 +
-+      void (^configureKeyboardTracking)(UITextField *) = ^(UITextField *textField) {
-+        BOOL isEditing = textField.isFirstResponder;
-+        keyboardAvoidConstraint.priority =
-+            isEditing ? UILayoutPriorityDefaultHigh : UILayoutPriorityDefaultLow;
-+        restingBottomConstraint.priority =
-+            isEditing ? UILayoutPriorityDefaultLow : UILayoutPriorityDefaultHigh;
-+
-+        __weak NSLayoutConstraint *weakKeyboardAvoidConstraint = keyboardAvoidConstraint;
-+        __weak NSLayoutConstraint *weakRestingBottomConstraint = restingBottomConstraint;
-+        __weak UIView *weakChromeHostView = chromeHostView;
-+        NSString *beginActionIdentifier = @"org.react-native-screens.mail-search-toolbar.keyboard-begin";
-+        NSString *endActionIdentifier = @"org.react-native-screens.mail-search-toolbar.keyboard-end";
-+        [textField removeActionForIdentifier:beginActionIdentifier forControlEvents:UIControlEventEditingDidBegin];
-+        [textField removeActionForIdentifier:endActionIdentifier forControlEvents:UIControlEventEditingDidEnd];
-+        [textField addAction:[UIAction actionWithTitle:@""
-+                                                image:nil
-+                                           identifier:beginActionIdentifier
-+                                              handler:^(__kindof UIAction *_Nonnull action) {
-+                                                     weakRestingBottomConstraint.priority = UILayoutPriorityDefaultLow;
-+                                                     weakKeyboardAvoidConstraint.priority = UILayoutPriorityDefaultHigh;
-+                                                     [weakChromeHostView setNeedsLayout];
-+                                                   }]
-+            forControlEvents:UIControlEventEditingDidBegin];
-+        [textField addAction:[UIAction actionWithTitle:@""
-+                                                image:nil
-+                                           identifier:endActionIdentifier
-+                                              handler:^(__kindof UIAction *_Nonnull action) {
-+                                                     weakKeyboardAvoidConstraint.priority = UILayoutPriorityDefaultLow;
-+                                                     weakRestingBottomConstraint.priority = UILayoutPriorityDefaultHigh;
-+                                                     [weakChromeHostView setNeedsLayout];
-+                                                   }]
-+            forControlEvents:UIControlEventEditingDidEnd];
-+      };
-+
 +      UIGlassEffect *glassEffect = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
 +      glassEffect.interactive = YES;
 +      UIVisualEffectView *glassView = [[UIVisualEffectView alloc] initWithEffect:glassEffect];
@@ -438,9 +404,13 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +          mailSearchToolbarConfig[@"composeButtonId"] != nil || mailSearchToolbarConfig[@"composeMenu"] != nil;
 +      CGFloat glassLeadingInset = hasFilterButton ? sideButtonReserve : 0.0;
 +      CGFloat glassTrailingInset = hasComposeButton ? -sideButtonReserve : 0.0;
++      NSLayoutConstraint *glassLeadingConstraint =
++          [glassView.leadingAnchor constraintEqualToAnchor:toolbarHost.leadingAnchor constant:glassLeadingInset];
++      NSLayoutConstraint *glassTrailingConstraint =
++          [glassView.trailingAnchor constraintEqualToAnchor:toolbarHost.trailingAnchor constant:glassTrailingInset];
 +      [NSLayoutConstraint activateConstraints:@[
-+        [glassView.leadingAnchor constraintEqualToAnchor:toolbarHost.leadingAnchor constant:glassLeadingInset],
-+        [glassView.trailingAnchor constraintEqualToAnchor:toolbarHost.trailingAnchor constant:glassTrailingInset],
++        glassLeadingConstraint,
++        glassTrailingConstraint,
 +        [glassView.centerYAnchor constraintEqualToAnchor:toolbarHost.centerYAnchor],
 +        [glassView.heightAnchor constraintEqualToConstant:toolbarHeight],
 +      ]];
@@ -490,6 +460,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +      UISearchBar *searchBar =
 +          !useFallbackSearchField && navitem.searchController != nil ? navitem.searchController.searchBar : nil;
 +      NSString *placeholder = mailSearchToolbarConfig[@"placeholder"];
++      UITextField *resolvedSearchTextField = nil;
 +      if (searchBar != nil) {
 +        if (placeholder != nil) {
 +          searchBar.placeholder = placeholder;
@@ -506,7 +477,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +        searchBar.searchTextField.adjustsFontForContentSizeCategory = YES;
 +        searchBar.searchTextField.textColor = UIColor.labelColor;
 +        searchBar.searchTextField.tintColor = UIColor.labelColor;
-+        configureKeyboardTracking(searchBar.searchTextField);
++        resolvedSearchTextField = searchBar.searchTextField;
 +        if (placeholder != nil) {
 +          searchBar.searchTextField.attributedPlaceholder =
 +              [[NSAttributedString alloc] initWithString:placeholder attributes:placeholderAttributes];
@@ -539,7 +510,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +        searchField.adjustsFontForContentSizeCategory = YES;
 +        searchField.textColor = UIColor.labelColor;
 +        searchField.tintColor = UIColor.labelColor;
-+        configureKeyboardTracking(searchField);
++        resolvedSearchTextField = searchField;
 +        searchField.translatesAutoresizingMaskIntoConstraints = NO;
 +        [glassView.contentView addSubview:searchField];
 +        [NSLayoutConstraint activateConstraints:@[
@@ -550,8 +521,9 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +        ]];
 +      }
 +
++      UIButton *filterButton = nil;
 +      if (hasFilterButton) {
-+        UIButton *filterButton = makeGlassButton(
++        filterButton = makeGlassButton(
 +            mailSearchToolbarConfig[@"filterSystemImageName"] ?: @"line.3.horizontal.decrease",
 +            mailSearchToolbarConfig[@"filterButtonId"],
 +            mailSearchToolbarConfig[@"filterMenu"]);
@@ -565,8 +537,9 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +        ]];
 +      }
 +
++      UIButton *composeButton = nil;
 +      if (hasComposeButton) {
-+        UIButton *composeButton = makeGlassButton(
++        composeButton = makeGlassButton(
 +            mailSearchToolbarConfig[@"composeSystemImageName"] ?: @"square.and.pencil",
 +            mailSearchToolbarConfig[@"composeButtonId"],
 +            mailSearchToolbarConfig[@"composeMenu"]);
@@ -579,6 +552,107 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +          [composeButton.heightAnchor constraintEqualToConstant:buttonSize],
 +        ]];
 +      }
++
++      BOOL showsSearchDismissButton =
++          [mailSearchToolbarConfig[@"showsSearchDismissButton"] boolValue] && resolvedSearchTextField != nil;
++      UIButton *searchDismissButton = nil;
++      if (showsSearchDismissButton) {
++        searchDismissButton = makeGlassButton(@"xmark", nil, nil);
++        searchDismissButton.accessibilityLabel = @"Dismiss search keyboard";
++        searchDismissButton.alpha = 0.0;
++        searchDismissButton.hidden = YES;
++        searchDismissButton.translatesAutoresizingMaskIntoConstraints = NO;
++        [toolbarHost addSubview:searchDismissButton];
++        [NSLayoutConstraint activateConstraints:@[
++          [searchDismissButton.trailingAnchor constraintEqualToAnchor:toolbarHost.trailingAnchor],
++          [searchDismissButton.centerYAnchor constraintEqualToAnchor:toolbarHost.centerYAnchor],
++          [searchDismissButton.widthAnchor constraintEqualToConstant:buttonSize],
++          [searchDismissButton.heightAnchor constraintEqualToConstant:buttonSize],
++        ]];
++        __weak UITextField *weakSearchTextField = resolvedSearchTextField;
++        [searchDismissButton
++            addAction:[UIAction actionWithHandler:^(__kindof UIAction *_Nonnull action) {
++                        [weakSearchTextField resignFirstResponder];
++                      }]
++            forControlEvents:UIControlEventTouchUpInside];
++      }
++
++      __weak UIButton *weakFilterButton = filterButton;
++      __weak UIButton *weakComposeButton = composeButton;
++      __weak UIButton *weakSearchDismissButton = searchDismissButton;
++      __weak NSLayoutConstraint *weakGlassLeadingConstraint = glassLeadingConstraint;
++      __weak NSLayoutConstraint *weakGlassTrailingConstraint = glassTrailingConstraint;
++      __weak NSLayoutConstraint *weakKeyboardAvoidConstraint = keyboardAvoidConstraint;
++      __weak NSLayoutConstraint *weakRestingBottomConstraint = restingBottomConstraint;
++      __weak UIView *weakToolbarHost = toolbarHost;
++      __weak UITextField *weakSearchTextField = resolvedSearchTextField;
++      void (^setSearchEditingAppearance)(BOOL, BOOL) = ^(BOOL isEditing, BOOL animated) {
++        weakKeyboardAvoidConstraint.priority =
++            isEditing ? UILayoutPriorityDefaultHigh : UILayoutPriorityDefaultLow;
++        weakRestingBottomConstraint.priority =
++            isEditing ? UILayoutPriorityDefaultLow : UILayoutPriorityDefaultHigh;
++
++        if (showsSearchDismissButton) {
++          if (isEditing) {
++            weakSearchDismissButton.hidden = NO;
++          } else {
++            weakFilterButton.hidden = NO;
++            weakComposeButton.hidden = NO;
++          }
++          weakGlassLeadingConstraint.constant = isEditing ? 0.0 : glassLeadingInset;
++          weakGlassTrailingConstraint.constant = isEditing ? -sideButtonReserve : glassTrailingInset;
++
++          void (^changes)(void) = ^{
++            weakFilterButton.alpha = isEditing ? 0.0 : 1.0;
++            weakComposeButton.alpha = isEditing ? 0.0 : 1.0;
++            weakSearchDismissButton.alpha = isEditing ? 1.0 : 0.0;
++            [weakToolbarHost layoutIfNeeded];
++          };
++          void (^completion)(BOOL) = ^(BOOL finished) {
++            if (!finished || weakSearchTextField.isFirstResponder != isEditing) {
++              return;
++            }
++            weakFilterButton.hidden = isEditing;
++            weakComposeButton.hidden = isEditing;
++            weakSearchDismissButton.hidden = !isEditing;
++          };
++          if (animated) {
++            [UIView animateWithDuration:0.2
++                                  delay:0.0
++                                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut
++                             animations:changes
++                             completion:completion];
++          } else {
++            changes();
++            completion(YES);
++          }
++        }
++        [weakToolbarHost setNeedsLayout];
++      };
++
++      setSearchEditingAppearance(resolvedSearchTextField.isFirstResponder, NO);
++      NSString *beginActionIdentifier = @"org.react-native-screens.mail-search-toolbar.keyboard-begin";
++      NSString *endActionIdentifier = @"org.react-native-screens.mail-search-toolbar.keyboard-end";
++      [resolvedSearchTextField removeActionForIdentifier:beginActionIdentifier
++                                       forControlEvents:UIControlEventEditingDidBegin];
++      [resolvedSearchTextField removeActionForIdentifier:endActionIdentifier
++                                       forControlEvents:UIControlEventEditingDidEnd];
++      [resolvedSearchTextField
++          addAction:[UIAction actionWithTitle:@""
++                                        image:nil
++                                   identifier:beginActionIdentifier
++                                      handler:^(__kindof UIAction *_Nonnull action) {
++                                                setSearchEditingAppearance(YES, YES);
++                                              }]
++          forControlEvents:UIControlEventEditingDidBegin];
++      [resolvedSearchTextField
++          addAction:[UIAction actionWithTitle:@""
++                                        image:nil
++                                   identifier:endActionIdentifier
++                                      handler:^(__kindof UIAction *_Nonnull action) {
++                                                setSearchEditingAppearance(NO, YES);
++                                              }]
++          forControlEvents:UIControlEventEditingDidEnd];
 +    }
 +#endif
 +  }
@@ -615,7 +689,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
  
    // Setting navigation bar visibility is split to mitigate iOS 26 bug with bar button items
    // (setting nav bar visibility should be done after `navitem.*BarButtonItems`).
-@@ -773,6 +1185,7 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -773,6 +1259,7 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
  
  - (NSArray<UIBarButtonItem *> *)barButtonItemsFromConfigs:(NSArray<NSDictionary<NSString *, id> *> *)dicts
                                           withCurrentItems:(NSArray<UIBarButtonItem *> *)currentItems
@@ -623,7 +697,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
  {
    if (dicts.count == 0) {
      return currentItems;
-@@ -781,7 +1194,197 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -781,7 +1268,197 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    [items addObjectsFromArray:currentItems];
    for (NSUInteger i = 0; i < dicts.count; i++) {
      NSDictionary *dict = dicts[i];
@@ -822,7 +896,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
        RNSBarButtonItem *item = [[RNSBarButtonItem alloc] initWithConfig:dict
            action:^(NSString *buttonId) {
              auto eventEmitter = std::static_pointer_cast<const facebook::react::RNSScreenStackHeaderConfigEventEmitter>(
-@@ -803,19 +1406,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -803,19 +1480,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
            }
            imageLoader:_imageLoader];
        NSNumber *index = dict[@"index"];
@@ -852,7 +926,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
          [items insertObject:item atIndex:index.integerValue];
        } else {
          [items addObject:item];
-@@ -825,6 +1432,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -825,6 +1506,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    return items;
  }
  
@@ -900,7 +974,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
  RNS_IGNORE_SUPER_CALL_BEGIN
  - (void)insertReactSubview:(RNSScreenStackHeaderSubview *)subview atIndex:(NSInteger)atIndex
  {
-@@ -1013,6 +1661,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1013,6 +1735,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    }
  
    _title = RCTNSStringFromStringNilIfEmpty(newScreenProps.title);
@@ -909,7 +983,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
    if (newScreenProps.titleFontFamily != oldScreenProps.titleFontFamily) {
      _titleFontFamily = RCTNSStringFromStringNilIfEmpty(newScreenProps.titleFontFamily);
    }
-@@ -1038,6 +1688,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1038,6 +1762,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    _disableBackButtonMenu = newScreenProps.disableBackButtonMenu;
    _backButtonDisplayMode =
        [RNSConvert UINavigationItemBackButtonDisplayModeFromCppEquivalent:newScreenProps.backButtonDisplayMode];
@@ -917,7 +991,7 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
  
    if (newScreenProps.userInterfaceStyle != oldScreenProps.userInterfaceStyle) {
      _userInterfaceStyle = [RNSConvert UIUserInterfaceStyleFromCppEquivalent:newScreenProps.userInterfaceStyle];
-@@ -1084,6 +1735,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1084,6 +1809,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
      _headerRightBarButtonItems = array;
    }
  
@@ -1313,7 +1387,7 @@ index 3b384e03891e38e936f370372a682d73440e7ec2..861ffed850e90f27916c427853b503db
      /**
       * The tint color to apply to the item.
       *
-@@ -1145,8 +1193,37 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
+@@ -1145,8 +1193,38 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
  export interface HeaderBarButtonItemSpacing {
      type: 'spacing';
      spacing: number;
@@ -1344,6 +1418,7 @@ index 3b384e03891e38e936f370372a682d73440e7ec2..861ffed850e90f27916c427853b503db
 +    onSearchTextChange?: ((text: string) => void) | undefined;
 +    placeholder?: string | undefined;
 +    searchTextChangeId?: string | undefined;
++    showsSearchDismissButton?: boolean | undefined;
 +    useFallbackSearchField?: boolean | undefined;
 +    width?: number | undefined;
  }
@@ -1653,7 +1728,7 @@ index 76a83f3acb6fd3f0af7f027798848b7124100286..9e4499f076f9988e3266df4be7201e13
    /**
     * The tint color to apply to the item.
     *
-@@ -1279,11 +1327,46 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
+@@ -1279,11 +1327,47 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
  export interface HeaderBarButtonItemSpacing {
    type: 'spacing';
    spacing: number;
@@ -1687,6 +1762,7 @@ index 76a83f3acb6fd3f0af7f027798848b7124100286..9e4499f076f9988e3266df4be7201e13
 +  onSearchTextChange?: ((text: string) => void) | undefined;
 +  placeholder?: string | undefined;
 +  searchTextChangeId?: string | undefined;
++  showsSearchDismissButton?: boolean | undefined;
 +  useFallbackSearchField?: boolean | undefined;
 +  width?: number | undefined;
  }

@@ -5,12 +5,13 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { HomeProjectScope } from "../home/homeThreadList";
 import {
   getOnlySelectableProject,
+  getProjectScopeSelectionTarget,
   resolveDraftProjectSelection,
 } from "./new-task-project-selection";
 
-function makeProject(id: string): EnvironmentProject {
+function makeProject(id: string, environmentId = "environment"): EnvironmentProject {
   return {
-    environmentId: EnvironmentId.make("environment"),
+    environmentId: EnvironmentId.make(environmentId),
     id: ProjectId.make(id),
     title: id,
     workspaceRoot: `/work/${id}`,
@@ -41,9 +42,25 @@ describe("getOnlySelectableProject", () => {
     expect(getOnlySelectableProject([makeScope([project])])).toBe(project);
   });
 
-  it("does not auto-select a representative when one group has multiple clones", () => {
+  it("selects the representative when one logical project has multiple workspaces", () => {
     const projects = [makeProject("t3code"), makeProject("t3code-2"), makeProject("t3code-3")];
-    expect(getOnlySelectableProject([makeScope(projects)])).toBeNull();
+    expect(getOnlySelectableProject([makeScope(projects)])).toBe(projects[0]);
+  });
+});
+
+describe("getProjectScopeSelectionTarget", () => {
+  it("keeps the current environment when it hosts the selected logical project", () => {
+    const projects = [makeProject("t3code-mac", "mac"), makeProject("t3code-server", "server")];
+    expect(getProjectScopeSelectionTarget(makeScope(projects), EnvironmentId.make("server"))).toBe(
+      projects[1],
+    );
+  });
+
+  it("falls back to the representative when the current environment does not host the project", () => {
+    const projects = [makeProject("t3code-mac", "mac"), makeProject("t3code-server", "server")];
+    expect(getProjectScopeSelectionTarget(makeScope(projects), EnvironmentId.make("other"))).toBe(
+      projects[0],
+    );
   });
 });
 
@@ -63,10 +80,11 @@ describe("resolveDraftProjectSelection", () => {
     });
   });
 
-  it("opens the picker for multiple physical projects in one logical group", () => {
+  it("selects one logical project even when it has multiple physical workspaces", () => {
     const projects = [makeProject("t3code"), makeProject("t3code-2"), makeProject("t3code-3")];
     expect(resolveDraftProjectSelection(null, projects, [makeScope(projects)])).toEqual({
-      kind: "pick",
+      kind: "select",
+      project: projects[0],
     });
   });
 

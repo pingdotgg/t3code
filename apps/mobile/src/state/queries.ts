@@ -1,14 +1,23 @@
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
+import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
+import type {
+  EnvironmentId,
+  OrchestrationThread,
+  ThreadId,
+  VcsListRefsResult,
+  VcsRef,
+} from "@t3tools/contracts";
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { Atom } from "effect/unstable/reactivity";
-import { useEffect, useMemo, useState } from "react";
+import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
@@ -24,6 +33,8 @@ const COMPOSER_PATH_SEARCH_DEBOUNCE_MS = 200;
 const COMPOSER_PATH_SEARCH_LIMIT = 20;
 const THREAD_SEARCH_DEBOUNCE_MS = 200;
 const VCS_REF_LIST_LIMIT = 100;
+const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
+const INITIAL_BRANCH_CURSORS = [undefined] as const;
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
@@ -52,7 +63,7 @@ export interface ComposerPathSearchTarget {
   readonly query: string | null;
 }
 
-function useDebouncedValue<A>(value: A, delayMs: number): A {
+export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
 
   useEffect(() => {
@@ -123,6 +134,113 @@ export function useBranches(input: {
         })
       : null,
   );
+}
+
+export function usePaginatedBranches(target: VcsRefTarget) {
+  const query = target.query?.trim() ?? "";
+  const targetKey =
+    target.environmentId !== null && target.cwd !== null
+      ? JSON.stringify([target.environmentId, target.cwd, query])
+      : null;
+  const [pagination, setPagination] = useState<{
+    readonly targetKey: string | null;
+    readonly cursors: ReadonlyArray<number | undefined>;
+  }>({
+    targetKey,
+    cursors: INITIAL_BRANCH_CURSORS,
+  });
+  const cursors = pagination.targetKey === targetKey ? pagination.cursors : INITIAL_BRANCH_CURSORS;
+  const pageAtoms = useMemo(
+    () =>
+      target.environmentId !== null && target.cwd !== null
+        ? cursors.map((cursor) =>
+            vcsEnvironment.listRefs({
+              environmentId: target.environmentId!,
+              input: {
+                cwd: target.cwd!,
+                ...(query.length > 0 ? { query } : {}),
+                ...(cursor === undefined ? {} : { cursor }),
+                limit: VCS_REF_LIST_LIMIT,
+              },
+            }),
+          )
+        : [],
+    [cursors, query, target.cwd, target.environmentId],
+  );
+  const pagesAtom = useMemo(
+    () =>
+      Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
+        Atom.withLabel(`mobile:vcs-ref-pages:${targetKey ?? "empty"}`),
+      ),
+    [pageAtoms, targetKey],
+  );
+  const results = useAtomValue(pagesAtom);
+  const values = results.flatMap((result) => {
+    const value = Option.getOrNull(AsyncResult.value(result));
+    return value === null ? [] : [value];
+  });
+  const refs = new Map<string, VcsRef>();
+  for (const value of values) {
+    for (const ref of value.refs) {
+      refs.set(ref.name, ref);
+    }
+  }
+  const first = values[0] ?? null;
+  const last = values.at(-1) ?? null;
+  const data: VcsListRefsResult | null =
+    first === null || last === null
+      ? null
+      : {
+          refs: [...refs.values()],
+          isRepo: first.isRepo,
+          hasPrimaryRemote: first.hasPrimaryRemote,
+          nextCursor: last.nextCursor,
+          totalCount: Math.max(...values.map((value) => value.totalCount)),
+        };
+  const lastResult = results.at(-1);
+  const isFetchingNextPage =
+    results.length > 1 &&
+    lastResult?.waiting === true &&
+    Option.isNone(AsyncResult.value(lastResult));
+  const failed = results.find((result) => result._tag === "Failure");
+  const error =
+    failed?._tag === "Failure"
+      ? (() => {
+          const cause = Cause.squash(failed.cause);
+          return cause instanceof Error && cause.message.trim().length > 0
+            ? cause.message
+            : "Failed to load refs.";
+        })()
+      : null;
+  const refresh = useCallback(() => {
+    const firstPage = pageAtoms[0];
+    setPagination({ targetKey, cursors: INITIAL_BRANCH_CURSORS });
+    if (firstPage !== undefined) {
+      appAtomRegistry.refresh(firstPage);
+    }
+  }, [pageAtoms, targetKey]);
+  const loadNext = useCallback(() => {
+    if (targetKey === null || data?.nextCursor === null || data?.nextCursor === undefined) {
+      return;
+    }
+    setPagination((current) => {
+      const currentCursors =
+        current.targetKey === targetKey ? current.cursors : INITIAL_BRANCH_CURSORS;
+      return currentCursors.includes(data.nextCursor!)
+        ? { targetKey, cursors: currentCursors }
+        : { targetKey, cursors: [...currentCursors, data.nextCursor!] };
+    });
+  }, [data?.nextCursor, targetKey]);
+
+  return {
+    data,
+    refs: data?.refs ?? EMPTY_REFS,
+    error,
+    isPending: results.some((result) => result.waiting),
+    isFetchingNextPage,
+    refresh,
+    loadNext,
+  };
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {

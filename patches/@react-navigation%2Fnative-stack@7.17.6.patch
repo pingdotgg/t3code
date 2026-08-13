@@ -100,3 +100,25 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
 -//# sourceMappingURL=useHeaderConfigProps.js.map
 \ No newline at end of file
 +//# sourceMappingURL=useHeaderConfigProps.js.map
+diff --git a/lib/module/views/NativeStackView.native.js b/lib/module/views/NativeStackView.native.js
+index c342e90..5d3e440 100644
+--- a/lib/module/views/NativeStackView.native.js
++++ b/lib/module/views/NativeStackView.native.js
+@@ -370,6 +370,17 @@ export function NativeStackView({
+   return /*#__PURE__*/_jsx(SafeAreaProviderCompat, {
+     children: /*#__PURE__*/_jsx(ScreenStack, {
+       style: styles.container,
++      onFinishTransitioning: () => {
++        // Surface UIKit's transition-completion callback to every route of
++        // this navigator. Unlike transitionEnd, this also fires when a modal
++        // finishes dismissing — where the presenting screen below receives no
++        // appearance callbacks — and for a gesture-driven dismissal it fires
++        // before the state pop, while the modal route is still the focused
++        // one, so the event must not be targeted at a single route.
++        navigation.emit({
++          type: 'finishTransitioning'
++        });
++      },
+       children: state.routes.concat(state.preloadedRoutes).map((route, index) => {
+         const descriptor = descriptors[route.key] ?? preloadedDescriptors[route.key];
+         const isFocused = state.index === index;

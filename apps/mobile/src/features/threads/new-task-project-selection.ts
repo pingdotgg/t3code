@@ -1,18 +1,29 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
 
-export type DraftProjectSelectionResolution =
+type DraftProjectSelectionResolution =
   | { readonly kind: "preserve" }
   | { readonly kind: "select"; readonly project: EnvironmentProject }
   | { readonly kind: "pick" };
+
+export function getProjectScopeSelectionTarget(
+  scope: HomeProjectScope,
+  preferredEnvironmentId: EnvironmentId | null,
+): EnvironmentProject {
+  return (
+    scope.projects.find((project) => project.environmentId === preferredEnvironmentId) ??
+    scope.representative
+  );
+}
 
 export function getOnlySelectableProject(
   projectScopes: ReadonlyArray<HomeProjectScope>,
 ): EnvironmentProject | null {
   const onlyScope = projectScopes.length === 1 ? projectScopes[0] : null;
-  return onlyScope?.projects.length === 1 ? (onlyScope.projects[0] ?? null) : null;
+  return onlyScope?.representative ?? null;
 }
 
 export function resolveDraftProjectSelection(

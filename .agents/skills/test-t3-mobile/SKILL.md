@@ -125,31 +125,29 @@ Do not start, stop, erase, or reconfigure an emulator owned by another task. Tra
 
 ## Pair each client once
 
-Issue a fresh credential against the running backend's exact base directory:
+Use the bundled helper from the repository root. It issues a fresh credential against the running backend's exact base directory, opens the existing Add Environment route with the credential in an encoded query parameter, and asks that route to connect once:
 
 ```bash
-T3CODE_PORT=<server-port> node apps/server/src/bin.ts auth pairing create \
-  --base-dir <base-dir> \
-  --base-url <mobile-origin> \
-  --ttl 15m \
-  --label agent-mobile-<short-device-id>
+.agents/skills/test-t3-mobile/scripts/pair-client.sh \
+  ios <simulator-udid> <server-port> <base-dir>
+
+.agents/skills/test-t3-mobile/scripts/pair-client.sh \
+  android <emulator-serial> <server-port> <base-dir>
 ```
 
-In PowerShell, set `$env:T3CODE_PORT = "<server-port>"` first and run the `node ... auth pairing create` command without the leading assignment.
+Run only the command for the selected platform. The helper uses `http://127.0.0.1:<server-port>` for iOS and `http://10.0.2.2:<server-port>` for Android. Pass a fifth argument only when testing a non-development URL scheme.
 
-If the visible Add Environment action is not exposed as a semantic target, open the app's registered route instead of guessing coordinates:
+The helper opens this registered route:
 
-```bash
-xcrun simctl openurl <simulator-udid> 't3code-dev://connections/new'
-adb -s <emulator-serial> shell am start -W \
-  -a android.intent.action.VIEW \
-  -d 't3code-dev://connections/new' \
-  com.t3tools.t3code.dev
+```text
+t3code-dev://connections/new?pairingUrl=<encoded-pairing-url>&autoConnect=1
 ```
 
-Run only the command for the selected platform.
+The Add Environment route owns the behavior: `pairingUrl` prefills its normal host and token inputs, while `autoConnect=1` submits once in development builds and returns to Home after success. Without `autoConnect`, the same route only prefills the form for manual inspection.
 
-In T3 Code Dev, open Add Environment and enter the complete `<mobile-origin>` and newly printed `Token`. Verify the expected seeded projects appear before exercising the affected flow.
+Do not enter pairing hosts or tokens through simulator keyboard automation. Xcode's semantic typer sends HID-style key events through the simulator's active keyboard state, which can corrupt uppercase tokens and punctuation even when the host Mac uses a U.S. input source. The one-shot route is the deterministic pairing path. Use the visible form only as a fallback, and paste credentials rather than typing them character by character.
+
+Verify the expected seeded projects appear before exercising the affected flow.
 
 Pairing credentials are secret, short-lived, and single-use. Create a different credential for every simulator, emulator, physical device, or browser. If an attempt fails, issue a new credential rather than retrying the old one. Do not expose tokens in screenshots, commits, or final responses.
 
@@ -183,6 +181,8 @@ Keep local verification focused. Do not turn this workflow into a full repositor
 - **Old UI or an old error appears:** verify Metro's worktree, variant, URL, and port before diagnosing the app.
 - **The environment remains empty:** verify the platform-specific HTTP origin, use a fresh token, and confirm project seeding used the identical base directory.
 - **A second client cannot pair:** pairing tokens are single-use; issue another token.
+- **The pairing form opens but does not connect:** confirm the deep link uses the existing `connections/new` route, includes `autoConnect=1`, and carries a freshly minted encoded `pairingUrl`.
+- **Pairing text changes case or punctuation:** do not retry semantic typing. Use `scripts/pair-client.sh`; the simulator keyboard layout and HID input path are not reliable for credentials.
 - **iOS semantic actions fail:** set explicit XcodeBuildMCP defaults and refresh with `snapshot_ui`.
 - **Android cannot reach Metro:** verify `adb reverse` for the exact Metro port and relaunch the development-client URL.
 - **Android cannot reach the backend:** use `10.0.2.2`, not `127.0.0.1`, for the Android Emulator.

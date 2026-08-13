@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contracts";
 
 import type { ModelOption } from "../../lib/modelOptions";
-import { pendingModelAfterPress } from "./thread-settings-sheet-state";
+import { modelMatchesCatalogQuery, pendingModelAfterPress } from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -28,6 +28,26 @@ function modelOption(
 }
 
 describe("thread settings sheet state", () => {
+  it("matches visible model and provider terms", () => {
+    const model = modelOption("gpt-next");
+
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "Codex", query: "NEXT" })).toBe(true);
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "Codex", query: "codex" })).toBe(true);
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "Codex", query: "claude" })).toBe(
+      false,
+    );
+  });
+
+  it("treats whitespace-only catalog searches as empty", () => {
+    expect(
+      modelMatchesCatalogQuery({
+        model: modelOption("gpt-next"),
+        providerLabel: "Codex",
+        query: "   ",
+      }),
+    ).toBe(true);
+  });
+
   it("clears staging when the applied model is pressed", () => {
     expect(
       pendingModelAfterPress({
