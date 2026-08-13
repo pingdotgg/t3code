@@ -8,6 +8,7 @@ import { useMemo } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { vcsEnvironment } from "../state/vcs";
+import { buildRepoRootLabels } from "./repoRootLabels";
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
 
@@ -68,12 +69,14 @@ function getVcsStatusTargetKey(target: VcsStatusTarget): string | null {
   return `${target.environmentId}:${target.cwd}`;
 }
 
-/** The basename of an absolute repo-root path, used as a display label. */
-function repoRootDisplayName(repoRoot: string): string {
-  const trimmed = repoRoot.replace(/[/\\]+$/, "");
-  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  const base = separator >= 0 ? trimmed.slice(separator + 1) : trimmed;
-  return base.length > 0 ? base : repoRoot;
+const REPO_ROOT_KEY_SEPARATOR = "\0";
+
+export function serializeVcsStatusRoots(roots: ReadonlyArray<string> | null): string {
+  return roots?.join(REPO_ROOT_KEY_SEPARATOR) ?? "";
+}
+
+export function deserializeVcsStatusRoots(key: string): string[] {
+  return key === "" ? [] : key.split(REPO_ROOT_KEY_SEPARATOR);
 }
 
 /** Reshape an `AsyncResult<VcsStatusResult>` into a flat {@link VcsStatusState}. */
@@ -155,13 +158,14 @@ export function useVcsStatusGroups(
   target: VcsStatusGroupTarget,
 ): ReadonlyArray<VcsStatusGroupEntry> {
   const environmentId = target.environmentId;
-  // Stable dependency for the roots: NUL-free absolute paths, space-joined.
-  const rootsKey = target.repoRoots ? target.repoRoots.join(" ") : "";
+  // Stable dependency for the roots: NUL cannot occur in filesystem paths.
+  const rootsKey = serializeVcsStatusRoots(target.repoRoots);
 
   const roots = useMemo(
-    () => (environmentId !== null && rootsKey !== "" ? rootsKey.split(" ") : []),
+    () => (environmentId !== null ? deserializeVcsStatusRoots(rootsKey) : []),
     [environmentId, rootsKey],
   );
+  const rootLabels = useMemo(() => buildRepoRootLabels(roots), [roots]);
 
   const statusAtoms = useMemo(
     () =>
@@ -190,8 +194,8 @@ export function useVcsStatusGroups(
       const targetKey = `${environmentId}:${repoRoot}`;
       const state =
         result === undefined ? EMPTY_VCS_STATUS_STATE : toVcsStatusState(targetKey, result);
-      return { repoRoot, displayName: repoRootDisplayName(repoRoot), state };
+      return { repoRoot, displayName: rootLabels.get(repoRoot) ?? repoRoot, state };
     });
     // `results` identity drives recomputation; roots/environmentId stable per key.
-  }, [environmentId, roots, results]);
+  }, [environmentId, rootLabels, roots, results]);
 }

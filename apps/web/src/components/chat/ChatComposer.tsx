@@ -74,7 +74,10 @@ import {
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
-import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import {
+  composerPathSearchEntryDescription,
+  useComposerPathSearch,
+} from "../../lib/composerPathSearchState";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -104,6 +107,7 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
+import { buildRepoRootLabels } from "../../lib/repoRootLabels";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 
@@ -1032,6 +1036,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      const rootLabels = buildRepoRootLabels(
+        workspaceEntries.entries.flatMap((entry) => (entry.root ? [entry.root] : [])),
+      );
       return workspaceEntries.entries.map((entry) => ({
         // Multi-repo entries can share a relative path across roots, so key the
         // id (and disambiguate the description) by the owning root (#923).
@@ -1041,9 +1048,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pathKind: entry.kind,
         ...(entry.root ? { root: entry.root } : {}),
         label: basenameOfPath(entry.path),
-        description: entry.root
-          ? `${basenameOfPath(entry.root)}/${entry.parentPath ?? ""}`.replace(/\/$/, "")
-          : (entry.parentPath ?? entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/")))),
+        description: composerPathSearchEntryDescription(
+          entry,
+          entry.root ? rootLabels.get(entry.root) : undefined,
+        ),
       }));
     }
     if (composerTrigger.kind === "slash-command") {

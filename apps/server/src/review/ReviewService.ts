@@ -76,13 +76,18 @@ export const make = Effect.gen(function* () {
     cwd: string,
     allowedRepoRoots: readonly string[],
   ) {
-    const [candidate, workspaceRoot, worktreesRoot, repoRoots] = yield* Effect.all([
+    const [candidate, workspaceRoot, worktreesRoot, repoRootCandidates] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
       canonicalizePath(config.worktreesDir),
-      Effect.forEach(allowedRepoRoots, canonicalizePath),
+      Effect.forEach(allowedRepoRoots, (repoRoot) =>
+        canonicalizePath(repoRoot).pipe(Effect.orElseSucceed(() => null)),
+      ),
     ]);
 
+    const repoRoots = repoRootCandidates.filter(
+      (repoRoot): repoRoot is string => repoRoot !== null,
+    );
     const allowedRoots = [workspaceRoot, worktreesRoot, ...repoRoots];
     if (allowedRoots.some((root) => isWithinRoot(candidate, root))) {
       return;

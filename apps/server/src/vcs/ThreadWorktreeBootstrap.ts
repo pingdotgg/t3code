@@ -1,23 +1,16 @@
 /** Resolve and materialize the per-repository worktrees for an isolated thread. */
-import type {
-  GitCommandError,
-  GitManagerServiceError,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { resolveAnchorRepoRoot } from "@t3tools/shared/git";
-import type { GitWorkflowService } from "../git/GitWorkflowService.ts";
-import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 import {
   createThreadWorktrees,
   type CreatedThreadWorktree,
   type WorktreeFanoutTarget,
 } from "./WorktreeFanout.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 export interface ThreadWorktreeBootstrapResult {
   readonly created: ReadonlyArray<CreatedThreadWorktree>;
@@ -26,24 +19,23 @@ export interface ThreadWorktreeBootstrapResult {
   readonly branch: string;
 }
 
+interface ThreadWorktreeBootstrapInput {
+  readonly worktreesDir: string;
+  readonly projectId: ProjectId | undefined;
+  readonly threadId: ThreadId;
+  readonly prepare: {
+    readonly projectCwd: string;
+    readonly baseBranch: string;
+    readonly branch?: string | null | undefined;
+    readonly startFromOrigin?: boolean | undefined;
+  };
+}
+
 export const prepareThreadWorktreeFanout = Effect.fn("prepareThreadWorktreeFanout")(function* (
-  gitWorkflow: GitWorkflowService["Service"],
-  projectionSnapshotQuery: ProjectionSnapshotQueryShape,
-  input: {
-    readonly worktreesDir: string;
-    readonly projectId: ProjectId | undefined;
-    readonly threadId: ThreadId;
-    readonly prepare: {
-      readonly projectCwd: string;
-      readonly baseBranch: string;
-      readonly branch?: string | null | undefined;
-      readonly startFromOrigin?: boolean | undefined;
-    };
-  },
-): Effect.fn.Return<
-  ThreadWorktreeBootstrapResult,
-  GitCommandError | GitManagerServiceError | ProjectionRepositoryError
-> {
+  input: ThreadWorktreeBootstrapInput,
+) {
+  const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const projectId =
     input.projectId ??
     (yield* projectionSnapshotQuery
@@ -98,7 +90,7 @@ export const prepareThreadWorktreeFanout = Effect.fn("prepareThreadWorktreeFanou
     projectId: projectId ?? input.threadId,
     threadId: input.threadId,
     targets,
-  }).pipe(Effect.provideService(GitWorkflow.GitWorkflowService, gitWorkflow));
+  });
   const anchorWorktree = created.find((entry) => entry.repoRoot === anchorRepoRoot) ?? created[0];
   return {
     created,

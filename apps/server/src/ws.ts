@@ -929,15 +929,17 @@ const makeWsRpcLayer = (
 
             if (bootstrap?.prepareWorktree) {
               const prepare = bootstrap.prepareWorktree;
-              const prepared = yield* prepareThreadWorktreeFanout(
-                gitWorkflow,
-                projectionSnapshotQuery,
-                {
-                  worktreesDir: config.worktreesDir,
-                  projectId: targetProjectId,
-                  threadId: command.threadId,
-                  prepare,
-                },
+              const prepared = yield* prepareThreadWorktreeFanout({
+                worktreesDir: config.worktreesDir,
+                projectId: targetProjectId,
+                threadId: command.threadId,
+                prepare,
+              }).pipe(
+                Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
+                Effect.provideService(
+                  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+                  projectionSnapshotQuery,
+                ),
               );
               createdWorktrees = prepared.created;
               targetWorktreePath = prepared.worktreePath;
@@ -965,6 +967,9 @@ const makeWsRpcLayer = (
 
           return yield* bootstrapProgram.pipe(
             Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return Effect.interrupt;
+              }
               const dispatchError = toBootstrapDispatchCommandCauseError(cause);
               return Effect.uninterruptible(cleanupCreatedThread()).pipe(
                 Effect.flatMap(() => Effect.fail(dispatchError)),

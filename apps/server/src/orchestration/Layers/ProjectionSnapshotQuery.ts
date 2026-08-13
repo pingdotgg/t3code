@@ -317,7 +317,7 @@ function mapSessionRow(
 function normalizeRepoRoots(
   row: Schema.Schema.Type<typeof ProjectionProjectDbRowSchema>,
 ): ReadonlyArray<string> {
-  return [...new Set([row.workspaceRoot, ...row.repoRoots])];
+  return row.repoRoots.length > 0 ? [...new Set(row.repoRoots)] : [row.workspaceRoot];
 }
 
 function mapProjectShellRow(

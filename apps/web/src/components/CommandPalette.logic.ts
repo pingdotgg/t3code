@@ -351,7 +351,7 @@ export function buildBrowseGroups(input: {
   workspaceFileIcon: ReactNode;
   browseUp: () => void | Promise<void>;
   browseTo: (name: string) => void | Promise<void>;
-  openWorkspaceFile: (fullPath: string) => void;
+  openWorkspaceFile: (fullPath: string) => void | Promise<void>;
   includeWorkspaceFiles?: boolean;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
@@ -375,16 +375,17 @@ export function buildBrowseGroups(input: {
       if (input.includeWorkspaceFiles === false) {
         continue;
       }
-      // Selecting a workspace file resolves its repos and creates the project,
-      // so the palette closes (no keepOpen) rather than navigating into it.
+      // Keep the palette mounted until the workspace file has been resolved and
+      // the project flow explicitly closes it.
       items.push({
         kind: "action",
         value: `browse:${entry.fullPath}`,
         searchTerms: [input.browseQuery, entry.fullPath, entry.name],
         title: entry.name,
         icon: input.workspaceFileIcon,
+        keepOpen: true,
         run: async () => {
-          input.openWorkspaceFile(entry.fullPath);
+          await input.openWorkspaceFile(entry.fullPath);
         },
       });
       continue;

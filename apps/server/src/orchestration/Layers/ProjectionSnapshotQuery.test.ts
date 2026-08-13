@@ -54,6 +54,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           project_id,
           title,
           workspace_root,
+          repo_roots,
           default_model_selection_json,
           scripts_json,
           created_at,
@@ -64,6 +65,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'project-1',
           'Project 1',
           '/tmp/project-1',
+          '["/tmp/project-1-repo"]',
           '{"provider":"codex","model":"gpt-5-codex"}',
           '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           '2026-02-24T00:00:00.000Z',
@@ -270,7 +272,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
-          repoRoots: ["/tmp/project-1"],
+          repoRoots: ["/tmp/project-1-repo"],
           repositoryIdentity: null,
           repositoryIdentities: [],
           defaultModelSelection: {
@@ -393,7 +395,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: asProjectId("project-1"),
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
-          repoRoots: ["/tmp/project-1"],
+          repoRoots: ["/tmp/project-1-repo"],
           repositoryIdentity: null,
           repositoryIdentities: [],
           defaultModelSelection: {

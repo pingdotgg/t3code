@@ -27,6 +27,14 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
+import { Button } from "~/components/ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogHeader,
+  DialogPopup,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import {
   Menu,
   MenuItem,
@@ -181,7 +189,15 @@ function RightPanelEmptyState(props: {
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
+  const [terminalPickerOpen, setTerminalPickerOpen] = useState(false);
   const multiRepoTerminal = (props.terminalRoots?.length ?? 0) > 1;
+  const openTerminal = () => {
+    if (multiRepoTerminal) {
+      setTerminalPickerOpen(true);
+      return;
+    }
+    props.onAddTerminal();
+  };
   const actions = [
     {
       label: "Browser",
@@ -202,7 +218,7 @@ function RightPanelEmptyState(props: {
       shortcut: "T",
       available: props.terminalAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
-      onClick: () => props.onAddTerminal(),
+      onClick: openTerminal,
       badgeCount: 0,
     },
     {
@@ -414,6 +430,38 @@ function RightPanelEmptyState(props: {
           )}
         </div>
       </div>
+
+      <Dialog open={terminalPickerOpen} onOpenChange={setTerminalPickerOpen}>
+        <DialogPopup className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Open terminal</DialogTitle>
+            <DialogDescription>
+              Choose the repository where the shell should start.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 p-4 pt-0">
+            {props.terminalRoots?.map((root) => (
+              <Button
+                key={root.repoRoot}
+                variant="outline"
+                className="h-auto justify-start px-3 py-2 text-left"
+                onClick={() => {
+                  setTerminalPickerOpen(false);
+                  props.onAddTerminal(root.repoRoot);
+                }}
+              >
+                <TerminalSquare className="size-4" />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{root.displayName}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {root.repoRoot}
+                  </span>
+                </span>
+              </Button>
+            ))}
+          </div>
+        </DialogPopup>
+      </Dialog>
     </div>
   );
 }

@@ -2140,9 +2140,7 @@ function OpenCommandPaletteDialog(props: {
     workspaceFileIcon: <LayersIcon className={ITEM_ICON_CLASS} />,
     browseUp,
     browseTo,
-    openWorkspaceFile: (fullPath: string) => {
-      void openWorkspaceFile(fullPath);
-    },
+    openWorkspaceFile,
     includeWorkspaceFiles: multiRepoDraft === null && addProjectCloneFlow === null,
   });
   const cloneDestinationBrowseGroups = useMemo(

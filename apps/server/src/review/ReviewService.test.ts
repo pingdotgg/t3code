@@ -114,7 +114,7 @@ describe("ReviewService", () => {
               oldPath: "file.ts",
               newPath: "file.ts",
             },
-            [repoRoot],
+            [`${repoRoot}\0unresolvable`, repoRoot],
           )
           .pipe(Effect.flip);
       }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, detectCalls })));

@@ -57,6 +57,7 @@ export function ProjectFoldersDialog({
   const [newRoot, setNewRoot] = useState("");
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
+  const isBusy = saving || validating;
   const updateProject = useAtomCommand(projectEnvironment.update, {
     reportFailure: false,
   });
@@ -149,7 +150,7 @@ export function ProjectFoldersDialog({
     <Dialog
       open={target !== null}
       onOpenChange={(open) => {
-        if (!open) onClose();
+        if (!open && !isBusy) onClose();
       }}
     >
       <DialogPopup className="max-w-xl">
@@ -184,14 +185,19 @@ export function ProjectFoldersDialog({
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   {index > 0 ? (
-                    <Button variant="ghost" size="sm" onClick={() => makePrimary(root)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={isBusy}
+                      onClick={() => makePrimary(root)}
+                    >
                       Make primary
                     </Button>
                   ) : null}
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={roots.length === 1}
+                    disabled={isBusy || roots.length === 1}
                     aria-label={`Remove ${basename(root)}`}
                     onClick={() => removeRoot(root)}
                   >
@@ -218,12 +224,13 @@ export function ProjectFoldersDialog({
                 value={newRoot}
                 placeholder="/absolute/path/to/repository"
                 aria-label="Repository path"
+                disabled={isBusy}
                 onChange={(event) => setNewRoot(event.currentTarget.value)}
               />
               <Button
                 type="submit"
                 variant="outline"
-                disabled={validating || newRoot.trim().length === 0}
+                disabled={isBusy || newRoot.trim().length === 0}
               >
                 {validating ? "Checking…" : "Add"}
               </Button>
@@ -241,10 +248,10 @@ export function ProjectFoldersDialog({
           </form>
         </DialogPanel>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" disabled={isBusy} onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={saving || validating || roots.length === 0} onClick={() => void save()}>
+          <Button disabled={isBusy || roots.length === 0} onClick={() => void save()}>
             {saving ? "Saving…" : "Save"}
           </Button>
         </DialogFooter>

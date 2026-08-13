@@ -1088,6 +1088,7 @@ export default function FilePreviewPanel({
               cwd={cwd}
               projectName={projectName}
               selectedPath={relativePath}
+              selectedRoot={fileRoot ?? null}
               selectedPathRevealId={revealRequestId}
               repoRoots={repoRoots}
               onOpenFile={onOpenFile}

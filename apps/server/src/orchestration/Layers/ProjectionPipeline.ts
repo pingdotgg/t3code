@@ -1513,14 +1513,63 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const applyCheckpointsProjection: ProjectorDefinition["apply"] = () => Effect.void;
 
+    interface LegacyCheckpointThreadLocation {
+      readonly projectId: string;
+      readonly worktreePath: string | null;
+      readonly worktrees: ReadonlyArray<{
+        readonly repoRoot: string;
+        readonly worktreePath: string;
+      }>;
+    }
+
+    const legacyCheckpointProjectRoots = new Map<string, string>();
+    const legacyCheckpointThreadLocations = new Map<string, LegacyCheckpointThreadLocation>();
+
     // Checkpoint refs use their own cursor so the first startup after migration
     // replays historical diff-completed events even when the turn projector is
-    // already caught up. Legacy single-root events are mapped to the thread's
-    // original worktree (or project root); explicit empty arrays clear stale rows.
+    // already caught up. Its small replay state preserves the worktree/project
+    // location at each legacy event rather than consulting final projected rows.
     const applyCheckpointRefsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyCheckpointRefsProjection",
     )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "project.created":
+          legacyCheckpointProjectRoots.set(event.payload.projectId, event.payload.workspaceRoot);
+          break;
+        case "project.meta-updated":
+          if (event.payload.workspaceRoot !== undefined) {
+            legacyCheckpointProjectRoots.set(event.payload.projectId, event.payload.workspaceRoot);
+          }
+          break;
+        case "project.deleted":
+          legacyCheckpointProjectRoots.delete(event.payload.projectId);
+          break;
+        case "thread.created":
+          legacyCheckpointThreadLocations.set(event.payload.threadId, {
+            projectId: event.payload.projectId,
+            worktreePath: event.payload.worktreePath,
+            worktrees: event.payload.worktrees,
+          });
+          break;
+        case "thread.meta-updated": {
+          const current = legacyCheckpointThreadLocations.get(event.payload.threadId);
+          if (current) {
+            legacyCheckpointThreadLocations.set(event.payload.threadId, {
+              ...current,
+              ...(event.payload.worktreePath !== undefined
+                ? { worktreePath: event.payload.worktreePath }
+                : {}),
+              ...(event.payload.worktrees !== undefined
+                ? { worktrees: event.payload.worktrees }
+                : {}),
+            });
+          }
+          break;
+        }
+      }
+
       if (event.type === "thread.deleted") {
+        legacyCheckpointThreadLocations.delete(event.payload.threadId);
         yield* projectionCheckpointRefsRepository.deleteByThreadId({
           threadId: event.payload.threadId,
         });
@@ -1551,22 +1600,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const thread = yield* projectionThreadRepository.getById({
-        threadId: event.payload.threadId,
-      });
-      if (Option.isNone(thread)) {
-        return;
+      const historicalThread = legacyCheckpointThreadLocations.get(event.payload.threadId);
+      let legacyRepoRoot =
+        historicalThread?.worktreePath ?? historicalThread?.worktrees[0]?.worktreePath ?? null;
+      if (legacyRepoRoot === null && historicalThread) {
+        legacyRepoRoot = legacyCheckpointProjectRoots.get(historicalThread.projectId) ?? null;
       }
-      const project = yield* projectionProjectRepository.getById({
-        projectId: thread.value.projectId,
-      });
-      if (Option.isNone(project)) {
-        return;
+      if (legacyRepoRoot === null) {
+        const thread = yield* projectionThreadRepository.getById({
+          threadId: event.payload.threadId,
+        });
+        if (Option.isNone(thread)) {
+          return;
+        }
+        const project = yield* projectionProjectRepository.getById({
+          projectId: thread.value.projectId,
+        });
+        if (Option.isNone(project)) {
+          return;
+        }
+        legacyRepoRoot =
+          thread.value.worktreePath ??
+          thread.value.worktrees[0]?.worktreePath ??
+          project.value.workspaceRoot;
       }
-      const legacyRepoRoot =
-        thread.value.worktreePath ??
-        thread.value.worktrees[0]?.worktreePath ??
-        project.value.workspaceRoot;
       yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
         threadId: event.payload.threadId,
         checkpointTurnCount: event.payload.checkpointTurnCount,

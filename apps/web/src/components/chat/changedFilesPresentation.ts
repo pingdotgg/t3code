@@ -1,5 +1,6 @@
 import { type TurnDiffFileChange } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
+import { buildRepoRootLabels } from "../../lib/repoRootLabels";
 
 export const CHANGED_FILES_AUTO_EXPAND_FILE_LIMIT = 5;
 export const CHANGED_FILES_AUTO_EXPAND_LINE_LIMIT = 200;
@@ -22,12 +23,13 @@ export function changedFileName(pathValue: string): string {
   return pathSegments(pathValue).at(-1) ?? pathValue;
 }
 
-function changedFileScope(file: TurnDiffFileChange): string {
-  if (file.repoRoot) {
-    return pathSegments(file.repoRoot).at(-1) ?? file.repoRoot;
-  }
+function changedFilePathScope(file: TurnDiffFileChange): string {
   const segments = pathSegments(file.path);
   return segments.length > 1 ? (segments[0] ?? "root") : "root";
+}
+
+function changedFileScopeId(file: TurnDiffFileChange): string {
+  return file.repoRoot ? `repo\0${file.repoRoot}` : `path\0${changedFilePathScope(file)}`;
 }
 
 export function shouldAutoExpandChangedFiles(
@@ -45,18 +47,24 @@ export function summarizeChangedFileScopes(
   files: ReadonlyArray<TurnDiffFileChange>,
   limit = CHANGED_FILES_PREVIEW_SCOPE_LIMIT,
 ): ChangedFilesScopeSummary[] {
-  const scopes = new Map<string, { fileCount: number; firstIndex: number }>();
+  const rootLabels = buildRepoRootLabels(
+    files.flatMap((file) => (file.repoRoot ? [file.repoRoot] : [])),
+  );
+  const scopes = new Map<string, { fileCount: number; firstIndex: number; label: string }>();
   files.forEach((file, index) => {
-    const label = changedFileScope(file);
-    const current = scopes.get(label);
-    scopes.set(label, {
+    const id = changedFileScopeId(file);
+    const current = scopes.get(id);
+    scopes.set(id, {
       fileCount: (current?.fileCount ?? 0) + 1,
       firstIndex: current?.firstIndex ?? index,
+      label: file.repoRoot
+        ? (rootLabels.get(file.repoRoot) ?? file.repoRoot)
+        : changedFilePathScope(file),
     });
   });
 
-  return Array.from(scopes, ([label, scope]) => ({
-    label,
+  return Array.from(scopes.values(), (scope) => ({
+    label: scope.label,
     fileCount: scope.fileCount,
     firstIndex: scope.firstIndex,
   }))
@@ -79,7 +87,7 @@ export function selectChangedFilePreview(
   const selectedScopes = new Set<string>();
 
   for (const file of files) {
-    const scope = changedFileScope(file);
+    const scope = changedFileScopeId(file);
     if (selectedScopes.has(scope)) {
       continue;
     }

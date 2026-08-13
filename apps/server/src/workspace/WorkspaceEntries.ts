@@ -130,9 +130,10 @@ function isIgnoredDirectoryName(name: string): boolean {
   return name.endsWith(".git");
 }
 
-/** Whether any segment of a relative posix path is an ignored directory. */
-function isInIgnoredDirectory(relativePath: string): boolean {
-  return relativePath.split("/").some(isIgnoredDirectoryName);
+/** Whether an entry is nested in an ignored directory. */
+function isInIgnoredDirectory(entry: Pick<ProjectEntry, "kind" | "path">): boolean {
+  const directoryPath = entry.kind === "directory" ? entry.path : parentPathOf(entry.path);
+  return directoryPath?.split("/").some(isIgnoredDirectoryName) ?? false;
 }
 
 /**
@@ -366,7 +367,30 @@ export const make = Effect.gen(function* () {
       for (const root of roots) {
         const result = yield* Effect.gen(function* () {
           const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-          return yield* searchIndex.search(normalizedQuery, limit, input.kind, input.imageOnly);
+          let requestedLimit = limit;
+          while (true) {
+            const page = yield* searchIndex.search(
+              normalizedQuery,
+              requestedLimit,
+              input.kind,
+              input.imageOnly,
+            );
+            const entries = page.entries.filter((entry) => !isInIgnoredDirectory(entry));
+            if (
+              entries.length >= limit ||
+              !page.truncated ||
+              requestedLimit >= WorkspaceSearchIndex.WORKSPACE_INDEX_MAX_ENTRIES
+            ) {
+              return {
+                entries: entries.slice(0, limit),
+                truncated: page.truncated || entries.length > limit,
+              };
+            }
+            requestedLimit = Math.min(
+              WorkspaceSearchIndex.WORKSPACE_INDEX_MAX_ENTRIES,
+              Math.max(requestedLimit + 1, requestedLimit * 2),
+            );
+          }
         }).pipe(
           Effect.provide(
             workspaceSearchIndexes.get(
@@ -375,11 +399,7 @@ export const make = Effect.gen(function* () {
           ),
         );
         truncated = truncated || result.truncated;
-        entriesByRoot.push(
-          result.entries.flatMap((entry) =>
-            isInIgnoredDirectory(entry.path) ? [] : [withRoot(entry, root.tag)],
-          ),
-        );
+        entriesByRoot.push(result.entries.map((entry) => withRoot(entry, root.tag)));
       }
 
       const entries =
@@ -447,7 +467,7 @@ export const make = Effect.gen(function* () {
         );
         truncated = truncated || result.truncated;
         for (const entry of result.entries) {
-          if (isInIgnoredDirectory(entry.path)) {
+          if (isInIgnoredDirectory(entry)) {
             continue;
           }
           entries.push(withRoot(entry, root.tag));

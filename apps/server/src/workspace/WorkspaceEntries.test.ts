@@ -130,6 +130,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* writeTextFile(cwd, ".git/HEAD");
         yield* writeTextFile(cwd, ".frontend-origin.git/HEAD");
         yield* writeTextFile(cwd, "nested/origin.git/HEAD");
+        yield* writeTextFile(cwd, "docs/config.git");
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const result = yield* workspaceEntries.list({ cwd });
@@ -139,6 +140,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(paths.some((entryPath) => entryPath.startsWith(".git"))).toBe(false);
         expect(paths.some((entryPath) => entryPath.includes(".frontend-origin.git"))).toBe(false);
         expect(paths.some((entryPath) => entryPath.includes("origin.git"))).toBe(false);
+        expect(paths).toContain("docs/config.git");
       }),
     );
 
@@ -262,6 +264,39 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(result.entries).toEqual([{ path: "src/index.ts", kind: "file" }]);
         expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("filters ignored directories before applying the search limit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-ignore-limit-" });
+        yield* writeTextFile(cwd, "a-origin.git/match.ts");
+        yield* writeTextFile(cwd, "z-source/match.ts");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd,
+          query: "match",
+          limit: 1,
+          kind: "file",
+        });
+
+        expect(result.entries).toEqual([{ path: "z-source/match.ts", kind: "file" }]);
+      }),
+    );
+
+    it.effect("keeps files whose final name ends in .git", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-dot-git-file-" });
+        yield* writeTextFile(cwd, "docs/config.git");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd,
+          query: "config",
+          limit: 10,
+          kind: "file",
+        });
+
+        expect(result.entries).toEqual([{ path: "docs/config.git", kind: "file" }]);
       }),
     );
 

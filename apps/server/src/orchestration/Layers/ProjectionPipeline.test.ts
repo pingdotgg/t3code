@@ -296,7 +296,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-checkpoint-refs
               },
               runtimeMode: "full-access",
               branch: null,
-              worktreePath: null,
+              worktreePath: "/tmp/checkpoint-refs-original-worktree",
               createdAt: now,
               updatedAt: now,
             },
@@ -338,12 +338,51 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-checkpoint-refs
               completedAt: now,
             },
           });
+          yield* eventStore.append({
+            type: "thread.turn-diff-completed",
+            eventId: EventId.make("evt-checkpoint-refs-legacy-diff"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-checkpoint-refs-legacy-diff"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-checkpoint-refs-legacy-diff"),
+            metadata: {},
+            payload: {
+              threadId,
+              turnId: TurnId.make("turn-checkpoint-refs-legacy"),
+              checkpointTurnCount: 2,
+              checkpointRef: CheckpointRef.make(
+                "refs/t3/checkpoints/thread-checkpoint-refs/turn/2",
+              ),
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: now,
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.meta-updated",
+            eventId: EventId.make("evt-checkpoint-refs-later-worktree"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-checkpoint-refs-later-worktree"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-checkpoint-refs-later-worktree"),
+            metadata: {},
+            payload: {
+              threadId,
+              worktreePath: "/tmp/checkpoint-refs-later-worktree",
+              updatedAt: now,
+            },
+          });
 
           // Simulate an upgraded database whose existing turn projector has
           // already consumed the historical diff event.
           yield* sql`
           INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
-          VALUES (${ORCHESTRATION_PROJECTOR_NAMES.threadTurns}, 3, ${now})
+          VALUES (${ORCHESTRATION_PROJECTOR_NAMES.threadTurns}, 5, ${now})
         `;
           yield* projectionPipeline.bootstrap;
 
@@ -360,6 +399,16 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-checkpoint-refs
             backfilled.map((row) => row.repoRoot),
             ["/tmp/checkpoint-refs-attached", "/tmp/checkpoint-refs-primary"],
           );
+
+          const legacyBackfill = yield* sql<{ readonly repoRoot: string }>`
+          SELECT repo_root AS "repoRoot"
+          FROM projection_checkpoint_refs
+          WHERE thread_id = ${threadId}
+            AND checkpoint_turn_count = 2
+        `;
+          assert.deepEqual(legacyBackfill, [
+            { repoRoot: "/tmp/checkpoint-refs-original-worktree" },
+          ]);
 
           const clearedEvent = yield* eventStore.append({
             type: "thread.turn-diff-completed",

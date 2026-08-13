@@ -34,6 +34,31 @@ export interface ComposerPathSearchState {
   readonly isPending: boolean;
 }
 
+export function areComposerPathSearchTargetsEqual(
+  left: ComposerPathSearchTarget,
+  right: ComposerPathSearchTarget,
+): boolean {
+  const leftRoots = left.roots ?? [];
+  const rightRoots = right.roots ?? [];
+  return (
+    left.environmentId === right.environmentId &&
+    left.cwd === right.cwd &&
+    (left.query?.trim() ?? "") === (right.query?.trim() ?? "") &&
+    leftRoots.length === rightRoots.length &&
+    leftRoots.every((root, index) => root === rightRoots[index])
+  );
+}
+
+export function composerPathSearchEntryDescription(
+  entry: ComposerPathSearchEntry,
+  rootLabel?: string,
+): string {
+  const parentPath =
+    entry.parentPath ?? entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/")));
+  if (!entry.root) return parentPath;
+  return `${rootLabel ?? entry.root}/${parentPath}`.replace(/\/$/, "");
+}
+
 function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
 
@@ -95,12 +120,11 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget): Compose
       })),
     [result.data],
   );
+  const targetIsCurrent = areComposerPathSearchTargetsEqual(normalizedTarget, debouncedTarget);
 
   return {
-    entries,
-    error: result.error,
-    isPending:
-      normalizedTarget.query !== debouncedTarget.query ||
-      (debouncedTarget.query.length > 0 && result.isPending),
+    entries: targetIsCurrent ? entries : [],
+    error: targetIsCurrent ? result.error : null,
+    isPending: !targetIsCurrent || (debouncedTarget.query.length > 0 && result.isPending),
   };
 }

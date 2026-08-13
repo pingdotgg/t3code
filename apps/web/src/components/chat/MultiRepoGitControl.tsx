@@ -1,6 +1,6 @@
 import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { GitBranchIcon, RefreshCwIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import GitActionsControl from "../GitActionsControl";
 import { Button } from "../ui/button";
@@ -99,6 +99,7 @@ export function MultiRepoGitControl({
   draftId,
 }: MultiRepoGitControlProps) {
   const [isSyncing, setIsSyncing] = useState(false);
+  const isSyncingRef = useRef(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const repoRoots = useMemo(() => groups.map((group) => group.repoRoot), [groups]);
@@ -124,40 +125,47 @@ export function MultiRepoGitControl({
       : `Source control — ${aggregate.repoCount} repos, all clean`;
 
   async function executeSyncAll(steps: ReadonlyArray<SyncAllStep>): Promise<void> {
-    if (steps.length === 0) return;
+    if (steps.length === 0 || isSyncingRef.current) return;
+    isSyncingRef.current = true;
     setIsSyncing(true);
-    const noun = steps.length === 1 ? "repo" : "repos";
-    const toastId = toastManager.add({
-      type: "loading",
-      title: `Syncing ${steps.length} ${noun}…`,
-    });
-    const results = await Promise.allSettled(steps.map((step) => runSyncStep(environmentId, step)));
-    const failures = results
-      .map((result, index) => ({ result, step: steps[index]! }))
-      .filter((entry) => entry.result.status === "rejected");
+    try {
+      const noun = steps.length === 1 ? "repo" : "repos";
+      const toastId = toastManager.add({
+        type: "loading",
+        title: `Syncing ${steps.length} ${noun}…`,
+      });
+      const results = await Promise.allSettled(
+        steps.map((step) => runSyncStep(environmentId, step)),
+      );
+      const failures = results
+        .map((result, index) => ({ result, step: steps[index]! }))
+        .filter((entry) => entry.result.status === "rejected");
 
-    if (failures.length === 0) {
-      toastManager.update(toastId, {
-        type: "success",
-        title: `Synced ${steps.length} ${noun}`,
-      });
-    } else {
-      const failedNames = failures.map((entry) => entry.step.displayName).join(", ");
-      const succeeded = steps.length - failures.length;
-      toastManager.update(toastId, {
-        type: failures.length === steps.length ? "error" : "warning",
-        title:
-          failures.length === steps.length
-            ? `Sync failed for ${failures.length} ${failures.length === 1 ? "repo" : "repos"}`
-            : `Synced ${succeeded} of ${steps.length} repos`,
-        description: `Failed: ${failedNames}`,
-      });
+      if (failures.length === 0) {
+        toastManager.update(toastId, {
+          type: "success",
+          title: `Synced ${steps.length} ${noun}`,
+        });
+      } else {
+        const failedNames = failures.map((entry) => entry.step.displayName).join(", ");
+        const succeeded = steps.length - failures.length;
+        toastManager.update(toastId, {
+          type: failures.length === steps.length ? "error" : "warning",
+          title:
+            failures.length === steps.length
+              ? `Sync failed for ${failures.length} ${failures.length === 1 ? "repo" : "repos"}`
+              : `Synced ${succeeded} of ${steps.length} repos`,
+          description: `Failed: ${failedNames}`,
+        });
+      }
+    } finally {
+      isSyncingRef.current = false;
+      setIsSyncing(false);
     }
-    setIsSyncing(false);
   }
 
   function handleSyncAll(): void {
-    if (plan.steps.length === 0 || isSyncing) return;
+    if (plan.steps.length === 0 || isSyncingRef.current) return;
     if (plan.defaultBranchRepos.length > 0) {
       setConfirmOpen(true);
       return;
@@ -266,6 +274,7 @@ export function MultiRepoGitControl({
             </Button>
             <Button
               size="sm"
+              disabled={isSyncing}
               onClick={() => {
                 setConfirmOpen(false);
                 void executeSyncAll(plan.steps);

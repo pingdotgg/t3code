@@ -91,4 +91,29 @@ describe("changed-files presentation", () => {
     ]);
     expect(selectChangedFilePreview(files)).toEqual(files);
   });
+
+  it("keeps repositories with matching basenames as distinct scopes", () => {
+    const files = [
+      {
+        path: "README.md",
+        repoRoot: "/clients/a/app",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+      {
+        path: "package.json",
+        repoRoot: "/clients/b/app",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+    ];
+
+    expect(summarizeChangedFileScopes(files)).toEqual([
+      { label: "a/app", fileCount: 1 },
+      { label: "b/app", fileCount: 1 },
+    ]);
+    expect(selectChangedFilePreview(files)).toEqual(files);
+  });
 });
