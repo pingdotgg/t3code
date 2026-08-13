@@ -45,8 +45,8 @@ T3 Code works with the platforms your team already uses:
 - Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open it in your browser instead of in T3 Code
 - Check out a teammate's branch to review code locally
 - Merge from the review header when you have write access — the button says why when you don't,
-  and on GitHub a merge blocked by required checks or reviews becomes **Merge when ready**,
-  which lands it automatically once everything passes
+  and on GitHub, when auto-merge is available, a merge blocked by required checks or reviews
+  becomes **Merge when ready**, which lands it automatically once everything passes
 
 **Fix what you wrote, in place**
 
