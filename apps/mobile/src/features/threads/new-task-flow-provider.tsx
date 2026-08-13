@@ -14,6 +14,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   MessageId,
+  ProviderDriverKind,
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
@@ -74,6 +75,9 @@ import {
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+
+/** Mirrors the web composer's own declaration (ChatView).*/
+const AETHER_DRIVER_KIND = ProviderDriverKind.make("aether");
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -370,20 +374,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
     return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
   }, [t3ProjectFileData]);
-  const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
-    projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFile: t3ProjectFileDefaultMode,
-    globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
-  });
-  // While unsettled the resolved default is provisional. Nothing may write
-  // it into the draft during that window (the auto-branch effect does), or
-  // the frozen interim value beats the t3.json default once it loads.
-  const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
-    explicitMode: selectedProjectDraft.workspaceSelection?.mode,
-    projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFilePending: t3ProjectFileQuery.isPending,
-  });
-  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
   // Keep the user's explicit choice separate from the resolved display value:
@@ -428,6 +418,44 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
+  // Resolved AFTER the model selection on purpose: the Aether driver turns the
+  // thread's checkout into a one-way MIRROR of its cloud VM — every settle
+  // resets it and re-applies the cloud tree. Pointed at the SHARED project
+  // checkout that would discard the user's own work, so an untouched draft
+  // with an Aether model selected defaults to an isolated worktree, the same
+  // safety default the web composer applies. An explicit pick still wins:
+  // `workspaceSelection.mode` is read ahead of this default below.
+  const selectedProviderIsAether =
+    modelOptions.find((option) => option.key === selectedModelKey)?.providerDriver ===
+    AETHER_DRIVER_KIND;
+  const defaultWorkspaceMode: WorkspaceMode = selectedProviderIsAether
+    ? "worktree"
+    : resolveDefaultThreadEnvMode({
+        projectSetting: selectedProject?.defaultThreadEnvMode,
+        projectFile: t3ProjectFileDefaultMode,
+        globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
+      });
+  // While unsettled the resolved default is provisional. Nothing may write
+  // it into the draft during that window (the auto-branch effect does), or
+  // the frozen interim value beats the t3.json default once it loads.
+  const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
+    explicitMode: selectedProjectDraft.workspaceSelection?.mode,
+    projectSetting: selectedProject?.defaultThreadEnvMode,
+    projectFilePending: t3ProjectFileQuery.isPending,
+  });
+  // Only an EXPLICIT pick pins the mode. Incidental writes (selectBranch,
+  // setStartFromOrigin) carry the resolved mode along so the queued-task
+  // snapshot stays right, which would otherwise freeze the Aether worktree
+  // default into the draft as if the user had chosen it — and keep worktree
+  // after switching to a provider that never wanted it. Absent flag = a draft
+  // from before this field, treated as user-set so an existing pick stands.
+  const storedWorkspaceSelection = selectedProjectDraft.workspaceSelection;
+  const workspaceModeUserSet =
+    storedWorkspaceSelection !== undefined && storedWorkspaceSelection.modeUserSet !== false;
+  const workspaceMode =
+    workspaceModeUserSet && storedWorkspaceSelection !== undefined
+      ? storedWorkspaceSelection.mode
+      : defaultWorkspaceMode;
 
   const selectedModelOption =
     modelOptions.find(
@@ -599,6 +627,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       updateComposerDraftSettings(selectedProjectDraftKey, {
         workspaceSelection: {
           mode,
+          // The one write that means "the user chose this".
+          modeUserSet: true,
           branch: selectedBranchName,
           worktreePath: selectedWorktreePath,
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
@@ -616,13 +646,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       updateComposerDraftSettings(selectedProjectDraftKey, {
         workspaceSelection: {
           mode: workspaceMode,
+          modeUserSet: workspaceModeUserSet,
           branch: branch.name,
           worktreePath: normalizeSelectedWorktreePath(selectedProject, branch),
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
       });
     },
-    [draftStartFromOrigin, selectedProject, selectedProjectDraftKey, workspaceMode],
+    [
+      draftStartFromOrigin,
+      selectedProject,
+      selectedProjectDraftKey,
+      workspaceMode,
+      workspaceModeUserSet,
+    ],
   );
 
   const setStartFromOrigin = useCallback(
@@ -633,13 +670,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       updateComposerDraftSettings(selectedProjectDraftKey, {
         workspaceSelection: {
           mode: workspaceMode,
+          modeUserSet: workspaceModeUserSet,
           branch: selectedBranchName,
           worktreePath: selectedWorktreePath,
           startFromOrigin: value,
         },
       });
     },
-    [selectedBranchName, selectedProjectDraftKey, selectedWorktreePath, workspaceMode],
+    [
+      selectedBranchName,
+      selectedProjectDraftKey,
+      selectedWorktreePath,
+      workspaceMode,
+      workspaceModeUserSet,
+    ],
   );
 
   const refreshBranches = branchState.refresh;
@@ -709,7 +753,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         runtimeMode: message.runtimeMode,
         interactionMode: message.interactionMode,
         workspaceSelection: {
+          // The queued task's mode is a decision already made for it, so
+          // reopening it for editing keeps that mode pinned rather than
+          // re-deriving a default over the top of it.
           mode: message.creation.workspaceMode,
+          modeUserSet: true,
           branch: message.creation.branch,
           worktreePath: message.creation.worktreePath,
           startFromOrigin: message.creation.startFromOrigin ?? false,
@@ -744,9 +792,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return null;
       }
       const workspaceSelection = draft.workspaceSelection;
-      // Fall back to the resolved mode (server default) so queued tasks drain
-      // with the same mode the composer displayed.
-      const mode = workspaceSelection?.mode ?? workspaceMode;
+      // The stored mode outranks the resolved one ONLY when the user picked
+      // it. A mode that is merely a carried-along default must not win here:
+      // selecting a branch under a local provider stores `local`, and
+      // switching to Aether afterwards has to queue the task in the isolated
+      // worktree its one-way mirror requires — the composer already displays
+      // that, and the queue has to agree or the mirror claims the shared
+      // checkout on drain.
+      const mode =
+        workspaceSelection === undefined || workspaceSelection.modeUserSet === false
+          ? workspaceMode
+          : workspaceSelection.mode;
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back

@@ -58,6 +58,15 @@ describe("project RPC errors", () => {
       resolvedPath: "/workspace/src/index.ts",
       cause,
     });
+    const writeError = new ProjectWriteFileError({
+      cwd: "/workspace",
+      relativePath: "src/index.ts",
+      failure: "operation_failed",
+      operation: "write-file",
+      operationPath: "/workspace/src/index.ts",
+      resolvedPath: "/workspace/src/index.ts",
+      cause,
+    });
 
     expect(searchError.message).toBe("Failed to search workspace entries in '/workspace'.");
     expect(searchError.message).not.toContain(cause.message);
@@ -69,6 +78,11 @@ describe("project RPC errors", () => {
     expect(readError.message).toBe("Failed to read workspace file 'src/index.ts' in '/workspace'.");
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
+    expect(writeError.message).toBe(
+      "Failed to write workspace file 'src/index.ts' in '/workspace'.",
+    );
+    expect(writeError.message).not.toContain(cause.message);
+    expect(writeError.cause).toBe(cause);
 
     const contentSearchError = new ProjectSearchContentsError({
       cwd: "/workspace",

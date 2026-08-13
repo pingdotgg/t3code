@@ -626,6 +626,15 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        // `managedWorktree` tells the Aether adapter to skip its clean-tree
+        // preflight, so it must be true ONLY for a worktree the driver owns —
+        // that preflight is what stops the mirror from resetting away work the
+        // user has not committed. Path shape cannot decide this: a thread also
+        // points at the project checkout (local mode) or at a worktree the user
+        // already had (picking a branch that is checked out elsewhere), and
+        // both can be dirty. Only the bootstrap that created the worktree knows
+        // it is driver-owned, and it says so with `worktreeManaged`.
+        ...(thread.worktreeManaged === true ? { managedWorktree: true } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,

@@ -14,6 +14,7 @@ import {
 import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
+  derivePendingUserInputs,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
@@ -150,6 +151,52 @@ function makeThread(
   };
 }
 
+describe("derivePendingUserInputs", () => {
+  it("keeps a custom-answer-only question so the submission is never partial", () => {
+    const pending = derivePendingUserInputs([
+      makeActivity({
+        id: EventId.make("activity-ask"),
+        kind: "user-input.requested",
+        summary: "User input needed",
+        createdAt: "2026-08-08T10:00:00.000Z",
+        payload: {
+          requestId: "request-1",
+          questions: [
+            {
+              id: "q1",
+              header: "Scope",
+              question: "Which files should I touch?",
+              options: [{ label: "All", description: "Everything in the repo" }],
+            },
+            // The provider's custom-answer-only question: an EMPTY options
+            // array is legal and the card answers it with free text.
+            { id: "q2", header: "Anything else", question: "Notes?", options: [] },
+            // Options were sent but none parse — a choice-less card would
+            // misrepresent this one, so it stays dropped.
+            { id: "q3", header: "Broken", question: "Pick one", options: [{ label: 7 }] },
+          ],
+        },
+      }),
+    ]);
+
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.questions.map((question) => question.id)).toEqual(["q1", "q2"]);
+    expect(pending[0]!.questions[1]!.options).toEqual([]);
+    // Submit stays disabled until the custom-only question is answered too.
+    expect(
+      buildPendingUserInputAnswers(pending[0]!.questions, {
+        q1: { selectedOptionLabels: ["All"] },
+      }),
+    ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers(pending[0]!.questions, {
+        q1: { selectedOptionLabels: ["All"] },
+        q2: { customAnswer: "ship it" },
+      }),
+    ).toEqual({ q1: "All", q2: "ship it" });
+  });
+});
+
 describe("buildThreadFeed", () => {
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
@@ -199,6 +246,40 @@ describe("buildThreadFeed", () => {
         type: "activity-group",
         turnId: "turn-latest",
         activities: [{ id: "activity-latest", turnId: "turn-latest" }],
+      },
+    ]);
+  });
+
+  it("surfaces a port.opened activity as a clickable preview row", () => {
+    const url = `https://3000-ws-1-${"t".repeat(32)}.preview.runaether.dev`;
+    const thread = makeThread({
+      id: ThreadId.make("thread-1"),
+      projectId: ProjectId.make("project-1"),
+      title: "Port preview thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-port"),
+          kind: "port.opened",
+          summary: "Port 3000 is live",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: { port: 3000, url },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed).toMatchObject([
+      {
+        type: "activity-group",
+        activities: [
+          {
+            id: "activity-port",
+            summary: "Port 3000 is live",
+            icon: "globe",
+            portPreview: { port: 3000, url },
+          },
+        ],
       },
     ]);
   });

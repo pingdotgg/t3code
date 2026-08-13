@@ -52,6 +52,14 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  // T6 landed the turn protocol + mirror sync: Aether is selectable end to
+  // end.
+  {
+    value: ProviderDriverKind.make("aether"),
+    label: "Aether",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
 
 export type WorkLogToolLifecycleStatus =
@@ -79,6 +87,8 @@ export interface WorkLogEntry {
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
+  /** Present on a `port.opened` row: a live workspace port + its preview URL. */
+  portPreview?: { port: number; url: string };
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
   /** Agent role (subagent_type) for labeled timeline rows. */
@@ -899,6 +909,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (isTaskActivity && payload && isBackgroundTaskActivity(payload)) {
     entry.isBackgroundTask = true;
+  }
+  if (activity.kind === "port.opened" && payload) {
+    const port = payload.port;
+    const url = payload.url;
+    if (typeof port === "number" && typeof url === "string" && url.length > 0) {
+      entry.portPreview = { port, url };
+    }
   }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {

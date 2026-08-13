@@ -122,6 +122,8 @@ describe("compressImageForStash", () => {
     expect(close).toHaveBeenCalled();
   });
 
+  // Walks the full quality/scale ladder before giving up — ~18s on the 2-core
+  // GitHub-hosted runners this fork's CI uses, vs the default 15s timeout.
   it("reports too-large when even the smallest encoding overflows the budget", async () => {
     const { close } = stubCanvasPipeline(() => 8_000_000);
 
@@ -130,7 +132,7 @@ describe("compressImageForStash", () => {
     expect(result).toEqual({ ok: false, reason: "too-large" });
     // The bitmap must still be released on the give-up path.
     expect(close).toHaveBeenCalled();
-  });
+  }, 60_000);
 
   it("reports too-large for an oversized image when the browser cannot re-encode", async () => {
     vi.stubGlobal("createImageBitmap", undefined);

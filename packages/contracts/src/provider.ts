@@ -56,6 +56,12 @@ export const ProviderSessionStartInput = Schema.Struct({
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   cwd: Schema.optional(TrimmedNonEmptyString),
+  // True when `cwd` is a driver-owned, per-thread worktree (created clean from
+  // origin/{base}) rather than the shared "Current checkout". The Aether
+  // adapter uses this to skip its clean-tree/pushed preflight: a managed
+  // worktree is created clean, only the driver writes to it, and its temp
+  // branch has no upstream — so the shared-checkout preflight does not apply.
+  managedWorktree: Schema.optional(Schema.Boolean),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),

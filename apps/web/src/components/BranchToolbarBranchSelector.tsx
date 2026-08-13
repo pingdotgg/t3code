@@ -176,7 +176,11 @@ export function BranchToolbarBranchSelector({
       const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
         nextWorktreePath: worktreePath,
         currentWorktreePath: activeWorktreePath,
-        effectiveEnvMode,
+        // Use the persisted (sticky) mode, not `effectiveEnvMode`: the latter
+        // carries the Aether provider-default worktree overlay, which must
+        // never be written into persistence (it would stick after switching
+        // back to a non-worktree provider).
+        stickyEnvMode: draftThread?.envMode ?? "local",
       });
       setDraftThreadContext(draftId ?? threadRef, {
         branch,
@@ -196,7 +200,7 @@ export function BranchToolbarBranchSelector({
       draftId,
       threadRef,
       environmentId,
-      effectiveEnvMode,
+      draftThread?.envMode,
       stopThreadSession,
       updateThreadMetadata,
     ],

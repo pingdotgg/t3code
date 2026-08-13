@@ -217,6 +217,16 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // True once the user explicitly picks a workspace mode. While false the mode
+  // is still the auto/default value, so a provider whose driver prefers an
+  // isolated worktree (Aether) may override it. Additive + defaults false, so
+  // pre-existing persisted drafts decode unchanged.
+  envModeUserSet: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // True once the user explicitly toggles "start from origin". While false the
+  // value is still the auto/default one, so the Aether worktree overlay may
+  // seed it from the newWorktreesStartFromOrigin preference. Additive +
+  // defaults false, so pre-existing persisted drafts decode unchanged.
+  startFromOriginUserSet: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -320,7 +330,11 @@ export interface DraftSessionState {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
+  /** True once the user explicitly picks a workspace mode (see persisted schema). */
+  envModeUserSet: boolean;
   startFromOrigin: boolean;
+  /** True once the user explicitly toggles start-from-origin (see persisted schema). */
+  startFromOriginUserSet: boolean;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -382,7 +396,9 @@ interface ComposerDraftStoreState {
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      envModeUserSet?: boolean;
       startFromOrigin?: boolean;
+      startFromOriginUserSet?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -397,7 +413,9 @@ interface ComposerDraftStoreState {
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      envModeUserSet?: boolean;
       startFromOrigin?: boolean;
+      startFromOriginUserSet?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -411,7 +429,9 @@ interface ComposerDraftStoreState {
       projectRef?: ScopedProjectRef;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      envModeUserSet?: boolean;
       startFromOrigin?: boolean;
+      startFromOriginUserSet?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -1370,7 +1390,9 @@ function createDraftThreadState(
     worktreePath?: string | null;
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
+    envModeUserSet?: boolean;
     startFromOrigin?: boolean;
+    startFromOriginUserSet?: boolean;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
   },
@@ -1412,7 +1434,10 @@ function createDraftThreadState(
     worktreePath: nextWorktreePath,
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+    envModeUserSet: options?.envModeUserSet ?? existingThread?.envModeUserSet ?? false,
     startFromOrigin: nextStartFromOrigin,
+    startFromOriginUserSet:
+      options?.startFromOriginUserSet ?? existingThread?.startFromOriginUserSet ?? false,
     promotedTo: null,
   };
 }
@@ -1444,7 +1469,9 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
+    left.envModeUserSet === right.envModeUserSet &&
     left.startFromOrigin === right.startFromOrigin &&
+    left.startFromOriginUserSet === right.startFromOriginUserSet &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1540,6 +1567,15 @@ function normalizePersistedDraftThreads(
       const branch = candidateDraftThread.branch;
       const worktreePath = candidateDraftThread.worktreePath;
       const startFromOrigin = candidateDraftThread.startFromOrigin === true;
+      // Legacy-safe migration: a draft persisted before this field existed has
+      // it absent. Treat absent as user-set (`!== false`) so an existing draft
+      // is never surprise-flipped by a provider default (e.g. Aether worktree)
+      // on first render after upgrade. Only an explicit `false` — written by
+      // this build for a genuinely untouched new draft — stays overlay-eligible.
+      const envModeUserSet = candidateDraftThread.envModeUserSet !== false;
+      // Same legacy-safe rule as envModeUserSet: absent counts as user-set so
+      // a draft persisted before this field existed keeps its stored toggle.
+      const startFromOriginUserSet = candidateDraftThread.startFromOriginUserSet !== false;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
       const promotedToCandidate = candidateDraftThread.promotedTo;
       const promotedToRecord =
@@ -1587,7 +1623,9 @@ function normalizePersistedDraftThreads(
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
+        envModeUserSet,
         startFromOrigin,
+        startFromOriginUserSet,
         promotedTo,
       };
     }
@@ -1633,7 +1671,9 @@ function normalizePersistedDraftThreads(
           branch: null,
           worktreePath: null,
           envMode: "local",
+          envModeUserSet: false,
           startFromOrigin: false,
+          startFromOriginUserSet: false,
           promotedTo: null,
         };
       } else if (
@@ -2236,7 +2276,9 @@ function toHydratedDraftThreadState(
     branch: persistedDraftThread.branch,
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
+    envModeUserSet: persistedDraftThread.envModeUserSet,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    startFromOriginUserSet: persistedDraftThread.startFromOriginUserSet,
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
           persistedDraftThread.promotedTo.environmentId as EnvironmentId,
@@ -2455,6 +2497,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options.startFromOrigin === undefined
                 ? existing.startFromOrigin
                 : options.startFromOrigin;
+            const nextEnvModeUserSet =
+              options.envModeUserSet === undefined
+                ? existing.envModeUserSet
+                : options.envModeUserSet;
+            const nextStartFromOriginUserSet =
+              options.startFromOriginUserSet === undefined
+                ? existing.startFromOriginUserSet
+                : options.startFromOriginUserSet;
             const nextDraftThread: DraftThreadState = {
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
@@ -2470,7 +2520,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               worktreePath: nextWorktreePath,
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
+              envModeUserSet: nextEnvModeUserSet,
               startFromOrigin: nextStartFromOrigin,
+              startFromOriginUserSet: nextStartFromOriginUserSet,
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2483,7 +2535,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.branch === existing.branch &&
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
+              nextDraftThread.envModeUserSet === existing.envModeUserSet &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              nextDraftThread.startFromOriginUserSet === existing.startFromOriginUserSet &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

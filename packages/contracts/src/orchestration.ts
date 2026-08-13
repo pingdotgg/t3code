@@ -372,6 +372,13 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // True only for a worktree the thread bootstrap created for this thread and
+  // that only the driver writes to. A worktree the user already had (attached
+  // by picking a branch that is already checked out elsewhere) is never
+  // managed: it can hold their uncommitted work, so drivers must keep their
+  // clean-tree guards on it. Optional so payloads from pre-marker servers
+  // still decode — absent means "not managed", the safe reading.
+  worktreeManaged: Schema.optional(Schema.Boolean),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -442,6 +449,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // See OrchestrationThread.worktreeManaged.
+  worktreeManaged: Schema.optional(Schema.Boolean),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -758,6 +767,9 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Deliberately no worktreeManaged: see ThreadWorktreeAttachManagedCommand.
+  // The marker is server-authoritative, so it must not be reachable from a
+  // command a client can dispatch.
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -1015,6 +1027,30 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+// The thread bootstrap claiming the worktree it just created: it points the
+// thread at the new worktree and marks it driver-owned in one command, so the
+// branch, the path, and the marker can never disagree.
+//
+// Server-only on purpose. The marker is what makes drivers drop their
+// clean-tree guards, so a client that could set it could aim a thread at the
+// user's own worktree and have the driver reset away uncommitted work. This
+// command is absent from ClientOrchestrationCommand, so dispatchCommand
+// rejects it at the RPC boundary — only in-process server code can send it.
+// `expected*` carry the thread's workspace as the bootstrap observed it just
+// BEFORE it started creating the worktree. Creating one takes seconds and a
+// `thread.meta.update` can land in that window, so the decider compares before
+// applying: a stale attach must not revert the user's newer pick, nor mark
+// THEIR worktree driver-owned.
+const ThreadWorktreeAttachManagedCommand = Schema.Struct({
+  type: Schema.Literal("thread.worktree.attach-managed"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  branch: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  expectedBranch: Schema.NullOr(TrimmedNonEmptyString),
+  expectedWorktreePath: Schema.NullOr(TrimmedNonEmptyString),
+});
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1031,6 +1067,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadWorktreeAttachManagedCommand,
   ThreadTitleRegenerationCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
@@ -1201,6 +1238,12 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The resolved marker for the worktreePath in this same payload: see
+      OrchestrationThread. The decider writes it on every update that carries a
+      worktreePath — carrying it forward when the path is unchanged, clearing it
+      when the thread repoints — so readers apply it verbatim and never have to
+      reason about the previous path themselves. */
+  worktreeManaged: Schema.optional(Schema.Boolean),
   updatedAt: IsoDateTime,
 });
 

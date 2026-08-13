@@ -125,27 +125,65 @@ export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
+  /**
+   * Force a fresh draft to default to "worktree" when the selected provider's
+   * driver prefers an isolated worktree (currently the Aether fork driver) and
+   * the user has not explicitly chosen a workspace mode. Non-driver-aware
+   * callers omit this, preserving the prior behavior byte-for-byte.
+   */
+  providerDefaultsToWorktree?: boolean;
 }): EnvMode {
-  const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
+  const { activeWorktreePath, hasServerThread, draftThreadEnvMode, providerDefaultsToWorktree } =
+    input;
   if (!hasServerThread) {
     if (activeWorktreePath) {
       return "local";
     }
-    return draftThreadEnvMode === "worktree" ? "worktree" : "local";
+    if (draftThreadEnvMode === "worktree") {
+      return "worktree";
+    }
+    if (providerDefaultsToWorktree) {
+      return "worktree";
+    }
+    return "local";
   }
   return activeWorktreePath ? "worktree" : "local";
+}
+
+/**
+ * Whether a fresh, un-touched local draft should default its workspace to a new
+ * worktree because the selected provider's driver prefers isolation (the Aether
+ * fork). It is deliberately narrow so nothing else changes:
+ *  - only local drafts (never a started server thread),
+ *  - only while the mode is still the auto/default value (`!envModeUserSet`);
+ *    any explicit pick or a legacy migrated draft is user-set and wins,
+ *  - only for the Aether provider; every other provider keeps its prior default.
+ */
+export function resolveProviderDefaultsToWorktree(input: {
+  isLocalDraftThread: boolean;
+  envModeUserSet: boolean;
+  isAetherProvider: boolean;
+}): boolean {
+  return input.isLocalDraftThread && !input.envModeUserSet && input.isAetherProvider;
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {
   nextWorktreePath: string | null;
   currentWorktreePath: string | null;
-  effectiveEnvMode: EnvMode;
+  /**
+   * The draft's persisted (sticky) workspace mode — NOT the render-time
+   * effective mode. A branch change persists a workspace mode, so it must use
+   * the sticky value; feeding it the provider-default overlay (e.g. the Aether
+   * worktree default) would bake that transient overlay into persistence and
+   * break switching back to a non-worktree provider.
+   */
+  stickyEnvMode: EnvMode;
 }): EnvMode {
-  const { nextWorktreePath, currentWorktreePath, effectiveEnvMode } = input;
+  const { nextWorktreePath, currentWorktreePath, stickyEnvMode } = input;
   if (nextWorktreePath) {
     return "worktree";
   }
-  if (effectiveEnvMode === "worktree" && !currentWorktreePath) {
+  if (stickyEnvMode === "worktree" && !currentWorktreePath) {
     return "worktree";
   }
   return "local";

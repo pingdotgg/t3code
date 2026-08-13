@@ -611,6 +611,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            // A worktree named at thread creation is one the user already had;
+            // only the bootstrap's prepareWorktree marks its own via meta.
+            worktreeManaged: 0,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -796,8 +799,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { modelSelection: event.payload.modelSelection }
               : {}),
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
+            // The marker travels with the path it describes, already resolved
+            // by the decider (which is the only reader that knows the previous
+            // path), so it is applied verbatim rather than re-derived here.
             ...(event.payload.worktreePath !== undefined
-              ? { worktreePath: event.payload.worktreePath }
+              ? {
+                  worktreePath: event.payload.worktreePath,
+                  worktreeManaged: event.payload.worktreeManaged === true ? 1 : 0,
+                }
               : {}),
             updatedAt: event.payload.updatedAt,
           });

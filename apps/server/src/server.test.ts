@@ -103,6 +103,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { isThreadDetailEvent, resolveAvailableEditorsForConfig } from "./ws.ts";
+import * as AetherMirrorRegistryModule from "./provider/AetherMirrorRegistry.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -118,6 +119,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as AetherTerminalManager from "./terminal/AetherTerminalManager.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -266,6 +268,28 @@ const makeDefaultOrchestrationThreadShell = (
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
     ...overrides,
+  };
+};
+
+/**
+ * The projection read the bootstrap uses to CAS its managed-worktree attach:
+ * no worktree before the attach, the bootstrap-created one after it. Anything
+ * else means the attach was superseded, which makes the bootstrap tear the
+ * new worktree down instead of running setup in it.
+ */
+const bootstrapWorktreeShellQuery = (worktreePath: string) => {
+  let reads = 0;
+  return {
+    getThreadShellById: (threadId: ThreadId) =>
+      Effect.sync(() => {
+        reads += 1;
+        return Option.some(
+          makeDefaultOrchestrationThreadShell({
+            id: threadId,
+            ...(reads === 1 ? {} : { worktreePath }),
+          }),
+        );
+      }),
   };
 };
 
@@ -615,15 +639,21 @@ const buildAppUnderTest = (options?: {
         disableLogger: true,
       },
     ).pipe(
+      // The ws layer's Aether cloud-session write guard reads this registry;
+      // the real (empty) one is exactly the no-cloud-session case. Merged
+      // with the keybindings mock to stay under the pipe arity cap.
       Layer.provide(
-        Layer.mock(Keybindings.Keybindings)({
-          loadConfigState: Effect.succeed({
-            keybindings: [],
-            issues: [],
+        Layer.mergeAll(
+          AetherMirrorRegistryModule.layer,
+          Layer.mock(Keybindings.Keybindings)({
+            loadConfigState: Effect.succeed({
+              keybindings: [],
+              issues: [],
+            }),
+            streamChanges: Stream.empty,
+            ...options?.layers?.keybindings,
           }),
-          streamChanges: Stream.empty,
-          ...options?.layers?.keybindings,
-        }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -735,9 +765,20 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(TerminalManager.TerminalManager)({
-          ...options?.layers?.terminalManager,
-        }),
+        Layer.mergeAll(
+          Layer.mock(TerminalManager.TerminalManager)({
+            ...options?.layers?.terminalManager,
+          }),
+          // Test threads are local-backed: `handles` returns false so every
+          // terminal RPC routes to the local TerminalManager mock. `close` is
+          // stubbed because archive tears down both managers unconditionally;
+          // `subscribeMetadata` because the metadata stream merges both.
+          Layer.mock(AetherTerminalManager.AetherTerminalManager)({
+            handles: () => Effect.succeed(false),
+            close: () => Effect.void,
+            subscribeMetadata: () => Effect.succeed(() => {}),
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mergeAll(
@@ -7387,6 +7428,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             projectSetupScriptRunner: {
               runForThread,
             },
+            projectionSnapshotQuery: bootstrapWorktreeShellQuery("/tmp/bootstrap-worktree"),
           },
         });
 
@@ -7436,7 +7478,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           dispatchedCommands.map((command) => command.type),
           [
             "thread.create",
-            "thread.meta.update",
+            "thread.worktree.attach-managed",
             "thread.activity.append",
             "thread.activity.append",
             "thread.turn.start",
@@ -7636,6 +7678,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           projectSetupScriptRunner: {
             runForThread,
           },
+          projectionSnapshotQuery: bootstrapWorktreeShellQuery("/tmp/bootstrap-worktree"),
         },
       });
 
@@ -7682,7 +7725,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.sequence, 4);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.worktree.attach-managed",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupFailureActivity = dispatchedCommands.find(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
@@ -7694,6 +7742,128 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         worktreePath: "/tmp/bootstrap-worktree",
       });
       assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("tears down the bootstrap worktree when its attach is superseded", () =>
+    Effect.gen(function* () {
+      // The decider no-ops a managed attach whose thread was repointed while
+      // the worktree was being created. The bootstrap must notice: the new
+      // checkout is not the thread's workspace, so nothing may run in it and
+      // it must not be left on disk.
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const createWorktree = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+          Effect.succeed({
+            worktree: {
+              refName: "t3code/bootstrap-refName",
+              path: "/tmp/bootstrap-worktree",
+            },
+          }),
+      );
+      const removeWorktree = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"]>[0]) => Effect.void,
+      );
+      const runForThread = vi.fn(
+        (
+          input: Parameters<
+            ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
+          >[0],
+        ) =>
+          Effect.succeed({
+            status: "started" as const,
+            scriptId: "setup",
+            scriptName: "Setup",
+            terminalId: "setup-setup",
+            cwd: input.worktreePath,
+          }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            createWorktree,
+            removeWorktree,
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectSetupScriptRunner: {
+            runForThread,
+          },
+          projectionSnapshotQuery: {
+            // The user repointed the thread mid-create, so the attach no-ops
+            // and the thread still points at THEIR worktree afterwards.
+            getThreadShellById: (threadId: ThreadId) =>
+              Effect.succeed(
+                Option.some(
+                  makeDefaultOrchestrationThreadShell({
+                    id: threadId,
+                    worktreePath: "/tmp/user-picked-worktree",
+                  }),
+                ),
+              ),
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-turn-start-superseded"),
+            threadId: ThreadId.make("thread-bootstrap-superseded"),
+            message: {
+              messageId: MessageId.make("msg-bootstrap-superseded"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "main",
+                worktreePath: null,
+                createdAt,
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "t3code/bootstrap-refName",
+              },
+              runSetupScript: true,
+            },
+            createdAt,
+          }),
+        ),
+      );
+
+      // The orphan is removed, and the setup script never runs in it.
+      assert.deepEqual(removeWorktree.mock.calls[0]?.[0], {
+        cwd: "/tmp/project",
+        path: "/tmp/bootstrap-worktree",
+        force: true,
+      });
+      assert.equal(runForThread.mock.calls.length, 0);
+      // The turn still starts — on the workspace the user chose.
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.worktree.attach-managed", "thread.turn.start"],
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -7757,6 +7927,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           projectSetupScriptRunner: {
             runForThread,
           },
+          projectionSnapshotQuery: bootstrapWorktreeShellQuery("/tmp/bootstrap-worktree"),
         },
       });
 
@@ -7803,7 +7974,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.sequence, 4);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.worktree.attach-managed",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupActivities = dispatchedCommands.filter(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>

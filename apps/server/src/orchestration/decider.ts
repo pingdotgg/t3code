@@ -834,9 +834,64 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(branch !== undefined ? { branch } : {}),
-          ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.worktreePath !== undefined
+            ? {
+                worktreePath: command.worktreePath,
+                // The marker describes a worktree, not an update. An update
+                // that keeps the thread on the same worktree — the first-turn
+                // branch rename is one — carries it forward; repointing the
+                // thread elsewhere (or clearing the path) drops it, because a
+                // worktree this server did not create is the user's and keeps
+                // its clean-tree guards until a bootstrap claims it.
+                worktreeManaged:
+                  command.worktreePath !== null &&
+                  command.worktreePath === thread.worktreePath &&
+                  thread.worktreeManaged === true,
+              }
+            : {}),
           updatedAt: occurredAt,
         },
+      };
+    }
+
+    case "thread.worktree.attach-managed": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // The attach describes a worktree whose creation took seconds; a
+      // `thread.meta.update` repointing the thread can have landed since. An
+      // unconditional apply would revert that newer pick AND mark the user's
+      // own worktree driver-owned — the marker is exactly what makes drivers
+      // drop their clean-tree guards, so it must never land on a path the
+      // bootstrap did not create. When the expectation no longer holds this
+      // projects as a no-op: the fresh worktree stays unmarked (drivers keep
+      // guarding it) and the user's selection stands.
+      const attachIsCurrent =
+        thread.branch === command.expectedBranch &&
+        thread.worktreePath === command.expectedWorktreePath;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        // Reuses thread.meta-updated so the marker rides the same event the
+        // branch and path already travel on: one event, one row write, and no
+        // window where the thread points at the worktree unmarked.
+        type: "thread.meta-updated",
+        payload: attachIsCurrent
+          ? {
+              threadId: command.threadId,
+              branch: command.branch,
+              worktreePath: command.worktreePath,
+              worktreeManaged: true,
+              updatedAt: occurredAt,
+            }
+          : { threadId: command.threadId, updatedAt: thread.updatedAt },
       };
     }
 

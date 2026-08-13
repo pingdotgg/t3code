@@ -20,6 +20,8 @@ import {
   EventId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
+  GitCommandError,
+  GitManagerError,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
@@ -79,11 +81,20 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import {
+  AETHER_MIRROR_REFUSAL,
+  guardAetherQueuedMutation,
+  guardAetherWriteFile,
+  guardAetherRemoveWorktree,
+  guardAetherVcsMutation,
+} from "./provider/AetherMirrorGuards.ts";
+import { AetherMirrorRegistry } from "./provider/AetherMirrorRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as AetherTerminalManager from "./terminal/AetherTerminalManager.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -362,10 +373,71 @@ const makeWsRpcLayer = (
       const keybindings = yield* Keybindings.Keybindings;
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const aetherMirrorRegistry = yield* AetherMirrorRegistry;
+
+      // -- Aether cloud-session write guard (build item 8a) -----------------
+      // While an Aether thread owns a cwd, that checkout is a one-way mirror
+      // of the cloud VM: local writes never reach the VM and silently break
+      // the next turn's reset-and-apply sync. These RPCs dispatch straight
+      // into workspaceFileSystem/gitWorkflow (they never cross
+      // ProviderAdapter), so the refusal lives HERE, at the dispatch sites —
+      // the guard logic itself is in provider/AetherMirrorGuards.ts (tested).
+      const guardVcsMutation = <A, E, R>(
+        operation: string,
+        cwd: string,
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | GitCommandError, R> =>
+        guardAetherVcsMutation(aetherMirrorRegistry, operation, cwd, effect);
+
+      const guardRemoveWorktree = <A, E, R>(
+        input: { readonly cwd: string; readonly path: string },
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | GitCommandError, R> =>
+        guardAetherRemoveWorktree(aetherMirrorRegistry, input, effect);
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
+      const aetherTerminalManager = yield* AetherTerminalManager.AetherTerminalManager;
+      // Route each per-thread terminal RPC to the cloud-VM shell when the
+      // thread is Aether-backed, else the local PTY. `handles` caches per
+      // thread, so this is a plain in-memory check after the first call.
+      //
+      // A thread's terminals must all live in ONE manager. The Aether binding
+      // only appears with the thread's first turn, so a terminal opened before
+      // then lands on the local PTY — and once the binding exists every later
+      // op routes to the cloud manager, leaving that PTY running, unreachable,
+      // inside the checkout the mirror is about to claim. The first time a
+      // thread is seen as cloud-backed, close whatever it left behind locally.
+      const localTerminalsReconciled = new Set<string>();
+      const routeTerminal = <A>(
+        threadId: string,
+        onAether: () => Effect.Effect<A, TerminalError>,
+        onLocal: () => Effect.Effect<A, TerminalError>,
+      ): Effect.Effect<A, TerminalError> =>
+        aetherTerminalManager.handles(threadId).pipe(
+          Effect.flatMap((useAether) => {
+            if (!useAether) {
+              return onLocal();
+            }
+            if (localTerminalsReconciled.has(threadId)) {
+              return onAether();
+            }
+            localTerminalsReconciled.add(threadId);
+            return terminalManager.close({ threadId }).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning(
+                  "failed to close the pre-binding local terminals of a cloud thread",
+                  {
+                    threadId,
+                    error: error.message,
+                  },
+                ),
+              ),
+              Effect.andThen(onAether()),
+            );
+          }),
+        );
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -911,6 +983,19 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
+              // The thread's workspace as it stands BEFORE the worktree is
+              // created — creating one takes seconds, and the attach below
+              // must not overwrite a `thread.meta.update` that lands meanwhile.
+              const threadBeforePrepare = yield* projectionSnapshotQuery.getThreadShellById(
+                command.threadId,
+              );
+              const expectedWorkspace = Option.match(threadBeforePrepare, {
+                onNone: () => ({ branch: null, worktreePath: null }),
+                onSome: (thread) => ({
+                  branch: thread.branch,
+                  worktreePath: thread.worktreePath,
+                }),
+              });
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
               // "Start from origin" is a stored default; repos without an
               // origin remote fall back to the local base branch instead of
@@ -941,14 +1026,51 @@ const makeWsRpcLayer = (
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
+              // This is the one place an ephemeral per-thread worktree is
+              // created, and attach-managed is the only command that marks one.
+              // The marker is what later lets drivers treat the worktree as
+              // theirs; every other worktree a thread can point at is the
+              // user's and keeps its clean-tree guards.
               yield* orchestrationEngine.dispatch({
-                type: "thread.meta.update",
-                commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
+                type: "thread.worktree.attach-managed",
+                commandId: yield* serverCommandId("bootstrap-thread-worktree-attach"),
                 threadId: command.threadId,
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
+                expectedBranch: expectedWorkspace.branch,
+                expectedWorktreePath: expectedWorkspace.worktreePath,
               });
-              yield* refreshGitStatus(targetWorktreePath);
+              // The decider NO-OPS that attach when the thread was repointed
+              // while the worktree was being created, so the dispatch alone is
+              // no proof it landed. If it did not, the checkout just created is
+              // an orphan: the thread runs somewhere else, nothing may execute
+              // in it (a setup script there would be invisible to the user),
+              // and leaving it on disk leaks a worktree and its branch.
+              const threadAfterAttach = yield* projectionSnapshotQuery.getThreadShellById(
+                command.threadId,
+              );
+              const attachApplied = Option.match(threadAfterAttach, {
+                onNone: () => false,
+                onSome: (thread) => thread.worktreePath === targetWorktreePath,
+              });
+              if (attachApplied) {
+                yield* refreshGitStatus(targetWorktreePath);
+              } else {
+                const orphanPath = targetWorktreePath;
+                // Skips runSetupProgram(), which requires a target worktree.
+                targetWorktreePath = null;
+                yield* Effect.logWarning(
+                  "bootstrap worktree attach was superseded; removing the orphaned worktree",
+                  { threadId: command.threadId, worktreePath: orphanPath },
+                );
+                yield* gitWorkflow
+                  .removeWorktree({
+                    cwd: bootstrap.prepareWorktree.projectCwd,
+                    path: orphanPath,
+                    force: true,
+                  })
+                  .pipe(Effect.ignoreCause({ log: true }));
+              }
             }
 
             yield* runSetupProgram();
@@ -1071,50 +1193,59 @@ const makeWsRpcLayer = (
                   )
                 : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
-              if (parkingCommand) {
+              if (parkingCommand && shouldStopSessionAfterCommand) {
                 const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
-                if (shouldStopSessionAfterCommand) {
-                  yield* Effect.gen(function* () {
-                    const stopCommand = yield* normalizeDispatchCommand({
-                      type: "thread.session.stop",
-                      commandId: CommandId.make(
-                        `session-stop-for-${parkingKind}:${parkingCommand.commandId}`,
-                      ),
+                yield* Effect.gen(function* () {
+                  const stopCommand = yield* normalizeDispatchCommand({
+                    type: "thread.session.stop",
+                    commandId: CommandId.make(
+                      `session-stop-for-${parkingKind}:${parkingCommand.commandId}`,
+                    ),
+                    threadId: parkingCommand.threadId,
+                    createdAt: yield* nowIso,
+                    // A settled thread can be re-engaged before this stop is
+                    // decided; the decider then drops the stop instead of
+                    // killing the new session. Archive stops stay unconditional:
+                    // turn starts on archived threads are rejected, so there is
+                    // no new session to protect.
+                    ...(parkingKind === "settle" ? { onlyIfSettled: true } : {}),
+                  });
+
+                  yield* dispatchNormalizedCommand(stopCommand);
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning(`failed to stop provider session during ${parkingKind}`, {
                       threadId: parkingCommand.threadId,
-                      createdAt: yield* nowIso,
-                      // A settled thread can be re-engaged before this stop is
-                      // decided; the decider then drops the stop instead of
-                      // killing the new session. Archive stops stay
-                      // unconditional: turn starts on archived threads are
-                      // rejected, so there is no new session to protect.
-                      ...(parkingKind === "settle" ? { onlyIfSettled: true } : {}),
-                    });
+                      cause,
+                    }),
+                  ),
+                );
+              }
 
-                    yield* dispatchNormalizedCommand(stopCommand);
-                  }).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning(`failed to stop provider session during ${parkingKind}`, {
-                        threadId: parkingCommand.threadId,
-                        cause,
-                      }),
-                    ),
-                  );
-                }
-
-                // Terminals are user-opened panes, not thread background
-                // work: archive removes the thread from view so they close
-                // with it, but a settled thread stays reachable and may be
-                // un-settled, so its terminals stay up.
-                if (parkingCommand.type === "thread.archive") {
-                  yield* terminalManager.close({ threadId: parkingCommand.threadId }).pipe(
-                    Effect.catch((error) =>
-                      Effect.logWarning("failed to close thread terminals after archive", {
-                        threadId: parkingCommand.threadId,
-                        error: error.message,
-                      }),
-                    ),
-                  );
-                }
+              if (normalizedCommand.type === "thread.archive") {
+                // Close BOTH managers: a thread is either local- or Aether-backed,
+                // and closing the one with no sessions is a no-op. Settle keeps its
+                // terminals: a settled thread stays reachable and may be un-settled.
+                // DELETION is not handled here — ThreadDeletionReactor owns it, so
+                // that a `project.delete` cascade (whose child `thread.deleted`
+                // events never surface as a dispatched command) tears its cloud
+                // terminals down too instead of leaking their VMs.
+                yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("failed to close thread terminals after archive", {
+                      threadId: normalizedCommand.threadId,
+                      error: error.message,
+                    }),
+                  ),
+                );
+                yield* aetherTerminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("failed to close cloud terminals after archive", {
+                      threadId: normalizedCommand.threadId,
+                      error: error.message,
+                    }),
+                  ),
+                );
               }
               return result;
             }).pipe(
@@ -1807,15 +1938,19 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectWriteFileError({
-                    cwd: input.cwd,
-                    relativePath: input.relativePath,
-                    ...projectFileFailureContext(cause),
-                    cause,
-                  }),
+            guardAetherWriteFile(
+              aetherMirrorRegistry,
+              input,
+              workspaceFileSystem.writeFile(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectWriteFileError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
+                ),
               ),
             ),
             { "rpc.aggregate": "workspace" },
@@ -1930,35 +2065,60 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsPull]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsPull,
-            gitWorkflow.pullCurrentBranch(input.cwd).pipe(
-              Effect.matchCauseEffect({
-                onFailure: (cause) => Effect.failCause(cause),
-                onSuccess: (result) =>
-                  refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
-              }),
+            guardVcsMutation(
+              "vcs.pull",
+              input.cwd,
+              gitWorkflow.pullCurrentBranch(input.cwd).pipe(
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Effect.failCause(cause),
+                  onSuccess: (result) =>
+                    refreshGitStatus(input.cwd).pipe(
+                      Effect.ignore({ log: true }),
+                      Effect.as(result),
+                    ),
+                }),
+              ),
             ),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
+            // The ownership check and the run share ONE frozen region, held for
+            // the whole mutation: runStackedAction commits, branches and
+            // pushes, so a session registering between a `false` answer and
+            // the run would land all of that in a live one-way mirror. Checking
+            // outside the region (as this site used to) took no reader permit
+            // at all, so the exclusive registration never waited for it.
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitWorkflow
-                .runStackedAction(input, {
-                  actionId: input.actionId,
-                  progressReporter: {
-                    publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                  },
-                })
-                .pipe(
-                  Effect.matchCauseEffect({
-                    onFailure: (cause) => Queue.failCause(queue, cause),
-                    onSuccess: () =>
-                      refreshGitStatus(input.cwd).pipe(
-                        Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
-                      ),
+              guardAetherQueuedMutation(
+                aetherMirrorRegistry,
+                input.cwd,
+                Queue.fail(
+                  queue,
+                  new GitManagerError({
+                    operation: "git.runStackedAction",
+                    cwd: input.cwd,
+                    detail: AETHER_MIRROR_REFUSAL,
                   }),
-                ),
+                ).pipe(Effect.asVoid),
+                gitWorkflow
+                  .runStackedAction(input, {
+                    actionId: input.actionId,
+                    progressReporter: {
+                      publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                    },
+                  })
+                  .pipe(
+                    Effect.matchCauseEffect({
+                      onFailure: (cause) => Queue.failCause(queue, cause),
+                      onSuccess: () =>
+                        refreshGitStatus(input.cwd).pipe(
+                          Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                        ),
+                    }),
+                  ),
+              ),
             ),
             { "rpc.aggregate": "vcs" },
           ),
@@ -1985,25 +2145,40 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            guardVcsMutation(
+              "vcs.createWorktree",
+              input.cwd,
+              gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            guardRemoveWorktree(
+              input,
+              gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateRef,
-            gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            guardVcsMutation(
+              "vcs.createRef",
+              input.cwd,
+              gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsSwitchRef,
-            gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            guardVcsMutation(
+              "vcs.switchRef",
+              input.cwd,
+              gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsInit]: (input) =>
@@ -2025,40 +2200,93 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalOpen,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.open(input),
+              () => terminalManager.open(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalAttach]: (input) =>
           observeRpcStream(
             WS_METHODS.terminalAttach,
             Stream.callback<TerminalAttachStreamEvent, TerminalError>((queue) =>
               Effect.acquireRelease(
-                terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                routeTerminal(
+                  input.threadId,
+                  () =>
+                    aetherTerminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                  () => terminalManager.attachStream(input, (event) => Queue.offer(queue, event)),
+                ),
                 (unsubscribe) => Effect.sync(unsubscribe),
               ),
             ),
             { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.terminalWrite]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalWrite,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.write(input),
+              () => terminalManager.write(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalResize]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalResize,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.resize(input),
+              () => terminalManager.resize(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalClear]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalClear, terminalManager.clear(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalClear,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.clear(input),
+              () => terminalManager.clear(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalRestart,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.restart(input),
+              () => terminalManager.restart(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.terminalClose]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
-            "rpc.aggregate": "terminal",
-          }),
+          observeRpcEffect(
+            WS_METHODS.terminalClose,
+            routeTerminal(
+              input.threadId,
+              () => aetherTerminalManager.close(input),
+              () => terminalManager.close(input),
+            ),
+            {
+              "rpc.aggregate": "terminal",
+            },
+          ),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalEvents,
@@ -2074,10 +2302,29 @@ const makeWsRpcLayer = (
           observeRpcStream(
             WS_METHODS.subscribeTerminalMetadata,
             Stream.callback<TerminalMetadataStreamEvent>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
-              ),
+              Effect.gen(function* () {
+                // Separate acquireReleases: each registers its own finalizer, so
+                // an interrupt after the local subscription acquires but before
+                // the Aether one does still releases the local listener.
+                yield* Effect.acquireRelease(
+                  terminalManager.subscribeMetadata((event) => Queue.offer(queue, event)),
+                  (unsubscribe) => Effect.sync(unsubscribe),
+                );
+                // Fold Aether terminals in: its snapshot becomes upserts so it
+                // augments the local snapshot instead of replacing it.
+                yield* Effect.acquireRelease(
+                  aetherTerminalManager.subscribeMetadata((event) =>
+                    event.type === "snapshot"
+                      ? Effect.forEach(
+                          event.terminals,
+                          (terminal) => Queue.offer(queue, { type: "upsert", terminal }),
+                          { discard: true },
+                        )
+                      : Queue.offer(queue, event),
+                  ),
+                  (unsubscribe) => Effect.sync(unsubscribe),
+                );
+              }),
             ),
             { "rpc.aggregate": "terminal" },
           ),

@@ -399,6 +399,10 @@ export function useNewThreadHandler() {
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
           envMode: initialEnvMode,
+          // Only an explicitly-passed envMode is a deliberate choice; the
+          // server-default fallback stays overlay-eligible (envModeUserSet
+          // false) so a fresh Aether draft can still default to a worktree.
+          envModeUserSet: hasEnvModeOption,
           startFromOrigin:
             options?.startFromOrigin ??
             resolveNewDraftStartFromOrigin({

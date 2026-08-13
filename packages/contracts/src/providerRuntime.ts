@@ -192,6 +192,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "config.warning",
   "deprecation.notice",
   "files.persisted",
+  "port.opened",
   "runtime.warning",
   "runtime.error",
 ]);
@@ -243,6 +244,7 @@ const ModelReroutedType = Schema.Literal("model.rerouted");
 const ConfigWarningType = Schema.Literal("config.warning");
 const DeprecationNoticeType = Schema.Literal("deprecation.notice");
 const FilesPersistedType = Schema.Literal("files.persisted");
+const PortOpenedType = Schema.Literal("port.opened");
 const ToolDeniedType = Schema.Literal("tool.denied");
 const RuntimeWarningType = Schema.Literal("runtime.warning");
 const RuntimeErrorType = Schema.Literal("runtime.error");
@@ -1115,6 +1117,22 @@ const ProviderRuntimeFilesPersistedEvent = Schema.Struct({
 });
 export type ProviderRuntimeFilesPersistedEvent = typeof ProviderRuntimeFilesPersistedEvent.Type;
 
+/**
+ * A network port opened inside the provider's workspace (e.g. an Aether cloud
+ * VM running a dev server). `url` is the ready-to-open preview URL.
+ */
+const PortOpenedPayload = Schema.Struct({
+  port: Schema.Number,
+  url: TrimmedNonEmptyStringSchema,
+});
+export type PortOpenedPayload = typeof PortOpenedPayload.Type;
+const ProviderRuntimePortOpenedEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: PortOpenedType,
+  payload: PortOpenedPayload,
+});
+export type ProviderRuntimePortOpenedEvent = typeof ProviderRuntimePortOpenedEvent.Type;
+
 const ProviderRuntimeToolDeniedEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: ToolDeniedType,
@@ -1183,6 +1201,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeConfigWarningEvent,
   ProviderRuntimeDeprecationNoticeEvent,
   ProviderRuntimeFilesPersistedEvent,
+  ProviderRuntimePortOpenedEvent,
   ProviderRuntimeToolDeniedEvent,
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,

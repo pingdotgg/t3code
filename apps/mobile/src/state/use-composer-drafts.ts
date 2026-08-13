@@ -55,6 +55,15 @@ export interface ComposerDraftContent {
 
 export interface ComposerDraftWorkspaceSelection {
   readonly mode: "local" | "worktree";
+  /**
+   * True once the user PICKED the mode. While false the stored `mode` is only
+   * a resolved default that an incidental write (a branch pick, a
+   * start-from-origin toggle) carried along, so a provider-derived default may
+   * still override it — the Aether one-way-mirror default does. Absent means a
+   * draft written before this field existed: treated as user-set, so an
+   * existing pick is never surprise-flipped.
+   */
+  readonly modeUserSet?: boolean;
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
@@ -67,6 +76,11 @@ export type ComposerDraftSettingsUpdate = Pick<
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
   mode: Schema.Literals(["local", "worktree"]),
+  // MUST stay declared: the decoder strips undeclared keys, so omitting it
+  // here would drop a persisted `false` on hydrate — and absence reads as
+  // user-set, which would pin the mode and silently disable the Aether
+  // worktree safety default after every app restart.
+  modeUserSet: Schema.optional(Schema.Boolean),
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),

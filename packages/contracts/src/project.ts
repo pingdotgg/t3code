@@ -211,8 +211,17 @@ export const ProjectFileFailure = Schema.Literals([
   "path_not_file",
   "binary_file",
   "operation_failed",
+  "aether_mirror_read_only",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
+
+/**
+ * The human-facing message the ProjectFile errors derive for the
+ * `aether_mirror_read_only` failure: while an Aether cloud task owns a
+ * checkout, that checkout is a one-way mirror and local writes are refused.
+ */
+export const AETHER_MIRROR_REFUSAL =
+  "This checkout is mirrored from an Aether cloud task. Local saves, commits, pulls and branch changes are unavailable while the cloud session is active — changes flow one way, from the cloud workspace into this checkout.";
 
 export const ProjectFileOperation = Schema.Literals([
   "realpath-workspace-root",
@@ -256,8 +265,10 @@ export class ProjectReadFileError extends Schema.TaggedErrorClass<ProjectReadFil
     super({
       ...props,
       message:
-        decodedProjectErrorMessage(props) ??
-        `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`,
+        props.failure === "aether_mirror_read_only"
+          ? AETHER_MIRROR_REFUSAL
+          : (decodedProjectErrorMessage(props) ??
+            `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }
@@ -293,8 +304,10 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
     super({
       ...props,
       message:
-        decodedProjectErrorMessage(props) ??
-        `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
+        props.failure === "aether_mirror_read_only"
+          ? AETHER_MIRROR_REFUSAL
+          : (decodedProjectErrorMessage(props) ??
+            `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`),
     } as any);
   }
 }

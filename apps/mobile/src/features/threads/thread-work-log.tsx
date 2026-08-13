@@ -1,6 +1,13 @@
 import * as Haptics from "expo-haptics";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
-import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
+import {
+  LayoutAnimation,
+  Linking,
+  Pressable,
+  ScrollView,
+  useColorScheme,
+  View,
+} from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
@@ -162,16 +169,22 @@ export function ThreadWorkLog(props: {
               {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
             >
               <Pressable
-                accessibilityRole={canExpand ? "button" : undefined}
+                accessibilityRole={row.portPreview ? "link" : canExpand ? "button" : undefined}
                 accessibilityLabel={displayText}
                 accessibilityHint={
-                  canExpand
-                    ? "Double tap to show full details. Long press to copy."
-                    : "Long press to copy."
+                  row.portPreview
+                    ? "Double tap to open the preview. Long press to copy."
+                    : canExpand
+                      ? "Double tap to show full details. Long press to copy."
+                      : "Long press to copy."
                 }
                 accessibilityState={canExpand ? { expanded } : undefined}
                 hitSlop={4}
                 onPress={() => {
+                  if (row.portPreview) {
+                    void Linking.openURL(row.portPreview.url);
+                    return;
+                  }
                   if (canExpand) {
                     triggerDisclosureFeedback();
                     props.onToggleRow(row.id);
@@ -212,6 +225,10 @@ export function ThreadWorkLog(props: {
                     {props.copiedRowId === row.id ? (
                       <Text className="pr-1 font-t3-medium text-3xs text-emerald-600 dark:text-emerald-400">
                         Copied
+                      </Text>
+                    ) : row.portPreview ? (
+                      <Text className="pr-1 font-t3-medium text-3xs text-blue-600 dark:text-blue-400">
+                        Open preview ›
                       </Text>
                     ) : null}
                     <View className="h-4 w-4 items-center justify-center">

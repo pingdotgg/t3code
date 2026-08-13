@@ -54,6 +54,8 @@ export interface ThreadFeedActivity {
     | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
+  /** Present on a `port.opened` row: a live workspace port + its preview URL. */
+  readonly portPreview?: { readonly port: number; readonly url: string };
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -75,6 +77,8 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  /** Present on a `port.opened` row: a live workspace port + its preview URL. */
+  portPreview?: { port: number; url: string };
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -203,7 +207,13 @@ function parseUserInputQuestions(
           };
         })
         .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0) {
+      // A question the provider sent with NO options is answerable by free
+      // text alone (the card always renders the custom-answer field), so it
+      // must survive — dropping it hides the question and submits a partial
+      // answer set the provider rejects. Options that WERE sent but all
+      // failed to parse still drop the question: a choice-less card would
+      // misrepresent a multiple-choice question.
+      if (options.length === 0 && question.options.length > 0) {
         return null;
       }
       return {
@@ -433,6 +443,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
   }
+  if (activity.kind === "port.opened" && payload) {
+    const port = payload.port;
+    const url = payload.url;
+    if (typeof port === "number" && typeof url === "string" && url.length > 0) {
+      entry.portPreview = { port, url };
+    }
+  }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
     entry.collapseKey = collapseKey;
@@ -629,6 +646,7 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
     return "message";
   }
   if (entry.activityKind === "runtime.warning") return "warning";
+  if (entry.activityKind === "port.opened") return "globe";
   if (entry.requestKind === "command") return "command";
   if (entry.requestKind === "file-read") return "eye";
   if (entry.requestKind === "file-change") return "edit";
@@ -1566,6 +1584,7 @@ export function buildThreadFeed(
               icon: workEntryIcon(entry),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
+              ...(entry.portPreview ? { portPreview: entry.portPreview } : {}),
             },
           };
         }),

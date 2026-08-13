@@ -42,6 +42,8 @@ import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
+import * as AetherMirrorRegistry from "./provider/AetherMirrorRegistry.ts";
+import * as AetherTerminalManager from "./terminal/AetherTerminalManager.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -257,7 +259,10 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
 // NDJSON writers and is provided at the outer runtime layer so both
 // `ProviderService` and the per-instance drivers read the same logger pair.
 const ProviderLayerLive = ProviderServiceLive.pipe(
-  Layer.provide(ProviderAdapterRegistryLive),
+  // provideMerge (not provide): the AetherTerminalManager resolves cloud
+  // shells through the SAME adapter registry the turn engine uses, so it must
+  // be exposed downstream, not consumed here.
+  Layer.provideMerge(ProviderAdapterRegistryLive),
   Layer.provideMerge(ProviderSessionDirectoryLayerLive),
 );
 
@@ -324,6 +329,11 @@ const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PortScannerLayerLive),
 );
 
+// Cloud-terminal sibling: routed to per thread in ws.ts. Its deps
+// (ProviderAdapterRegistry + ProviderSessionDirectory) are satisfied by
+// ProviderRuntimeLayerLive later in the runtime pipe.
+const AetherTerminalManagerLayerLive = AetherTerminalManager.layer;
+
 const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PreviewManager.layer),
   Layer.provideMerge(PortScannerLayerLive),
@@ -365,6 +375,13 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
+// AetherTerminalManager consumes the adapter registry + session directory that
+// ProviderRuntimeLayerLive exposes. Compose them into one layer so the runtime
+// pipe stays within the provideMerge arity cap.
+const ProviderRuntimeWithTerminalLive = AetherTerminalManagerLayerLive.pipe(
+  Layer.provideMerge(ProviderRuntimeLayerLive),
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
@@ -372,7 +389,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
-  Layer.provideMerge(ProviderRuntimeLayerLive),
+  Layer.provideMerge(ProviderRuntimeWithTerminalLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(Keybindings.layer),
@@ -382,13 +399,22 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  // `AetherDriver.create()` yields `GitVcsDriver` for its session preflight
+  // (clean-tree/pushed-branch checks + origin-remote resolution). The Git/Vcs
+  // layers above sit EARLIER in this chain, so they never feed the instance
+  // registry — provide the (memoized) driver layer directly so hydration's
+  // `BuiltInDriversEnv` is satisfied.
+  Layer.provideMerge(ProviderInstanceRegistryHydrationLive.pipe(Layer.provide(GitVcsDriver.layer))),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).
   // Provided once at the runtime level so every consumer sees the same
-  // logger instances.
-  Layer.provideMerge(ProviderEventLoggers.layer),
+  // logger instances. Merged with the ONE mirror registry for the whole
+  // runtime: `AetherDriver.create()` registers cloud-session cwds into it,
+  // and the ws.ts dispatch-site guard (build item 8a) refuses local writes
+  // against those cwds — merged into one pipe argument to stay under the
+  // pipe overload arity cap.
+  Layer.provideMerge(Layer.mergeAll(ProviderEventLoggers.layer, AetherMirrorRegistry.layer)),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
   // the rewritten registry reads snapshots off the instance registry and

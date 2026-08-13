@@ -471,6 +471,46 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+/**
+ * Default Aether API endpoint. Mirrors the production default baked into the
+ * Aether CLI at release time (`-X main.defaultAPIURL=https://api.runaether.dev`).
+ */
+export const DEFAULT_AETHER_API_BASE_URL = "https://api.runaether.dev";
+
+/**
+ * Settings for the Aether cloud-task driver. Deliberately has no API-key
+ * field: the key is sensitive and must arrive via a `ProviderInstanceEnvironment`
+ * variable named `AETHER_API_KEY` (marked sensitive so the server stores it in
+ * the secret store and redacts it from client snapshots).
+ */
+export const AetherSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    apiBaseUrl: makeBinaryPathSetting(DEFAULT_AETHER_API_BASE_URL).pipe(
+      Schema.annotateKey({
+        title: "API base URL",
+        description:
+          "Aether API endpoint. The API key is read from the sensitive AETHER_API_KEY environment variable on this instance.",
+        providerSettingsForm: {
+          placeholder: DEFAULT_AETHER_API_BASE_URL,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["apiBaseUrl"],
+  },
+);
+export type AetherSettings = typeof AetherSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),

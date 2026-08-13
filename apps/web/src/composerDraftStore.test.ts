@@ -1138,6 +1138,109 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOrigin).toBe(false);
   });
 
+  it("defaults envModeUserSet to false and flips it when the user picks a mode", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      envMode: "local",
+    });
+
+    // Freshly seeded: the mode is still the auto/default value.
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.envModeUserSet).toBe(false);
+
+    store.setDraftThreadContext(draftId, { envMode: "worktree", envModeUserSet: true });
+
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      envMode: "worktree",
+      envModeUserSet: true,
+    });
+
+    // A later context update that omits the flag preserves the user-set value.
+    store.setDraftThreadContext(draftId, { startFromOrigin: true });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.envModeUserSet).toBe(true);
+
+    // Resurrecting a draft to defaults explicitly clears the flag (the mode is
+    // the auto/default value again, so a provider default may override it).
+    store.setDraftThreadContext(draftId, { envMode: "local", envModeUserSet: false });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.envModeUserSet).toBe(false);
+  });
+
+  it("defaults startFromOriginUserSet to false and flips it on an explicit toggle", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId, envMode: "worktree" });
+
+    // Freshly seeded: still the auto/default value, so the Aether worktree
+    // overlay may seed it from the newWorktreesStartFromOrigin preference.
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOriginUserSet).toBe(
+      false,
+    );
+
+    store.setDraftThreadContext(draftId, {
+      startFromOrigin: true,
+      startFromOriginUserSet: true,
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      startFromOrigin: true,
+      startFromOriginUserSet: true,
+    });
+
+    // A later context update that omits the flag preserves the user-set value.
+    store.setDraftThreadContext(draftId, { envMode: "local" });
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOriginUserSet).toBe(
+      true,
+    );
+  });
+
+  it("migrates a legacy persisted draft (absent envModeUserSet) to user-set, keeping an explicit false", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const legacyThreadId = ThreadId.make("thread-legacy-envmode");
+    const explicitThreadId = ThreadId.make("thread-explicit-envmode");
+    const baseDraft = {
+      environmentId: TEST_ENVIRONMENT_ID,
+      projectId,
+      logicalProjectKey: "github.com/acme/repo",
+      createdAt: "2026-03-13T12:00:00.000Z",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "main",
+      worktreePath: null,
+      envMode: "local",
+      startFromOrigin: false,
+      promotedTo: null,
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftThreadsByThreadKey: {
+          // Legacy draft: created before envModeUserSet existed → field absent.
+          [threadKeyFor(legacyThreadId, TEST_ENVIRONMENT_ID)]: {
+            threadId: legacyThreadId,
+            ...baseDraft,
+          },
+          // Modern untouched draft: this build writes an explicit false.
+          [threadKeyFor(explicitThreadId, TEST_ENVIRONMENT_ID)]: {
+            threadId: explicitThreadId,
+            ...baseDraft,
+            envModeUserSet: false,
+          },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    const byThread = (id: ThreadId) =>
+      Object.values(mergedState.draftThreadsByThreadKey).find((draft) => draft.threadId === id);
+    // Legacy draft is treated as user-set so a provider default never flips it.
+    expect(byThread(legacyThreadId)?.envModeUserSet).toBe(true);
+    // An explicit false stays overlay-eligible.
+    expect(byThread(explicitThreadId)?.envModeUserSet).toBe(false);
+  });
+
   it("preserves existing branch and worktree when setProjectDraftThreadId receives undefined", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {

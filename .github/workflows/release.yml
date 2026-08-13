@@ -29,7 +29,9 @@ permissions:
 jobs:
   check_changes:
     name: Check for changes since last nightly
-    if: github.event_name == 'schedule'
+    # The schedule fires on the Aether-Runtime fork too; nightly releases are
+    # upstream-only, so skip there (manual workflow_dispatch still works).
+    if: github.event_name == 'schedule' && github.repository == 'pingdotgg/t3code'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     outputs:
       has_changes: ${{ steps.check.outputs.has_changes }}

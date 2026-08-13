@@ -257,6 +257,7 @@ import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
+  resolveProviderDefaultsToWorktree,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
@@ -491,6 +492,10 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
 
   return true;
 }
+
+// The Aether fork driver defaults a fresh composer draft to an isolated
+// worktree so the mirror never collides with the user's working checkout.
+const AETHER_DRIVER_KIND = ProviderDriverKind.make("aether");
 
 function formatOutgoingPrompt(params: {
   provider: ProviderDriverKind;
@@ -1893,7 +1898,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
 
   const openOrReuseProjectDraftThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
+    async (input: {
+      branch: string;
+      worktreePath: string | null;
+      envMode: DraftThreadEnvMode;
+      envModeUserSet: boolean;
+    }) => {
       if (!activeProject) {
         throw new Error("No active project is available for this pull request.");
       }
@@ -1975,6 +1985,9 @@ function ChatViewContent(props: ChatViewProps) {
         branch: input.branch,
         worktreePath: input.worktreePath,
         envMode: input.worktreePath ? "worktree" : "local",
+        // Checking out a PR is a deliberate workspace choice: mark it user-set
+        // so the Aether provider default cannot later override it.
+        envModeUserSet: true,
       });
     },
     [openOrReuseProjectDraftThread],
@@ -4055,10 +4068,18 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
 
   const activeWorktreePath = activeThread?.worktreePath ?? null;
+  // Aether-only: a fresh, un-touched draft with an Aether model selected
+  // defaults its workspace to a new worktree (see resolveProviderDefaultsToWorktree).
+  const providerDefaultsToWorktree = resolveProviderDefaultsToWorktree({
+    isLocalDraftThread,
+    envModeUserSet: draftThread?.envModeUserSet ?? false,
+    isAetherProvider: selectedProvider === AETHER_DRIVER_KIND,
+  });
   const derivedEnvMode: DraftThreadEnvMode = resolveEffectiveEnvMode({
     activeWorktreePath,
     hasServerThread: isServerThread,
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
+    providerDefaultsToWorktree,
   });
   const canOverrideServerThreadEnvMode = Boolean(
     isServerThread &&
@@ -4084,6 +4105,36 @@ function ChatViewContent(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
+  // The base branch for a fresh Aether worktree draft is seeded by the branch
+  // toolbar's own auto-seed effect, which fires whenever the effective mode is
+  // "worktree" (the Aether provider default is forwarded to it as an override).
+  // startFromOrigin is independent of the branch, so seed it here: the draft was
+  // created with the "local" default (startFromOrigin false), but the Aether
+  // overlay makes the effective mode "worktree", which must honor the user's
+  // newWorktreesStartFromOrigin preference. Gated on `startFromOriginUserSet`
+  // exactly as the mode overlay is gated on `envModeUserSet`: once the user has
+  // toggled the control, their pick is what makes the draft differ from the
+  // preference — which is the very condition this effect fires on, so without
+  // the flag every explicit toggle is reset on the next render.
+  useEffect(() => {
+    if (!providerDefaultsToWorktree) return;
+    if (envMode !== "worktree") return;
+    if (draftThread?.startFromOriginUserSet === true) return;
+    const desiredStartFromOrigin = resolveNewDraftStartFromOrigin({
+      envMode: "worktree",
+      newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
+    });
+    if (draftThread?.startFromOrigin === desiredStartFromOrigin) return;
+    setDraftThreadContext(composerDraftTarget, { startFromOrigin: desiredStartFromOrigin });
+  }, [
+    providerDefaultsToWorktree,
+    envMode,
+    draftThread?.startFromOrigin,
+    draftThread?.startFromOriginUserSet,
+    primaryServerSettings.newWorktreesStartFromOrigin,
+    composerDraftTarget,
+    setDraftThreadContext,
+  ]);
   const localCheckoutBranchMismatch = useMemo(
     () =>
       isServerThread
@@ -5921,6 +5972,9 @@ function ChatViewContent(props: ChatViewProps) {
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
+          // An explicit pick freezes the mode so the Aether worktree default
+          // can no longer override it (invariant: user choice wins).
+          envModeUserSet: true,
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
@@ -5954,6 +6008,9 @@ function ChatViewContent(props: ChatViewProps) {
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, {
         startFromOrigin: nextStartFromOrigin,
+        // An explicit toggle freezes the value so the Aether worktree overlay
+        // can no longer re-seed it from the preference (user choice wins).
+        startFromOriginUserSet: true,
       });
     }
   };
@@ -6422,7 +6479,7 @@ function ChatViewContent(props: ChatViewProps) {
                                 onEnvModeChange={onEnvModeChange}
                                 startFromOrigin={startFromOrigin}
                                 onStartFromOriginChange={onStartFromOriginChange}
-                                {...(canOverrideServerThreadEnvMode
+                                {...(canOverrideServerThreadEnvMode || isLocalDraftThread
                                   ? { effectiveEnvModeOverride: envMode }
                                   : {})}
                                 {...(canOverrideServerThreadEnvMode

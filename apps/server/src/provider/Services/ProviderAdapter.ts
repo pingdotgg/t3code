@@ -23,6 +23,8 @@ import type {
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
+import type { CloudTerminalConnector } from "../CloudTerminalConnector.ts";
+
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
 export interface ProviderAdapterCapabilities {
@@ -48,6 +50,14 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly provider: ProviderDriverKind;
   readonly capabilities: ProviderAdapterCapabilities;
+
+  /**
+   * Attach an interactive shell inside the provider's remote compute. Present
+   * only for cloud providers; `undefined` for local-runtime providers. The
+   * terminal router uses its presence to decide whether a thread's shell runs
+   * in the cloud VM or as a local PTY.
+   */
+  readonly cloudTerminal?: CloudTerminalConnector;
 
   /**
    * Start a provider-backed session.

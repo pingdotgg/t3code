@@ -17,6 +17,9 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
+    # Upstream-only: the relay and its Cloudflare/Clerk/APNs credentials live in
+    # pingdotgg. On the Aether-Runtime fork this job must never run.
+    if: github.repository == 'pingdotgg/t3code'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     environment:

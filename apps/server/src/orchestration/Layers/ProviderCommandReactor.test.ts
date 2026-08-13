@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import {
   ModelSelection,
+  type OrchestrationCommand,
   ProviderRuntimeEvent,
   ProviderSession,
   ProviderDriverKind,
@@ -1508,6 +1509,279 @@ describe("ProviderCommandReactor", () => {
       message: "Add a safer reconnect backoff.",
     });
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+  });
+
+  it("marks the session managedWorktree for a bootstrap-created worktree", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.worktree.attach-managed",
+        commandId: CommandId.make("cmd-thread-worktree-managed"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "feature/bootstrap-worktree",
+        worktreePath: "/tmp/provider-project-worktree",
+        expectedBranch: null,
+        expectedWorktreePath: null,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-managed"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-managed"),
+          role: "user",
+          text: "hello managed worktree",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      cwd: "/tmp/provider-project-worktree",
+      managedWorktree: true,
+    });
+  });
+
+  it("does not mark the session managedWorktree when the worktree path equals the workspace root", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // A local-mode thread seeded with worktreePath == workspaceRoot resolves to
+    // the shared checkout as its cwd. Skipping the clean-tree preflight there
+    // would clobber the user's uncommitted work, so managedWorktree must stay
+    // unset even though worktreePath is non-null.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-worktree-shared"),
+        threadId: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/provider-project",
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-shared"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-shared"),
+          role: "user",
+          text: "hello shared checkout",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const startInput = harness.startSession.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(startInput.cwd).toBe("/tmp/provider-project");
+    expect(startInput.managedWorktree).toBeUndefined();
+  });
+
+  it("does not mark the session managedWorktree for a worktree the user already had", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // Picking a branch that is already checked out in one of the user's own
+    // worktrees points the thread at that path — outside the workspace root,
+    // but full of work they have not committed. Without the bootstrap marker
+    // the clean-tree preflight has to stay on.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-worktree-user"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "feature/user-branch",
+        worktreePath: "/tmp/user-worktrees/feature-user-branch",
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-user-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-user-worktree"),
+          role: "user",
+          text: "hello user worktree",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const startInput = harness.startSession.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(startInput.cwd).toBe("/tmp/user-worktrees/feature-user-branch");
+    expect(startInput.managedWorktree).toBeUndefined();
+  });
+
+  it("clears the managed marker when the thread moves to a worktree the user already had", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.worktree.attach-managed",
+        commandId: CommandId.make("cmd-thread-worktree-bootstrap"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "feature/bootstrap-worktree",
+        worktreePath: "/tmp/provider-project-worktree",
+        expectedBranch: null,
+        expectedWorktreePath: null,
+      }),
+    );
+
+    // Re-pointing the thread carries no marker, so the previous one must not
+    // survive onto a path the driver does not own.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-worktree-reattach"),
+        threadId: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/user-worktrees/feature-reattached",
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-reattached"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-reattached"),
+          role: "user",
+          text: "hello reattached worktree",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const startInput = harness.startSession.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(startInput.cwd).toBe("/tmp/user-worktrees/feature-reattached");
+    expect(startInput.managedWorktree).toBeUndefined();
+  });
+
+  it("keeps the managed marker when the first turn renames the worktree branch", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.worktree.attach-managed",
+        commandId: CommandId.make("cmd-thread-worktree-rename-bootstrap"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "t3code/1234abcd",
+        worktreePath: "/tmp/provider-project-worktree",
+        expectedBranch: null,
+        expectedWorktreePath: null,
+      }),
+    );
+
+    harness.generateBranchName.mockReturnValue(Effect.succeed({ branch: "feature/generated" }));
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-rename-managed"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-rename-managed"),
+          role: "user",
+          text: "hello renamed worktree",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    // The rename repoints the thread at the same worktree under a new branch.
+    // That is a rename, not a re-attach, so the bootstrap's marker has to
+    // survive it — otherwise the driver's clean-tree preflight comes back on a
+    // worktree it owns and refuses the very first turn.
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.branch ===
+        "t3code/feature/generated"
+      );
+    });
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.worktreePath).toBe("/tmp/provider-project-worktree");
+    expect(thread?.worktreeManaged).toBe(true);
+  });
+
+  it("ignores a worktreeManaged field smuggled onto a thread.meta.update", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    // The client schema has no worktreeManaged, so this shape cannot survive
+    // the RPC boundary. The cast checks the layer behind it: even handed the
+    // field directly, the decider derives the marker from the thread it already
+    // has, never from command input.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-worktree-smuggled"),
+        threadId: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/user-worktrees/feature-smuggled",
+        worktreeManaged: true,
+      } as unknown as OrchestrationCommand),
+    );
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.worktreePath).toBe("/tmp/user-worktrees/feature-smuggled");
+    expect(thread?.worktreeManaged).toBe(false);
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-smuggled"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-smuggled"),
+          role: "user",
+          text: "hello smuggled marker",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    const startInput = harness.startSession.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(startInput.cwd).toBe("/tmp/user-worktrees/feature-smuggled");
+    expect(startInput.managedWorktree).toBeUndefined();
   });
 
   it("forwards codex model options through session start and turn send", async () => {

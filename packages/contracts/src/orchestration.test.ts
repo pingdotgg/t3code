@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
@@ -51,6 +52,7 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 
@@ -680,6 +682,59 @@ it.effect("rejects an explicit title combined with title regeneration", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+// The managed-worktree marker makes drivers skip their clean-tree preflight, so
+// a client that could set it could point a thread at the user's own worktree and
+// have the driver reset away uncommitted work. The client boundary is where that
+// is stopped: the field is not on the client command, and the command that does
+// carry it is not dispatchable.
+it.effect("drops a worktreeManaged field smuggled into a client thread.meta.update", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeClientOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-worktree-managed-spoof",
+      threadId: "thread-1",
+      worktreePath: "/home/user/my-worktree",
+      worktreeManaged: true,
+    });
+    assert.strictEqual(parsed.type, "thread.meta.update");
+    assert.ok(!("worktreeManaged" in parsed));
+  }),
+);
+
+it.effect("rejects thread.worktree.attach-managed dispatched by a client", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeClientOrchestrationCommand({
+        type: "thread.worktree.attach-managed",
+        commandId: "cmd-worktree-attach-spoof",
+        threadId: "thread-1",
+        branch: "t3code/1234abcd",
+        worktreePath: "/home/user/my-worktree",
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("accepts thread.worktree.attach-managed from the server", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.worktree.attach-managed",
+      commandId: "cmd-worktree-attach",
+      threadId: "thread-1",
+      branch: "t3code/1234abcd",
+      worktreePath: "/tmp/worktrees/thread-1",
+      expectedBranch: null,
+      expectedWorktreePath: null,
+    });
+    assert.strictEqual(parsed.type, "thread.worktree.attach-managed");
+    if (parsed.type === "thread.worktree.attach-managed") {
+      assert.strictEqual(parsed.worktreePath, "/tmp/worktrees/thread-1");
+      assert.strictEqual(parsed.expectedWorktreePath, null);
+    }
   }),
 );
 

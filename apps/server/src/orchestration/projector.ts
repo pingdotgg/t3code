@@ -297,6 +297,9 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            // A worktree named at thread creation is one the user already had;
+            // only the bootstrap's prepareWorktree marks its own via meta.
+            worktreeManaged: false,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -455,7 +458,15 @@ export function projectEvent(
               ? { modelSelection: payload.modelSelection }
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
-            ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            // The marker travels with the path it describes, already resolved
+            // by the decider (which is the only reader that knows the previous
+            // path), so it is applied verbatim rather than re-derived here.
+            ...(payload.worktreePath !== undefined
+              ? {
+                  worktreePath: payload.worktreePath,
+                  worktreeManaged: payload.worktreeManaged === true,
+                }
+              : {}),
             updatedAt: payload.updatedAt,
           }),
         })),
