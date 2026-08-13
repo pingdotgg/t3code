@@ -74,6 +74,36 @@ Binary files a/icon.png and b/icon.png differ
     expect(pullRequestDiffChangeType(files[0]!)).toBe("change");
   });
 
+  it("preserves /dev/null so added and deleted files expand as new or deleted", () => {
+    const added = parseUnifiedDiff(`diff --git a/src/new.ts b/src/new.ts
+new file mode 100644
+--- /dev/null
++++ b/src/new.ts
+`);
+    const deleted = parseUnifiedDiff(`diff --git a/src/gone.ts b/src/gone.ts
+deleted file mode 100644
+--- a/src/gone.ts
++++ /dev/null
+`);
+    expect(added[0]).toMatchObject({ oldPath: "/dev/null", newPath: "src/new.ts" });
+    expect(deleted[0]).toMatchObject({ oldPath: "src/gone.ts", newPath: "/dev/null" });
+    expect(pullRequestDiffChangeType(added[0]!)).toBe("new");
+    expect(pullRequestDiffChangeType(deleted[0]!)).toBe("deleted");
+    expect(markWithheldDiffFiles(added, true)[0]?.withheld).toBe(true);
+  });
+
+  it("expands header-only renames when the slice withheld their hunks", () => {
+    const files = parseUnifiedDiff(`diff --git a/src/old.ts b/src/new.ts
+rename from src/old.ts
+rename to src/new.ts
+--- a/src/old.ts
++++ b/src/new.ts
+`);
+    const marked = markWithheldDiffFiles(files, true)[0]!;
+    expect(marked.withheld).toBe(true);
+    expect(pullRequestDiffChangeType(marked)).toBe("rename-changed");
+  });
+
   it("builds a numbered diff from the host's full file contents", () => {
     const parsed = parsedDiffFromContents("keep\ngone\n", "keep\nadded\n");
     expect(parsed.additions).toBe(1);

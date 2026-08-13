@@ -92,6 +92,25 @@ function parseDiffSidePath(raw: string, prefix: "--- " | "+++ "): string | null 
   return unquoteGitPath(rest);
 }
 
+function isGitMetadataLine(raw: string): boolean {
+  return (
+    raw.startsWith("+++ ") ||
+    raw.startsWith("--- ") ||
+    raw.startsWith("index ") ||
+    raw.startsWith("new file mode ") ||
+    raw.startsWith("deleted file mode ") ||
+    raw.startsWith("old mode ") ||
+    raw.startsWith("new mode ") ||
+    raw.startsWith("rename from ") ||
+    raw.startsWith("rename to ") ||
+    raw.startsWith("copy from ") ||
+    raw.startsWith("copy to ") ||
+    raw.startsWith("similarity index ") ||
+    raw.startsWith("dissimilarity index ") ||
+    raw.startsWith("Binary files ")
+  );
+}
+
 /**
  * Split a unified patch into files and numbered lines. Binary / empty files still appear as
  * a header-only entry so the file list stays honest.
@@ -145,11 +164,11 @@ export function parseUnifiedDiff(patch: string): ReadonlyArray<ParsedDiffFile> {
       continue;
     }
     if (current === null) continue;
-    if (raw.startsWith("+++ ") || raw.startsWith("--- ") || raw.startsWith("index ")) {
+    if (isGitMetadataLine(raw)) {
       const oldPath = parseDiffSidePath(raw, "--- ");
-      if (oldPath !== null && oldPath !== "/dev/null") current.oldPath = oldPath;
+      if (oldPath !== null) current.oldPath = oldPath;
       const newPath = parseDiffSidePath(raw, "+++ ");
-      if (newPath !== null && newPath !== "/dev/null") current.newPath = newPath;
+      if (newPath !== null) current.newPath = newPath;
       current.lines.push({ kind: "meta", text: raw, oldLine: null, newLine: null });
       continue;
     }
@@ -202,8 +221,7 @@ export function parseUnifiedDiff(patch: string): ReadonlyArray<ParsedDiffFile> {
 
 export function diffFileHasHunks(file: ParsedDiffFile): boolean {
   return file.lines.some(
-    (line) =>
-      line.kind === "add" || line.kind === "del" || line.kind === "hunk" || line.kind === "context",
+    (line) => line.kind === "add" || line.kind === "del" || line.kind === "hunk",
   );
 }
 
@@ -217,17 +235,9 @@ export function markWithheldDiffFiles(
   sliceTruncated: boolean,
 ): ReadonlyArray<ParsedDiffFile> {
   if (!sliceTruncated) return files;
-  return files.map((file) => {
-    if (diffFileHasHunks(file) || isBinaryDiffFile(file)) return file;
-    if (
-      file.oldPath !== file.newPath &&
-      file.oldPath !== "/dev/null" &&
-      file.newPath !== "/dev/null"
-    ) {
-      return file;
-    }
-    return { ...file, withheld: true };
-  });
+  return files.map((file) =>
+    diffFileHasHunks(file) || isBinaryDiffFile(file) ? file : { ...file, withheld: true },
+  );
 }
 
 export function pullRequestDiffChangeType(
@@ -235,8 +245,9 @@ export function pullRequestDiffChangeType(
 ): PullRequestDiffFileContentsInput["changeType"] {
   if (file.oldPath === "/dev/null") return "new";
   if (file.newPath === "/dev/null") return "deleted";
-  if (file.oldPath !== file.newPath)
-    return diffFileHasHunks(file) ? "rename-changed" : "rename-pure";
+  if (file.oldPath !== file.newPath) {
+    return file.withheld || diffFileHasHunks(file) ? "rename-changed" : "rename-pure";
+  }
   return "change";
 }
 

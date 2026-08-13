@@ -77,6 +77,13 @@ export function PullRequestsRouteScreen() {
       setSelectedEnvironmentId(preferredEnvironmentId);
     }
   }, [environments, preferredEnvironmentId, selectedEnvironmentId]);
+  const previousEnvironmentId = useRef(selectedEnvironmentId);
+  useEffect(() => {
+    if (previousEnvironmentId.current === selectedEnvironmentId) return;
+    previousEnvironmentId.current = selectedEnvironmentId;
+    setSelectedProjectId(undefined);
+    setSelectedHost(undefined);
+  }, [selectedEnvironmentId]);
 
   const selected = environments.find(
     (environment) => environment.environmentId === selectedEnvironmentId,
@@ -133,7 +140,11 @@ export function PullRequestsRouteScreen() {
           screen: "AddProject",
         })
       }
-      onEnvironmentChange={setSelectedEnvironmentId}
+      onEnvironmentChange={(environmentId) => {
+        setSelectedEnvironmentId(environmentId);
+        setSelectedProjectId(undefined);
+        setSelectedHost(undefined);
+      }}
       onHostChange={setSelectedHost}
       onInvolvementChange={setInvolvement}
       onLoadMore={list.loadMore}

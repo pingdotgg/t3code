@@ -265,34 +265,6 @@ export function usePullRequestList(input: {
 
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
   const [invalidating, setInvalidating] = useState(false);
-  const refreshFromHost = useCallback(async () => {
-    setInvalidating(true);
-    try {
-      if (pullRequestEnvironmentId !== null) {
-        await invalidate({ environmentId: pullRequestEnvironmentId, input: {} });
-      }
-    } finally {
-      setInvalidating(false);
-    }
-    refreshList();
-    baselineQuery.refresh();
-    authoredQuery.refresh();
-    reviewingQuery.refresh();
-  }, [
-    authoredQuery,
-    baselineQuery,
-    invalidate,
-    pullRequestEnvironmentId,
-    refreshList,
-    reviewingQuery,
-  ]);
-
-  const refreshQueries = useCallback(() => {
-    refreshList();
-    baselineQuery.refresh();
-    authoredQuery.refresh();
-    reviewingQuery.refresh();
-  }, [authoredQuery, baselineQuery, refreshList, reviewingQuery]);
 
   const viewers = listData?.viewers ?? EMPTY_VIEWERS;
   const feedEntries = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
@@ -336,9 +308,18 @@ export function usePullRequestList(input: {
   useEffect(() => {
     setStatsChunkIndex(0);
   }, [filterKey]);
+  const firstStatsChunk = statsChunks[0] ?? [];
   const statsChunk =
     statsChunks[statsChunkIndex] ??
     (statsChunks.length === 0 ? [] : statsChunks[statsChunks.length - 1]!);
+  const firstStatsQuery = useEnvironmentQuery(
+    pullRequestEnvironmentId === null || firstStatsChunk.length === 0
+      ? null
+      : pullRequestEnvironment.listStats({
+          environmentId: pullRequestEnvironmentId,
+          input: { refs: firstStatsChunk },
+        }),
+  );
   const statsQuery = useEnvironmentQuery(
     pullRequestEnvironmentId === null || statsChunk.length === 0
       ? null
@@ -356,6 +337,43 @@ export function usePullRequestList(input: {
       setStatsChunkIndex(statsChunkIndex + 1);
     }
   }, [statsChunkIndex, statsChunks.length, statsQuery.data, statsQuery.isPending]);
+  const refreshStats = useCallback(() => {
+    setStatsByRow(new Map());
+    setStatsChunkIndex(0);
+    firstStatsQuery.refresh();
+  }, [firstStatsQuery]);
+
+  const refreshFromHost = useCallback(async () => {
+    setInvalidating(true);
+    try {
+      if (pullRequestEnvironmentId !== null) {
+        await invalidate({ environmentId: pullRequestEnvironmentId, input: {} });
+      }
+    } finally {
+      setInvalidating(false);
+    }
+    refreshList();
+    baselineQuery.refresh();
+    authoredQuery.refresh();
+    reviewingQuery.refresh();
+    refreshStats();
+  }, [
+    authoredQuery,
+    baselineQuery,
+    invalidate,
+    pullRequestEnvironmentId,
+    refreshList,
+    refreshStats,
+    reviewingQuery,
+  ]);
+
+  const refreshQueries = useCallback(() => {
+    refreshList();
+    baselineQuery.refresh();
+    authoredQuery.refresh();
+    reviewingQuery.refresh();
+    refreshStats();
+  }, [authoredQuery, baselineQuery, refreshList, refreshStats, reviewingQuery]);
 
   const decoratedGroups = useMemo(
     () =>
@@ -383,7 +401,7 @@ export function usePullRequestList(input: {
     loadMore,
     refreshFromHost,
     refreshQueries,
-    refreshStats: statsQuery.refresh,
+    refreshStats,
     typedQuery,
     sentQuery,
     querySettled: typedQuery === sentQuery,

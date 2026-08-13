@@ -1,9 +1,10 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Platform, View } from "react-native";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
@@ -19,6 +20,7 @@ import {
   pullRequestDiffContentsPaths,
   type DiffLineKind,
   type ParsedDiffFile,
+  type ParsedDiffLine,
 } from "./pullRequestDiffParse";
 import { readableFailure } from "./pullRequestDetail.logic";
 import { parseRoutePositiveInt, type PullRequestDiffRouteParams } from "./pullRequestNavigation";
@@ -40,6 +42,8 @@ const LINE_TEXT_CLASS: Record<DiffLineKind, string> = {
   meta: "text-foreground-tertiary",
   context: "text-foreground",
 };
+
+const DIFF_LINE_ESTIMATED_SIZE = 22;
 
 type PullRequestDiffScreenProps = StaticScreenProps<PullRequestDiffRouteParams>;
 
@@ -82,7 +86,14 @@ export function PullRequestDiffScreen(props: PullRequestDiffScreenProps) {
 
   const title = listed?.displayPath ?? path ?? "Diff";
   const waitingForSlice = listed === undefined && (diff.loading || diff.loadingMore);
-  const waitingForContents = listed?.withheld === true && expanded.pending;
+  const waitingForContents =
+    listed?.withheld === true && expanded.file === null && expanded.error === null;
+  const renderLine = useCallback(
+    ({ item, index }: { item: ParsedDiffLine; index: number }) => (
+      <DiffLineRow index={index} line={item} />
+    ),
+    [],
+  );
 
   return (
     <View className="flex-1 bg-sheet">
@@ -121,35 +132,38 @@ export function PullRequestDiffScreen(props: PullRequestDiffScreenProps) {
           />
         </View>
       ) : (
-        <ScrollView
+        <LegendList
           className="flex-1"
-          contentContainerStyle={{ paddingBottom: 32 }}
+          contentContainerStyle={{ paddingBottom: 32, paddingTop: 8 }}
           contentInsetAdjustmentBehavior="automatic"
-          horizontal={false}
-        >
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View className="min-w-full py-2">
-              {file.lines.map((line, index) => (
-                <View
-                  key={`${index}:${line.kind}:${line.oldLine ?? ""}:${line.newLine ?? ""}`}
-                  className={cn("flex-row px-3 py-0.5", LINE_CLASS[line.kind])}
-                >
-                  <Text className="w-10 font-mono text-2xs tabular-nums text-foreground-tertiary">
-                    {line.oldLine ?? ""}
-                  </Text>
-                  <Text className="w-10 font-mono text-2xs tabular-nums text-foreground-tertiary">
-                    {line.newLine ?? ""}
-                  </Text>
-                  <Text className={cn("font-mono text-xs", LINE_TEXT_CLASS[line.kind])}>
-                    {line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}
-                    {line.text}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </ScrollView>
-        </ScrollView>
+          data={file.lines}
+          estimatedItemSize={DIFF_LINE_ESTIMATED_SIZE}
+          getItemType={(item) => item.kind}
+          keyExtractor={(item, index) =>
+            `${index}:${item.kind}:${item.oldLine ?? ""}:${item.newLine ?? ""}`
+          }
+          recycleItems
+          renderItem={renderLine}
+        />
       )}
+    </View>
+  );
+}
+
+function DiffLineRow(props: { readonly index: number; readonly line: ParsedDiffLine }) {
+  const { line } = props;
+  return (
+    <View className={cn("flex-row px-3 py-0.5", LINE_CLASS[line.kind])}>
+      <Text className="w-10 font-mono text-2xs tabular-nums text-foreground-tertiary">
+        {line.oldLine ?? ""}
+      </Text>
+      <Text className="w-10 font-mono text-2xs tabular-nums text-foreground-tertiary">
+        {line.newLine ?? ""}
+      </Text>
+      <Text className={cn("min-w-0 flex-1 font-mono text-xs", LINE_TEXT_CLASS[line.kind])}>
+        {line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}
+        {line.text}
+      </Text>
     </View>
   );
 }
@@ -162,17 +176,15 @@ function useExpandedWithheldDiffFile(input: {
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents, {
     reportFailure: false,
   });
+  const withheld = input.file?.withheld === true;
   const [file, setFile] = useState<ParsedDiffFile | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
   const fileKey = input.file?.key;
-  const withheld = input.file?.withheld === true;
 
   useEffect(() => {
     if (input.reference === null || input.file === undefined || !withheld) {
       setFile(null);
       setError(null);
-      setPending(false);
       return;
     }
     const listed = input.file;
@@ -180,7 +192,6 @@ function useExpandedWithheldDiffFile(input: {
     let cancelled = false;
     setFile(null);
     setError(null);
-    setPending(true);
     const paths = pullRequestDiffContentsPaths(listed);
     void getDiffFileContents({
       environmentId: input.environmentId,
@@ -192,7 +203,6 @@ function useExpandedWithheldDiffFile(input: {
       },
     }).then((result) => {
       if (cancelled) return;
-      setPending(false);
       if (AsyncResult.isFailure(result)) {
         setError(
           readableFailure(
@@ -216,5 +226,5 @@ function useExpandedWithheldDiffFile(input: {
     };
   }, [fileKey, getDiffFileContents, input.environmentId, input.file, input.reference, withheld]);
 
-  return { file, error, pending };
+  return { file, error };
 }
