@@ -1,9 +1,7 @@
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { useNavigation } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useState } from "react";
-
-import { EnvironmentId } from "@t3tools/contracts";
+import { useEffect, useMemo, useState } from "react";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -80,23 +78,6 @@ export function HomeRouteScreen() {
   } = useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const startNewChat = useCallback(
-    (environmentId?: EnvironmentId | string | null) => {
-      const id = environmentId ?? selectedEnvironmentId ?? environments[0]?.environmentId ?? null;
-      if (id == null) {
-        return;
-      }
-      navigation.navigate("NewTaskSheet", {
-        screen: "NewTaskDraft",
-        params: {
-          environmentId: String(id),
-          createInChatScratch: "true",
-          title: "New chat",
-        },
-      });
-    },
-    [environments, navigation, selectedEnvironmentId],
-  );
   const projectFilterOptions = useMemo(
     () =>
       buildHomeProjectScopes({
@@ -128,22 +109,14 @@ export function HomeRouteScreen() {
         />
         <WorkspaceSidebarToolbar
           afterSidebarButton={
-            <>
-              <NativeHeaderToolbar.Button
-                accessibilityLabel="New chat"
-                icon="text.bubble"
-                onPress={() => startNewChat()}
-              />
-              <NativeHeaderToolbar.Button
-                accessibilityLabel="New task"
-                icon="square.and.pencil"
-                onPress={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-              />
-            </>
+            <NativeHeaderToolbar.Button
+              accessibilityLabel="New task"
+              icon="square.and.pencil"
+              onPress={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+            />
           }
         />
         <WorkspaceEmptyDetail
-          onNewChat={() => startNewChat()}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
         />
       </>
@@ -193,7 +166,6 @@ export function HomeRouteScreen() {
           onProjectSortOrderChange={setProjectSortOrder}
           onSearchQueryChange={setSearchQuery}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-          onNewChat={() => startNewChat()}
           onThreadSortOrderChange={setThreadSortOrder}
         />
 
@@ -246,7 +218,6 @@ export function HomeRouteScreen() {
               },
             });
           }}
-          onNewChat={startNewChat}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
           onThreadSortOrderChange={setThreadSortOrder}
           pendingTasks={pendingTasks}

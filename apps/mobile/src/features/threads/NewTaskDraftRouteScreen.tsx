@@ -10,12 +10,7 @@ type NewTaskDraftRouteParams = {
   readonly title?: string | string[];
   readonly pendingTaskId?: string | string[];
   readonly incomingShareId?: string | string[];
-  readonly createInChatScratch?: string | string[];
 };
-
-function firstParam(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
   const params = route.params ?? {};
@@ -25,8 +20,10 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   // re-apply the requested project.
   const initialProjectRef = useMemo(
     () => ({
-      environmentId: firstParam(params.environmentId),
-      projectId: firstParam(params.projectId),
+      environmentId: Array.isArray(params.environmentId)
+        ? params.environmentId[0]
+        : params.environmentId,
+      projectId: Array.isArray(params.projectId) ? params.projectId[0] : params.projectId,
     }),
     [route.params],
   );
@@ -35,14 +32,17 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     <>
       <NativeStackScreenOptions
         options={{
-          title: firstParam(params.title) ?? "New task",
+          title: Array.isArray(params.title) ? params.title[0] : (params.title ?? "New task"),
         }}
       />
       <NewTaskDraftScreen
-        createInChatScratch={firstParam(params.createInChatScratch) === "true"}
         initialProjectRef={initialProjectRef}
-        incomingShareId={firstParam(params.incomingShareId)}
-        pendingTaskId={firstParam(params.pendingTaskId)}
+        incomingShareId={
+          Array.isArray(params.incomingShareId) ? params.incomingShareId[0] : params.incomingShareId
+        }
+        pendingTaskId={
+          Array.isArray(params.pendingTaskId) ? params.pendingTaskId[0] : params.pendingTaskId
+        }
       />
     </>
   );

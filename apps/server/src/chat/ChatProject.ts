@@ -11,21 +11,41 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../config.ts";
-import {
-  OrchestrationCommandInvariantError,
-  type OrchestrationDispatchError,
-} from "../orchestration/Errors.ts";
+import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 
-export type GetOrCreateChatProjectError = OrchestrationDispatchError | ProjectionRepositoryError;
+export class ChatScratchDirectoryError extends Schema.TaggedErrorClass<ChatScratchDirectoryError>()(
+  "ChatScratchDirectoryError",
+  {
+    directory: Schema.String,
+    stage: Schema.Literals(["project-root", "thread-worktree"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Failed to create chat scratch directory '${this.directory}'.`;
+  }
+}
 
-const isWorkspaceRootTaken = (error: OrchestrationDispatchError): boolean =>
-  error._tag === "OrchestrationCommandInvariantError" &&
-  error.detail.includes("already exists for workspace root");
+export class ChatProjectLookupError extends Schema.TaggedErrorClass<ChatProjectLookupError>()(
+  "ChatProjectLookupError",
+  {
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+export type GetOrCreateChatProjectError =
+  | OrchestrationDispatchError
+  | ChatScratchDirectoryError
+  | ChatProjectLookupError;
 
 export const chatScratchWorkspaceRoot = Effect.fn("chatScratchWorkspaceRoot")(function* () {
   const serverConfig = yield* ServerConfig;
@@ -42,14 +62,17 @@ const findActiveChatProject = Effect.fn("findActiveChatProject")(function* () {
   );
 });
 
-const ensureDirectory = Effect.fn("ensureChatScratchDirectory")(function* (directory: string) {
+const ensureDirectory = Effect.fn("ensureChatScratchDirectory")(function* (
+  directory: string,
+  stage: ChatScratchDirectoryError["stage"],
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   yield* fileSystem.makeDirectory(directory, { recursive: true }).pipe(
     Effect.mapError(
       (cause) =>
-        new OrchestrationCommandInvariantError({
-          commandType: "project.create",
-          detail: `Failed to create chat scratch directory '${directory}'.`,
+        new ChatScratchDirectoryError({
+          directory,
+          stage,
           cause,
         }),
     ),
@@ -59,18 +82,18 @@ const ensureDirectory = Effect.fn("ensureChatScratchDirectory")(function* (direc
 export const getOrCreateChatProject = Effect.fn("getOrCreateChatProject")(function* () {
   const existing = yield* findActiveChatProject();
   if (Option.isSome(existing)) {
-    yield* ensureDirectory(existing.value.workspaceRoot);
+    yield* ensureDirectory(existing.value.workspaceRoot, "project-root");
     return existing.value;
   }
 
   const workspaceRoot = yield* chatScratchWorkspaceRoot();
-  yield* ensureDirectory(workspaceRoot);
+  yield* ensureDirectory(workspaceRoot, "project-root");
 
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const createdAt = DateTime.formatIso(yield* DateTime.now);
   const projectId = ProjectId.make(yield* crypto.randomUUIDv4);
-  const created = yield* orchestrationEngine
+  yield* orchestrationEngine
     .dispatch({
       type: "project.create",
       commandId: CommandId.make(yield* crypto.randomUUIDv4),
@@ -82,32 +105,22 @@ export const getOrCreateChatProject = Effect.fn("getOrCreateChatProject")(functi
       createdAt,
     })
     .pipe(
-      Effect.matchEffect({
-        onFailure: (error) =>
-          isWorkspaceRootTaken(error)
-            ? findActiveChatProject().pipe(
-                Effect.flatMap((recovered) =>
-                  Option.isSome(recovered) ? Effect.succeed(recovered.value) : Effect.fail(error),
-                ),
-              )
-            : Effect.fail(error),
-        onSuccess: () =>
-          findActiveChatProject().pipe(
-            Effect.flatMap((createdProject) =>
-              Option.isSome(createdProject)
-                ? Effect.succeed(createdProject.value)
-                : Effect.fail(
-                    new OrchestrationCommandInvariantError({
-                      commandType: "project.create",
-                      detail: "Chat project was created but could not be read back.",
-                    }),
-                  ),
-            ),
+      Effect.catchTag("OrchestrationCommandInvariantError", (error) =>
+        findActiveChatProject().pipe(
+          Effect.flatMap((recovered) =>
+            Option.isSome(recovered) ? Effect.void : Effect.fail(error),
           ),
-      }),
+        ),
+      ),
     );
 
-  return created;
+  const createdProject = yield* findActiveChatProject();
+  if (Option.isNone(createdProject)) {
+    return yield* new ChatProjectLookupError({
+      detail: "Chat project was created but could not be read back.",
+    });
+  }
+  return createdProject.value;
 });
 
 export const prepareChatScratchCreateThread = Effect.fn("prepareChatScratchCreateThread")(
@@ -125,7 +138,7 @@ export const prepareChatScratchCreateThread = Effect.fn("prepareChatScratchCreat
     const chatProject = yield* getOrCreateChatProject();
     const path = yield* Path.Path;
     const worktreePath = path.join(chatProject.workspaceRoot, input.threadId);
-    yield* ensureDirectory(worktreePath);
+    yield* ensureDirectory(worktreePath, "thread-worktree");
 
     return {
       createThread: {

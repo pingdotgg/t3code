@@ -14,20 +14,12 @@ chrome. Checkpoint restore does not apply.
 
 ## Starting a chat
 
-On web and desktop:
+Open the command palette and choose **New chat**, or use the New chat shortcut (see
+[Keyboard shortcuts](./keybindings.md)).
 
-- Use **+** in the sidebar, then **Local chat**
-- Open the command palette and choose **New chat**, or **New** and then **Local chat**
-- Use the New chat shortcut (see [Keyboard shortcuts](./keybindings.md))
-- On the empty landing screen, choose **Start a chat** — chats work even if you have no projects yet
+Send the first message from the chat composer. T3 Code creates the conversation when you send.
 
-On mobile:
-
-- Use **New chat** from the home screen, the Chats group, or the empty state
-- Send the first message from the chat composer. T3 Code creates the conversation when you send.
-
-Chats show a speech-bubble icon so they stay distinct from project threads. Filter to **Chats**
-from All projects, or leave All projects selected to see both. Rename, pin, snooze, and archive
-work the same as they do for any other thread.
+Chats appear in the thread list alongside project threads. Rename, pin, snooze, and archive work
+the same as they do for any other thread.
 
 Attaching an existing chat to a project later is not available yet.

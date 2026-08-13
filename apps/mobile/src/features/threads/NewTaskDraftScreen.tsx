@@ -12,7 +12,6 @@ import { useThemeColor } from "../../lib/useThemeColor";
 import { useFontFamily } from "../../lib/useFontFamily";
 
 import { EnvironmentId } from "@t3tools/contracts";
-import { projectHasWorkspace } from "@t3tools/client-runtime/state/project-kind";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -72,7 +71,6 @@ export function NewTaskDraftScreen(props: {
     readonly environmentId?: string;
     readonly projectId?: string;
   };
-  readonly createInChatScratch?: boolean;
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
   /** Durable native share inbox item to merge into this project draft. */
@@ -245,15 +243,6 @@ export function NewTaskDraftScreen(props: {
     if (props.pendingTaskId) {
       return;
     }
-    if (props.createInChatScratch) {
-      const environmentId = props.initialProjectRef?.environmentId;
-      if (!environmentId) {
-        navigation.dispatch(StackActions.replace("NewTask"));
-        return;
-      }
-      flow.startChatDraft(EnvironmentId.make(environmentId));
-      return;
-    }
     if (lastInitialProjectRefRef.current !== props.initialProjectRef) {
       lastInitialProjectRefRef.current = props.initialProjectRef;
       appliedInitialProjectKeyRef.current = null;
@@ -307,7 +296,6 @@ export function NewTaskDraftScreen(props: {
   }, [
     projectScopes,
     projects,
-    props.createInChatScratch,
     props.initialProjectRef,
     props.incomingShareId,
     props.pendingTaskId,
@@ -315,11 +303,10 @@ export function NewTaskDraftScreen(props: {
     selectedProject,
     selectedProjectKey,
     setProject,
-    flow.startChatDraft,
   ]);
 
   useEffect(() => {
-    if (!selectedProject || !projectHasWorkspace(selectedProject)) {
+    if (!selectedProject) {
       loadedBranchesProjectKeyRef.current = null;
       return;
     }
@@ -749,12 +736,11 @@ export function NewTaskDraftScreen(props: {
     const interactionMode = draft.interactionMode ?? flow.interactionMode;
     const initialMessageText = draft.text.trim();
 
-    const isChat = selectedProject.kind === "chat";
     if (
       !modelSelection ||
       initialMessageText.length === 0 ||
       flow.submitting ||
-      (!isChat && workspaceMode === "worktree" && !selectedBranchName)
+      (workspaceMode === "worktree" && !selectedBranchName)
     ) {
       return;
     }
@@ -813,11 +799,10 @@ export function NewTaskDraftScreen(props: {
     const result = await createProjectThread({
       project: selectedProject,
       modelSelection,
-      envMode: isChat ? "local" : workspaceMode,
-      branch: isChat ? null : selectedBranchName,
-      worktreePath: isChat ? null : workspaceMode === "worktree" ? null : selectedWorktreePath,
-      startFromOrigin: isChat ? false : startFromOrigin,
-      createInChatScratch: isChat,
+      envMode: workspaceMode,
+      branch: selectedBranchName,
+      worktreePath: workspaceMode === "worktree" ? null : selectedWorktreePath,
+      startFromOrigin,
       runtimeMode,
       interactionMode,
       initialMessageText,
@@ -870,21 +855,15 @@ export function NewTaskDraftScreen(props: {
         {Platform.OS === "android" ? (
           <>
             <NativeStackScreenOptions options={{ headerShown: false }} />
-            <AndroidScreenHeader
-              title={props.createInChatScratch ? "New chat" : "New Thread"}
-              onBack={() => navigation.goBack()}
-            />
+            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
           </>
         ) : (
-          <NativeStackScreenOptions
-            options={{ title: props.createInChatScratch ? "New chat" : "Loading task" }}
-          />
+          <NativeStackScreenOptions options={{ title: "Loading task" }} />
         )}
       </View>
     );
   }
 
-  const isChat = selectedProject.kind === "chat";
   const isAndroid = Platform.OS === "android";
   const isDarkMode = colorScheme === "dark";
   // Android expansion follows native editor focus so relayout cannot race
@@ -899,7 +878,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
-    (isChat || !(flow.workspaceMode === "worktree" && !flow.selectedBranchName));
+    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
@@ -917,9 +896,7 @@ export function NewTaskDraftScreen(props: {
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
-      placeholder={
-        isChat ? "What should we talk about?" : `Describe a coding task in ${selectedProject.title}`
-      }
+      placeholder={`Describe a coding task in ${selectedProject.title}`}
       // Same collapsed centering as ThreadComposer: native vertical gravity
       // in a pill-height box.
       singleLineCentered={!isExpanded}
@@ -966,19 +943,17 @@ export function NewTaskDraftScreen(props: {
           label={selectedEnvironmentLabel}
         />
       </ControlPillMenu>
-      {isChat ? null : (
-        <ControlPillMenu
-          actions={workspaceMenuActions}
-          onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
-        >
-          <ComposerToolbarTrigger
-            accessibilityLabel="Workspace"
-            disabled={isIncomingShareTransferPending}
-            icon="point.topleft.down.curvedto.point.bottomright.up"
-            label={workspaceLabel}
-          />
-        </ControlPillMenu>
-      )}
+      <ControlPillMenu
+        actions={workspaceMenuActions}
+        onPressAction={({ nativeEvent }) => handleWorkspaceMenuAction(nativeEvent.event)}
+      >
+        <ComposerToolbarTrigger
+          accessibilityLabel="Workspace"
+          disabled={isIncomingShareTransferPending}
+          icon="point.topleft.down.curvedto.point.bottomright.up"
+          label={workspaceLabel}
+        />
+      </ControlPillMenu>
     </>
   );
 
@@ -1028,10 +1003,7 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-screen">
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader
-          title={isChat ? "New chat" : "New Thread"}
-          onBack={() => navigation.goBack()}
-        />
+        <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
 
         <View className="flex-1" />
 

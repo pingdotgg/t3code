@@ -11,6 +11,12 @@ import {
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const PROJECT_ID = ProjectId.make("project-1");
 const FALLBACK_PROJECT_ID = ProjectId.make("project-2");
+const CHAT_PROJECT_ID = ProjectId.make("chat-project");
+
+const WORKSPACE_PROJECTS = [
+  { environmentId: ENVIRONMENT_ID, id: PROJECT_ID },
+  { environmentId: ENVIRONMENT_ID, id: FALLBACK_PROJECT_ID },
+];
 
 function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatThreadActionContext {
   return {
@@ -18,6 +24,8 @@ function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatTh
     activeThread: undefined,
     defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID),
     handleNewThread: async () => {},
+    projects: WORKSPACE_PROJECTS,
+    projectsKnown: true,
     ...overrides,
   };
 }
@@ -72,6 +80,33 @@ describe("chatThreadActions", () => {
     );
 
     expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID));
+  });
+
+  it("skips a chat thread so new-thread does not target the hidden chat project", () => {
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        activeThread: {
+          environmentId: ENVIRONMENT_ID,
+          projectId: CHAT_PROJECT_ID,
+        },
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID));
+  });
+
+  it("skips a chat draft so new-thread does not target the hidden chat project", () => {
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        activeDraftThread: {
+          environmentId: ENVIRONMENT_ID,
+          projectId: CHAT_PROJECT_ID,
+          createInChatScratch: true,
+        },
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID));
   });
 
   it("inherits only the project from context, never branch or worktree state", async () => {

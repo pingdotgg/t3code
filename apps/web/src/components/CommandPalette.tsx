@@ -37,7 +37,6 @@ import {
   MessageSquareIcon,
   MessageSquarePlusIcon,
   PaletteIcon,
-  PlusIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -70,7 +69,11 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useProjects,
+  useThreadShells,
+} from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -587,6 +590,7 @@ function OpenCommandPaletteDialog(props: {
     useHandleNewThread();
   const handleNewChat = useHandleNewChat();
   const projects = useProjects();
+  const projectsKnown = useAllEnvironmentShellsBootstrapped();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -699,8 +703,10 @@ function OpenCommandPaletteDialog(props: {
         activeThread: activeThread ?? undefined,
         defaultProjectRef,
         handleNewThread,
+        projects,
+        projectsKnown,
       }),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread],
+    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects, projectsKnown],
   );
   const projectPickerEntries = useMemo(
     () =>
@@ -1187,74 +1193,17 @@ function OpenCommandPaletteDialog(props: {
       const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
         {
           kind: "action",
-          value: `action:add-project:${environmentId}:chat`,
-          searchTerms: [
-            "chat",
-            "local chat",
-            "new chat",
-            "conversation",
-            "without files",
-            "no folder",
-          ],
-          title: "Local chat",
-          description: "Not connected to any folder",
-          icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+          value: `action:add-project:${environmentId}:local`,
+          searchTerms: ["local", "folder", "directory", "browse"],
+          title: "Local folder",
+          description: "Browse a folder on disk",
+          icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+          keepOpen: true,
           run: async () => {
-            await handleNewChat(environmentId);
+            await startAddProjectBrowse(environmentId);
           },
         },
       ];
-
-      const threadItemsForEnvironment = projectThreadItems.filter((item) =>
-        item.value.startsWith(`new-thread-in:${environmentId}:`),
-      );
-      if (threadItemsForEnvironment.length === 1) {
-        const threadItem = threadItemsForEnvironment[0]!;
-        sourceItems.push({
-          kind: "action",
-          value: `action:add-project:${environmentId}:thread`,
-          searchTerms: ["thread", "new thread", "project", "workspace"],
-          title: "Thread",
-          description: "Start in a project",
-          icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-          run: threadItem.run,
-        });
-      } else if (threadItemsForEnvironment.length > 1) {
-        sourceItems.push({
-          kind: "submenu",
-          value: `action:add-project:${environmentId}:thread`,
-          searchTerms: ["thread", "new thread", "project", "workspace"],
-          title: "Thread",
-          description: "Start in a project",
-          icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-          addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-          groups: [{ value: "projects", label: "Projects", items: threadItemsForEnvironment }],
-        });
-      } else {
-        sourceItems.push({
-          kind: "action",
-          value: `action:add-project:${environmentId}:thread`,
-          searchTerms: ["thread", "new thread", "project", "workspace"],
-          title: "Thread",
-          description: "Start in a project",
-          disabled: true,
-          icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-          run: async () => {},
-        });
-      }
-
-      sourceItems.push({
-        kind: "action",
-        value: `action:add-project:${environmentId}:local`,
-        searchTerms: ["local", "folder", "directory", "browse"],
-        title: "Local folder",
-        description: "Browse a folder on disk",
-        icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-        keepOpen: true,
-        run: async () => {
-          await startAddProjectBrowse(environmentId);
-        },
-      });
 
       const orderedSources: ReadonlyArray<AddProjectRemoteSource> = [
         "url",
@@ -1327,13 +1276,7 @@ function OpenCommandPaletteDialog(props: {
 
       return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
     },
-    [
-      handleNewChat,
-      openSourceControlSettings,
-      projectThreadItems,
-      startAddProjectBrowse,
-      startAddProjectClone,
-    ],
+    [openSourceControlSettings, startAddProjectBrowse, startAddProjectClone],
   );
 
   const startAddProjectSourceSelection = useCallback(
@@ -1354,7 +1297,7 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow(null);
       pushPaletteView({
-        addonIcon: <PlusIcon className={ADDON_ICON_CLASS} />,
+        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: buildAddProjectSourceGroups(
           environmentId,
           buildAddProjectRemoteSourceReadiness(
@@ -1384,7 +1327,7 @@ function OpenCommandPaletteDialog(props: {
           : option.environmentId
         : option.status,
       disabled: !option.isConnected,
-      icon: <PlusIcon className={ITEM_ICON_CLASS} />,
+      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {
         startAddProjectSourceSelection(option.environmentId);
@@ -1406,7 +1349,7 @@ function OpenCommandPaletteDialog(props: {
   const openAddProjectFlow = useCallback(() => {
     if (addProjectEnvironmentOptions.length > 1 || defaultAddProjectEnvironmentId === null) {
       pushPaletteView({
-        addonIcon: <PlusIcon className={ADDON_ICON_CLASS} />,
+        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
         groups: addProjectEnvironmentGroups,
       });
       return;
@@ -1519,6 +1462,8 @@ function OpenCommandPaletteDialog(props: {
             activeThread: activeThread ?? undefined,
             defaultProjectRef,
             handleNewThread,
+            projects,
+            projectsKnown,
           });
         },
       });
@@ -1565,8 +1510,6 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:add-project",
     searchTerms: [
-      "new",
-      "new chat",
       "add project",
       "folder",
       "directory",
@@ -1584,9 +1527,9 @@ function OpenCommandPaletteDialog(props: {
       "url",
       "environment",
     ],
-    title: "New",
+    title: "Add project",
     disabled: defaultAddProjectEnvironmentId === null,
-    icon: <PlusIcon className={ITEM_ICON_CLASS} />,
+    icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
     keepOpen: true,
     run: async () => {
       openAddProjectFlow();

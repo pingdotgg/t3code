@@ -51,7 +51,6 @@ export function HomeHeader(props: {
   readonly onOpenEnvironments: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
-  readonly onNewChat?: () => void;
 }) {
   if (Platform.OS === "android") {
     return <AndroidHomeHeader {...props} />;
@@ -80,14 +79,6 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
     : hasCustomHomeListOptions(props);
   const menuActions = useMemo<MenuAction[]>(
     () => [
-      ...(props.onNewChat
-        ? ([
-            {
-              id: "new-chat",
-              title: "New chat",
-            },
-          ] satisfies MenuAction[])
-        : []),
       {
         id: "environment",
         title: "Environment",
@@ -148,7 +139,6 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
           ] satisfies MenuAction[])),
     ],
     [
-      props.onNewChat,
       props.environments,
       props.projectSortOrder,
       props.projects,
@@ -161,11 +151,6 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
       const id = event.nativeEvent.event;
-      if (id === "new-chat") {
-        props.onNewChat?.();
-        return;
-      }
-
       if (id === "environment:all") {
         props.onEnvironmentChange(null);
         return;
@@ -478,13 +463,6 @@ function IosHomeHeader(props: HomeHeaderProps) {
             )}
           </NativeHeaderToolbar.Menu>
           <NativeHeaderToolbar.Spacer flexible />
-          {props.onNewChat ? (
-            <NativeHeaderToolbar.Button
-              accessibilityLabel="New chat"
-              icon="text.bubble"
-              onPress={props.onNewChat}
-            />
-          ) : null}
           <NativeHeaderToolbar.Button
             accessibilityLabel="New task"
             icon="square.and.pencil"

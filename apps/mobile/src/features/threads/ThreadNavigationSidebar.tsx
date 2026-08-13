@@ -142,7 +142,6 @@ interface ThreadNavigationSidebarProps {
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
-  readonly onNewChat: (environmentId: EnvironmentId) => void;
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onRequestVisibility: () => void;
@@ -1028,14 +1027,12 @@ function ThreadNavigationSidebarPane(
               collapsed={item.collapsed}
               isFirst={item.isFirst}
               groupKey={item.group.key}
-              groupKind={item.group.kind}
               onGroupAction={updateGroupDisplay}
               // Same gating as the compact Home list: aggregated groups have no
               // single target project, and pending-project groups hold a
               // placeholder shell rather than a real project.
               newThreadTarget={item.group.newThreadTarget}
               onNewThread={props.onNewThreadInProject}
-              onNewChat={props.onNewChat}
               project={item.group.representative}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
               title={item.group.title}
@@ -1122,7 +1119,6 @@ function ThreadNavigationSidebarPane(
       projectTitleByProjectKey,
       regenerateThreadTitle,
       props.onNewThreadInProject,
-      props.onNewChat,
       props.searchQuery,
       props.selectedThreadKey,
       props.width,
@@ -1185,22 +1181,8 @@ function ThreadNavigationSidebarPane(
         filterIcon,
         filterMenu,
         onOpenSettings: props.onOpenSettings,
-        onNewChat: () => {
-          const environmentId =
-            options.selectedEnvironmentId ?? workspaceEnvironments[0]?.environmentId ?? null;
-          if (environmentId) {
-            props.onNewChat(environmentId);
-          }
-        },
       }),
-    [
-      filterIcon,
-      filterMenu,
-      options.selectedEnvironmentId,
-      props.onNewChat,
-      props.onOpenSettings,
-      workspaceEnvironments,
-    ],
+    [filterIcon, filterMenu, props.onOpenSettings],
   );
   // Snoozed threads need no special case: the shelf header is a list row
   // even while collapsed.

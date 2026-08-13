@@ -33,7 +33,6 @@ export function useCreateProjectThread() {
       readonly branch: string | null;
       readonly worktreePath: string | null;
       readonly startFromOrigin?: boolean;
-      readonly createInChatScratch?: boolean;
       readonly runtimeMode: RuntimeMode;
       readonly interactionMode: ProviderInteractionMode;
       readonly initialMessageText: string;
@@ -76,7 +75,6 @@ export function useCreateProjectThread() {
           worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
-          createInChatScratch: input.createInChatScratch === true,
         }),
       });
       if (AsyncResult.isFailure(result)) {

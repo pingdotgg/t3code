@@ -40,20 +40,8 @@ export function createSidebarHeaderItems(input: {
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;
   readonly onOpenSettings: () => void;
-  readonly onNewChat?: () => void;
 }): NativeStackHeaderItem[] {
   return [
-    ...(input.onNewChat
-      ? [
-          withNativeGlassHeaderItem({
-            type: "button" as const,
-            label: "",
-            accessibilityLabel: "New chat",
-            icon: sfSymbolIcon("text.bubble"),
-            onPress: input.onNewChat,
-          }),
-        ]
-      : []),
     withNativeGlassHeaderItem({
       type: "menu",
       label: "",

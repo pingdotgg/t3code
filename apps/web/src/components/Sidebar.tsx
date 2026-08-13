@@ -24,13 +24,12 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { isChatDraft, isChatThread } from "@t3tools/client-runtime/state/project-kind";
 import {
   scopeProjectRef,
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import { CHAT_PROJECT_TITLE, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
+import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -42,6 +41,7 @@ import {
   CircleDashedIcon,
   ClockIcon,
   FolderIcon,
+  FolderPlusIcon,
   GitBranchIcon,
   MessageSquareIcon,
   PinIcon,
@@ -104,7 +104,11 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useProjects,
+  useThreadShells,
+} from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -183,7 +187,6 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 // Keep the v2 key so existing preferences survive the v2-to-default rename.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:snoozed-expanded";
-const CHATS_SCOPE_KEY = "chats";
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -241,32 +244,6 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
-function SidebarScopeGlyph(props: {
-  isChat: boolean;
-  environmentId: EnvironmentThreadShell["environmentId"];
-  cwd: string | null;
-  faviconPath: string | null;
-  className?: string;
-}) {
-  if (props.isChat) {
-    return (
-      <MessageSquareIcon className={cn("shrink-0 text-icon-muted", props.className ?? "size-4")} />
-    );
-  }
-  return (
-    <ProjectFavicon
-      environmentId={props.environmentId}
-      cwd={props.cwd ?? ""}
-      faviconPath={props.faviconPath}
-      className={props.className}
-    />
-  );
-}
-
-function sidebarProjectLabel(isChat: boolean, projectTitle: string | null): string | null {
-  return isChat ? CHAT_PROJECT_TITLE : projectTitle;
-}
-
 function SidebarThreadTooltip({
   thread,
   projectTitle,
@@ -279,7 +256,6 @@ function SidebarThreadTooltip({
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
-  isChat,
 }: {
   thread: SidebarThreadSummary;
   projectTitle: string | null;
@@ -295,9 +271,7 @@ function SidebarThreadTooltip({
   } | null;
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
-  isChat: boolean;
 }) {
-  const scopeTitle = sidebarProjectLabel(isChat, projectTitle);
   return (
     <TooltipPopup
       side="right"
@@ -311,16 +285,15 @@ function SidebarThreadTooltip({
           {thread.title}
         </div>
         <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
-          {scopeTitle ? (
+          {projectTitle ? (
             <div className="flex min-w-0 items-center gap-2">
-              <SidebarScopeGlyph
-                isChat={isChat}
+              <ProjectFavicon
                 environmentId={thread.environmentId}
-                cwd={projectCwd}
+                cwd={projectCwd ?? ""}
                 faviconPath={projectFaviconPath}
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
-              <div className="min-w-0 truncate text-foreground/75">{scopeTitle}</div>
+              <div className="min-w-0 truncate text-foreground/75">{projectTitle}</div>
             </div>
           ) : null}
           {environmentLabel ? (
@@ -471,8 +444,6 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
 }) {
   const { composer, draftId, onDiscard, onNavigate, session } = props;
-  const isChat = isChatDraft(session);
-  const scopeTitle = sidebarProjectLabel(isChat, props.projectTitle);
   const promptPreview = composer.prompt.trim().split("\n", 1)[0] ?? "";
   // images mirrors persistedAttachments once rehydration finishes; before
   // that only the persisted list is populated, hence max not sum.
@@ -529,15 +500,14 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               aria-hidden
               className="size-3 shrink-0 text-amber-600 dark:text-amber-300/80"
             />
-            <SidebarScopeGlyph
-              isChat={isChat}
+            <ProjectFavicon
               environmentId={session.environmentId}
-              cwd={props.projectCwd}
+              cwd={props.projectCwd ?? ""}
               faviconPath={props.projectFaviconPath}
               className="size-4 shrink-0"
             />
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {scopeTitle}
+              {props.projectTitle}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
               <button
@@ -575,7 +545,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
-  chatDrafts?: "exclude" | "only";
 }) {
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftsByThreadKey = useComposerDraftStore((store) => store.draftsByThreadKey);
@@ -613,9 +582,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       if (session.promotedTo != null) {
         continue;
       }
-      if (isChatDraft(session) !== (props.chatDrafts === "only")) {
-        continue;
-      }
       if (
         props.scopedProjectKeys !== null &&
         !props.scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
@@ -645,7 +611,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     frozenActive,
     props.routeDraftId,
     props.scopedProjectKeys,
-    props.chatDrafts,
   ]);
   const handleDiscard = useCallback(
     (draftId: DraftId) => {
@@ -724,7 +689,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectTitle: string | null;
-  isChat: boolean;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
@@ -909,7 +873,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   const isRemote =
     props.currentEnvironmentId !== null && thread.environmentId !== props.currentEnvironmentId;
-  const scopeTitle = sidebarProjectLabel(props.isChat, props.projectTitle);
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -922,7 +885,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
       branchMismatch={branchMismatch}
-      isChat={props.isChat}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
     />
@@ -1193,12 +1155,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   "opacity-40 grayscale group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              <SidebarScopeGlyph
-                isChat={props.isChat}
+              <ProjectFavicon
                 environmentId={thread.environmentId}
-                cwd={props.projectCwd}
+                cwd={props.projectCwd ?? ""}
                 faviconPath={props.projectFaviconPath}
                 className="size-4"
+                fallbackIcon={MessageSquareIcon}
               />
             </span>
             {title}
@@ -1333,21 +1295,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         >
           <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
-              <SidebarScopeGlyph
-                isChat={props.isChat}
+              <ProjectFavicon
                 environmentId={thread.environmentId}
-                cwd={props.projectCwd}
+                cwd={props.projectCwd ?? ""}
                 faviconPath={props.projectFaviconPath}
                 className="size-4 shrink-0"
               />
-              {scopeTitle ? (
+              {props.projectTitle ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
                   )}
                 >
-                  {scopeTitle}
+                  {props.projectTitle}
                 </span>
               ) : (
                 <span className="flex-1" />
@@ -1536,7 +1497,6 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectTitle: string | null;
-  isChat: boolean;
   environmentLabel: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   isHighlighted: boolean;
@@ -1577,7 +1537,6 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     threadId: thread.id,
   });
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
-  const scopeTitle = sidebarProjectLabel(props.isChat, props.projectTitle);
   return (
     <li role="presentation" className="list-none">
       <Tooltip>
@@ -1592,7 +1551,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               tabIndex={-1}
               aria-selected={props.isHighlighted}
               aria-current={props.isRouteActive ? "page" : undefined}
-              aria-label={scopeTitle ? `${thread.title}, ${scopeTitle}` : thread.title}
+              aria-label={
+                props.projectTitle ? `${thread.title}, ${props.projectTitle}` : thread.title
+              }
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
               className={cn(
@@ -1604,12 +1565,12 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             />
           }
         >
-          <SidebarScopeGlyph
-            isChat={props.isChat}
+          <ProjectFavicon
             environmentId={thread.environmentId}
-            cwd={props.projectCwd}
+            cwd={props.projectCwd ?? ""}
             faviconPath={props.projectFaviconPath}
             className="size-4 shrink-0"
+            fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
@@ -1628,7 +1589,6 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}
-          isChat={props.isChat}
         />
       </Tooltip>
     </li>
@@ -1637,6 +1597,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 
 export default function Sidebar() {
   const projects = useProjects();
+  const projectsKnown = useAllEnvironmentShellsBootstrapped();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
@@ -1869,13 +1830,12 @@ export default function Sidebar() {
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
   const [projectScopeKey, setProjectScopeKey] = useState<string | null>(null);
-  const isChatsScope = projectScopeKey === CHATS_SCOPE_KEY;
   const scopedProjectGroup = useMemo(
     () =>
-      projectScopeKey === null || isChatsScope
+      projectScopeKey === null
         ? null
         : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [isChatsScope, projectGroups, projectScopeKey],
+    [projectGroups, projectScopeKey],
   );
   const scopedProjectKeys = useMemo(
     () =>
@@ -1889,11 +1849,7 @@ export default function Sidebar() {
     [scopedProjectGroup],
   );
   useEffect(() => {
-    if (
-      projectScopeKey !== null &&
-      projectScopeKey !== CHATS_SCOPE_KEY &&
-      scopedProjectGroup === null
-    ) {
+    if (projectScopeKey !== null && scopedProjectGroup === null) {
       setProjectScopeKey(null);
     }
   }, [projectScopeKey, scopedProjectGroup]);
@@ -1908,9 +1864,6 @@ export default function Sidebar() {
     let count = 0;
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
       if (session.promotedTo != null) {
-        continue;
-      }
-      if (isChatDraft(session)) {
         continue;
       }
       if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
@@ -1953,24 +1906,6 @@ export default function Sidebar() {
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
-  const { projectThreads, chatThreads } = useMemo(() => {
-    const projectThreads: EnvironmentThreadShell[] = [];
-    const chatThreads: EnvironmentThreadShell[] = [];
-    for (const thread of threads) {
-      if (
-        isChatThread({
-          thread,
-          projects,
-          projectsKnown: true,
-        })
-      ) {
-        chatThreads.push(thread);
-      } else {
-        projectThreads.push(thread);
-      }
-    }
-    return { projectThreads, chatThreads };
-  }, [projects, threads]);
   const {
     pinnedThreads,
     reorderablePinnedKeys,
@@ -1986,7 +1921,7 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = projectThreads.filter(
+    const visible = threads.filter(
       (thread) =>
         thread.archivedAt === null &&
         (scopedProjectKeys === null ||
@@ -2061,101 +1996,18 @@ export default function Sidebar() {
     changeRequestStateByKey,
     nowMinute,
     scopedProjectKeys,
-    projectThreads,
     serverConfigs,
     snoozeWakeTick,
+    threads,
   ]);
-
-  const showChatsSection =
-    primaryEnvironmentId !== null && (projectScopeKey === null || isChatsScope);
-  const { pinnedChatThreads, activeChatThreads, snoozedChatThreads, settledChatThreads } =
-    useMemo(() => {
-      if (!showChatsSection) {
-        return {
-          pinnedChatThreads: [] as EnvironmentThreadShell[],
-          activeChatThreads: [] as EnvironmentThreadShell[],
-          snoozedChatThreads: [] as EnvironmentThreadShell[],
-          settledChatThreads: [] as EnvironmentThreadShell[],
-        };
-      }
-      const now = `${nowMinute}:00.000Z`;
-      void snoozeWakeTick;
-      const preciseNow = new Date().toISOString();
-      const visible = chatThreads.filter((thread) => thread.archivedAt === null);
-      const pinned: EnvironmentThreadShell[] = [];
-      const active: EnvironmentThreadShell[] = [];
-      const snoozed: EnvironmentThreadShell[] = [];
-      const settled: EnvironmentThreadShell[] = [];
-      for (const thread of visible) {
-        const supportsSettlement =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
-          true;
-        const supportsSnooze =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
-        const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-        const changeRequestState = changeRequestStateByKey.get(threadKey) ?? null;
-        if (supportsSnooze && effectiveSnoozed(thread, { now: preciseNow })) {
-          snoozed.push(thread);
-        } else if (thread.pinnedAt != null) {
-          pinned.push(thread);
-        } else if (
-          supportsSettlement &&
-          effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
-        ) {
-          settled.push(thread);
-        } else {
-          active.push(thread);
-        }
-      }
-      return {
-        pinnedChatThreads: sortPinnedThreadsForSidebar(pinned),
-        activeChatThreads: sortThreadsForSidebar(active),
-        snoozedChatThreads: snoozed.toSorted(
-          (left, right) =>
-            firstValidTimestampMs(left.snoozedUntil ?? null) -
-            firstValidTimestampMs(right.snoozedUntil ?? null),
-        ),
-        settledChatThreads: sortSettledThreadsForSidebar(settled),
-      };
-    }, [
-      autoSettleAfterDays,
-      changeRequestStateByKey,
-      chatThreads,
-      nowMinute,
-      serverConfigs,
-      showChatsSection,
-      snoozeWakeTick,
-    ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const searchableThreads = useMemo(
-    () =>
-      isChatsScope
-        ? [...pinnedChatThreads, ...activeChatThreads, ...snoozedChatThreads, ...settledChatThreads]
-        : [
-            ...pinnedThreads,
-            ...activeThreads,
-            ...snoozedThreads,
-            ...settledThreads,
-            ...pinnedChatThreads,
-            ...activeChatThreads,
-            ...snoozedChatThreads,
-            ...settledChatThreads,
-          ],
-    [
-      activeChatThreads,
-      activeThreads,
-      isChatsScope,
-      pinnedChatThreads,
-      pinnedThreads,
-      settledChatThreads,
-      settledThreads,
-      snoozedChatThreads,
-      snoozedThreads,
-    ],
+    () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
+    [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
   );
   const threadSearchResults = useMemo(
     () => searchSidebarThreadsByTitle(searchableThreads, threadSearchQuery),
@@ -3343,42 +3195,41 @@ export default function Sidebar() {
     autoAnimate(node, { duration: 150, easing: "ease-out" });
   }, []);
 
-  // Same as chat.new: one project (or a scoped project, or Shift+click) creates
-  // immediately; several projects open the "New thread in..." picker. Chat
-  // context is skipped so this never tries to start a project thread inside
-  // the hidden chat workspace.
+  // New thread defaults to the project you're in (active thread's project,
+  // falling back to the top project) — same resolution the command palette
+  // uses. The command palette already offers a "New thread in..." submenu
+  // for multi-project setups.
   const handleNewThreadClick = useCallback(
-    (event?: { readonly shiftKey?: boolean }) => {
-      const scopedProjectRef = scopedProjectGroup?.memberProjectRefs[0] ?? null;
-      const activeThread = isChatThread({
-        thread: newThreadContext.activeThread,
-        projects,
-        projectsKnown: true,
-      })
-        ? undefined
-        : (newThreadContext.activeThread ?? undefined);
-      const activeDraftThread = isChatDraft(newThreadContext.activeDraftThread)
-        ? null
-        : newThreadContext.activeDraftThread;
-      if (
-        scopedProjectRef !== null ||
-        shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)
-      ) {
+    (event?: ReactMouseEvent) => {
+      // One project: nothing to pick, create immediately. Shift+click creates
+      // directly in the current project even with several projects, skipping
+      // the palette picker.
+      if (shouldCreateNewThreadInCurrentProject(event?.shiftKey ?? false, projectGroups.length)) {
         if (isMobile) setOpenMobile(false);
         void startNewThreadFromContext({
-          activeDraftThread: scopedProjectRef !== null ? null : activeDraftThread,
-          activeThread: scopedProjectRef !== null ? undefined : activeThread,
-          defaultProjectRef: scopedProjectRef ?? newThreadContext.defaultProjectRef,
+          activeDraftThread: newThreadContext.activeDraftThread,
+          activeThread: newThreadContext.activeThread ?? undefined,
+          defaultProjectRef: newThreadContext.defaultProjectRef,
           handleNewThread: newThreadContext.handleNewThread,
+          projects,
+          projectsKnown,
         });
         return;
       }
       if (isMobile) setOpenMobile(false);
       openCommandPalette({ open: "new-thread-in" });
     },
-    [isMobile, newThreadContext, projectGroups.length, projects, scopedProjectGroup, setOpenMobile],
+    [isMobile, newThreadContext, projectGroups.length, projects, projectsKnown, setOpenMobile],
   );
 
+  // The button mirrors chat.new: in multi-project setups both route through
+  // the command palette's "New thread in..." picker, and in single-project
+  // setups both create immediately. In multi-project setups the label is only
+  // the picker's shortcut: falling back to chat.newLocal would advertise the
+  // same shortcut for both the picker and direct create. In single-project
+  // setups both commands create directly, so chat.newLocal is a valid
+  // fallback. The second tooltip line (multi-project only) advertises
+  // shift+click and its keyboard twin chat.newLocal for direct create.
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
@@ -3460,9 +3311,7 @@ export default function Sidebar() {
                     />
                   </TooltipTrigger>
                   <TooltipPopup side="right">
-                    {projects.length === 0 ? (
-                      "New thread"
-                    ) : projectGroups.length > 1 ? (
+                    {projectGroups.length > 1 ? (
                       <span className="flex flex-col gap-0.5">
                         <span>
                           {newThreadShortcutLabel
@@ -3485,21 +3334,18 @@ export default function Sidebar() {
                 </Tooltip>
               </div>
             </div>
-            {primaryEnvironmentId !== null || projectGroups.length > 0 ? (
+            {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
                 <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
                   <MenuTrigger
                     render={
                       <SidebarMenuButton
-                        aria-label="Filter threads"
+                        aria-label="Filter threads by project"
                         className="min-w-0 flex-1 ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       />
                     }
                   >
-                    {isChatsScope ||
-                    (projectGroups.length === 0 && primaryEnvironmentId !== null) ? (
-                      <MessageSquareIcon className="size-4 shrink-0 text-icon-muted" />
-                    ) : scopedProjectGroup ? (
+                    {scopedProjectGroup ? (
                       <ProjectFavicon
                         environmentId={scopedProjectGroup.environmentId}
                         cwd={scopedProjectGroup.workspaceRoot}
@@ -3510,44 +3356,25 @@ export default function Sidebar() {
                       <FolderIcon className="size-4 shrink-0" />
                     )}
                     <span className="min-w-0 flex-1 truncate">
-                      {isChatsScope || (projectGroups.length === 0 && primaryEnvironmentId !== null)
-                        ? CHAT_PROJECT_TITLE
-                        : (scopedProjectGroup?.displayName ?? "All projects")}
+                      {scopedProjectGroup?.displayName ?? "All projects"}
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
                   <MenuPopup align="start" className="w-(--anchor-width)">
                     <MenuRadioGroup
-                      value={
-                        projectScopeKey ??
-                        (projectGroups.length === 0 && primaryEnvironmentId !== null
-                          ? CHATS_SCOPE_KEY
-                          : "all")
-                      }
+                      value={projectScopeKey ?? "all"}
                       onValueChange={(value) =>
                         setProjectScopeKey(value === "all" ? null : (value as string))
                       }
                     >
-                      {projectGroups.length > 0 ? (
-                        <MenuRadioItem
-                          value="all"
-                          closeOnClick
-                          className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-                        >
-                          <FolderIcon className="size-4 shrink-0" />
-                          <span className="min-w-0 truncate text-sm">All projects</span>
-                        </MenuRadioItem>
-                      ) : null}
-                      {primaryEnvironmentId !== null ? (
-                        <MenuRadioItem
-                          value={CHATS_SCOPE_KEY}
-                          closeOnClick
-                          className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-                        >
-                          <MessageSquareIcon className="size-4 shrink-0 text-icon-muted" />
-                          <span className="min-w-0 truncate text-sm">{CHAT_PROJECT_TITLE}</span>
-                        </MenuRadioItem>
-                      ) : null}
+                      <MenuRadioItem
+                        value="all"
+                        closeOnClick
+                        className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                      >
+                        <FolderIcon className="size-4 shrink-0" />
+                        <span className="min-w-0 truncate text-sm">All projects</span>
+                      </MenuRadioItem>
                       {projectGroups.map((project) => {
                         const scopeKey = project.projectKey;
                         return (
@@ -3590,18 +3417,17 @@ export default function Sidebar() {
                         className="relative shrink-0 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                         onClick={openAddProjectCommandPalette}
                         type="button"
-                        aria-label="New"
-                        data-testid="sidebar-new"
+                        aria-label="New project"
                       />
                     }
                   >
-                    <PlusIcon />
+                    <FolderPlusIcon />
                     <span
                       className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
                       aria-hidden="true"
                     />
                   </TooltipTrigger>
-                  <TooltipPopup side="right">New</TooltipPopup>
+                  <TooltipPopup side="right">New project</TooltipPopup>
                 </Tooltip>
               </div>
             ) : null}
@@ -3644,11 +3470,6 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
-                        isChat={isChatThread({
-                          thread,
-                          projects,
-                          projectsKnown: true,
-                        })}
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         isHighlighted={activeSearchResultIndex === index}
@@ -3758,11 +3579,6 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
-                        isChat={isChatThread({
-                          thread,
-                          projects,
-                          projectsKnown: true,
-                        })}
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
@@ -3791,187 +3607,136 @@ export default function Sidebar() {
                   // Pinned rows render in the one shared pinned order; only
                   // reorder-capable rows register as sortable (legacy-server
                   // pins render in place as plain rows).
-                  const items: ReactNode[] = [];
-                  if (showChatsSection) {
+                  const items: ReactNode[] = [
+                    <SidebarDraftBlock
+                      key="draft-sessions"
+                      projectDisplayNameByKey={projectDisplayNameByKey}
+                      projectCwdByKey={projectCwdByKey}
+                      projectFaviconPathByKey={projectFaviconPathByKey}
+                      scopedProjectKeys={scopedProjectKeys}
+                      routeDraftId={routeDraftIdForRows}
+                      onNavigateToDraft={navigateToDraft}
+                    />,
+                    <DndContext
+                      key="pinned-dnd"
+                      sensors={pinnedDndSensors}
+                      collisionDetection={closestCenter}
+                      modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                      onDragEnd={handlePinnedDragEnd}
+                    >
+                      <SortableContext
+                        items={orderedPinnedThreads
+                          .map((thread) =>
+                            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                          )
+                          .filter((threadKey) => reorderablePinnedKeys.has(threadKey))}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {orderedPinnedThreads.map((thread) => {
+                          const threadKey = scopedThreadKey(
+                            scopeThreadRef(thread.environmentId, thread.id),
+                          );
+                          if (!reorderablePinnedKeys.has(threadKey)) {
+                            return renderThreadRow(thread, "pinned");
+                          }
+                          return (
+                            <SortablePinnedThreadRow key={threadKey} id={threadKey}>
+                              {(bag) => renderThreadRow(thread, "pinned", bag)}
+                            </SortablePinnedThreadRow>
+                          );
+                        })}
+                      </SortableContext>
+                    </DndContext>,
+                  ];
+                  if (pinnedThreads.length > 0) {
                     items.push(
-                      <SidebarDraftBlock
-                        key="chat-draft-sessions"
-                        chatDrafts="only"
-                        projectDisplayNameByKey={projectDisplayNameByKey}
-                        projectCwdByKey={projectCwdByKey}
-                        projectFaviconPathByKey={projectFaviconPathByKey}
-                        scopedProjectKeys={null}
-                        routeDraftId={routeDraftIdForRows}
-                        onNavigateToDraft={navigateToDraft}
+                      <li
+                        key="pinned-divider"
+                        aria-hidden
+                        data-testid="sidebar-pinned-divider"
+                        className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
                       />,
                     );
-                    for (const thread of pinnedChatThreads) {
-                      items.push(renderThreadRow(thread, "pinned"));
-                    }
-                    for (const thread of activeChatThreads) {
-                      items.push(renderThreadRow(thread, "active"));
-                    }
-                    for (const thread of snoozedChatThreads) {
+                  }
+                  for (const thread of activeThreads) {
+                    items.push(renderThreadRow(thread, "active"));
+                  }
+                  // Snoozed shelf: between the inbox and Settled — out of the
+                  // way, never gone. The header always renders while anything
+                  // is snoozed (the count is the whole footprint when
+                  // collapsed); rows only when expanded. Vanishes entirely at
+                  // count 0.
+                  if (snoozedThreads.length > 0) {
+                    items.push(
+                      <li
+                        key="snoozed-shelf-header"
+                        data-thread-selection-safe
+                        className="list-none"
+                      >
+                        <button
+                          type="button"
+                          onClick={toggleSnoozedShelf}
+                          aria-expanded={snoozedShelfExpanded}
+                          data-testid="sidebar-snoozed-shelf-toggle"
+                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+                        >
+                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                            {snoozedShelfExpanded
+                              ? "Snoozed"
+                              : `Snoozed (${snoozedThreads.length})`}
+                          </span>
+                          <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
+                          <ChevronDownIcon
+                            aria-hidden
+                            className={cn(
+                              "size-3 text-blue-600 transition-transform dark:text-blue-400",
+                              snoozedShelfExpanded && "rotate-180",
+                            )}
+                          />
+                        </button>
+                      </li>,
+                    );
+                    for (const thread of visibleSnoozedThreads) {
                       items.push(renderThreadRow(thread, "snoozed"));
                     }
-                    for (const thread of settledChatThreads) {
-                      items.push(renderThreadRow(thread, "settled"));
-                    }
-                    const hasChatRows =
-                      pinnedChatThreads.length +
-                        activeChatThreads.length +
-                        snoozedChatThreads.length +
-                        settledChatThreads.length >
-                      0;
-                    const hasProjectRows =
-                      !isChatsScope &&
-                      pinnedThreads.length +
-                        activeThreads.length +
-                        snoozedThreads.length +
-                        settledThreads.length >
-                        0;
-                    if (hasChatRows && hasProjectRows) {
-                      items.push(
-                        <li
-                          key="chats-projects-divider"
-                          aria-hidden
-                          className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
-                        />,
-                      );
-                    }
                   }
-                  if (!isChatsScope) {
+                  if (settledThreads.length > 0) {
                     items.push(
-                      <SidebarDraftBlock
-                        key="draft-sessions"
-                        projectDisplayNameByKey={projectDisplayNameByKey}
-                        projectCwdByKey={projectCwdByKey}
-                        projectFaviconPathByKey={projectFaviconPathByKey}
-                        scopedProjectKeys={scopedProjectKeys}
-                        routeDraftId={routeDraftIdForRows}
-                        onNavigateToDraft={navigateToDraft}
-                      />,
-                      <DndContext
-                        key="pinned-dnd"
-                        sensors={pinnedDndSensors}
-                        collisionDetection={closestCenter}
-                        modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-                        onDragEnd={handlePinnedDragEnd}
+                      <li
+                        key="settled-shelf-header"
+                        data-thread-selection-safe
+                        className="list-none"
                       >
-                        <SortableContext
-                          items={orderedPinnedThreads
-                            .map((thread) =>
-                              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                            )
-                            .filter((threadKey) => reorderablePinnedKeys.has(threadKey))}
-                          strategy={verticalListSortingStrategy}
+                        <button
+                          type="button"
+                          onClick={toggleSettledShelf}
+                          aria-expanded={settledShelfExpanded}
+                          data-testid="sidebar-settled-shelf-toggle"
+                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
                         >
-                          {orderedPinnedThreads.map((thread) => {
-                            const threadKey = scopedThreadKey(
-                              scopeThreadRef(thread.environmentId, thread.id),
-                            );
-                            if (!reorderablePinnedKeys.has(threadKey)) {
-                              return renderThreadRow(thread, "pinned");
-                            }
-                            return (
-                              <SortablePinnedThreadRow key={threadKey} id={threadKey}>
-                                {(bag) => renderThreadRow(thread, "pinned", bag)}
-                              </SortablePinnedThreadRow>
-                            );
-                          })}
-                        </SortableContext>
-                      </DndContext>,
+                          <span className="text-xs font-medium text-muted-foreground/50">
+                            {settledShelfExpanded
+                              ? "Settled"
+                              : `Settled (${settledThreads.length})`}
+                          </span>
+                          <span className="h-px flex-1 bg-sidebar-border/60" />
+                          <ChevronDownIcon
+                            aria-hidden
+                            className={cn(
+                              "size-3 text-muted-foreground/50 transition-transform",
+                              settledShelfExpanded && "rotate-180",
+                            )}
+                          />
+                        </button>
+                      </li>,
                     );
-                    if (pinnedThreads.length > 0) {
-                      items.push(
-                        <li
-                          key="pinned-divider"
-                          aria-hidden
-                          data-testid="sidebar-pinned-divider"
-                          className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
-                        />,
-                      );
-                    }
-                    for (const thread of activeThreads) {
-                      items.push(renderThreadRow(thread, "active"));
-                    }
-                    // Snoozed shelf: between the inbox and Settled — out of the
-                    // way, never gone. The header always renders while anything
-                    // is snoozed (the count is the whole footprint when
-                    // collapsed); rows only when expanded. Vanishes entirely at
-                    // count 0.
-                    if (snoozedThreads.length > 0) {
-                      items.push(
-                        <li
-                          key="snoozed-shelf-header"
-                          data-thread-selection-safe
-                          className="list-none"
-                        >
-                          <button
-                            type="button"
-                            onClick={toggleSnoozedShelf}
-                            aria-expanded={snoozedShelfExpanded}
-                            data-testid="sidebar-snoozed-shelf-toggle"
-                            className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
-                          >
-                            <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                              {snoozedShelfExpanded
-                                ? "Snoozed"
-                                : `Snoozed (${snoozedThreads.length})`}
-                            </span>
-                            <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
-                            <ChevronDownIcon
-                              aria-hidden
-                              className={cn(
-                                "size-3 text-blue-600 transition-transform dark:text-blue-400",
-                                snoozedShelfExpanded && "rotate-180",
-                              )}
-                            />
-                          </button>
-                        </li>,
-                      );
-                      for (const thread of visibleSnoozedThreads) {
-                        items.push(renderThreadRow(thread, "snoozed"));
-                      }
-                    }
-                    if (settledThreads.length > 0) {
-                      items.push(
-                        <li
-                          key="settled-shelf-header"
-                          data-thread-selection-safe
-                          className="list-none"
-                        >
-                          <button
-                            type="button"
-                            onClick={toggleSettledShelf}
-                            aria-expanded={settledShelfExpanded}
-                            data-testid="sidebar-settled-shelf-toggle"
-                            className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
-                          >
-                            <span className="text-xs font-medium text-muted-foreground/50">
-                              {settledShelfExpanded
-                                ? "Settled"
-                                : `Settled (${settledThreads.length})`}
-                            </span>
-                            <span className="h-px flex-1 bg-sidebar-border/60" />
-                            <ChevronDownIcon
-                              aria-hidden
-                              className={cn(
-                                "size-3 text-muted-foreground/50 transition-transform",
-                                settledShelfExpanded && "rotate-180",
-                              )}
-                            />
-                          </button>
-                        </li>,
-                      );
-                    }
-                    for (const thread of renderedSettledThreads) {
-                      items.push(renderThreadRow(thread, "settled"));
-                    }
+                  }
+                  for (const thread of renderedSettledThreads) {
+                    items.push(renderThreadRow(thread, "settled"));
                   }
                   return items;
                 })()}
-                {!isChatsScope && settledShelfExpanded && hiddenSettledCount > 0 ? (
+                {settledShelfExpanded && hiddenSettledCount > 0 ? (
                   <li className="list-none">
                     <button
                       type="button"
@@ -3992,20 +3757,9 @@ export default function Sidebar() {
             activeThreads.length +
             snoozedThreads.length +
             settledThreads.length ===
-            0 &&
-          pinnedChatThreads.length +
-            activeChatThreads.length +
-            snoozedChatThreads.length +
-            settledChatThreads.length ===
-            0 &&
-          (projects.length === 0 ||
-            scopedProjectGroup !== null ||
-            isChatsScope ||
-            !showChatsSection) ? (
+            0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {isChatsScope ? (
-                "No chats yet"
-              ) : projects.length === 0 ? (
+              {projects.length === 0 ? (
                 <>
                   <span>No projects yet</span>
                   <button
@@ -4014,7 +3768,7 @@ export default function Sidebar() {
                     className="inline-flex items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   >
                     <PlusIcon className="-mx-0.5 size-3" />
-                    New
+                    Add project
                   </button>
                 </>
               ) : scopedProjectGroup ? (
