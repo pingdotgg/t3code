@@ -24,6 +24,7 @@ import {
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
+  isOrphanReasoningActivity,
   mergeOrchestrationThreadActivity,
 } from "./orchestration.ts";
 import { EventId, TurnId } from "./baseSchemas.ts";
@@ -56,6 +57,43 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+
+it("flags a detail-less reasoning settle with no prior row as an orphan", () => {
+  const settle: OrchestrationThreadActivity = {
+    id: EventId.make("reasoning:thread-1:item-orphan"),
+    tone: "info",
+    kind: "reasoning",
+    summary: "Thought",
+    payload: { streaming: false },
+    turnId: TurnId.make("turn-1"),
+    createdAt: "2026-08-12T12:00:00.000Z",
+  };
+  assert.strictEqual(
+    isOrphanReasoningActivity(undefined, mergeOrchestrationThreadActivity(undefined, settle)),
+    true,
+  );
+
+  const streamed: OrchestrationThreadActivity = {
+    ...settle,
+    id: EventId.make("reasoning:thread-1:item-streamed"),
+    summary: "Thinking",
+    payload: { detail: "Weighing options", streaming: true },
+  };
+  assert.strictEqual(
+    isOrphanReasoningActivity(streamed, mergeOrchestrationThreadActivity(streamed, settle)),
+    false,
+  );
+  assert.strictEqual(
+    isOrphanReasoningActivity(
+      undefined,
+      mergeOrchestrationThreadActivity(undefined, {
+        ...settle,
+        payload: { detail: "Settled text", streaming: false },
+      }),
+    ),
+    false,
+  );
+});
 
 it("materializes streamed reasoning deltas into one stable activity", () => {
   const previous: OrchestrationThreadActivity = {

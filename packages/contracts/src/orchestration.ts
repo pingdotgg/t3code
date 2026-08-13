@@ -383,6 +383,23 @@ export function mergeOrchestrationThreadActivity(
   };
 }
 
+/**
+ * A reasoning settle that arrives with no streamed row and no text of its own
+ * is an orphan (codex completes reasoning items without a detail string).
+ * Every activity store must drop it the same way, or a client shows an empty
+ * Thought entry live that disappears on reload.
+ */
+export function isOrphanReasoningActivity(
+  previous: OrchestrationThreadActivity | undefined,
+  merged: OrchestrationThreadActivity,
+): boolean {
+  return (
+    merged.kind === "reasoning" &&
+    previous === undefined &&
+    typeof (merged.payload as { detail?: unknown } | null)?.detail !== "string"
+  );
+}
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",

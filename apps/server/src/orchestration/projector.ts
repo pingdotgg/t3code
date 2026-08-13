@@ -1,5 +1,6 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
+  isOrphanReasoningActivity,
   mergeOrchestrationThreadActivity,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
@@ -788,6 +789,9 @@ export function projectEvent(
             (entry) => entry.id === payload.activity.id,
           );
           const nextActivity = mergeOrchestrationThreadActivity(previousActivity, payload.activity);
+          if (isOrphanReasoningActivity(previousActivity, nextActivity)) {
+            return nextBase;
+          }
           const activities = [
             ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
             nextActivity,
