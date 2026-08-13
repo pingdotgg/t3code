@@ -1132,9 +1132,45 @@ function PullRequestsRouteView() {
     viewers,
   ]);
 
-  // Keyed by every row being shown — the partitions can hold rows the feed has not paged to —
-  // so scrolling further asks only about what is new. One read per environment, each asking only
-  // about its own rows: a reference names a project, and a project belongs to one machine.
+  // Line counts are decoration, so they start only when a row reaches (or nears) the viewport.
+  // One shared observer avoids one observer per row, and remembered keys keep counts loaded as a
+  // reader scrolls back and forth without making an off-screen cold page hit the host at all.
+  const [visibleStatsKeys, setVisibleStatsKeys] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const elements = document.querySelectorAll<HTMLElement>("[data-pull-request-stats-key]");
+    if (typeof IntersectionObserver === "undefined") {
+      setVisibleStatsKeys(
+        new Set([...elements].map((element) => element.dataset.pullRequestStatsKey ?? "")),
+      );
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (observed) => {
+        const newlyVisible = observed.flatMap((item) => {
+          if (!item.isIntersecting) return [];
+          observer.unobserve(item.target);
+          const key = (item.target as HTMLElement).dataset.pullRequestStatsKey;
+          return key === undefined ? [] : [key];
+        });
+        if (newlyVisible.length === 0) return;
+        setVisibleStatsKeys((current) => {
+          const next = new Set(current);
+          for (const key of newlyVisible) next.add(key);
+          return next;
+        });
+      },
+      { rootMargin: "480px" },
+    );
+    for (const element of elements) {
+      const key = element.dataset.pullRequestStatsKey;
+      if (key !== undefined && !visibleStatsKeys.has(key)) observer.observe(element);
+    }
+    return () => observer.disconnect();
+  }, [groups, visibleStatsKeys]);
+
+  // One read per environment, each asking only about its own near-visible rows: a reference names
+  // a project, and a project belongs to one machine.
   const statsTargets = useMemo(() => {
     const refsByEnvironment = new Map<
       EnvironmentId,
@@ -1142,6 +1178,7 @@ function PullRequestsRouteView() {
     >();
     for (const group of groups) {
       for (const entry of group.entries) {
+        if (!visibleStatsKeys.has(pullRequestEntryKey(entry))) continue;
         const refs = refsByEnvironment.get(entry.environmentId) ?? [];
         refs.push({
           projectId: entry.projectId,
@@ -1155,7 +1192,7 @@ function PullRequestsRouteView() {
       environmentId,
       input: { refs },
     }));
-  }, [groups]);
+  }, [groups, visibleStatsKeys]);
   const statsQuery = usePullRequestListStats(statsTargets);
   // Adding or removing one row keys a fresh stats query with nothing in it yet, so the counts
   // are merged into what is already held rather than rebuilt: every count on screen stays until
@@ -1346,31 +1383,35 @@ function PullRequestsRouteView() {
                 </h2>
               ) : null}
               {group.entries.map((entry) => (
-                <PullRequestRow
+                <div
                   key={pullRequestEntryKey(entry)}
-                  // A row whose host reported its line counts keeps them; one whose host left
-                  // them for later takes whatever has arrived since, and draws without them
-                  // until it does.
-                  entry={withDiffStat(entry, statsByRow)}
-                  showProjectTitle
-                  showProvider={showProvider}
-                  {...(capableEnvironments.length > 1 &&
-                  environmentLabels.get(entry.environmentId) !== undefined
-                    ? { environmentLabel: environmentLabels.get(entry.environmentId)! }
-                    : {})}
-                  // Ten is the floor the ranking gives a row whose own fields say nothing
-                  // about the search: the host matched something this row cannot show.
-                  matchedElsewhere={
-                    typedParsed.text.length > 0 &&
-                    scorePullRequestMatch(entry, typedParsed.text) <= MATCHED_ELSEWHERE_SCORE
-                  }
-                  selected={
-                    selected?.environmentId === entry.environmentId &&
-                    selected.repository === entry.repository &&
-                    selected.number === entry.number
-                  }
-                  onSelect={selectEntry}
-                />
+                  data-pull-request-stats-key={pullRequestEntryKey(entry)}
+                >
+                  <PullRequestRow
+                    // A row whose host reported its line counts keeps them; one whose host left
+                    // them for later takes whatever has arrived since, and draws without them
+                    // until it does.
+                    entry={withDiffStat(entry, statsByRow)}
+                    showProjectTitle
+                    showProvider={showProvider}
+                    {...(capableEnvironments.length > 1 &&
+                    environmentLabels.get(entry.environmentId) !== undefined
+                      ? { environmentLabel: environmentLabels.get(entry.environmentId)! }
+                      : {})}
+                    // Ten is the floor the ranking gives a row whose own fields say nothing
+                    // about the search: the host matched something this row cannot show.
+                    matchedElsewhere={
+                      typedParsed.text.length > 0 &&
+                      scorePullRequestMatch(entry, typedParsed.text) <= MATCHED_ELSEWHERE_SCORE
+                    }
+                    selected={
+                      selected?.environmentId === entry.environmentId &&
+                      selected.repository === entry.repository &&
+                      selected.number === entry.number
+                    }
+                    onSelect={selectEntry}
+                  />
+                </div>
               ))}
             </div>
           ))}
