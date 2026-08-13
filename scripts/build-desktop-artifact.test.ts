@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -44,6 +46,7 @@ import {
   STAGE_INSTALL_ARGS,
   WINDOWS_ASAR_UNPACK,
   ancestorNodeModulesPaths,
+  copyDirectoryPreservingSymlinks,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -798,6 +801,50 @@ it("keeps the prefix of a UNC path instead of going relative", () => {
   }
   assert.deepStrictEqual(paths[0], "\\\\server\\share\\tmp\\node_modules");
 });
+
+it.effect("rebases packaged links into the isolated tree", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-copy-symlinks-" });
+    const source = path.join(root, "source");
+    const destination = path.join(root, "destination");
+    const packageDir = path.join(source, "node_modules/.pnpm/example@1/node_modules/example");
+    const relativePackageLink = path.join(source, "node_modules/example-relative");
+    const absolutePackageLink = path.join(source, "node_modules/example-absolute");
+
+    yield* fs.makeDirectory(packageDir, { recursive: true });
+    yield* fs.writeFileString(path.join(packageDir, "index.js"), "module.exports = true;\n");
+    yield* fs.symlink(
+      path.join(".pnpm", "example@1", "node_modules", "example"),
+      relativePackageLink,
+    );
+    yield* fs.symlink(packageDir, absolutePackageLink);
+
+    yield* copyDirectoryPreservingSymlinks(source, destination);
+
+    const copiedPackage = path.join(
+      destination,
+      "node_modules/.pnpm/example@1/node_modules/example",
+    );
+    assert.equal(
+      yield* fs.readLink(path.join(destination, "node_modules/example-relative")),
+      copiedPackage,
+    );
+    assert.equal(
+      yield* fs.readLink(path.join(destination, "node_modules/example-absolute")),
+      copiedPackage,
+    );
+    assert.equal(
+      yield* fs.realPath(path.join(destination, "node_modules/example-relative")),
+      copiedPackage,
+    );
+    assert.equal(
+      yield* fs.realPath(path.join(destination, "node_modules/example-absolute")),
+      copiedPackage,
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it("ignores trailing separators", () => {
   assert.deepStrictEqual(

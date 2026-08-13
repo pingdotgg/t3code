@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off - Node's typed junction API avoids Windows symlink privileges while keeping the probe isolated.
 
+import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
@@ -33,6 +35,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import type { PlatformError } from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -1349,6 +1352,64 @@ const hasNativeLoaderMarkers = Effect.fn("hasNativeLoaderMarkers")(function* (pa
   );
 });
 
+export const copyDirectoryPreservingSymlinks = Effect.fn("copyDirectoryPreservingSymlinks")(
+  function* (source: string, destination: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    // Effect's Node implementation delegates directory copies to fs.cp, whose
+    // default rewrites links into absolute source-tree references. Recreate every
+    // in-tree directory link as a junction rooted in the isolated copy so the
+    // probe cannot resolve through staging and Windows needs no symlink privilege.
+    yield* fs.copy(source, destination);
+
+    const restoreRelativeSymlinks = (
+      sourceDirectory: string,
+      destinationDirectory: string,
+    ): Effect.Effect<void, PlatformError | BundleNotSelfContainedError> =>
+      Effect.gen(function* () {
+        for (const entry of yield* fs.readDirectory(sourceDirectory)) {
+          const sourceEntry = path.join(sourceDirectory, entry);
+          const destinationEntry = path.join(destinationDirectory, entry);
+          const linkTarget = yield* fs.readLink(sourceEntry).pipe(Effect.option);
+          if (Option.isSome(linkTarget)) {
+            const absoluteSourceTarget = path.isAbsolute(linkTarget.value)
+              ? linkTarget.value
+              : path.resolve(path.dirname(sourceEntry), linkTarget.value);
+            const sourceRelativeTarget = path.relative(source, absoluteSourceTarget);
+            if (
+              sourceRelativeTarget === ".." ||
+              sourceRelativeTarget.startsWith(`..${path.sep}`) ||
+              path.isAbsolute(sourceRelativeTarget)
+            ) {
+              return yield* new BundleNotSelfContainedError({
+                exitCode: -1,
+                output: `Refusing to copy symlink ${sourceEntry}: its target ${absoluteSourceTarget} escapes the packaged tree.`,
+              });
+            }
+            const target = path.join(destination, sourceRelativeTarget);
+            yield* fs.remove(destinationEntry, { recursive: true, force: true });
+            yield* Effect.tryPromise({
+              try: () => NodeFSP.symlink(target, destinationEntry, "junction"),
+              catch: (cause) =>
+                new BundleNotSelfContainedError({
+                  exitCode: -1,
+                  output: `Could not isolate ${sourceEntry}: ${String(cause)}`,
+                }),
+            });
+          } else {
+            const info = yield* fs.stat(sourceEntry);
+            if (info.type === "Directory") {
+              yield* restoreRelativeSymlinks(sourceEntry, destinationEntry);
+            }
+          }
+        }
+      });
+
+    yield* restoreRelativeSymlinks(source, destination);
+  },
+);
+
 const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSelfContained")(
   function* (input: { readonly stageDistDir: string; readonly verbose: boolean }) {
     const fs = yield* FileSystem.FileSystem;
@@ -1379,7 +1440,7 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
       prefix: "t3code-bundle-selfcheck-",
     });
     const probeApp = path.join(probeRoot, "app");
-    yield* fs.copy(unpackedRoot, probeApp);
+    yield* copyDirectoryPreservingSymlinks(unpackedRoot, probeApp);
 
     // Guard the guard: if anything above the probe provides a node_modules, a
     // missing dependency would resolve there and the check would pass while the
