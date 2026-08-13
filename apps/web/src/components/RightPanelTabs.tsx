@@ -340,7 +340,11 @@ function RightPanelEmptyState(props: {
       tabIndex={0}
       onKeyDown={handleKeyDown}
       aria-label="Open a surface"
-      data-surface-launcher-keys={availableActions.map((action) => action.shortcut).join("")}
+      data-surface-launcher-keys={
+        props.keyboardShortcutsEnabled
+          ? availableActions.map((action) => action.shortcut).join("")
+          : undefined
+      }
       className={cn(
         "flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 pt-6 outline-none",
         // The panel topbar sits above this container; matching bottom padding
