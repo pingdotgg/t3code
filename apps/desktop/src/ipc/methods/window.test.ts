@@ -8,7 +8,8 @@ import type * as Electron from "electron";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { getLocalEnvironmentBootstraps, getWindowFullscreenState } from "./window.ts";
+import * as ElectronShell from "../../electron/ElectronShell.ts";
+import { getLocalEnvironmentBootstraps, getWindowFullscreenState, openPath } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -141,6 +142,28 @@ describe("getWindowFullscreenState", () => {
       Effect.provide(
         Layer.mock(ElectronWindow.ElectronWindow)({
           currentMainOrFirst: Effect.succeed(Option.some(window)),
+        }),
+      ),
+    );
+  });
+});
+
+describe("openPath", () => {
+  it.effect("passes the exact renderer path to the Electron shell", () => {
+    let openedPath: string | null = null;
+    const shellOpenPath = (path: string) =>
+      Effect.sync(() => {
+        openedPath = path;
+      });
+    const path = "/Users/toviastorres/Downloads/product image.png";
+
+    return Effect.gen(function* () {
+      yield* openPath.handler(path);
+      assert.equal(openedPath, path);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronShell.ElectronShell)({
+          openPath: shellOpenPath,
         }),
       ),
     );

@@ -261,6 +261,16 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const openPath = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_PATH_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.openPath")(function* (path) {
+    const shell = yield* ElectronShell.ElectronShell;
+    return yield* shell.openPath(path);
+  }),
+});
+
 /** Theme files are a few KB; anything larger returns empty text and lets the
  *  renderer reject it by size without the contents ever crossing the bridge. */
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;

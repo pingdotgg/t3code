@@ -108,6 +108,136 @@ export function rewriteMarkdownFileUriHref(href: string | undefined): string | n
   return `${target.path}${target.hash}`;
 }
 
+function findMarkdownLinkLabelEnd(text: string, labelStart: number): number {
+  let depth = 0;
+  for (let index = labelStart; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+    if (character === "[") {
+      depth += 1;
+      continue;
+    }
+    if (character === "]") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+function skipMarkdownLinkTitleAndClose(text: string, start: number): number {
+  const isWhitespace = (character: string | undefined): boolean =>
+    character === " " || character === "\t" || character === "\n" || character === "\r";
+  let position = start;
+  while (position < text.length && isWhitespace(text[position])) position += 1;
+
+  const opener = text[position];
+  if (opener === '"' || opener === "'" || opener === "(") {
+    const closer = opener === "(" ? ")" : opener;
+    position += 1;
+    while (position < text.length) {
+      const character = text[position];
+      if (character === "\\" && position + 1 < text.length) {
+        position += 2;
+        continue;
+      }
+      position += 1;
+      if (character === closer) break;
+    }
+    while (position < text.length && isWhitespace(text[position])) position += 1;
+  }
+
+  return text[position] === ")" ? position + 1 : position;
+}
+
+/** Extract inline-link destinations using the forms accepted by CommonMark. */
+export function extractMarkdownLinkHrefs(text: string): string[] {
+  const hrefs: string[] = [];
+  let index = 0;
+
+  while (index < text.length) {
+    const labelStart = text.indexOf("[", index);
+    if (labelStart === -1) break;
+    const labelEnd = findMarkdownLinkLabelEnd(text, labelStart);
+    if (labelEnd === -1) break;
+    if (text[labelEnd + 1] !== "(") {
+      index = labelEnd + 1;
+      continue;
+    }
+
+    let position = labelEnd + 2;
+    while (text[position] === " " || text[position] === "\t") position += 1;
+    let destination = "";
+
+    if (text[position] === "<") {
+      position += 1;
+      let closed = false;
+      while (position < text.length) {
+        const character = text[position];
+        if (character === "\\" && position + 1 < text.length) {
+          destination += text[position + 1];
+          position += 2;
+          continue;
+        }
+        if (character === "\n") break;
+        if (character === ">") {
+          closed = true;
+          position += 1;
+          break;
+        }
+        destination += character;
+        position += 1;
+      }
+      if (!closed) {
+        index = labelEnd + 2;
+        continue;
+      }
+    } else {
+      let depth = 0;
+      while (position < text.length) {
+        const character = text[position];
+        if (character === "\\" && position + 1 < text.length) {
+          destination += text[position + 1];
+          position += 2;
+          continue;
+        }
+        if (
+          character === " " ||
+          character === "\t" ||
+          character === "\n" ||
+          character === undefined ||
+          character.charCodeAt(0) < 0x20
+        ) {
+          break;
+        }
+        if (character === "(") {
+          depth += 1;
+        } else if (character === ")") {
+          if (depth === 0) break;
+          depth -= 1;
+        }
+        destination += character;
+        position += 1;
+      }
+    }
+
+    const href = destination.trim();
+    if (href.length > 0) hrefs.push(href);
+    index = Math.max(skipMarkdownLinkTitleAndClose(text, position), labelEnd + 2);
+  }
+
+  return hrefs;
+}
+
+/** Canonical map key shared by authored destinations and rendered anchor hrefs. */
+export function normalizeMarkdownLinkHrefKey(href: string): string {
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  return safeDecode(rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref);
+}
+
 function looksLikePosixFilesystemPath(path: string): boolean {
   if (!path.startsWith("/")) return false;
   if (POSIX_FILE_ROOT_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;

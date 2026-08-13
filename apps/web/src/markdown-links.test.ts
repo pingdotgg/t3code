@@ -1,11 +1,68 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  extractMarkdownLinkHrefs,
+  normalizeMarkdownLinkHrefKey,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
 } from "./markdown-links";
+
+describe("markdown file link destinations", () => {
+  it("matches an angle-bracket destination containing spaces to its rendered href", () => {
+    const [sourceHref] = extractMarkdownLinkHrefs(
+      "[product image](</Users/toviastorres/Downloads/product image.png>)",
+    );
+
+    expect(sourceHref).toBe("/Users/toviastorres/Downloads/product image.png");
+    expect(normalizeMarkdownLinkHrefKey(sourceHref ?? "")).toBe(
+      normalizeMarkdownLinkHrefKey("/Users/toviastorres/Downloads/product%20image.png"),
+    );
+  });
+
+  it("keeps balanced parentheses inside bare destinations", () => {
+    expect(extractMarkdownLinkHrefs("[download](/tmp/report(1).pdf)")).toEqual([
+      "/tmp/report(1).pdf",
+    ]);
+  });
+
+  it("ignores a trailing title after the destination", () => {
+    expect(extractMarkdownLinkHrefs('[report](/tmp/report.pdf "Latest report")')).toEqual([
+      "/tmp/report.pdf",
+    ]);
+  });
+
+  it("finds the label end across escaped and nested brackets", () => {
+    expect(
+      extractMarkdownLinkHrefs("[escaped \\] label](/tmp/a.txt) and [nested [label]](/tmp/b.txt)"),
+    ).toEqual(["/tmp/a.txt", "/tmp/b.txt"]);
+  });
+
+  it("does not extract link-looking text from a title", () => {
+    expect(
+      extractMarkdownLinkHrefs('[report](/tmp/a.txt "see [fake](/tmp/not-a-link.txt)")'),
+    ).toEqual(["/tmp/a.txt"]);
+  });
+
+  it("continues after malformed destinations", () => {
+    expect(
+      extractMarkdownLinkHrefs("[unclosed](</tmp/nope.txt) then [valid](/tmp/valid.txt)"),
+    ).toEqual(["/tmp/valid.txt"]);
+  });
+
+  it("matches file URI source and rewritten render keys without double-decoding", () => {
+    const source = normalizeMarkdownLinkHrefKey(
+      "file:///Users/toviastorres/Downloads/file%2520name.pdf",
+    );
+    const rendered = normalizeMarkdownLinkHrefKey(
+      "/Users/toviastorres/Downloads/file%2520name.pdf",
+    );
+
+    expect(source).toBe(rendered);
+    expect(source).toBe("/Users/toviastorres/Downloads/file%20name.pdf");
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {
