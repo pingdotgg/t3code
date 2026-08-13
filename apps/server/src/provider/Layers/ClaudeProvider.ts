@@ -574,6 +574,7 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+const CLAUDE_USAGE_LOOKUP_TIMEOUT_MS = 5_000;
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -821,10 +822,16 @@ const probeClaudeCapabilities = (
         }),
       });
       const init = await q.initializationResult();
-      const claudeStatus = await q
-        .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
-        .then((usage) => mapClaudeUsageToStatus(usage, claudePromo))
-        .catch(() => undefined);
+      const claudeStatus = await Promise.race([
+        q
+          .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+          .then((usage) => mapClaudeUsageToStatus(usage, claudePromo))
+          .catch(() => undefined),
+        new Promise<undefined>((resolve) => {
+          // @effect-diagnostics-next-line globalTimers:off - Promise.race needs a native timer.
+          globalThis.setTimeout(resolve, CLAUDE_USAGE_LOOKUP_TIMEOUT_MS);
+        }),
+      ]);
       const account = init.account as
         | {
             readonly email?: string;

@@ -173,7 +173,7 @@ it("omits a Claude reset timestamp when the SDK does not provide one", () => {
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
-  it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>
+  it.effect("keeps account capabilities when the usage lookup stalls", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -207,6 +207,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
           '  if (message.type === "control_request" && message.request?.subtype === "get_usage") {',
+          '    if (process.env.T3_PROBE_STALL_USAGE === "true") return;',
           "    process.stdout.write(JSON.stringify({",
           '      type: "control_response",',
           "      response: {",
@@ -245,6 +246,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
         {
           ...process.env,
           T3_PROBE_INVOCATION_PATH: invocationPath,
+          T3_PROBE_STALL_USAGE: "true",
           ENABLE_CLAUDEAI_MCP_SERVERS: "true",
         },
         workspaceCwd,
