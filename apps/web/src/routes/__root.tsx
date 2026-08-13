@@ -7,6 +7,7 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useParams,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
@@ -50,7 +51,8 @@ import {
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
-import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import { readProject, setActiveEnvironmentId, useActiveEnvironmentId, useProject, useThreadShell } from "../state/entities";
+import { resolveThreadRouteRef } from "../threadRoutes";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -193,14 +195,20 @@ function FontAppearanceSync() {
 }
 
 function DocumentTitleSync() {
+  const threadRef = useParams({ strict: false, select: resolveThreadRouteRef });
+  const thread = useThreadShell(threadRef);
+  const project = useProject(
+    thread ? scopeProjectRef(thread.environmentId, thread.projectId) : null,
+  );
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-  const title = resolveServerBackedAppDisplayName({
+  const appTitle = resolveServerBackedAppDisplayName({
     baseName: APP_BASE_NAME,
     fallbackDisplayName: APP_DISPLAY_NAME,
     fallbackStageLabel: APP_STAGE_LABEL,
     primaryServerVersion,
   });
+  const title = thread && project ? `${thread.title} — ${project.title}` : appTitle;
 
   useEffect(() => {
     document.title = title;

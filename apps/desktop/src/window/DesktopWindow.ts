@@ -541,10 +541,6 @@ export const make = Effect.gen(function* () {
       }
     });
 
-    window.on("page-title-updated", (event) => {
-      event.preventDefault();
-      window.setTitle(environment.displayName);
-    });
     window.on("resize", scheduleBoundsPersist);
     window.on("move", scheduleBoundsPersist);
     window.on("maximize", scheduleBoundsPersist);
