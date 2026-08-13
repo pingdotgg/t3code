@@ -776,13 +776,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
     prState !== "merged" &&
     prState !== "closed";
-  // In-flight rows (working, or waiting on approval/input) fade as a whole:
-  // there is nothing for the user to do yet, so prominence is reserved for
-  // rows that need a human — done (unread), read-but-unsettled, failed, and
-  // freshly woken. The status label keeps its hue, so waiting rows stay
-  // findable. In-flight rows recede the same as read-ready ones (inbox-zero:
-  // working threads aren't your problem yet) — only the colored status label
-  // stands out.
+  // In-flight rows (working, or waiting on approval/input) fade as a whole.
+  // Completed rows keep their status after being read; unread styling remains
+  // a separate indication that new output has not been opened yet.
   const isInFlight =
     status === "working" || status === "monitoring" || status === "approval" || status === "input";
   const shouldRecede =
@@ -828,19 +824,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   icon: null,
                   className: "text-red-700 dark:text-red-300",
                 }
-              : isWoke
+              : status === "plan-ready"
                 ? {
-                    label: "Woke",
-                    icon: "woke" as const,
-                    className: "text-amber-700 dark:text-amber-300",
+                    label: "Plan Ready",
+                    icon: null,
+                    className: "text-violet-600 dark:text-violet-300",
                   }
-                : isUnread
+                : isWoke
                   ? {
-                      label: "Done",
-                      icon: "done" as const,
-                      className: "text-emerald-700 dark:text-emerald-300",
+                      label: "Woke",
+                      icon: "woke" as const,
+                      className: "text-amber-700 dark:text-amber-300",
                     }
-                  : null;
+                  : status === "completed"
+                    ? {
+                        label: "Done",
+                        icon: "done" as const,
+                        className: "text-emerald-700 dark:text-emerald-300",
+                      }
+                    : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({

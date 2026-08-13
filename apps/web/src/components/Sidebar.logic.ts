@@ -453,23 +453,27 @@ export function resolveThreadRowClassName(input: {
 }
 
 // ── Sidebar thread status model ─────────────────────────────────────
-// Five visual states, three colors: color is reserved for "act now"
-// (approval), "in motion" (working), and "broken" (failed). Ready is the
-// unlabeled resting state — the agent stopped and is waiting on the user,
-// whether it finished, asked a question, or proposed a plan.
-// Unread completion is tracked separately: it describes whether a ready
-// thread needs attention, not what the thread is currently doing.
+// Execution state and unread state are separate. Completion remains visible
+// after the user opens a thread; unread styling only indicates new output.
 export type SidebarThreadStatus =
   | "approval"
   | "input"
   | "working"
   | "monitoring"
   | "failed"
+  | "plan-ready"
+  | "completed"
   | "ready";
 
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "session"
+  | "backgroundLiveness"
+  | "latestTurn"
+  | "interactionMode"
+  | "hasActionableProposedPlan"
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
@@ -487,6 +491,13 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.session?.status === "error") {
     return "failed";
   }
+  if (
+    thread.interactionMode === "plan" &&
+    isLatestTurnSettled(thread.latestTurn, thread.session) &&
+    thread.hasActionableProposedPlan
+  ) {
+    return "plan-ready";
+  }
   // Background work outlives the turn: fleets read as working; monitoring
   // only when watch loops are the sole live work.
   if (thread.backgroundLiveness === "working") {
@@ -494,6 +505,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   }
   if (thread.backgroundLiveness === "monitoring") {
     return "monitoring";
+  }
+  if (thread.latestTurn?.state === "completed") {
+    return "completed";
   }
   return "ready";
 }
@@ -714,7 +728,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (hasUnseenCompletion(thread)) {
+  if (thread.latestTurn?.state === "completed") {
     return {
       label: "Completed",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",

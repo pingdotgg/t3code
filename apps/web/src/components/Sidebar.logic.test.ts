@@ -246,11 +246,12 @@ describe("resolveSidebarStageBadgeLabel", () => {
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
+  state?: OrchestrationLatestTurn["state"];
   startedAt?: string | null;
 }): OrchestrationLatestTurn {
   return {
     turnId: "turn-1" as never,
-    state: "completed",
+    state: overrides?.state ?? "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
     startedAt:
@@ -677,7 +678,13 @@ describe("resolveSidebarThreadStatus", () => {
     updatedAt: "2026-03-09T10:00:00.000Z",
   };
 
-  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+  const idle = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestTurn: null,
+  };
 
   it("prioritizes approval over a running session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, session })).toBe(
@@ -726,6 +733,39 @@ describe("resolveSidebarThreadStatus", () => {
       resolveSidebarThreadStatus({
         ...idle,
         session: { ...session, status: "ready" as const, lastError: "persisted" },
+      }),
+    ).toBe("ready");
+  });
+
+  it("keeps completed visible independently of read state", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        latestTurn: makeLatestTurn(),
+        session: { ...session, status: "ready" as const, activeTurnId: null },
+      }),
+    ).toBe("completed");
+  });
+
+  it("reports an actionable settled plan as plan ready instead of completed", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        backgroundLiveness: "working",
+        hasActionableProposedPlan: true,
+        interactionMode: "plan",
+        latestTurn: makeLatestTurn(),
+        session: { ...session, status: "ready" as const, activeTurnId: null },
+      }),
+    ).toBe("plan-ready");
+  });
+
+  it("does not report interrupted work as completed", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        latestTurn: makeLatestTurn({ state: "interrupted" }),
+        session: { ...session, status: "ready" as const, activeTurnId: null },
       }),
     ).toBe("ready");
   });
@@ -1114,7 +1154,7 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
 
-  it("does not manufacture completed state without a client visit marker", () => {
+  it("keeps completed visible without a client visit marker", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -1127,7 +1167,7 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toBeNull();
+    ).toMatchObject({ label: "Completed", pulse: false });
   });
 
   it("shows completed when there is an unseen completion and no active blocker", () => {
