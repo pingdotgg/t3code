@@ -18,6 +18,10 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import {
+  conversationComposerPlaceholder,
+  type ComposerConversationKind,
+} from "@t3tools/client-runtime/composer";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
@@ -503,6 +507,7 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
+  conversationKind: ComposerConversationKind;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
 
@@ -612,6 +617,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
+    conversationKind,
     forceExpandedOnMobile,
     projectSelectionRequired,
     phase,
@@ -3049,9 +3055,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ? "Choose a project above to start a thread"
                           : noProviderAvailable
                             ? "Enable a provider in Settings to send a message"
-                            : phase === "disconnected"
-                              ? "Ask for follow-up changes or attach images"
-                              : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                            : conversationComposerPlaceholder(conversationKind)
                 }
                 disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
               />

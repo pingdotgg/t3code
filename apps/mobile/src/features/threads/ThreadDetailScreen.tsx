@@ -53,6 +53,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ControlPill";
+import { conversationComposerPlaceholder } from "@t3tools/client-runtime/composer";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
@@ -717,7 +718,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 editorRef={composerEditorRef}
                 draftMessage={props.draftMessage}
                 draftAttachments={props.draftAttachments}
-                placeholder="Ask the repo agent, or run a command…"
+                placeholder={conversationComposerPlaceholder("existing")}
                 contentMaxWidth={contentMaxWidth}
                 connectionState={props.connectionStateLabel}
                 connectionError={props.connectionError}

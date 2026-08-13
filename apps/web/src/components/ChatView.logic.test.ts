@@ -15,6 +15,7 @@ import {
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
+  resolveComposerConversationKind,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -167,6 +168,18 @@ describe("buildLoadingThreadFromShell", () => {
       activities: [],
       checkpoints: [],
     });
+  });
+});
+
+describe("resolveComposerConversationKind", () => {
+  it("preserves existing-thread guidance while message detail is loading", () => {
+    expect(
+      resolveComposerConversationKind({
+        messageCount: 0,
+        threadDetailLoading: true,
+        latestUserMessageAt: now,
+      }),
+    ).toBe("existing");
   });
 });
 

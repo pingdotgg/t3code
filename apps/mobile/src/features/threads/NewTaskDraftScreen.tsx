@@ -16,6 +16,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { conversationComposerPlaceholder } from "@t3tools/client-runtime/composer";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -896,7 +897,7 @@ export function NewTaskDraftScreen(props: {
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
-      placeholder={`Describe a coding task in ${selectedProject.title}`}
+      placeholder={conversationComposerPlaceholder("new")}
       // Same collapsed centering as ThreadComposer: native vertical gravity
       // in a pill-height box.
       singleLineCentered={!isExpanded}
