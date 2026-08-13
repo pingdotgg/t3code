@@ -373,6 +373,7 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
               isRepo: true,
               hasOriginRemote: true,
               isDefaultBranch: true,
+              headOid: null,
               branch: "main",
               upstreamRef: null,
               hasWorkingTreeChanges: false,
