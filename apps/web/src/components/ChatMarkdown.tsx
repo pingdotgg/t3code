@@ -1,12 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
-import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import {
   CheckIcon,
   ChevronRightIcon,
   CopyIcon,
   GlobeIcon,
+  InfoIcon,
+  LightbulbIcon,
   Maximize2Icon,
+  MessageSquareWarningIcon,
   Minimize2Icon,
+  OctagonAlertIcon,
+  TriangleAlertIcon,
   WrapTextIcon,
 } from "lucide-react";
 import type { ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
@@ -39,6 +43,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import { remarkGithubAlerts } from "../markdown-github-alerts";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -53,10 +58,13 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsi
 import { ScrollArea } from "./ui/scroll-area";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { recordVisitForThread } from "../browserHistoryStore";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
+import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings } from "../hooks/useSettings";
 import {
@@ -82,6 +90,7 @@ import { usePreparedConnection } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import {
@@ -90,27 +99,6 @@ import {
   openUrlInPreview,
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
-
-class CodeHighlightErrorBoundary extends React.Component<
-  { fallback: ReactNode; children: ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { fallback: ReactNode; children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  override render() {
-    if (this.state.hasError) {
-      return this.props.fallback;
-    }
-    return this.props.children;
-  }
-}
 
 interface ChatMarkdownProps {
   text: string;
@@ -147,7 +135,6 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
-const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
@@ -165,6 +152,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -174,6 +162,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
   remarkTagInlineCode,
@@ -181,6 +170,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkBreaks,
   remarkPreserveCodeMeta,
@@ -191,6 +181,43 @@ const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+/** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
+const GITHUB_ALERT_PRESENTATIONS: Record<
+  string,
+  { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
+> = {
+  note: {
+    label: "Note",
+    Icon: InfoIcon,
+    borderClassName: "border-blue-500/70",
+    titleClassName: "text-blue-600 dark:text-blue-400",
+  },
+  tip: {
+    label: "Tip",
+    Icon: LightbulbIcon,
+    borderClassName: "border-emerald-500/70",
+    titleClassName: "text-emerald-600 dark:text-emerald-400",
+  },
+  important: {
+    label: "Important",
+    Icon: MessageSquareWarningIcon,
+    borderClassName: "border-purple-500/70",
+    titleClassName: "text-purple-600 dark:text-purple-400",
+  },
+  warning: {
+    label: "Warning",
+    Icon: TriangleAlertIcon,
+    borderClassName: "border-amber-500/70",
+    titleClassName: "text-amber-600 dark:text-amber-500",
+  },
+  caution: {
+    label: "Caution",
+    Icon: OctagonAlertIcon,
+    borderClassName: "border-red-500/70",
+    titleClassName: "text-red-600 dark:text-red-400",
+  },
+};
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -331,27 +358,6 @@ function createHighlightCacheKey(code: string, language: string, themeName: Diff
 
 function estimateHighlightedSize(html: string, code: string): number {
   return Math.max(html.length * 2, code.length * 3);
-}
-
-function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
-  const cached = highlighterPromiseCache.get(language);
-  if (cached) return cached;
-
-  const promise = getSharedHighlighter({
-    themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
-    langs: [language as SupportedLanguages],
-    preferredHighlighter: "shiki-js",
-  }).catch((err) => {
-    highlighterPromiseCache.delete(language);
-    if (language === "text") {
-      // "text" itself failed — Shiki cannot initialize at all, surface the error
-      throw err;
-    }
-    // Language not supported by Shiki — fall back to "text"
-    return getHighlighterPromise("text");
-  });
-  highlighterPromiseCache.set(language, promise);
-  return promise;
 }
 
 function readInitialWordWrapSetting(): boolean {
@@ -636,7 +642,7 @@ function MarkdownCodeBlock({
 
   return (
     <div
-      className="chat-markdown-codeblock leading-snug"
+      className="chat-markdown-codeblock border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
@@ -648,7 +654,7 @@ function MarkdownCodeBlock({
             theme={theme}
           />
         </span>
-        <span className="flex items-center gap-0.5">
+        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -743,7 +749,7 @@ function UncachedShikiCodeBlock({
   cacheKey,
   isStreaming,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getHighlighterPromise(language));
+  const highlighter = use(getSyntaxHighlighterPromise(language));
   const highlightedHtml = useMemo(() => {
     try {
       return highlighter.codeToHtml(code, { lang: language, theme: themeName });
@@ -944,6 +950,25 @@ function plainHastText(node: unknown): string | null {
     return null;
   });
   return parts.every((part) => part !== null) ? parts.join("") : null;
+}
+
+/**
+ * Whether the link carries any words of its own. An anchor that is only an image — a badge, a
+ * "Fix in Cursor" button — already shows its identity, and a favicon bolted on in front of it
+ * is a stray logo rather than a hint.
+ */
+function hastHasText(node: unknown): boolean {
+  if (!node || typeof node !== "object") return false;
+  if (
+    "type" in node &&
+    node.type === "text" &&
+    "value" in node &&
+    typeof node.value === "string" &&
+    node.value.trim().length > 0
+  ) {
+    return true;
+  }
+  return "children" in node && Array.isArray(node.children) && node.children.some(hastHasText);
 }
 
 const SANITIZED_FRAGMENT_PREFIX = "user-content-";
@@ -1365,6 +1390,7 @@ function ChatMarkdown({
     event.clipboardData.setData("text/plain", payload.text);
     event.clipboardData.setData("text/html", payload.html);
   }, []);
+  const openChangeRequestLink = useOpenChangeRequestLink(threadRef);
   const openExternalLinkInPreview = useCallback(
     (url: string) => {
       if (!threadRef) {
@@ -1378,7 +1404,10 @@ function ChatMarkdown({
           ),
         );
       }
-      return openUrlInPreview({ threadRef, url, openPreview });
+      return openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
+        if (result._tag === "Success") recordVisitForThread(threadRef, url);
+        return result;
+      });
     },
     [openPreview, threadRef],
   );
@@ -1405,6 +1434,9 @@ function ChatMarkdown({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
+  /* eslint-disable react/no-unstable-nested-components -- ReactMarkdown requires component
+   * renderers that close over this message's metadata. useMemo keeps them stable until that
+   * metadata changes. */
   const markdownComponents = useMemo<Components>(() => {
     const fileLinkChip = (
       fileLinkMeta: MarkdownFileLinkMeta,
@@ -1450,6 +1482,26 @@ function ChatMarkdown({
     return {
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+      },
+      blockquote({ node: _node, children, ...props }) {
+        const alert =
+          GITHUB_ALERT_PRESENTATIONS[
+            String((props as Record<string, unknown>)["data-alert"] ?? "")
+          ];
+        if (!alert) {
+          return <blockquote {...props}>{children}</blockquote>;
+        }
+        // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
+        // text under a colored title — which is how the host renders it.
+        return (
+          <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+            <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
+              <alert.Icon aria-hidden className="size-3.5 shrink-0" />
+              {alert.label}
+            </p>
+            {children}
+          </div>
+        );
       },
       li({ node, children, ...props }) {
         const listItemStart = node?.position?.start.offset;
@@ -1508,16 +1560,23 @@ function ChatMarkdown({
                 onClick?.(event);
                 if (isSameDocumentLink && href) {
                   handleMarkdownFragmentClick(event, href);
+                  return;
                 }
+                // A link to a change request in a workspace project opens beside the
+                // conversation instead of in a browser: it is the thing being talked about, and
+                // the panel it opens offers the browser as one of its actions. Anything else is
+                // an ordinary link and keeps the `_blank` the shell already handles.
+                if (href) openChangeRequestLink(event, href);
               }}
               onContextMenu={(event) => {
-                if (!canOpenInPreview || !href || !faviconHost) return;
+                if (!href || !faviconHost) return;
                 event.preventDefault();
                 event.stopPropagation();
                 const api = readLocalApi();
                 if (!api) return;
                 void showExternalLinkContextMenu({
                   href,
+                  canOpenInPreview,
                   position: { x: event.clientX, y: event.clientY },
                   showContextMenu: (items, position) => api.contextMenu.show(items, position),
                   openInPreview: async (target) => {
@@ -1537,7 +1596,7 @@ function ChatMarkdown({
                 });
               }}
             >
-              {faviconHost ? (
+              {faviconHost && hastHasText(node) ? (
                 <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
                   {children}
                 </MarkdownExternalLinkContent>
@@ -1605,7 +1664,7 @@ function ChatMarkdown({
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
           >
-            <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+            <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
                 <SuspenseShikiCodeBlock
                   className={codeBlock.className}
@@ -1614,7 +1673,7 @@ function ChatMarkdown({
                   isStreaming={isStreaming}
                 />
               </Suspense>
-            </CodeHighlightErrorBoundary>
+            </RenderErrorBoundary>
           </MarkdownCodeBlock>
         );
       },
@@ -1635,6 +1694,7 @@ function ChatMarkdown({
     text,
     threadRef,
   ]);
+  /* eslint-enable react/no-unstable-nested-components */
 
   return (
     <div

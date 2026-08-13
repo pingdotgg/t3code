@@ -294,6 +294,111 @@ describe("thread outbox", () => {
     registry.dispose();
   });
 
+  it("publishes an enqueued message before the durable write resolves", async () => {
+    const registry = AtomRegistry.make();
+    let releaseWrite!: () => void;
+    const writeBlocked = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [],
+        write: async () => writeBlocked,
+        remove: async () => undefined,
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+
+    const enqueueing = manager.enqueue(message);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [message],
+    });
+
+    releaseWrite();
+    await enqueueing;
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [message],
+    });
+    registry.dispose();
+  });
+
+  it("rolls an enqueued message back out when the durable write fails", async () => {
+    const registry = AtomRegistry.make();
+    const writeCause = new Error("disk full");
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [],
+        write: async () => {
+          throw writeCause;
+        },
+        remove: async () => undefined,
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+
+    await expect(manager.enqueue(message)).rejects.toEqual(
+      new ThreadOutboxManagerError({
+        operation: "enqueue",
+        environmentId: message.environmentId,
+        threadId: message.threadId,
+        messageId: message.messageId,
+        cause: writeCause,
+      }),
+    );
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
+    registry.dispose();
+  });
+
+  it("keeps a same-id retry queued when the first attempt's write fails", async () => {
+    const registry = AtomRegistry.make();
+    let failNextWrite = true;
+    let releaseFirstWrite!: () => void;
+    const firstWriteBlocked = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [],
+        write: async () => {
+          if (failNextWrite) {
+            failNextWrite = false;
+            await firstWriteBlocked;
+            throw new Error("disk full");
+          }
+        },
+        remove: async () => undefined,
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const retried = { ...message, text: "retried" };
+
+    const first = manager.enqueue(message);
+    const second = manager.enqueue(retried);
+    releaseFirstWrite();
+    await expect(first).rejects.toBeInstanceOf(ThreadOutboxManagerError);
+    await second;
+
+    // The failed first attempt must not roll back the retry that replaced it.
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [retried],
+    });
+    await expect(manager.confirmQueued(retried)).resolves.toBe(true);
+    await expect(manager.confirmQueued(message)).resolves.toBe(false);
+    registry.dispose();
+  });
+
   it("replaces an existing message when an enqueue retry uses the same id", async () => {
     const registry = AtomRegistry.make();
     const manager = createThreadOutboxManager({

@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     name: Check
@@ -14,6 +18,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -21,6 +30,11 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -30,6 +44,9 @@ jobs:
 
       - name: Typecheck
         run: vpr typecheck
+
+      - name: Check resource monitor formatting
+        run: cargo fmt --manifest-path native/resource-monitor/Cargo.toml -- --check
 
       - name: Build desktop pipeline
         run: vp run build:desktop
@@ -47,6 +64,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -54,27 +76,61 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
       - name: Test
+        env:
+          T3CODE_TRANSFER_BUDGET_REPORT_PATH: ${{ runner.temp }}/t3code-transfer-budget.md
+          T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
         run: vp run test
+
+      - name: Publish transfer budget report
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/t3code-transfer-budget.md"; then
+            tee -a "$GITHUB_STEP_SUMMARY" < "${{ runner.temp }}/t3code-transfer-budget.md"
+          else
+            echo "Transfer budget report was not produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload thread transfer result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: thread-transfer-results
+          path: ${{ runner.temp }}/thread-transfer-result.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Test resource monitor
+        run: cargo test --locked --manifest-path native/resource-monitor/Cargo.toml
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
-    runs-on: blacksmith-12vcpu-macos-26
+    runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
           cache: true
-          run-install: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
 
       - name: Install mobile native static analysis tools
         run: brew bundle install --file apps/mobile/Brewfile
@@ -89,13 +145,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
           cache: true
-          run-install: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
 
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts

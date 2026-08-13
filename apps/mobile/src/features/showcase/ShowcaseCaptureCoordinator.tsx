@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Keyboard, View } from "react-native";
-import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
+import {
+  CommonActions,
+  type NavigationState,
+  type PartialState,
+  StackActions,
+  useNavigation,
+} from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { useConnectionController } from "../connection/useConnectionController";
@@ -9,6 +15,8 @@ import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { holdEditingQueuedMessage } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import {
+  applyNativeShowcaseOrientation,
+  getNativeShowcaseOrientation,
   getNativeShowcasePairingUrls,
   getNativeShowcaseScene,
   markNativeShowcaseReady,
@@ -22,6 +30,8 @@ import { retryShowcaseOperation } from "./showcaseRetry";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const SHOWCASE_THREAD_ID = "remote-command-center";
+
+type ShowcaseResetRoute = PartialState<NavigationState>["routes"][number];
 
 function sceneFromPathname(pathname: string): ShowcaseScene | null {
   const routePath = pathname.split(/[?#]/u, 1)[0] ?? pathname;
@@ -47,6 +57,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   const [pendingTasksReady, setPendingTasksReady] = useState(false);
   const [requestedScene, setRequestedScene] = useState<ShowcaseScene | null>(null);
   const [readyScene, setReadyScene] = useState<ShowcaseScene | null>(null);
+  const [orientationSettled, setOrientationSettled] = useState(false);
 
   useEffect(() => {
     if (!SHOWCASE_ENABLED || pairingUrls.length > 0) return;
@@ -59,6 +70,25 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
     const interval = setInterval(readPairingUrls, 250);
     return () => clearInterval(interval);
   }, [pairingUrls.length]);
+
+  useEffect(() => {
+    if (!SHOWCASE_ENABLED || orientationSettled) return;
+    const orientation = getNativeShowcaseOrientation();
+    if (orientation === null) {
+      setOrientationSettled(true);
+      return;
+    }
+
+    let cancelled = false;
+    void retryShowcaseOperation(async () => applyNativeShowcaseOrientation(orientation), {
+      isCancelled: () => cancelled,
+    }).then((applied) => {
+      if (!cancelled && applied) setOrientationSettled(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [orientationSettled]);
 
   useEffect(() => {
     if (!SHOWCASE_ENABLED) return;
@@ -144,17 +174,21 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
       navigation.dispatch(StackActions.popToTop());
       return;
     }
-    const routes: Array<{
-      name: string;
-      params?: Record<string, unknown>;
-      state?: { index: number; routes: Array<{ name: string }> };
-    }> = [{ name: "Home" }];
+    const routes: ShowcaseResetRoute[] = [{ name: "Home" }];
     if (requestedScene === "environments") {
       routes.push({
         name: "SettingsSheet",
         state: {
-          index: 1,
-          routes: [{ name: "Settings" }, { name: "SettingsEnvironments" }],
+          index: 0,
+          routes: [
+            {
+              name: "SettingsContent",
+              state: {
+                index: 1,
+                routes: [{ name: "Settings" }, { name: "SettingsEnvironments" }],
+              },
+            },
+          ],
         },
       });
     } else {
@@ -182,7 +216,10 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
       scene === null ||
       requestedScene === null ||
       scene !== requestedScene ||
-      !hasFixture
+      !hasFixture ||
+      // Never report a scene ready while the capture orientation is still
+      // being applied — a screenshot taken early has the wrong dimensions.
+      !orientationSettled
     ) {
       setReadyScene(null);
       return;
@@ -210,7 +247,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
       if (renderFrame !== null) cancelAnimationFrame(renderFrame);
       if (readyFrame !== null) cancelAnimationFrame(readyFrame);
     };
-  }, [hasFixture, requestedScene, scene]);
+  }, [hasFixture, orientationSettled, requestedScene, scene]);
 
   if (!SHOWCASE_ENABLED || readyScene === null) return null;
 

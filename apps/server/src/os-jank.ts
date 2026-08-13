@@ -36,6 +36,18 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
   }
 }
 
+export function hydratePosixHome(
+  env: NodeJS.ProcessEnv,
+  resolveHomeDir = () => NodeOS.userInfo().homedir,
+): void {
+  if ((env.HOME?.trim() ?? "").length > 0) return;
+
+  const homeDir = resolveHomeDir();
+  if (homeDir.length > 0) {
+    env.HOME = homeDir;
+  }
+}
+
 export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
   void,
   never,
@@ -63,6 +75,13 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
 
   if (platform !== "darwin" && platform !== "linux") return;
 
+  yield* Effect.sync(() => hydratePosixHome(env)).pipe(
+    Effect.catchDefect((defect) =>
+      Effect.sync(() => {
+        logPathHydrationWarning("Failed to hydrate HOME from the user account.", defect);
+      }),
+    ),
+  );
   yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
     Effect.catchDefect((defect) =>
       Effect.sync(() => {

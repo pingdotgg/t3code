@@ -24,6 +24,7 @@ import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
+import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useThread } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -230,7 +231,7 @@ export function BranchToolbarBranchSelector({
   const refs = branchRefState.refs;
   const hasNextPage =
     branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;
-  const isFetchingNextPage = branchRefState.isPending && branchRefState.data !== null;
+  const isFetchingNextPage = branchRefState.isFetchingNextPage;
   const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
@@ -505,19 +506,16 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   // Combobox / list plumbing
   // ---------------------------------------------------------------------------
-  const handleOpenChange = useCallback(
-    (open: boolean) => {
-      setIsBranchMenuOpen(open);
-      if (!open) {
-        setBranchQuery("");
-        return;
-      }
-      branchRefState.refresh();
-    },
-    [branchRefState.refresh],
-  );
-
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
+  const previousBranchListScrollTopRef = useRef<number | null>(null);
+  const handleOpenChange = useCallback((open: boolean) => {
+    previousBranchListScrollTopRef.current = null;
+    setIsBranchMenuOpen(open);
+    if (!open) {
+      setBranchQuery("");
+    }
+  }, []);
+
   const [showTopBranchScrollFade, setShowTopBranchScrollFade] = useState(false);
   const [showBottomBranchScrollFade, setShowBottomBranchScrollFade] = useState(false);
   const fetchNextBranchPage = useCallback(() => {
@@ -528,18 +526,24 @@ export function BranchToolbarBranchSelector({
     branchRefState.loadNext();
   }, [branchRefState.loadNext, hasNextPage, isFetchingNextPage]);
   const maybeFetchNextBranchPage = useCallback(() => {
-    if (!isBranchMenuOpen || !hasNextPage || isFetchingNextPage) {
-      return;
-    }
-
     const scrollElement = branchListScrollElementRef.current;
     if (!scrollElement) {
       return;
     }
 
-    const distanceFromBottom =
-      scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
-    if (distanceFromBottom > 96) {
+    const previousScrollTop = previousBranchListScrollTopRef.current;
+    previousBranchListScrollTopRef.current = scrollElement.scrollTop;
+    if (
+      !isBranchMenuOpen ||
+      !hasNextPage ||
+      isFetchingNextPage ||
+      !shouldLoadNextBranchPageAfterScroll({
+        previousScrollTop,
+        scrollTop: scrollElement.scrollTop,
+        scrollHeight: scrollElement.scrollHeight,
+        clientHeight: scrollElement.clientHeight,
+      })
+    ) {
       return;
     }
 
@@ -589,10 +593,6 @@ export function BranchToolbarBranchSelector({
     void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
   }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
 
-  useEffect(() => {
-    maybeFetchNextBranchPage();
-  }, [refs.length, maybeFetchNextBranchPage]);
-
   const triggerLabel = resolveBranchTriggerLabel({
     activeWorktreePath,
     effectiveEnvMode,
@@ -613,9 +613,9 @@ export function BranchToolbarBranchSelector({
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
   // state-description tooltip.
   const branchPrTooltip = branchPr
-    ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state}) in browser`
+    ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state})`
     : "";
-  const openPrLink = useOpenPrLink();
+  const openPrLink = useOpenPrLink(threadRef);
 
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
@@ -714,7 +714,10 @@ export function BranchToolbarBranchSelector({
       open={isBranchMenuOpen}
       value={resolvedActiveBranch}
     >
-      <div className={cn("flex min-w-0 items-center gap-1", className)}>
+      <div
+        className={cn("flex min-w-0 items-center gap-1", className)}
+        data-composer-context-control
+      >
         {branchPr && branchPrStatus ? (
           <Tooltip>
             <TooltipTrigger
@@ -749,7 +752,17 @@ export function BranchToolbarBranchSelector({
             disabled={isInitialBranchesLoadPending || isBranchActionPending}
           >
             <GitBranchIcon className="size-3 shrink-0 opacity-70" />
-            <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
+            <span
+              data-composer-label
+              className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
+            >
+              <span
+                data-composer-label-motion
+                className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
+              >
+                {triggerLabel}
+              </span>
+            </span>
             <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
           </ComboboxTrigger>
         </span>
@@ -791,14 +804,10 @@ export function BranchToolbarBranchSelector({
                 renderItem={({ item, index }) => renderPickerItem(item, index)}
                 estimatedItemSize={28}
                 drawDistance={336}
-                onEndReached={() => {
-                  if (hasNextPage && !isFetchingNextPage) {
-                    fetchNextBranchPage();
-                  }
-                }}
                 onLayout={() => {
                   updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
+                  previousBranchListScrollTopRef.current =
+                    branchListScrollElementRef.current?.scrollTop ?? null;
                 }}
                 onScroll={() => {
                   updateBranchListScrollFades();

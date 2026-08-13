@@ -8,8 +8,10 @@ import {
   readConnectCliCallbackResult,
   rememberConnectCliAuthState,
 } from "../../cloud/connectCliAuth";
+import { isElectron } from "../../env";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
+import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
 
 function ConnectCliAuthMessage({
@@ -42,8 +44,10 @@ const invalidLinkMessage = {
 } as const;
 
 /**
- * /connect: the URL a headless CLI prints. Waits for a Clerk session, then
- * forwards the CLI's PKCE request to Clerk's authorize endpoint.
+ * /connect: the URL the CLI prints for both flows. Waits for a Clerk session,
+ * then forwards the CLI's PKCE request to Clerk's authorize endpoint — with a
+ * loopback redirect URI when the request carries a port, so the code returns
+ * straight to the waiting CLI, and the hosted callback page otherwise.
  */
 export function ConnectCliAuthorizeSurface() {
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
@@ -59,7 +63,7 @@ export function ConnectCliAuthorizeSurface() {
     if (!isSignedIn) {
       if (!signInOpened.current) {
         signInOpened.current = true;
-        clerk.openSignIn({ forceRedirectUrl: window.location.href });
+        clerk.openSignIn(resolveClerkSignInProps(window.location.href, isElectron));
       }
       return;
     }
@@ -83,7 +87,11 @@ export function ConnectCliAuthorizeSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectCliAuthMessage
-        eyebrow="Step 1 of 2 · Browser authorization"
+        eyebrow={
+          request.loopbackPort === undefined
+            ? "Step 1 of 2 · Browser authorization"
+            : "Browser authorization"
+        }
         title="Connecting your terminal"
         description={
           isSignedIn
@@ -95,7 +103,9 @@ export function ConnectCliAuthorizeSurface() {
         <div className="mt-6">
           <Button
             type="button"
-            onClick={() => clerk.openSignIn({ forceRedirectUrl: window.location.href })}
+            onClick={() =>
+              clerk.openSignIn(resolveClerkSignInProps(window.location.href, isElectron))
+            }
           >
             Sign in
           </Button>

@@ -54,6 +54,14 @@ export function shouldShowEnvironmentIndicator(input: {
   return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
 }
 
+export function shouldShowComposerContextStrip(input: {
+  hasActiveProject: boolean;
+  isGitRepo: boolean;
+  showEnvironmentIndicator: boolean;
+}): boolean {
+  return input.hasActiveProject && (input.isGitRepo || input.showEnvironmentIndicator);
+}
+
 export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }

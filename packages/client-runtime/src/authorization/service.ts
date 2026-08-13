@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 import {
   exchangeRemoteDpopAccessToken,
@@ -58,7 +58,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
 const TOKEN_EXPIRY_SAFETY_MARGIN_MS = 60_000;
-const CACHED_ENDPOINT_FAILURE_THRESHOLD = 2;
+const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
+const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
@@ -79,25 +80,16 @@ export const make = Effect.gen(function* () {
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const tokenStore = yield* TokenStore.RemoteDpopAccessTokenStore;
   const httpClient = yield* HttpClient.HttpClient;
-  const cachedEndpointFailures = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
-
-  const resetCachedEndpointFailures = (environmentId: string) =>
-    Ref.update(cachedEndpointFailures, (current) => {
-      if (!current.has(environmentId)) {
-        return current;
+  const bearerDescriptors = yield* Ref.make<
+    ReadonlyMap<
+      EnvironmentId,
+      {
+        readonly httpBaseUrl: string;
+        readonly descriptor: ExecutionEnvironmentDescriptor;
+        readonly validatedAtEpochMs: number;
       }
-      const next = new Map(current);
-      next.delete(environmentId);
-      return next;
-    });
-
-  const recordCachedEndpointFailure = (environmentId: string) =>
-    Ref.modify(cachedEndpointFailures, (current) => {
-      const failureCount = (current.get(environmentId) ?? 0) + 1;
-      const next = new Map(current);
-      next.set(environmentId, failureCount);
-      return [failureCount, next] as const;
-    });
+    >
+  >(new Map());
 
   const authorizeBearer = Effect.fn("clientRuntime.connection.remote.authorizeBearer")(
     function* (input: {
@@ -108,13 +100,31 @@ export const make = Effect.gen(function* () {
       readonly wsBaseUrl: string;
       readonly bearerToken: string;
     }) {
-      const descriptor = yield* fetchDescriptor(input.httpBaseUrl).pipe(
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-      );
+      const now = yield* Clock.currentTimeMillis;
+      const cachedDescriptor = (yield* Ref.get(bearerDescriptors)).get(input.expectedEnvironmentId);
+      const canReuseDescriptor =
+        cachedDescriptor?.httpBaseUrl === input.httpBaseUrl &&
+        cachedDescriptor.validatedAtEpochMs + BEARER_DESCRIPTOR_CACHE_TTL_MS > now;
+      const descriptor = canReuseDescriptor
+        ? cachedDescriptor.descriptor
+        : yield* fetchDescriptor(input.httpBaseUrl).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+          );
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
         return yield* environmentMismatchError({
           expected: input.expectedEnvironmentId,
           actual: descriptor.environmentId,
+        });
+      }
+      if (!canReuseDescriptor) {
+        yield* Ref.update(bearerDescriptors, (current) => {
+          const next = new Map(current);
+          next.set(input.expectedEnvironmentId, {
+            httpBaseUrl: input.httpBaseUrl,
+            descriptor,
+            validatedAtEpochMs: now,
+          });
+          return next;
         });
       }
       const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
@@ -139,7 +149,7 @@ export const make = Effect.gen(function* () {
   );
 
   const createDpopSocketUrl = Effect.fn("clientRuntime.connection.remote.createDpopSocketUrl")(
-    function* (token: TokenStore.RemoteDpopAccessToken) {
+    function* (token: TokenStore.RemoteDpopAccessToken, timeoutMs?: number) {
       const ticketProof = yield* signer
         .createProof({
           method: "POST",
@@ -160,6 +170,7 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: token.endpoint.httpBaseUrl,
         accessToken: token.accessToken,
         dpopProof: ticketProof,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
     },
   );
@@ -196,9 +207,11 @@ export const make = Effect.gen(function* () {
         yield* Effect.annotateCurrentSpan({
           "connection.remote_token_cache": "hit",
         });
-        const cachedSocket = yield* createDpopSocketUrl(cached.value).pipe(Effect.result);
+        const cachedSocket = yield* createDpopSocketUrl(
+          cached.value,
+          CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
+        ).pipe(Effect.result);
         if (Result.isSuccess(cachedSocket)) {
-          yield* resetCachedEndpointFailures(input.expectedEnvironmentId);
           return {
             environmentId: cached.value.environmentId,
             label: cached.value.label,
@@ -213,20 +226,11 @@ export const make = Effect.gen(function* () {
         if (cachedSocket.failure._tag === "ConnectionBlockedError") {
           return yield* mapDpopSocketError(cachedSocket.failure);
         }
-        const mappedFailure = mapDpopSocketError(cachedSocket.failure);
-        if (mappedFailure._tag === "ConnectionTransientError") {
-          const failureCount = yield* recordCachedEndpointFailure(input.expectedEnvironmentId);
-          if (failureCount < CACHED_ENDPOINT_FAILURE_THRESHOLD) {
-            return yield* mappedFailure;
-          }
-        }
         yield* tokenStore
           .remove(input.expectedEnvironmentId)
           .pipe(Effect.withSpan("environment.authorization.accessToken.remove"));
-        yield* resetCachedEndpointFailures(input.expectedEnvironmentId);
       }
 
-      yield* resetCachedEndpointFailures(input.expectedEnvironmentId);
       yield* Effect.annotateCurrentSpan({
         "connection.remote_token_cache": "miss",
       });

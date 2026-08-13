@@ -31,14 +31,14 @@ import {
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
-const ANDROID_PACKAGE = "com.t3tools.t3code.dev";
-const APP_SCHEME = "t3code-dev";
+const ANDROID_PACKAGE = "com.t3tools.t3code";
+const APP_SCHEME = "t3code";
 const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
 const SERVER_HOST = "0.0.0.0";
 const IOS_SIMULATOR_ARCH = NodeProcess.arch === "arm64" ? "arm64" : "x86_64";
 const IOS_APP_PATH = NodePath.join(
   MOBILE_ROOT,
-  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3CodeDev.app",
+  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3Code.app",
 );
 const ANDROID_APK_PATH = NodePath.join(
   MOBILE_ROOT,
@@ -58,8 +58,11 @@ const ANDROID_SDK_ROOT = resolveAndroidSdkRoot(NodeProcess.env);
 const MOBILE_BUILD_ENV = {
   ...NodeProcess.env,
   ANDROID_HOME: ANDROID_SDK_ROOT,
-  APP_VARIANT: "development",
+  APP_VARIANT: "production",
   EXPO_NO_GIT_STATUS: "1",
+  // Lets the capture build require full screen on iPad so the app can rotate
+  // itself to landscape (see app.config.ts).
+  T3_SHOWCASE_CAPTURE_BUILD: "1",
   JAVA_HOME:
     NodeProcess.env.JAVA_HOME ??
     (NodeProcess.platform === "darwin"
@@ -500,6 +503,23 @@ async function waitForPort(port: number, label = "Process", timeoutMs = 60_000):
   throw new Error(`${label} did not begin listening on port ${port} within ${timeoutMs}ms.`);
 }
 
+async function waitForFileContent(
+  filePath: string,
+  label: string,
+  timeoutMs = 60_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const content = await NodeFSP.readFile(filePath, "utf8").then(
+      (value) => value.trim(),
+      () => "",
+    );
+    if (content) return content;
+    await delay(250);
+  }
+  throw new Error(`${label} was not written to ${filePath} within ${timeoutMs}ms.`);
+}
+
 async function reserveAvailablePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = NodeNet.createServer();
@@ -664,9 +684,9 @@ async function buildIos(): Promise<string> {
     "xcodebuild",
     [
       "-workspace",
-      NodePath.join(MOBILE_ROOT, "ios/T3CodeDev.xcworkspace"),
+      NodePath.join(MOBILE_ROOT, "ios/T3Code.xcworkspace"),
       "-scheme",
-      "T3CodeDev",
+      "T3Code",
       "-configuration",
       "Debug",
       "-sdk",
@@ -775,6 +795,60 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
   ]);
 }
 
+// iPadOS 26 windowing ("Chamois") runs UIRequiresFullScreen apps in a fixed
+// portrait compatibility window, which defeats the in-app landscape rotation
+// the capture build relies on. Switch the device to Full Screen Apps mode
+// (Settings > Multitasking & Gestures) and restart SpringBoard to apply it.
+async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
+  const current = await commandOutput("xcrun", [
+    "simctl",
+    "spawn",
+    udid,
+    "defaults",
+    "read",
+    "com.apple.springboard",
+    "SBChamoisWindowingEnabled",
+  ]).catch(() => "");
+  if (current.trim() === "0") return;
+  // The Settings toggle writes all three keys; SBChamoisWindowingEnabled
+  // alone is not honored on a freshly created device.
+  for (const key of [
+    "SBChamoisWindowingEnabled",
+    "SBMedusaMultitaskingEnabled",
+    "SBFlexibleWindowingPreviouslyEnabledAutomaticStageCreation",
+  ]) {
+    await runCommand("xcrun", [
+      "simctl",
+      "spawn",
+      udid,
+      "defaults",
+      "write",
+      "com.apple.springboard",
+      key,
+      "-bool",
+      "false",
+    ]);
+  }
+  // A SpringBoard restart is not enough on a freshly created simulator (the
+  // first CI run captured with windowing still active), so reboot the device
+  // and verify the mode actually stuck.
+  await runCommand("xcrun", ["simctl", "shutdown", udid]);
+  await runCommand("xcrun", ["simctl", "boot", udid]);
+  await runCommand("xcrun", ["simctl", "bootstatus", udid, "-b"]);
+  const applied = await commandOutput("xcrun", [
+    "simctl",
+    "spawn",
+    udid,
+    "defaults",
+    "read",
+    "com.apple.springboard",
+    "SBChamoisWindowingEnabled",
+  ]).catch(() => "");
+  if (applied.trim() !== "0") {
+    throw new Error(`Simulator ${udid} did not switch to Full Screen Apps mode.`);
+  }
+}
+
 async function iosAppContainer(udid: string): Promise<string> {
   return (
     await commandOutput("xcrun", ["simctl", "get_app_container", udid, ANDROID_PACKAGE, "data"])
@@ -819,6 +893,9 @@ async function captureIos(
   }
   await runCommand("xcrun", ["simctl", "boot", simulator.udid]);
   await runCommand("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"]);
+  if (capture.device.orientation === "landscape") {
+    await ensureIosFullScreenAppsMode(simulator.udid);
+  }
   await normalizeIosSimulator(capture.appearance, simulator.udid);
   if (appPath) {
     await runCommand("xcrun", ["simctl", "uninstall", simulator.udid, ANDROID_PACKAGE]).catch(
@@ -869,6 +946,10 @@ async function captureIos(
       JSON.stringify(pairingUrls),
       "--showcaseScene",
       firstScene,
+      // The app rotates itself; Simulator menu UI scripting needs macOS
+      // Accessibility permission that CI runners do not grant to osascript.
+      "--showcaseOrientation",
+      capture.device.orientation ?? "portrait",
     ]);
   };
   await NodeFSP.rm(readyPath, { force: true });
@@ -900,6 +981,15 @@ async function captureIos(
       `${scene}.png`,
     );
     await runCommand("xcrun", ["simctl", "io", simulator.udid, "screenshot", destination]);
+    if (capture.device.orientation === "landscape") {
+      // A headless simulator keeps its display portrait while the rotated app
+      // renders sideways inside it; with Simulator.app attached the display
+      // itself rotates. Only post-rotate the former.
+      const { width, height } = readPngDimensions(await NodeFSP.readFile(destination));
+      if (height > width) {
+        await runCommand("sips", ["--rotate", "270", destination]);
+      }
+    }
     await finalizeCapture(destination, capture.device);
   }
 }
@@ -1225,12 +1315,12 @@ async function main(): Promise<void> {
       showcaseServers.push(server);
       await waitForPort(port, `${environment.label} server`);
       await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
-      const environmentId = (
-        await NodeFSP.readFile(NodePath.join(baseDir, "userdata", "environment-id"), "utf8")
-      ).trim();
-      if (!environmentId) {
-        throw new Error(`${environment.label} did not persist an environment id.`);
-      }
+      // The server begins listening before the ServerEnvironment layer
+      // persists the environment id, so poll rather than read once.
+      const environmentId = await waitForFileContent(
+        NodePath.join(baseDir, "userdata", "environment-id"),
+        `${environment.label} environment id`,
+      );
       showcaseEnvironments.push({ baseDir, environmentId, label: environment.label, port });
     }
 

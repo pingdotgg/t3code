@@ -3,10 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { mergeServers, type PreviewableServer } from "./useDiscoveredLocalServers";
 
-const scannerServer = (overrides: Partial<DiscoveredLocalServer>): DiscoveredLocalServer => ({
+const scannerServer = (
+  overrides: Partial<DiscoveredLocalServer & { requestedUrl: string }>,
+): DiscoveredLocalServer & { requestedUrl: string } => ({
   host: "localhost",
   port: 5173,
   url: "http://localhost:5173",
+  requestedUrl: overrides.url ?? "http://localhost:5173",
   processName: "vite",
   pid: 1234,
   terminal: null,
@@ -24,6 +27,7 @@ describe("mergeServers", () => {
     expect(result[0]).toMatchObject({
       host: "localhost",
       port: 5173,
+      requestedUrl: "http://localhost:5173",
       source: "scanner",
       listening: true,
       processName: "vite",
@@ -56,6 +60,7 @@ describe("mergeServers", () => {
     expect(result[0]).toMatchObject({
       source: "configured",
       listening: false,
+      requestedUrl: "http://localhost:5173/",
     });
   });
 
@@ -68,6 +73,7 @@ describe("mergeServers", () => {
     expect(result.map((s) => s.port)).toEqual([5173, 8080]);
     expect(result.find((s) => s.port === 5173)?.source).toBe("scanner");
     expect(result.find((s) => s.port === 8080)?.source).toBe("recent");
+    expect(result.find((s) => s.port === 8080)?.requestedUrl).toBe("http://localhost:8080/");
   });
 
   it("ignores non-loopback URLs in configured/recent inputs", () => {
@@ -101,6 +107,22 @@ describe("mergeServers", () => {
       recentlySeenUrls: [],
     });
     expect(result).toHaveLength(1);
+  });
+
+  it("keeps a scanner entry's pre-resolution requestedUrl distinct from a resolved url", () => {
+    const result = mergeServers({
+      scanner: [
+        scannerServer({
+          port: 5173,
+          url: "https://env-42.example.dev:5173/",
+          requestedUrl: "http://localhost:5173/",
+        }),
+      ],
+      configuredUrls: [],
+      recentlySeenUrls: [],
+    });
+    expect(result[0]?.url).toBe("https://env-42.example.dev:5173/");
+    expect(result[0]?.requestedUrl).toBe("http://localhost:5173/");
   });
 });
 

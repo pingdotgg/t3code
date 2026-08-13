@@ -14,8 +14,10 @@ export interface PendingApprovalCardProps {
 }
 
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
+  // Opaque for the same reason as PendingUserInputCard: nothing blurs the feed
+  // behind this card, so a translucent surface bleeds messages through it.
   return (
-    <View className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100/80 p-4 dark:border-white/6 dark:bg-neutral-900/80">
+    <View className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100 p-4 dark:border-white/6 dark:bg-neutral-900">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
         Approval needed
       </Text>

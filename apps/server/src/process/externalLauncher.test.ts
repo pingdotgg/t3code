@@ -2,11 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -154,6 +156,130 @@ it.effect("discovers editors through the service API", () =>
     assert.equal(editors.includes("file-manager"), true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("memoizes editor discovery and refreshes after the cache window", () => {
+  let statCalls = 0;
+  const fileInfo = { type: "File" } as FileSystem.File.Info;
+  const launcherLayer = ExternalLauncher.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({
+          stat: () =>
+            Effect.sync(() => {
+              statCalls += 1;
+              return fileInfo;
+            }),
+        }),
+        Path.layer,
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
+        ),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+    const first = yield* launcher.resolveAvailableEditors();
+    assert.equal(first.includes("vscode"), true);
+    const statCallsAfterFirstScan = statCalls;
+    assert.isAbove(statCallsAfterFirstScan, 0);
+
+    // Past the shared command-resolution cache TTL (30s) but within the
+    // discovery cache window: the memoized set is reused without any scan.
+    yield* TestClock.adjust("31 seconds");
+    const second = yield* launcher.resolveAvailableEditors();
+    assert.deepEqual([...second], [...first]);
+    assert.equal(statCalls, statCallsAfterFirstScan);
+
+    // Past the discovery cache window the next call rescans.
+    yield* TestClock.adjust("30 seconds");
+    yield* launcher.resolveAvailableEditors();
+    assert.isAbove(statCalls, statCallsAfterFirstScan);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        launcherLayer,
+        Layer.succeed(HostProcessPlatform, "win32"),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              PATH: "C:\\t3-editor-discovery-cache-test",
+              PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            },
+          }),
+        ),
+        TestClock.layer(),
+      ),
+    ),
+  );
+});
+
+// A client that disconnects mid-scan interrupts the shared discovery effect on
+// the connection fiber. The cache must not retain that interrupt: doing so
+// replayed it to every later connect for the whole TTL, so `server.getConfig`
+// failed and no client could reconnect until the server restarted.
+it.effect("rescans after an interrupted discovery instead of caching the interrupt", () => {
+  const fileInfo = { type: "File" } as FileSystem.File.Info;
+  let blockFirstScan = true;
+  let scans = 0;
+  const launcherLayer = ExternalLauncher.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({
+          // The first scan parks inside `stat` so the interrupt lands while
+          // discovery is in flight, which is what a client disconnecting
+          // mid-connect does to the shared effect.
+          stat: () =>
+            Effect.gen(function* () {
+              scans += 1;
+              if (blockFirstScan) {
+                return yield* Effect.never;
+              }
+              return fileInfo;
+            }),
+        }),
+        Path.layer,
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
+        ),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+
+    const fiber = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+    yield* Effect.yieldNow;
+    yield* Fiber.interrupt(fiber);
+
+    // The next connect must still get a real answer well inside the TTL.
+    blockFirstScan = false;
+    scans = 0;
+    const editors = yield* launcher.resolveAvailableEditors();
+    assert.equal(editors.includes("vscode"), true);
+    assert.isAbove(scans, 0);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        launcherLayer,
+        Layer.succeed(HostProcessPlatform, "win32"),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              PATH: "C:\\t3-editor-discovery-interrupt-test",
+              PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("rejects unknown editors through the service API", () =>
   Effect.gen(function* () {

@@ -8,7 +8,8 @@ import { OtlpResource, OtlpTracer } from "effect/unstable/observability";
 
 import { RotatingFileSink } from "./logging.ts";
 
-const FLUSH_BUFFER_THRESHOLD = 32;
+const FLUSH_BUFFER_THRESHOLD = 256;
+const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
 
@@ -109,6 +110,13 @@ export interface TraceSinkOptions {
   readonly maxBytes: number;
   readonly maxFiles: number;
   readonly batchWindowMs: number;
+  readonly onFlush?: (stats: TraceSinkFlushStats) => Effect.Effect<void>;
+}
+
+export interface TraceSinkFlushStats {
+  readonly logicalWriteBytes: number;
+  readonly count: number;
+  readonly durationMs: number;
 }
 
 export interface TraceSink {
@@ -240,6 +248,61 @@ function formatTraceExit(exit: Exit.Exit<unknown, unknown>): EffectTraceRecord["
   };
 }
 
+const TRACE_ATTRIBUTE_MAX_LENGTH = 500;
+const TRACE_ATTRIBUTE_TRUNCATED_LENGTH = 200;
+const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
+const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
+
+// Clamps strings nested inside already-normalized attribute values (arrays and
+// plain objects from normalizeJsonValue, e.g. an Error's `stack`). Returns the
+// input reference when nothing was clamped.
+function truncateNestedValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length <= TRACE_ATTRIBUTE_MAX_LENGTH
+      ? value
+      : `${value.slice(0, TRACE_ATTRIBUTE_MAX_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+  }
+  if (Array.isArray(value)) {
+    const truncated = value.map(truncateNestedValue);
+    return truncated.some((entry, index) => entry !== value[index]) ? truncated : value;
+  }
+  if (isPlainObject(value)) {
+    let truncated: Record<string, unknown> | undefined;
+    for (const [key, entry] of Object.entries(value)) {
+      const next = truncateNestedValue(entry);
+      if (next === entry) continue;
+      truncated ??= { ...value };
+      truncated[key] = next;
+    }
+    return truncated ?? value;
+  }
+  return value;
+}
+
+/**
+ * Clamps oversized attribute values on the serialized trace record so the file
+ * sink stays small, including strings nested inside arrays and objects (e.g.
+ * error stacks). Returns a new record when anything was clamped; never
+ * mutates the input (the live span's attributes are shared with other tracers).
+ */
+export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
+  let truncated: Record<string, unknown> | undefined;
+  for (const [key, value] of Object.entries(attributes)) {
+    if (typeof value === "string" && ALWAYS_TRUNCATED_TRACE_ATTRIBUTES.has(key)) {
+      if (value.length <= TRACE_ATTRIBUTE_TRUNCATED_LENGTH) continue;
+      truncated ??= { ...attributes };
+      truncated[key] =
+        `${value.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+      continue;
+    }
+    const next = truncateNestedValue(value);
+    if (next === value) continue;
+    truncated ??= { ...attributes };
+    truncated[key] = next;
+  }
+  return truncated ?? attributes;
+}
+
 export function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
   const status = span.status as Extract<Tracer.SpanStatus, { _tag: "Ended" }>;
   const parentSpanId = Option.getOrUndefined(span.parent)?.spanId;
@@ -255,16 +318,18 @@ export function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
     startTimeUnixNano: String(status.startTime),
     endTimeUnixNano: String(status.endTime),
     durationMs: Number(status.endTime - status.startTime) / 1_000_000,
-    attributes: compactTraceAttributes(Object.fromEntries(span.attributes)),
+    attributes: truncateTraceAttributes(
+      compactTraceAttributes(Object.fromEntries(span.attributes)),
+    ),
     events: span.events.map(([name, startTime, attributes]) => ({
       name,
       timeUnixNano: String(startTime),
-      attributes: compactTraceAttributes(attributes),
+      attributes: truncateTraceAttributes(compactTraceAttributes(attributes)),
     })),
     links: span.links.map((link) => ({
       traceId: link.span.traceId,
       spanId: link.span.spanId,
-      attributes: compactTraceAttributes(link.attributes),
+      attributes: truncateTraceAttributes(compactTraceAttributes(link.attributes)),
     })),
     exit: formatTraceExit(status.exit),
   };
@@ -275,26 +340,73 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     filePath: options.filePath,
     maxBytes: options.maxBytes,
     maxFiles: options.maxFiles,
+    throwOnError: true,
   });
 
   let buffer: Array<string> = [];
+  let pendingFlushStats: TraceSinkFlushStats = {
+    logicalWriteBytes: 0,
+    count: 0,
+    durationMs: 0,
+  };
 
   const flushUnsafe = () => {
     if (buffer.length === 0) {
       return;
     }
 
-    const chunk = buffer.join("");
+    const records = buffer;
     buffer = [];
+    let persistedCount = 0;
 
-    try {
-      sink.write(chunk);
-    } catch {
-      buffer.unshift(chunk);
+    while (persistedCount < records.length) {
+      const firstRecordBytes = textEncoder.encode(records[persistedCount]).byteLength;
+      if (firstRecordBytes > options.maxBytes) {
+        persistedCount += 1;
+        continue;
+      }
+
+      let nextIndex = persistedCount + 1;
+      let chunkBytes = firstRecordBytes;
+      while (nextIndex < records.length) {
+        const nextRecordBytes = textEncoder.encode(records[nextIndex]).byteLength;
+        if (chunkBytes + nextRecordBytes > options.maxBytes) break;
+        chunkBytes += nextRecordBytes;
+        nextIndex += 1;
+      }
+
+      const chunk = records.slice(persistedCount, nextIndex).join("");
+      const startedAt = performance.now();
+      try {
+        sink.write(chunk);
+      } catch {
+        buffer.unshift(...records.slice(persistedCount));
+        return;
+      }
+      pendingFlushStats = {
+        logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
+        count: pendingFlushStats.count + nextIndex - persistedCount,
+        durationMs: pendingFlushStats.durationMs + Math.max(0, performance.now() - startedAt),
+      };
+      persistedCount = nextIndex;
     }
   };
 
-  const flush = Effect.sync(flushUnsafe).pipe(Effect.withTracerEnabled(false));
+  const flush = Effect.sync(() => {
+    flushUnsafe();
+    const stats = pendingFlushStats;
+    pendingFlushStats = {
+      logicalWriteBytes: 0,
+      count: 0,
+      durationMs: 0,
+    };
+    return stats;
+  }).pipe(
+    Effect.flatMap((stats) =>
+      stats.count > 0 && options.onFlush ? options.onFlush(stats).pipe(Effect.ignore) : Effect.void,
+    ),
+    Effect.withTracerEnabled(false),
+  );
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
   yield* Effect.forkScoped(
@@ -399,6 +511,7 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
       maxBytes: options.maxBytes,
       maxFiles: options.maxFiles,
       batchWindowMs: options.batchWindowMs,
+      ...(options.onFlush ? { onFlush: options.onFlush } : {}),
     }));
 
   const delegate =

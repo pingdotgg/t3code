@@ -32,6 +32,17 @@ interface EnvironmentAtomOptions<Input, A, E, R> {
   }>;
 }
 
+interface EnvironmentCommandAtomOptions<Input, A, E, R> extends Omit<
+  EnvironmentAtomOptions<Input, A, E, R>,
+  "execute"
+> {
+  readonly execute: (
+    input: Input,
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentIdType,
+  ) => Effect.Effect<A, E, R>;
+}
+
 interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOptions<
   Input,
   A,
@@ -242,6 +253,28 @@ export function createAtomCommandScheduler(): AtomCommandScheduler {
   };
 }
 
+/** Runs one effect inside an existing command scheduler lane. */
+export function scheduleAtomCommandEffect<W, A, E, R>(
+  registry: AtomRegistry.AtomRegistry,
+  scheduler: AtomCommandScheduler,
+  concurrency: AtomCommandConcurrency<W>,
+  input: W,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.gen(function* () {
+    const context = yield* Effect.context<R>();
+    const result = yield* Effect.promise((signal) =>
+      scheduler.schedule<W, A, E>(registry, concurrency, input, async () => {
+        const exit = await Effect.runPromiseExitWith(context)(effect, { signal });
+        return Exit.isSuccess(exit)
+          ? AsyncResult.success(exit.value)
+          : AsyncResult.failure(exit.cause);
+      }),
+    );
+    return result._tag === "Success" ? result.value : yield* Effect.failCause(result.cause);
+  });
+}
+
 export async function runAtomCommand<W, A, E>(
   registry: AtomRegistry.AtomRegistry,
   command: AtomCommand<W, A, E>,
@@ -444,7 +477,7 @@ export function followStreamInEnvironment<A, E, R>(
   );
 }
 
-function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
+export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
   options: EnvironmentQueryAtomOptions<Input, A, E, EnvironmentSupervisor | R>,
 ): (target: {
@@ -520,13 +553,17 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
 
 export function createEnvironmentCommand<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
-  options: EnvironmentAtomOptions<Input, A, E, EnvironmentSupervisor | R>,
+  options: EnvironmentCommandAtomOptions<Input, A, E, EnvironmentSupervisor | R>,
 ) {
   return createRuntimeCommand(runtime, {
     label: options.label,
     ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
-    execute: (target) => runInEnvironment(target.environmentId, options.execute(target.input)),
+    execute: (target, registry) =>
+      runInEnvironment(
+        target.environmentId,
+        options.execute(target.input, registry, target.environmentId),
+      ),
   });
 }
 
@@ -616,13 +653,36 @@ export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnary
       readonly environmentId: EnvironmentIdType;
       readonly input: EnvironmentRpcInput<TTag>;
     }>;
+    readonly onSuccess?: (
+      target: {
+        readonly environmentId: EnvironmentIdType;
+        readonly input: EnvironmentRpcInput<TTag>;
+      },
+      registry: AtomRegistry.AtomRegistry,
+    ) => Effect.Effect<void, never, R>;
+    readonly onSettled?: (
+      target: {
+        readonly environmentId: EnvironmentIdType;
+        readonly input: EnvironmentRpcInput<TTag>;
+      },
+      registry: AtomRegistry.AtomRegistry,
+    ) => Effect.Effect<void, never, R>;
   },
 ) {
   return createEnvironmentCommand(runtime, {
     label: options.label,
     ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
     ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
-    execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
+    execute: (input: EnvironmentRpcInput<TTag>, registry, environmentId) => {
+      const target = {
+        environmentId,
+        input,
+      };
+      return request(options.tag, input).pipe(
+        Effect.tap(() => options.onSuccess?.(target, registry) ?? Effect.void),
+        Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
+      );
+    },
   });
 }
 

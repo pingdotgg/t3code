@@ -79,6 +79,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --app-scrollbar-width: 6px;
   --app-scrollbar-thumb: rgb(217 217 217);
   --app-scrollbar-thumb-hover: rgb(191 191 191);
+  /*
+   * Compact UI geometry. Keep these values semantic so sidebar, palette,
+   * tooltip, and toolbar controls cannot quietly drift apart.
+   */
+  --control-radius: 0.5rem;
+  --sidebar-content-inset: 0.5rem;
+  --sidebar-control-gap: 0.5rem;
+  --sidebar-icon-color: color-mix(in srgb, var(--sidebar-muted-foreground) 60%, var(--sidebar));
+  --sidebar-row-content-inset: 0.625rem;
+  --command-shell-inset: 0.5rem;
+  --command-content-inset: 1rem;
+  --floating-content-inset: 0.75rem;
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
@@ -118,21 +130,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   );
 }
 
+/* The font tokens are declared outside the inline theme so utilities reference
+   the variables and Settings -> Appearance can override them at runtime. The
+   default stacks are mirrored in `appearanceFonts.ts`. */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
 @theme inline {
   --color-zinc-25: oklch(99.2% 0 0);
-  --animate-skeleton: skeleton 2s -1s infinite linear;
+  --animate-skeleton: skeleton 2s infinite linear;
   /* Duty-cycled indicator animations: long holds with stepped ramps, so the
      compositor updates discrete frames instead of every vsync. */
   --animate-status-pulse: status-pulse 2s infinite;
+  --animate-ghost-pulse: ghost-pulse 2.4s infinite;
   --animate-status-ping: status-ping 2s infinite;
-  --animate-sidebar-working-text: sidebar-working-text 3.4s infinite;
-  --font-sans:
-    "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
-    sans-serif;
-  --font-mono:
-    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-error-foreground: var(--error-foreground);
+  --color-error: var(--error);
+  --color-error-surface: var(--error-surface);
+  --color-update-foreground: var(--update-foreground);
+  --color-update: var(--update);
+  --color-update-surface: var(--update-surface);
   --color-success-foreground: var(--success-foreground);
   --color-success: var(--success);
   --color-info-foreground: var(--info-foreground);
@@ -146,6 +169,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
+  --color-placeholder: var(--placeholder);
+  --color-secondary-label: var(--secondary-label);
+  --color-icon-muted: var(--icon-muted);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
@@ -157,6 +183,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --color-surface-raised: var(--surface-raised);
+  --color-message: var(--message-surface);
+  --color-message-foreground: var(--message-foreground);
+  --color-message-action: var(--message-action);
+  --color-message-action-foreground: var(--message-action-foreground);
+  --color-message-action-hover: var(--message-action-hover);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
@@ -173,8 +204,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
   @keyframes skeleton {
-    to {
-      background-position: -200% 0;
+    /* Transform-only so the highlight sweep stays on the compositor, then a
+       long hold with the band parked off-screen instead of a constant shimmer. */
+    0% {
+      transform: translateX(-100%);
+    }
+    60%,
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes ghost-pulse {
+    /* The loading ghosts' breath. Stepped like the status indicators, so however many bars a
+       ghost holds, the compositor draws a handful of discrete frames per cycle rather than one
+       per vsync — which on a 120Hz display is the difference between ~14 and ~288 updates. */
+    0%,
+    42% {
+      opacity: 1;
+      animation-timing-function: steps(4);
+    }
+    50%,
+    92% {
+      opacity: 0.55;
+      animation-timing-function: steps(4);
+    }
+    100% {
+      opacity: 1;
     }
   }
   @keyframes status-pulse {
@@ -207,24 +262,54 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       scale: 2;
     }
   }
-  @keyframes sidebar-working-text {
-    0%,
-    36% {
-      opacity: 1;
-      animation-timing-function: steps(10);
-    }
-    50%,
-    86% {
-      opacity: 0.75;
-      animation-timing-function: steps(10);
-    }
-    100% {
-      opacity: 1;
-    }
-  }
 }
 
 @layer base {
+  :root {
+    /* Dev artwork defaults. Built-in themes override these seven pigments in
+       the components layer; Nightly derives a darker matching palette. */
+    --stage-art-top: oklch(0.782169 0.123386 240.226);
+    --stage-art-mid: oklch(0.616111 0.195824 259.735);
+    --stage-art-bottom: oklch(0.441553 0.232394 265.474);
+    --stage-art-highlight: oklch(0.951597 0.037289 215.482);
+    --stage-art-secondary: oklch(0.794668 0.12136 235.46);
+    --stage-art-tertiary: oklch(0.678991 0.170261 275.365);
+    --stage-art-line: oklch(0.959666 0.029238 218.179);
+    --stage-night-top: color-mix(
+      in oklch,
+      var(--stage-art-top) 38%,
+      oklch(0.283792 0.117327 297.201)
+    );
+    --stage-night-mid: color-mix(
+      in oklch,
+      var(--stage-art-mid) 38%,
+      oklch(0.227147 0.086086 277.99)
+    );
+    --stage-night-bottom: color-mix(
+      in oklch,
+      var(--stage-art-bottom) 38%,
+      oklch(0.200528 0.055699 261.216)
+    );
+    --stage-night-highlight: var(--stage-art-highlight);
+    --stage-night-secondary: color-mix(
+      in oklch,
+      var(--stage-art-secondary) 55%,
+      var(--stage-night-mid)
+    );
+    --stage-night-tertiary: color-mix(
+      in oklch,
+      var(--stage-art-tertiary) 60%,
+      var(--stage-night-top)
+    );
+    --stage-night-line: color-mix(in oklch, var(--stage-art-line) 82%, oklch(1 0 0));
+  }
+
+  .dark {
+    --stage-art-top: oklch(0.581473 0.149124 256.9);
+    --stage-art-mid: oklch(0.456509 0.159377 261.945);
+    --stage-art-bottom: oklch(0.291327 0.136578 267.649);
+  }
+
   * {
     @apply border-border outline-ring/50;
   }
@@ -255,10 +340,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   @media (min-width: 48rem) {
-    @container sidebar-header (min-width: 13.5rem) {
-      .sidebar-brand {
-        display: flex;
-      }
+    .sidebar-brand {
+      display: flex;
     }
 
     @container sidebar-header (min-width: 15.75rem) {
@@ -295,16 +378,136 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     );
   }
 
-  .stage-blueprint {
-    --stage-bp-top: #67c2ff;
-    --stage-bp-mid: #347ff8;
-    --stage-bp-bottom: #1538d0;
+  /* Each maintainer palette gives the same line art its own material: rose
+     vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
+     These colors stay deliberately deep at the top edge so the white stage
+     wordmark and controls retain contrast in both appearance modes. */
+  html[data-theme-id="t3-chat"] {
+    --stage-art-top: oklch(0.760675 0.141361 348.019);
+    --stage-art-mid: oklch(0.588093 0.188832 353.138);
+    --stage-art-bottom: oklch(0.383959 0.135096 348.656);
+    --stage-art-highlight: oklch(0.949689 0.034241 339.171);
+    --stage-art-secondary: oklch(0.763402 0.163836 352.525);
+    --stage-art-tertiary: oklch(0.70819 0.180285 311.949);
+    --stage-art-line: oklch(0.952158 0.034194 336.179);
   }
 
-  .dark .stage-blueprint {
-    --stage-bp-top: #3a7ad1;
-    --stage-bp-mid: #2050ae;
-    --stage-bp-bottom: #101f6e;
+  html.dark[data-theme-id="t3-chat"] {
+    --stage-art-top: oklch(0.540689 0.143665 347.587);
+    --stage-art-mid: oklch(0.396586 0.126592 347.6);
+    --stage-art-bottom: oklch(0.249959 0.079694 340.523);
+    --stage-art-highlight: oklch(0.921297 0.051708 343.229);
+    --stage-art-secondary: oklch(0.667398 0.165674 352.549);
+    --stage-art-tertiary: oklch(0.609315 0.163722 306.315);
+    --stage-art-line: oklch(0.945349 0.036045 341.433);
+  }
+
+  html[data-theme-id="grove"] {
+    --stage-art-top: oklch(0.751465 0.112731 157.313);
+    --stage-art-mid: oklch(0.567105 0.11099 158.859);
+    --stage-art-bottom: oklch(0.367918 0.067635 160.558);
+    --stage-art-highlight: oklch(0.976387 0.034353 161.456);
+    --stage-art-secondary: oklch(0.80968 0.117071 158.817);
+    --stage-art-tertiary: oklch(0.784102 0.108047 88.516);
+    --stage-art-line: oklch(0.981098 0.027812 158.718);
+    --stage-night-top: oklch(0.45805 0.079616 160.092);
+    --stage-night-mid: oklch(0.368483 0.065631 162.719);
+    --stage-night-bottom: oklch(0.264797 0.044397 168.088);
+    --stage-night-highlight: oklch(0.912563 0.055173 158.974);
+    --stage-night-secondary: oklch(0.665652 0.109731 156.599);
+    --stage-night-tertiary: oklch(0.698651 0.103024 89.828);
+    --stage-night-line: oklch(0.945336 0.041923 157.222);
+  }
+
+  html.dark[data-theme-id="grove"] {
+    --stage-art-top: oklch(0.58719 0.09869 157.426);
+    --stage-art-mid: oklch(0.454979 0.079031 159.756);
+    --stage-art-bottom: oklch(0.297856 0.050355 161.167);
+    --stage-art-highlight: oklch(0.952407 0.053872 158.44);
+    --stage-art-secondary: oklch(0.732591 0.120606 155.853);
+    --stage-art-tertiary: oklch(0.716282 0.116547 80.563);
+    --stage-art-line: oklch(0.961577 0.035285 157.03);
+    --stage-night-top: oklch(0.398632 0.065534 158.601);
+    --stage-night-mid: oklch(0.290561 0.049694 160.456);
+    --stage-night-bottom: oklch(0.210147 0.03173 169.818);
+    --stage-night-highlight: oklch(0.866303 0.057526 156.796);
+    --stage-night-secondary: oklch(0.586553 0.093722 157.365);
+    --stage-night-tertiary: oklch(0.6364 0.101769 82.985);
+    --stage-night-line: oklch(0.913292 0.035718 156.976);
+  }
+
+  html[data-theme-id="ocean"] {
+    --stage-art-top: oklch(0.792993 0.088072 220.421);
+    --stage-art-mid: oklch(0.590296 0.116841 243.184);
+    --stage-art-bottom: oklch(0.409123 0.093718 247.98);
+    --stage-art-highlight: oklch(0.971217 0.023008 213.615);
+    --stage-art-secondary: oklch(0.788391 0.090856 215.684);
+    --stage-art-tertiary: oklch(0.76441 0.099607 187.893);
+    --stage-art-line: oklch(0.976025 0.019647 212.543);
+  }
+
+  html.dark[data-theme-id="ocean"] {
+    --stage-art-top: oklch(0.59663 0.089167 233.427);
+    --stage-art-mid: oklch(0.461094 0.084904 243.478);
+    --stage-art-bottom: oklch(0.294818 0.05947 250.526);
+    --stage-art-highlight: oklch(0.952907 0.032224 221.27);
+    --stage-art-secondary: oklch(0.732079 0.09296 224.414);
+    --stage-art-tertiary: oklch(0.720885 0.095495 190.903);
+    --stage-art-line: oklch(0.961039 0.027355 219.756);
+  }
+
+  html[data-theme-id="ember"] {
+    --stage-art-top: oklch(0.782439 0.118806 52.569);
+    --stage-art-mid: oklch(0.62863 0.15922 39.401);
+    --stage-art-bottom: oklch(0.404251 0.117664 30.424);
+    --stage-art-highlight: oklch(0.962469 0.02774 70.95);
+    --stage-art-secondary: oklch(0.815735 0.11904 53.659);
+    --stage-art-tertiary: oklch(0.69361 0.159346 24.787);
+    --stage-art-line: oklch(0.970313 0.02052 67.583);
+    --stage-night-top: oklch(0.470236 0.102322 39.355);
+    --stage-night-mid: oklch(0.345367 0.080697 33.217);
+    --stage-night-bottom: oklch(0.227386 0.056077 27.437);
+    --stage-night-highlight: oklch(0.903891 0.059281 56.181);
+    --stage-night-secondary: oklch(0.641705 0.126508 44.376);
+    --stage-night-tertiary: oklch(0.538694 0.129931 25.865);
+    --stage-night-line: oklch(0.926348 0.046029 58.73);
+  }
+
+  html.dark[data-theme-id="ember"] {
+    --stage-art-top: oklch(0.597533 0.120694 43.455);
+    --stage-art-mid: oklch(0.437763 0.101287 34.86);
+    --stage-art-bottom: oklch(0.264269 0.055858 26.548);
+    --stage-art-highlight: oklch(0.929214 0.042638 55.801);
+    --stage-art-secondary: oklch(0.705592 0.137369 43.176);
+    --stage-art-tertiary: oklch(0.629583 0.158322 24.088);
+    --stage-art-line: oklch(0.945058 0.033906 58.824);
+    --stage-night-top: oklch(0.392352 0.081287 36.444);
+    --stage-night-mid: oklch(0.271305 0.056352 31.135);
+    --stage-night-bottom: oklch(0.182126 0.028154 27.774);
+    --stage-night-highlight: oklch(0.851007 0.061294 53.805);
+    --stage-night-secondary: oklch(0.560789 0.10645 42.953);
+    --stage-night-tertiary: oklch(0.476228 0.106656 24.165);
+    --stage-night-line: oklch(0.884931 0.046607 56.556);
+  }
+
+  html[data-theme-id="iris"] {
+    --stage-art-top: oklch(0.738305 0.113454 298.926);
+    --stage-art-mid: oklch(0.551826 0.159189 294.531);
+    --stage-art-bottom: oklch(0.37147 0.133317 289.999);
+    --stage-art-highlight: oklch(0.949472 0.029204 303.081);
+    --stage-art-secondary: oklch(0.745085 0.125892 298.647);
+    --stage-art-tertiary: oklch(0.73066 0.167815 340.964);
+    --stage-art-line: oklch(0.960278 0.024064 306.969);
+  }
+
+  html.dark[data-theme-id="iris"] {
+    --stage-art-top: oklch(0.57297 0.145973 295.185);
+    --stage-art-mid: oklch(0.419499 0.13752 292.131);
+    --stage-art-bottom: oklch(0.274235 0.095798 286.608);
+    --stage-art-highlight: oklch(0.916698 0.047206 300.224);
+    --stage-art-secondary: oklch(0.670994 0.13095 296.689);
+    --stage-art-tertiary: oklch(0.679357 0.165376 340.439);
+    --stage-art-line: oklch(0.940582 0.032921 299.076);
   }
 
   .workspace-topbar {
@@ -318,7 +521,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   /* Fade rows themselves as they pass beneath the top chrome. A mask remains
      visible even when the header and timeline share the same background. */
   .chat-timeline-scroll-fade,
-  .settings-page-scroll-fade {
+  .settings-page-scroll-fade,
+  .pull-requests-scroll-fade {
     --topbar-scroll-fade-height: 2.5rem;
     -webkit-mask-image:
       linear-gradient(
@@ -358,6 +562,35 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       var(--app-scrollbar-width) 100%;
   }
 
+  /* The pull request list sits directly under its topbar, so the tall band the chat and
+     settings pages fade under would read as empty padding here. A shorter band keeps the
+     fade while letting the controls start near the chrome. */
+  .pull-requests-scroll-fade {
+    --topbar-scroll-fade-height: 1.5rem;
+  }
+
+  @keyframes settings-search-target-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+    50% {
+      box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 70%, transparent);
+    }
+  }
+
+  .settings-page-scroll-fade div.settings-search-target-pulse,
+  .settings-page-scroll-fade section.settings-search-target-pulse > div:first-child {
+    animation: settings-search-target-pulse 650ms ease-in-out 2;
+    border-radius: 0.75rem;
+  }
+
+  /* The pulse is the destination indicator; without it (reduced motion), the
+     focus outline takes over, so exactly one indicator shows at a time. */
+  .settings-page-scroll-fade .settings-search-target-pulse:focus {
+    outline: none;
+  }
+
   .workspace-titlebar-controls {
     position: absolute;
     top: var(--workspace-controls-top);
@@ -370,6 +603,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .surface-subheader {
     @apply flex h-10 min-h-10 shrink-0 items-center border-b border-border/60 bg-background;
+  }
+
+  [data-preview-panel-mode="inline"] [data-right-panel-surface-content] [data-surface-subheader] {
+    height: calc(var(--spacing) * 7);
+    min-height: calc(var(--spacing) * 7);
+    margin-bottom: calc(var(--spacing) * 3);
+    border-bottom-color: transparent;
   }
 
   .chat-composer-horizontal-inset {
@@ -638,11 +878,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background: color-mix(in srgb, var(--background) 64%, transparent);
   }
 
-  .glass-opacity-slider {
-    --glass-slider-progress: 0%;
-    --glass-slider-fill-offset: 0.5rem;
-    --glass-slider-fill-position: calc(
-      var(--glass-slider-progress) + var(--glass-slider-fill-offset)
+  .settings-slider {
+    --settings-slider-progress: 0%;
+    --settings-slider-fill-offset: 0.5rem;
+    --settings-slider-fill-position: calc(
+      var(--settings-slider-progress) + var(--settings-slider-fill-offset)
     );
     appearance: none;
     height: 1.5rem;
@@ -650,32 +890,32 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     cursor: pointer;
   }
 
-  .glass-opacity-slider::-webkit-slider-runnable-track {
+  .settings-slider::-webkit-slider-runnable-track {
     height: 0.375rem;
     border-radius: 9999px;
     background: linear-gradient(
       to right,
-      var(--primary) 0 var(--glass-slider-fill-position),
-      color-mix(in srgb, var(--muted-foreground) 22%, transparent) var(--glass-slider-fill-position)
-        100%
+      var(--primary) 0 var(--settings-slider-fill-position),
+      color-mix(in srgb, var(--muted-foreground) 22%, transparent)
+        var(--settings-slider-fill-position) 100%
     );
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
   }
 
-  .glass-opacity-slider::-moz-range-track {
+  .settings-slider::-moz-range-track {
     height: 0.375rem;
     border-radius: 9999px;
     background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
   }
 
-  .glass-opacity-slider::-moz-range-progress {
+  .settings-slider::-moz-range-progress {
     height: 0.375rem;
     border-radius: 9999px;
     background: var(--primary);
   }
 
-  .glass-opacity-slider::-webkit-slider-thumb {
+  .settings-slider::-webkit-slider-thumb {
     appearance: none;
     width: 1rem;
     height: 1rem;
@@ -689,7 +929,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       box-shadow 120ms ease;
   }
 
-  .glass-opacity-slider::-moz-range-thumb {
+  .settings-slider::-moz-range-thumb {
     width: 1rem;
     height: 1rem;
     border: 2px solid var(--primary);
@@ -701,54 +941,54 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       box-shadow 120ms ease;
   }
 
-  .glass-opacity-slider:hover::-webkit-slider-thumb {
+  .settings-slider:hover::-webkit-slider-thumb {
     transform: scale(1.08);
     box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
   }
 
-  .glass-opacity-slider:hover::-moz-range-thumb {
+  .settings-slider:hover::-moz-range-thumb {
     transform: scale(1.08);
     box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
   }
 
-  .glass-opacity-slider:active::-webkit-slider-thumb {
+  .settings-slider:active::-webkit-slider-thumb {
     transform: scale(0.94);
   }
 
-  .glass-opacity-slider:active::-moz-range-thumb {
+  .settings-slider:active::-moz-range-thumb {
     transform: scale(0.94);
   }
 
-  .glass-opacity-slider:focus-visible {
+  .settings-slider:focus-visible {
     outline: none;
   }
 
-  .glass-opacity-slider:focus-visible::-webkit-slider-thumb {
+  .settings-slider:focus-visible::-webkit-slider-thumb {
     box-shadow:
       0 0 0 3px var(--background),
       0 0 0 5px var(--ring);
   }
 
-  .glass-opacity-slider:focus-visible::-moz-range-thumb {
+  .settings-slider:focus-visible::-moz-range-thumb {
     box-shadow:
       0 0 0 3px var(--background),
       0 0 0 5px var(--ring);
   }
 
   @media (forced-colors: active) {
-    .glass-opacity-slider {
+    .settings-slider {
       appearance: auto;
       accent-color: Highlight;
     }
 
-    .glass-opacity-slider::-webkit-slider-runnable-track,
-    .glass-opacity-slider::-webkit-slider-thumb {
+    .settings-slider::-webkit-slider-runnable-track,
+    .settings-slider::-webkit-slider-thumb {
       all: revert;
     }
 
-    .glass-opacity-slider::-moz-range-track,
-    .glass-opacity-slider::-moz-range-progress,
-    .glass-opacity-slider::-moz-range-thumb {
+    .settings-slider::-moz-range-track,
+    .settings-slider::-moz-range-progress,
+    .settings-slider::-moz-range-thumb {
       all: revert;
     }
   }
@@ -804,7 +1044,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @utility surface-grain {
   background-image: var(--surface-grain);
   background-repeat: repeat;
-  background-size: 256px 256px;
+  background-size: var(--surface-grain-size);
 }
 
 /* Suppress all transitions during theme changes */
@@ -821,6 +1061,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius: 0.625rem;
   --background: var(--color-zinc-25);
   --app-chrome-background: var(--background);
+  --toolbar-background: var(--app-chrome-background);
+  --toolbar-foreground: var(--foreground);
+  --toolbar-border: var(--border);
+  --toolbar-control: var(--popover);
+  --toolbar-control-foreground: var(--foreground);
+  --toolbar-control-hover: var(--accent);
   --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
@@ -833,19 +1079,34 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --secondary-foreground: var(--color-zinc-800);
   --muted: var(--color-zinc-50);
   --muted-foreground: var(--color-zinc-500);
+  --placeholder: var(--muted-foreground);
+  --secondary-label: var(--muted-foreground);
+  --icon-muted: var(--muted-foreground);
+  --message-surface: var(--accent);
+  --message-foreground: var(--foreground);
+  --message-action: var(--primary);
+  --message-action-foreground: var(--primary-foreground);
+  --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
   --accent: var(--color-zinc-100);
   --accent-foreground: var(--color-zinc-900);
-  --destructive: var(--color-red-500);
+  --error: var(--color-red-500);
+  --error-foreground: var(--color-red-700);
+  --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
+  --destructive: var(--error);
   --border: var(--color-zinc-200);
   --input: var(--color-zinc-300);
-  --ring: oklch(0.488 0.217 264);
-  --destructive-foreground: var(--color-red-700);
+  --ring: var(--primary);
+  --destructive-foreground: var(--error-foreground);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
   --success: var(--color-emerald-500);
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
+  --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
+  --update: var(--primary);
+  --update-foreground: var(--primary);
+  --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
   /* Keep every sidebar primitive on the same light surface hierarchy, including
      portaled mobile sheets and settings navigation outside the app sidebar. */
   --sidebar: var(--color-zinc-50);
@@ -857,6 +1118,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-row-selected: var(--color-white);
   --sidebar-border: var(--border);
   --sidebar-stage-fade: var(--sidebar);
+  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --code-foreground: var(--foreground);
+  --terminal-background: var(--background);
+  --terminal-foreground: var(--foreground);
+  --terminal-cursor: rgb(38 56 78);
+  --terminal-selection-background: rgb(37 63 99 / 20%);
+  --terminal-scrollbar: rgb(0 0 0 / 15%);
+  --terminal-scrollbar-hover: rgb(0 0 0 / 25%);
 
   @variant dark {
     color-scheme: dark;
@@ -870,25 +1139,40 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --card-foreground: var(--color-neutral-100);
     --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.588 0.217 264);
+    --primary: oklch(0.571 0.21 264);
     --primary-foreground: var(--color-white);
     --secondary: --alpha(var(--color-white) / 4%);
     --secondary-foreground: var(--color-neutral-100);
     --muted: --alpha(var(--color-white) / 4%);
     --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    --placeholder: var(--muted-foreground);
+    --secondary-label: var(--muted-foreground);
+    --icon-muted: var(--muted-foreground);
+    --message-surface: var(--accent);
+    --message-foreground: var(--foreground);
+    --message-action: var(--primary);
+    --message-action-foreground: var(--primary-foreground);
+    --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
     --accent: --alpha(var(--color-white) / 4%);
     --accent-foreground: var(--color-neutral-100);
-    --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+    --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+    --error-foreground: var(--color-red-400);
+    --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
+    --destructive: var(--error);
     --border: --alpha(var(--color-white) / 6%);
     --input: --alpha(var(--color-white) / 8%);
-    --ring: oklch(0.588 0.217 264);
-    --destructive-foreground: var(--color-red-400);
+    --ring: var(--primary);
+    --destructive-foreground: var(--error-foreground);
     --info: var(--color-blue-500);
     --info-foreground: var(--color-blue-400);
     --success: var(--color-emerald-500);
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+    --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
+    --update: var(--primary);
+    --update-foreground: var(--color-blue-400);
+    --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
     --sidebar: var(--card);
     --sidebar-foreground: var(--foreground);
     --sidebar-muted-foreground: var(--muted-foreground);
@@ -898,15 +1182,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --sidebar-row-selected: var(--muted);
     --sidebar-border: var(--border);
     --sidebar-stage-fade: var(--card);
+    --terminal-background: var(--background);
+    --terminal-foreground: var(--foreground);
+    --terminal-cursor: rgb(180 203 255);
+    --terminal-selection-background: rgb(180 203 255 / 25%);
+    --terminal-scrollbar: rgb(255 255 255 / 10%);
+    --terminal-scrollbar-hover: rgb(255 255 255 / 18%);
   }
 }
 
-/* Keep both navigation implementations on the same quiet zinc hierarchy:
-   zinc-50 navigation, zinc-25 hover, and white selected/raised surfaces.
-   The version attribute remains useful for layout-specific styling without
-   changing the color system when the beta is toggled. */
-[data-sidebar-version="v1"],
-[data-sidebar-version="v2"] {
+/* Keep both sidebar implementations (default and legacy) on the same quiet
+   zinc hierarchy: zinc-50 navigation, zinc-25 hover, and white selected/raised
+   surfaces. */
+[data-app-sidebar] {
   --background: var(--color-zinc-25);
   --foreground: var(--color-zinc-800);
   --card: var(--color-white);
@@ -929,8 +1217,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background-color: var(--sidebar);
 }
 
-.dark [data-sidebar-version="v1"],
-.dark [data-sidebar-version="v2"] {
+.dark [data-app-sidebar] {
   --background: #000;
   --foreground: #f1f3f7;
   --card: #000;
@@ -955,15 +1242,338 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --sidebar-stage-fade: var(--card);
 }
 
+/* Theme files are expressed in app color roles and mapped to the existing
+   semantic surface tokens here. Keep this block after the sidebar-version
+   compatibility overrides so both navigation implementations receive the
+   same palette. Success, info, provider, and channel identity colors remain
+   independent; error, warning, and update roles are themeable below. */
+html[data-theme-id],
+html.dark[data-theme-id] {
+  --background: var(--app-theme-canvas);
+  --app-chrome-background: var(--app-theme-chrome);
+  --toolbar-background: var(--app-theme-toolbar);
+  --toolbar-foreground: var(--app-theme-toolbar-foreground);
+  --toolbar-border: var(--app-theme-toolbar-border);
+  --toolbar-control: var(--app-theme-toolbar-control);
+  --toolbar-control-foreground: var(--app-theme-toolbar-control-foreground);
+  --toolbar-control-hover: var(--app-theme-toolbar-control-hover);
+  --surface-raised: var(--app-theme-surface-raised);
+  --foreground: var(--app-theme-text);
+  --card: var(--app-theme-surface);
+  --card-foreground: var(--app-theme-text);
+  --popover: var(--app-theme-surface-overlay);
+  --popover-foreground: var(--app-theme-text);
+  /* Solid controls (CTAs, switches, sliders, the send button) all share the
+     theme's action color so every "act now" affordance reads consistently;
+     the accent keeps driving surfaces, selection, and focus. Palettes without
+     a distinct action color make these identical. */
+  --primary: var(--app-theme-message-action);
+  --primary-foreground: var(--app-theme-message-action-foreground);
+  --secondary: var(--app-theme-secondary);
+  --secondary-foreground: var(--app-theme-secondary-foreground);
+  --muted: var(--app-theme-muted);
+  --muted-foreground: var(--app-theme-muted-foreground);
+  --placeholder: var(--app-theme-placeholder);
+  --secondary-label: var(--app-theme-secondary-label);
+  --icon-muted: var(--app-theme-icon-muted);
+  --accent: var(--app-theme-accent-surface);
+  --accent-foreground: var(--app-theme-accent-surface-foreground);
+  --message-surface: var(--app-theme-message-surface);
+  --message-foreground: var(--app-theme-message-foreground);
+  --message-action: var(--app-theme-message-action);
+  --message-action-foreground: var(--app-theme-message-action-foreground);
+  --message-action-hover: var(--app-theme-message-action-hover);
+  --error: var(--app-theme-error);
+  --error-foreground: var(--app-theme-error-foreground);
+  --error-surface: var(--app-theme-error-surface);
+  --destructive: var(--error);
+  --destructive-foreground: var(--error-foreground);
+  --warning: var(--app-theme-warning);
+  --warning-foreground: var(--app-theme-warning-foreground);
+  --warning-surface: var(--app-theme-warning-surface);
+  --update: var(--app-theme-update);
+  --update-foreground: var(--app-theme-update-foreground);
+  --update-surface: var(--app-theme-update-surface);
+  --border: var(--app-theme-border);
+  --input: var(--app-theme-input);
+  --ring: var(--app-theme-focus);
+  --sidebar: var(--app-theme-sidebar);
+  --sidebar-foreground: var(--app-theme-sidebar-foreground);
+  --sidebar-muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-control-surface: var(--app-theme-sidebar-control-surface);
+  --sidebar-row-hover: var(--app-theme-sidebar-row-hover);
+  --sidebar-row-active: var(--app-theme-sidebar-row-active);
+  --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
+  --sidebar-border: var(--app-theme-sidebar-border);
+  --sidebar-stage-fade: var(--app-theme-sidebar);
+  --code-background: var(--app-theme-code-background);
+  --code-foreground: var(--app-theme-code-foreground);
+  --terminal-background: var(--app-theme-terminal-background);
+  --terminal-foreground: var(--app-theme-terminal-foreground);
+  --terminal-cursor: var(--app-theme-terminal-cursor);
+  --terminal-selection-background: var(--app-theme-terminal-selection-background);
+  --terminal-scrollbar: var(--app-theme-terminal-scrollbar);
+  --terminal-scrollbar-hover: var(--app-theme-terminal-scrollbar-hover);
+}
+
+/* T3 Chat's composer is a translucent lift over --chat-background. Route its
+   measured flattened color through the raised-surface role instead of deriving
+   another tint from the canvas, which made the dark composer too red. */
+html[data-theme-id] .chat-composer-glass-shell {
+  --chat-composer-glass-surface: var(--app-theme-surface-raised);
+}
+
+html[data-theme-id]:not(.dark) .chat-composer-glass-shell {
+  --chat-composer-outline: var(--app-theme-toolbar-border);
+}
+
+html.dark[data-theme-id] .chat-composer-glass-shell {
+  --chat-composer-outline: color-mix(in srgb, var(--app-theme-input) 30%, var(--background));
+  --chat-composer-highlight: color-mix(in srgb, var(--app-theme-input) 12%, transparent);
+}
+
+html.dark[data-theme-id="t3-chat"] .chat-composer-glass-shell {
+  /* T3 Chat's visible composer edge is a dark plum, not the stock translucent
+     white outline. Its highlight is derived from --chat-input-gradient. */
+  --chat-composer-outline: #241e28;
+  --chat-composer-highlight: color-mix(in srgb, #432d48 12%, transparent);
+}
+
+html[data-theme-id]:not(.dark) {
+  color-scheme: light;
+}
+
+html.dark[data-theme-id] {
+  color-scheme: dark;
+}
+
+html[data-theme-id] body {
+  background-color: var(--app-chrome-background);
+  color: var(--foreground);
+}
+
+/* Theme-token dependency probes are restored synchronously, before paint. Keep
+   transitions from observing the temporary sentinel color in between. */
+html[data-theme-token-probe],
+html[data-theme-token-probe] *,
+html[data-theme-token-probe] *::before,
+html[data-theme-token-probe] *::after {
+  transition: none !important;
+}
+
+#theme-inspector-spotlight {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  overflow: visible;
+  pointer-events: none;
+}
+
+[data-slot="popover-positioner"]:has([data-theme-editor-panel]),
+[data-slot="tooltip-positioner"]:has([data-theme-editor-panel]) {
+  z-index: 120;
+}
+
+.theme-inspector-spotlight-dimmer {
+  fill: rgb(2 3 8 / 54%);
+}
+
+.theme-inspector-spotlight-glow {
+  fill: color-mix(in oklab, var(--ring) 9%, transparent);
+  stroke: color-mix(in oklab, var(--ring) 72%, white);
+  stroke-width: 2px;
+  opacity: 0.92;
+  vector-effect: non-scaling-stroke;
+}
+
+#theme-inspector-hover {
+  position: fixed;
+  z-index: 101;
+  pointer-events: none;
+  background: color-mix(in oklab, var(--ring) 7%, transparent);
+  border: 1px solid color-mix(in oklab, var(--ring) 70%, white);
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--ring) 16%, transparent),
+    0 0 18px color-mix(in oklab, var(--ring) 38%, transparent);
+}
+
+#theme-inspector-hover [data-theme-inspector-hover-label] {
+  position: absolute;
+  left: 0;
+  max-width: 12rem;
+  overflow: hidden;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid color-mix(in oklab, var(--ring) 48%, var(--border));
+  border-radius: 0.4rem;
+  background: var(--popover);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 24%);
+  color: var(--popover-foreground);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#theme-inspector-hover[data-placement="above"] [data-theme-inspector-hover-label] {
+  bottom: calc(100% + 0.35rem);
+}
+
+#theme-inspector-hover[data-placement="below"] [data-theme-inspector-hover-label] {
+  top: calc(100% + 0.35rem);
+}
+
+/* Workspace actions use a small, separate chrome hierarchy. Keeping these
+   roles explicit prevents the thread toolbar from falling back to the default
+   dark-mode whites while preserving the same theme file across clients. */
+html[data-theme-id] [data-chat-header] {
+  background-color: var(--toolbar-background);
+  color: var(--toolbar-foreground);
+}
+
+html[data-theme-id] [data-chat-header] [data-slot="button"],
+html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"],
+html[data-theme-id] [data-chat-header] [data-toolbar-control] {
+  --control-icon-color: var(--toolbar-control-foreground);
+  background-color: var(--toolbar-control);
+  border-color: var(--toolbar-border);
+  color: var(--toolbar-control-foreground);
+}
+
+/* The panel layout toggles stay ghost: they render both inside the header and
+   in the titlebar strip, so filling them would make them change appearance as
+   the panel opens. They only take the themed foreground; hover and pressed
+   keep the base ghost accent. The tooltip trigger's data-slot wins over the
+   toggle's when the trigger renders the toggle, so match both. */
+html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"],
+html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"],
+html[data-theme-id] .workspace-titlebar-controls [data-slot="toggle"],
+html[data-theme-id] .workspace-titlebar-controls [data-slot="tooltip-trigger"] {
+  --control-icon-color: var(--toolbar-foreground);
+  color: var(--toolbar-foreground);
+}
+
+html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,
+html[data-theme-id] [data-chat-header] [data-slot="button"][data-pressed],
+html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"]:hover,
+html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"][data-pressed],
+html[data-theme-id] [data-chat-header] [data-toolbar-control]:hover,
+html[data-theme-id] [data-chat-header] [data-toolbar-control][data-pressed] {
+  background-color: var(--toolbar-control-hover);
+}
+
+html[data-theme-id] [data-chat-header] [data-slot="separator"] {
+  background-color: var(--toolbar-border);
+}
+
+/* Chat code blocks join the other code surfaces on the code tokens. The
+   default look keeps its secondary/input tints; themed palettes tint those
+   surfaces with the accent, which fights syntax highlighting. */
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock {
+  background-color: var(--code-background);
+  border-color: var(--border);
+  color: var(--code-foreground);
+}
+
+html[data-theme-id] .chat-markdown pre {
+  background-color: var(--code-background);
+  color: var(--code-foreground);
+}
+
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock pre {
+  background-color: transparent;
+}
+
+html[data-theme-id] .chat-markdown .chat-markdown-codeblock-header,
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action {
+  color: color-mix(in srgb, var(--code-foreground) 72%, transparent);
+}
+
+/* T3 Chat renders inline code and compact chat artifacts with its translucent
+   secondary surface flattened over the light chat canvas. The raw muted and
+   secondary tokens are substantially darker than those visible pixels. */
+html[data-theme-id="t3-chat"]:not(.dark) .chat-markdown :not(pre) > code,
+html[data-theme-id="t3-chat"]:not(.dark) [data-changed-files-state],
+html[data-theme-id="t3-chat"]:not(.dark) [data-changed-files-header] {
+  background-color: var(--message-surface);
+}
+
+html[data-theme-id="t3-chat"]:not(.dark) .chat-markdown :not(pre) > code,
+html[data-theme-id="t3-chat"]:not(.dark) [data-changed-files-state] {
+  border-color: transparent;
+}
+
+html[data-theme-id="t3-chat"]:not(.dark) .chat-markdown :not(pre) > code {
+  color: var(--message-foreground);
+}
+
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action:hover,
+html[data-theme-id] .chat-markdown .chat-markdown-chrome-action[aria-pressed="true"] {
+  color: var(--code-foreground);
+}
+
+html[data-theme-id] [data-app-sidebar] {
+  --background: var(--app-theme-canvas);
+  --foreground: var(--app-theme-text);
+  --card: var(--app-theme-surface);
+  --card-foreground: var(--app-theme-text);
+  --accent: var(--app-theme-accent-surface);
+  --accent-foreground: var(--app-theme-accent-surface-foreground);
+  --muted: var(--app-theme-muted);
+  --muted-foreground: var(--app-theme-muted-foreground);
+  --border: var(--app-theme-border);
+  --input: var(--app-theme-input);
+  --sidebar: var(--app-theme-sidebar);
+  --sidebar-foreground: var(--app-theme-sidebar-foreground);
+  --sidebar-muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-control-surface: var(--app-theme-sidebar-control-surface);
+  --sidebar-row-hover: var(--app-theme-sidebar-row-hover);
+  --sidebar-row-active: var(--app-theme-sidebar-row-active);
+  --sidebar-row-selected: var(--app-theme-sidebar-row-selected);
+  --sidebar-border: var(--app-theme-sidebar-border);
+  --sidebar-stage-fade: var(--app-theme-sidebar);
+  background-color: var(--sidebar);
+}
+
+/* Keep the navigation edge as quiet as the standard palettes. Theme files may
+   still use sidebarBorder for controls and internal separators, but the outer
+   divider should not become more prominent just because a palette is vivid. */
+html[data-theme-id] [data-app-sidebar] {
+  border-color: color-mix(in srgb, var(--sidebar-foreground) 10%, transparent);
+}
+
+html.dark[data-theme-id] [data-app-sidebar] {
+  border-color: color-mix(in srgb, var(--sidebar-foreground) 8%, transparent);
+}
+
+/* T3 Chat's panel divider is deliberately pink, and its resize affordance
+   keeps that color while hovered. Do not neutralize this branded edge. */
+html.dark[data-theme-id="t3-chat"] [data-app-sidebar] {
+  border-color: var(--sidebar-border);
+}
+
+.theme-json-key {
+  color: var(--app-theme-accent, var(--color-blue-600));
+}
+
+.theme-json-string {
+  color: var(--app-theme-message-action, var(--color-emerald-600));
+}
+
+.theme-json-number {
+  color: var(--app-theme-secondary-foreground, var(--color-amber-600));
+}
+
+.theme-json-constant {
+  color: var(--app-theme-accent-surface-foreground, var(--color-violet-600));
+}
+
 body {
-  font-family:
-    "DM Sans Variable",
-    "DM Sans",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    system-ui,
-    sans-serif;
+  /* Reference the theme token (not a literal stack) so the Settings ->
+     Appearance runtime override of --font-sans reaches all interface text. */
+  font-family: var(--font-sans);
   margin: 0;
   padding: 0;
 }
@@ -1004,18 +1614,46 @@ body {
    grain's subtle brightening and stand out against the body. */
 :root {
   --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  --surface-grain-size: 256px 256px;
+}
+
+/* The live T3 Chat texture is a 128px grayscale tile with a constant 7/255
+   alpha. Keep our procedural texture cheap while matching that scale and
+   strength for the branded preset. */
+html[data-theme-id="t3-chat"] {
+  --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02745'/%3E%3C/svg%3E");
+  --surface-grain-size: 128px 128px;
 }
 
 body {
   background-image: var(--surface-grain);
   background-repeat: repeat;
-  background-size: 256px 256px;
+  background-size: var(--surface-grain-size);
 }
 
 pre,
 code {
-  font-family:
-    "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  font-family: var(--font-mono);
+}
+
+/* Code blocks in chat carry the size preference. Scoped to chat markdown
+   rather than every pre: a global rule would beat text-size utilities and
+   inherited sizes on unrelated pre surfaces (terminal previews, approvals).
+   Inline code stays relative to its sentence so it never towers over prose;
+   diffs and file previews take the size through --diffs-font-size. */
+.chat-markdown .chat-markdown-shiki .shiki,
+.chat-markdown pre code {
+  font-size: var(--font-size-code, inherit);
+}
+
+/* @pierre/diffs surfaces (diffs, file previews, annotatable code, search
+   lines) render inside shadow roots but consult these hooks with their own
+   literal stacks as fallback. Custom properties inherit across the shadow
+   boundary, so defining them once here routes every code surface through the
+   appearance font tokens. */
+:root {
+  --diffs-font-family: var(--font-mono);
+  --diffs-header-font-family: var(--font-sans);
 }
 
 /* Window drag region (frameless titlebar) */
@@ -1046,6 +1684,54 @@ code {
 }
 
 ::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-hover);
+}
+
+/* Settings -> Appearance can point the composer at its own face (for example a
+   mono font); default follows the sans stack. Applied on the surface wrapper so
+   the editor and its placeholder inherit together. */
+.composer-editor-surface {
+  font-family: var(--font-composer, var(--font-sans));
+  font-size: var(--font-size-prompt, 0.875rem);
+}
+
+/* Touch browsers zoom the page when a focused field is under 16px, so keep
+   the floor there regardless of the preference. Gated on a coarse pointer:
+   the zoom quirk does not exist on desktop, where a narrow window must not
+   silently override a smaller chosen prompt size. */
+@media (max-width: 39.999rem) and (pointer: coarse) {
+  .composer-editor-surface {
+    font-size: max(var(--font-size-prompt, 1rem), 16px);
+  }
+}
+
+.t3-ghostty-canvas {
+  cursor: text;
+}
+
+.t3-ghostty-scrollbar {
+  position: absolute;
+  z-index: 1;
+  top: 4px;
+  right: 1px;
+  bottom: 4px;
+  width: var(--app-scrollbar-width);
+  cursor: default;
+  touch-action: none;
+}
+
+.t3-ghostty-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  right: 1px;
+  left: 1px;
+  border-radius: 3px;
+  background: var(--app-scrollbar-thumb);
+  transition: background-color 120ms ease-out;
+}
+
+.t3-ghostty-scrollbar:hover .t3-ghostty-scrollbar-thumb,
+.t3-ghostty-scrollbar:focus-visible .t3-ghostty-scrollbar-thumb {
   background: var(--app-scrollbar-thumb-hover);
 }
 
@@ -1099,20 +1785,6 @@ code {
 
 .turn-chip-strip::-webkit-scrollbar {
   display: none;
-}
-
-/* Terminal drawer scrollbar parity with chat */
-.thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical {
-  width: 6px !important;
-}
-
-.thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar > .slider {
-  border-radius: 3px;
-}
-
-.thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
-  width: 6px !important;
-  left: 0 !important;
 }
 
 /* Reasoning select -- clickable label surface */
@@ -1224,6 +1896,12 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown li.task-list-item input[type="checkbox"] {
   margin: 0 0.35em 0.15em -1.25rem;
   vertical-align: middle;
+}
+
+/* Markdown assumes inline images — GitHub comments lay button images out in a row — and the
+   Tailwind preflight's block-level img would stack them one per line. */
+.chat-markdown img {
+  display: inline-block;
 }
 
 .chat-markdown a {
@@ -1365,9 +2043,7 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown .chat-markdown-codeblock {
   margin: 0.65rem 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--muted) 78%, var(--background));
+  border-radius: var(--radius);
 }
 
 .chat-markdown .chat-markdown-codeblock-header {
@@ -1375,10 +2051,8 @@ label:has(> select#reasoning-effort) select {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--muted);
-  padding: 0.25rem 0.375rem 0.25rem 0.7rem;
-  color: var(--muted-foreground);
+  padding: 0.375rem 0.375rem 0 0.75rem;
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
 }
 
 .chat-markdown .chat-markdown-codeblock-title {
@@ -1391,7 +2065,7 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .chat-markdown-chrome-action {
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
 }
 
 .chat-markdown .chat-markdown-chrome-action:hover {
@@ -1494,6 +2168,9 @@ label:has(> select#reasoning-effort) select {
   .prompt-stash-count-enter {
     animation: none;
   }
+  [data-slot="skeleton"]::after {
+    content: none;
+  }
 }
 
 @keyframes provider-update-pill-countdown {
@@ -1511,15 +2188,34 @@ label:has(> select#reasoning-effort) select {
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
-  background: color-mix(in srgb, var(--background) 94%, var(--card));
+  background: var(--background);
+}
+
+/* Diffs live directly on the panel canvas. Normal chat code blocks may use a
+   raised code surface, but carrying that fill into the diff creates a card-like
+   rectangle that does not belong in the panel. */
+.diff-render-surface {
+  --code-background: var(--background);
 }
 
 .diff-render-file,
-.diff-render-surface > diffs-container {
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
+.diff-render-surface diffs-container {
+  border: 0;
+  border-radius: 0;
   overflow: clip;
-  background: color-mix(in srgb, var(--card) 92%, var(--background));
+  background: var(--code-background);
+  color: var(--code-foreground);
+}
+
+/* Pierre's file renderer owns its own surface tokens. Keep the root of a file
+   preview on the same themeable code surface as the diff panel. */
+.diff-render-surface diffs-container,
+.file-preview-virtualizer diffs-container {
+  --diffs-bg: var(--code-background) !important;
+  --diffs-light-bg: var(--code-background) !important;
+  --diffs-dark-bg: var(--code-background) !important;
+  background-color: var(--code-background) !important;
+  color: var(--code-foreground) !important;
 }
 
 @keyframes ultrathink-rainbow {

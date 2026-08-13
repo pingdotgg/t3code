@@ -11,6 +11,7 @@ import {
   ProviderSessionReaper,
   type ProviderSessionReaperShape,
 } from "../Services/ProviderSessionReaper.ts";
+import { forkParked } from "../../serverActivation.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 
 const DEFAULT_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
@@ -70,6 +71,19 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
+        // The turn can settle while background work runs on (subagent
+        // fleets, workflow runs, Monitor watch loops). Those live inside the
+        // provider process, so stopping the session would kill them silently,
+        // and nothing bumps lastSeenAt between turns.
+        if (thread?.backgroundLiveness != null) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-background-work", {
+            threadId: binding.threadId,
+            backgroundLiveness: thread.backgroundLiveness,
+            idleDurationMs,
+          });
+          continue;
+        }
+
         const reaped = yield* providerService.stopSession({ threadId: binding.threadId }).pipe(
           Effect.tap(() =>
             Effect.logInfo("provider.session.reaped", {
@@ -105,7 +119,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
     const start: ProviderSessionReaperShape["start"] = () =>
       Effect.gen(function* () {
-        yield* Effect.forkScoped(
+        yield* forkParked(
           sweep.pipe(
             Effect.catch((error: unknown) =>
               Effect.logWarning("provider.session.reaper.sweep-failed", {

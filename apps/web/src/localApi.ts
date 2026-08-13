@@ -1,14 +1,11 @@
-import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
-import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
+import { requestConfirmDialog } from "./confirmDialog";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 
 let cachedApi: LocalApi | undefined;
-
-function unavailableLocalBackendError(): Error {
-  return new Error("Local backend API is unavailable before a backend is paired.");
-}
 
 function createBrowserLocalApi(): LocalApi {
   return {
@@ -17,15 +14,11 @@ function createBrowserLocalApi(): LocalApi {
         if (!window.desktopBridge) return null;
         return window.desktopBridge.pickFolder(options);
       },
-      confirm: async (message) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.confirm(message);
-        }
-        return window.confirm(message);
+      confirm: async (message, options?: ConfirmDialogOptions) => {
+        return requestConfirmDialog(message, options) ?? false;
       },
     },
     shell: {
-      openInEditor: () => Promise.reject(unavailableLocalBackendError()),
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
@@ -63,20 +56,6 @@ function createBrowserLocalApi(): LocalApi {
         writeBrowserClientSettings(settings);
       },
     },
-    server: {
-      getConfig: () => Promise.reject(unavailableLocalBackendError()),
-      refreshProviders: () => Promise.reject(unavailableLocalBackendError()),
-      updateProvider: () => Promise.reject(unavailableLocalBackendError()),
-      upsertKeybinding: () => Promise.reject(unavailableLocalBackendError()),
-      removeKeybinding: () => Promise.reject(unavailableLocalBackendError()),
-      getSettings: () => Promise.reject(unavailableLocalBackendError()),
-      updateSettings: () => Promise.reject(unavailableLocalBackendError()),
-      discoverSourceControl: () => Promise.reject(unavailableLocalBackendError()),
-      getTraceDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
-      getProcessDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
-      getProcessResourceHistory: () => Promise.reject(unavailableLocalBackendError()),
-      signalProcess: () => Promise.reject(unavailableLocalBackendError()),
-    },
   };
 }
 
@@ -88,12 +67,7 @@ export function readLocalApi(): LocalApi | undefined {
   if (typeof window === "undefined") return undefined;
   if (cachedApi) return cachedApi;
 
-  if (window.nativeApi) {
-    cachedApi = window.nativeApi;
-    return cachedApi;
-  }
-
-  cachedApi = createBrowserLocalApi();
+  cachedApi = createLocalApi();
   return cachedApi;
 }
 

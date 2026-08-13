@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ProviderOptionDescriptor } from "@t3tools/contracts";
+import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
 import { buildTraitsTriggerDisplay } from "./TraitsPicker";
 
 function selectDescriptor(
   id: string,
-  options: ReadonlyArray<{ id: string; label: string }>,
+  options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,
   currentValue: string,
 ): Extract<ProviderOptionDescriptor, { type: "select" }> {
   return { id, label: id, type: "select", options: [...options], currentValue };
@@ -17,7 +17,7 @@ function fastModeDescriptor(
 }
 
 const EFFORT = selectDescriptor(
-  "effort",
+  "reasoningEffort",
   [
     { id: "high", label: "High" },
     { id: "max", label: "Max" },
@@ -33,26 +33,48 @@ const CONTEXT_WINDOW = selectDescriptor(
   "1m",
 );
 
-function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>, fastModeEnabled: boolean) {
+const CODEX = ProviderDriverKind.make("codex");
+
+function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
   return buildTraitsTriggerDisplay({
+    provider: CODEX,
     descriptors,
-    primarySelectDescriptorId: "effort",
+    primarySelectDescriptorId: "reasoningEffort",
     ultrathinkPromptControlled: false,
-    fastModeEnabled,
   });
 }
 
 describe("buildTraitsTriggerDisplay", () => {
   it("omits fast mode from the label entirely when it is off", () => {
-    expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW], false)).toEqual({
+    expect(display([EFFORT, fastModeDescriptor(false), CONTEXT_WINDOW])).toEqual({
       label: "High · 1M",
       showFastModeIcon: false,
     });
   });
 
   it("shows the bolt instead of a text label when fast mode is on", () => {
-    expect(display([EFFORT, fastModeDescriptor(true), CONTEXT_WINDOW], true)).toEqual({
+    expect(display([EFFORT, fastModeDescriptor(true), CONTEXT_WINDOW])).toEqual({
       label: "High · 1M",
+      showFastModeIcon: true,
+    });
+  });
+
+  it("renders Codex's Standard and Fast service tiers as fast mode", () => {
+    const serviceTier = selectDescriptor(
+      "serviceTier",
+      [
+        { id: "default", label: "Standard", isDefault: true },
+        { id: "priority", label: "Fast" },
+      ],
+      "default",
+    );
+
+    expect(display([EFFORT, serviceTier])).toEqual({
+      label: "High",
+      showFastModeIcon: false,
+    });
+    expect(display([EFFORT, { ...serviceTier, currentValue: "priority" }])).toEqual({
+      label: "High",
       showFastModeIcon: true,
     });
   });
@@ -64,18 +86,18 @@ describe("buildTraitsTriggerDisplay", () => {
       type: "boolean",
       currentValue: true,
     };
-    expect(display([EFFORT, thinking], false)).toEqual({
+    expect(display([EFFORT, thinking])).toEqual({
       label: "High · Thinking On",
       showFastModeIcon: false,
     });
   });
 
   it("falls back to a text label when fast mode is the only trait", () => {
-    expect(display([fastModeDescriptor(true)], true)).toEqual({
+    expect(display([fastModeDescriptor(true)])).toEqual({
       label: "Fast",
       showFastModeIcon: false,
     });
-    expect(display([fastModeDescriptor(false)], false)).toEqual({
+    expect(display([fastModeDescriptor(false)])).toEqual({
       label: "Normal",
       showFastModeIcon: false,
     });
@@ -94,16 +116,16 @@ describe("buildTraitsTriggerDisplay", () => {
         { id: "high", label: "High" },
       ],
     };
-    expect(display([unresolved], false)).toEqual({ label: "", showFastModeIcon: false });
+    expect(display([unresolved])).toEqual({ label: "", showFastModeIcon: false });
   });
 
   it("still renders the prompt-controlled ultrathink label alongside the bolt", () => {
     expect(
       buildTraitsTriggerDisplay({
+        provider: CODEX,
         descriptors: [EFFORT, fastModeDescriptor(true)],
-        primarySelectDescriptorId: "effort",
+        primarySelectDescriptorId: "reasoningEffort",
         ultrathinkPromptControlled: true,
-        fastModeEnabled: true,
       }),
     ).toEqual({ label: "Ultrathink", showFastModeIcon: true });
   });

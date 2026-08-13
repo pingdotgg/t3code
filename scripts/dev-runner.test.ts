@@ -227,6 +227,30 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       }),
     );
 
+    it.effect("strips inherited service-launcher context", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {
+            T3_SERVICE_LAUNCHER_CONTEXT: '{"childVersion":"9.9.9"}',
+            T3_BOOT_SERVICE_UNIT: "t3code.service",
+          },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.T3_SERVICE_LAUNCHER_CONTEXT, undefined);
+        assert.equal(env.T3_BOOT_SERVICE_UNIT, undefined);
+      }),
+    );
+
     it.effect("does not force websocket logging on in dev mode when unset", () =>
       Effect.gen(function* () {
         const env = yield* createDevRunnerEnv({
@@ -984,6 +1008,115 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
 
         assert.equal(spawnCount, 1);
       });
+    });
+
+    // A shared origin means a remote browser, where unbundled dev's
+    // per-module waterfall pays a tailnet round trip per import level. The
+    // runner defaults bundled dev on for the spawned stack, but only
+    // defaults: an explicit T3CODE_BUNDLED_DEV (even "0") must pass through.
+    describe("--share bundled dev default", () => {
+      const shareSpawnedEnv = (input: { readonly ambientBundledDev: string | undefined }) =>
+        Effect.gen(function* () {
+          let captured: Record<string, string | undefined> | undefined;
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const spawned = command as unknown as {
+                readonly command: string;
+                readonly args: ReadonlyArray<string>;
+                readonly options?: { readonly env?: Record<string, string | undefined> };
+              };
+              if (spawned.command === "vp") {
+                captured = spawned.options?.env;
+                return Effect.succeed(mockProcess(0));
+              }
+              // tailscale: answer `status --json` with a valid tailnet name,
+              // succeed the `serve`/`off` calls.
+              return Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(2),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: spawned.args.includes("status")
+                    ? Stream.make(
+                        new TextEncoder().encode(
+                          JSON.stringify({ Self: { DNSName: "host.example.ts.net." } }),
+                        ),
+                      )
+                    : Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              );
+            }),
+          );
+
+          yield* runDevRunnerWithInput({
+            ...devServerInput,
+            mode: "dev",
+            port: undefined,
+            share: true,
+          }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(
+              HostProcessEnvironment,
+              input.ambientBundledDev === undefined
+                ? {}
+                : { T3CODE_BUNDLED_DEV: input.ambientBundledDev },
+            ),
+          );
+
+          return captured;
+        });
+
+      it.effect("defaults T3CODE_BUNDLED_DEV=1 for a shared run", () =>
+        Effect.gen(function* () {
+          const env = yield* shareSpawnedEnv({ ambientBundledDev: undefined });
+          assert.equal(env?.T3CODE_BUNDLED_DEV, "1");
+        }),
+      );
+
+      it.effect("keeps an explicit T3CODE_BUNDLED_DEV=0 opt-out", () =>
+        Effect.gen(function* () {
+          const env = yield* shareSpawnedEnv({ ambientBundledDev: "0" });
+          assert.equal(env?.T3CODE_BUNDLED_DEV, "0");
+        }),
+      );
+
+      it.effect("leaves T3CODE_BUNDLED_DEV unset without --share", () =>
+        Effect.gen(function* () {
+          let captured: Record<string, string | undefined> | undefined;
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              captured = (
+                command as {
+                  readonly options?: { readonly env?: Record<string, string | undefined> };
+                }
+              ).options?.env;
+              return Effect.succeed(mockProcess(0));
+            }),
+          );
+
+          yield* runDevRunnerWithInput({
+            ...devServerInput,
+            mode: "dev",
+            port: undefined,
+          }).pipe(
+            Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
+            Effect.provideService(HostProcessPlatform, "linux"),
+            Effect.provideService(HostProcessEnvironment, {}),
+          );
+
+          assert.equal(captured?.T3CODE_BUNDLED_DEV, undefined);
+        }),
+      );
     });
 
     it.effect("spawns nothing when --dry-run is combined with --share", () => {

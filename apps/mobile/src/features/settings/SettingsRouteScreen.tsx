@@ -2,26 +2,16 @@ import { useAuth, useUser } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
-import * as Updates from "expo-updates";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Linking,
-  Platform,
-  Pressable,
-  ScrollView,
-  View,
-} from "react-native";
+import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-  type AtomCommandResult,
   isAtomCommandInterrupted,
   reportAtomCommandResult,
   settleAsyncResult,
@@ -39,7 +29,6 @@ import {
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
-import { useClerkSettingsSheetDetent } from "../cloud/ClerkSettingsSheetDetent";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
@@ -47,6 +36,12 @@ import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import {
+  type AppUpdateCheckState,
+  isAppUpdateCheckAvailable,
+  registerHiddenUpdateTap,
+  runAppUpdateCheck,
+} from "../updates/app-updates";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -135,7 +130,7 @@ function LocalSettingsRouteScreen() {
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
 
-        <BetaSettingsSection />
+        <LegacySettingsSection />
 
         <ArchivedThreadsSettingsSection />
 
@@ -151,7 +146,6 @@ function ConfiguredSettingsRouteScreen() {
   const agentAwarenessPushAvailable = supportsAgentAwarenessPush();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { expand: expandClerkSheet } = useClerkSettingsSheetDetent();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -166,7 +160,7 @@ function ConfiguredSettingsRouteScreen() {
   const environmentCount = connections.length;
   const accountLabel = useMemo(() => {
     if (!isLoaded) return "Checking";
-    if (!isSignedIn) return "Request access";
+    if (!isSignedIn) return "Sign in";
     return user?.primaryEmailAddress?.emailAddress ?? "Signed in";
   }, [isLoaded, isSignedIn, user?.primaryEmailAddress?.emailAddress]);
 
@@ -273,13 +267,13 @@ function ConfiguredSettingsRouteScreen() {
 
   const promptSignIn = useCallback(() => {
     Alert.alert(
-      "Request T3 Connect access",
-      "Live Activity updates require approved T3 Connect access so relay can deliver updates to this device.",
+      "Sign in to T3 Connect",
+      "Live Activity updates require T3 Connect so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Continue",
-          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" }),
+          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
         },
       ],
     );
@@ -440,13 +434,8 @@ function ConfiguredSettingsRouteScreen() {
 
   const openAccount = useCallback(() => {
     if (!isLoaded) return;
-    if (!isSignedIn) {
-      navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" });
-      return;
-    }
-    expandClerkSheet();
     navigation.navigate("SettingsSheet", { screen: "SettingsAuth" });
-  }, [expandClerkSheet, isLoaded, isSignedIn, navigation]);
+  }, [isLoaded, navigation]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -522,7 +511,7 @@ function ConfiguredSettingsRouteScreen() {
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
 
-        <BetaSettingsSection />
+        <LegacySettingsSection />
 
         <ArchivedThreadsSettingsSection />
 
@@ -533,56 +522,46 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const projectGroupingEnabled = AsyncResult.isSuccess(preferencesResult)
-    ? preferencesResult.value.projectGroupingEnabled !== false
-    : true;
-
   return (
     <SettingsSection title="General">
-      <SettingsSwitchRow
-        icon="folder"
-        label="Project Grouping"
-        value={projectGroupingEnabled}
-        onValueChange={(value) => savePreferences({ projectGroupingEnabled: value })}
-      />
+      <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
+      <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>
   );
 }
 
 /**
- * Device-local beta toggles. Mobile has no client-settings sync, so this is
- * the counterpart of web's Settings → Beta backed by mobile preferences.
+ * Device-local legacy toggles. Mobile has no client-settings sync, so this is
+ * the counterpart of web's Settings → General → Legacy features backed by
+ * mobile preferences.
  */
-function BetaSettingsSection() {
+function LegacySettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const threadListV2Enabled = useThreadListV2Enabled();
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Beta">
+      <SettingsSection title="Legacy">
         <SettingsSwitchRow
           icon="sidebar.left"
-          label="Thread List v2"
-          value={threadListV2Enabled}
-          onValueChange={(value) => savePreferences({ threadListV2Enabled: value })}
+          label="Legacy Thread List"
+          value={!threadListV2Enabled}
+          onValueChange={(value) => savePreferences({ legacyThreadListEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        One flat thread list in creation order. Active work renders as cards; settled threads
-        collapse to compact rows. Switch back any time.
+        Brings back the original grouped thread list. The default list is flat, in creation order:
+        active work renders as cards; settled threads collapse to compact rows.
       </Text>
     </View>
   );
 }
 
-type UpdateCheckState = "idle" | "checking" | "downloading" | "restarting" | "current";
-
 function AppSettingsSection() {
   const icon = useThemeColor("--color-icon");
-  const [updateState, setUpdateState] = useState<UpdateCheckState>("idle");
+  const [updateState, setUpdateState] = useState<AppUpdateCheckState>("idle");
   const updateInFlight = useRef(false);
+  const hiddenUpdateTapCount = useRef(0);
 
   const version = Constants.expoConfig?.version ?? "0.0.0";
   // Fall back to "production" to match resolveAppVariant in app.config.ts, so a
@@ -590,22 +569,12 @@ function AppSettingsSection() {
   const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
   const variantLabel = variant === "production" ? "" : capitalize(variant);
   const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
-  // Which JS is actually running: the bundle shipped in the binary, or an OTA
-  // update downloaded on top of it. Surfacing this makes "am I even on the
-  // right build?" answerable at a glance.
-  const bundleLabel = Updates.isEnabled
-    ? Updates.isEmbeddedLaunch
-      ? "Embedded"
-      : Updates.updateId
-        ? `OTA ${Updates.updateId.slice(0, 7)}`
-        : null
-    : null;
-
+  const updateCheckAvailable = isAppUpdateCheckAvailable();
   const busy =
     updateState === "checking" || updateState === "downloading" || updateState === "restarting";
 
   // "Up to date" is a transient acknowledgement, not a state worth persisting —
-  // drop back to the bundle label so the row keeps answering "what am I running?".
+  // return the version row to its normal, deliberately quiet state.
   useEffect(() => {
     if (updateState !== "current") return;
     const timer = setTimeout(() => setUpdateState("idle"), 3000);
@@ -618,11 +587,23 @@ function AppSettingsSection() {
     if (updateInFlight.current) return;
     updateInFlight.current = true;
     try {
-      await runUpdateCheck(setUpdateState);
+      await runAppUpdateCheck({
+        onFailure: (message) => Alert.alert("Update failed", message),
+        onStateChange: setUpdateState,
+      });
     } finally {
       updateInFlight.current = false;
     }
   }, []);
+
+  const handleVersionPress = useCallback(() => {
+    if (!updateCheckAvailable || updateInFlight.current) return;
+    const tap = registerHiddenUpdateTap(hiddenUpdateTapCount.current);
+    hiddenUpdateTapCount.current = tap.nextCount;
+    if (tap.shouldCheck) {
+      void checkForUpdate();
+    }
+  }, [checkForUpdate, updateCheckAvailable]);
 
   const statusLabel =
     updateState === "checking"
@@ -633,7 +614,7 @@ function AppSettingsSection() {
           ? "Restarting…"
           : updateState === "current"
             ? "Up to date"
-            : bundleLabel;
+            : null;
 
   const versionRow = (
     <View className="flex-row items-center gap-4 p-4">
@@ -651,21 +632,6 @@ function AppSettingsSection() {
           <Text className="text-xs text-foreground-muted/70">{statusLabel}</Text>
         ) : null}
       </View>
-      {Updates.isEnabled ? (
-        <View className="w-[22px] items-center">
-          {busy ? (
-            <ActivityIndicator color={icon} size="small" />
-          ) : (
-            <SymbolView
-              name="arrow.clockwise"
-              size={18}
-              tintColor={icon}
-              type="monochrome"
-              weight="semibold"
-            />
-          )}
-        </View>
-      ) : null}
     </View>
   );
 
@@ -673,12 +639,12 @@ function AppSettingsSection() {
     <SettingsSection title="App">
       <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
       <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
-      {Updates.isEnabled ? (
+      {updateCheckAvailable ? (
         <Pressable
-          accessibilityLabel="Check for updates"
-          accessibilityRole="button"
+          accessibilityLabel={`Version ${versionLabel}`}
+          accessibilityRole="text"
           disabled={busy}
-          onPress={() => void checkForUpdate()}
+          onPress={handleVersionPress}
         >
           {versionRow}
         </Pressable>
@@ -687,52 +653,6 @@ function AppSettingsSection() {
       )}
     </SettingsSection>
   );
-}
-
-async function runUpdateCheck(setUpdateState: (state: UpdateCheckState) => void): Promise<void> {
-  setUpdateState("checking");
-  const check = await settlePromise(() => Updates.checkForUpdateAsync());
-  if (check._tag === "Failure") {
-    reportUpdateFailure(check, "Could not check for updates.");
-    setUpdateState("idle");
-    return;
-  }
-  // A rollback directive (`eas update:rollback`) arrives as isAvailable: false
-  // with isRollBackToEmbedded: true — there is nothing newer to install, but the
-  // running OTA still has to be dropped for the embedded bundle.
-  if (!check.value.isAvailable && !check.value.isRollBackToEmbedded) {
-    setUpdateState("current");
-    return;
-  }
-
-  setUpdateState("downloading");
-  const fetched = await settlePromise(() => Updates.fetchUpdateAsync());
-  if (fetched._tag === "Failure") {
-    reportUpdateFailure(fetched, "Could not download the update.");
-    setUpdateState("idle");
-    return;
-  }
-  // isNew is always false for a rollback, so it can't be the sole gate here either.
-  if (!fetched.value.isNew && !fetched.value.isRollBackToEmbedded) {
-    setUpdateState("current");
-    return;
-  }
-
-  setUpdateState("restarting");
-  // reloadAsync never resolves on success — the JS context is torn down — so
-  // reaching the failure branch below is the only way this returns.
-  const reloaded = await settlePromise(() => Updates.reloadAsync());
-  if (reloaded._tag === "Failure") {
-    reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.");
-    setUpdateState("idle");
-  }
-}
-
-function reportUpdateFailure(result: AtomCommandResult<unknown, unknown>, fallback: string): void {
-  reportAtomCommandResult(result, { label: "app update check" });
-  if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-  const error = squashAtomCommandFailure(result);
-  Alert.alert("Update failed", error instanceof Error ? error.message : fallback);
 }
 
 function capitalize(value: string): string {

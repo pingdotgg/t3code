@@ -49,20 +49,41 @@ const environmentInput = (baseDir: string) =>
     runningUnderArm64Translation: false,
   }) satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
-const makeEnvironmentLayer = (baseDir: string) =>
+const makeEnvironmentLayer = (baseDir: string, isDevelopment = true) =>
   DesktopEnvironment.layer(environmentInput(baseDir)).pipe(
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
           T3CODE_HOME: baseDir,
-          VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+          VITE_DEV_SERVER_URL: isDevelopment ? "http://127.0.0.1:5733" : undefined,
         }),
       ),
     ),
   );
 
 describe("DesktopObservability", () => {
+  it("advances a retained output offset instead of repeatedly copying a full head chunk", () => {
+    const maxBufferedBytes = 1024 * 1024;
+    const initial = DesktopObservability.appendBoundedOutputChunk(
+      {
+        runId: "test-run",
+        startDetails: "pid=123",
+        chunks: [],
+        byteLength: 0,
+      },
+      "stderr",
+      new Uint8Array(maxBufferedBytes),
+    );
+    const initialBackingBuffer = initial.chunks[0]?.chunk.buffer;
+
+    const next = DesktopObservability.appendBoundedOutputChunk(initial, "stderr", Uint8Array.of(1));
+
+    assert.equal(next.chunks[0]?.chunk.buffer, initialBackingBuffer);
+    assert.equal(next.chunks[0]?.offset, 1);
+    assert.equal(next.byteLength, maxBufferedBytes);
+  });
+
   it.effect("persists desktop Effect logs as span events in desktop.trace.ndjson", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -112,26 +133,34 @@ describe("DesktopObservability", () => {
     ),
   );
 
-  it.effect("persists backend child output as structured JSON records in development", () =>
+  it.effect("buffers backend child output and persists it only when a failure is reported", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-desktop-backend-output-log-test-",
       });
-      const environmentLayer = makeEnvironmentLayer(baseDir);
+      const environmentLayer = makeEnvironmentLayer(baseDir, false);
       const logPath = yield* Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         return environment.path.join(environment.logDir, "server-child.log");
+      }).pipe(Effect.provide(environmentLayer));
+      const tracePath = yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        return environment.path.join(environment.logDir, "desktop.trace.ndjson");
       }).pipe(Effect.provide(environmentLayer));
 
       yield* Effect.gen(function* () {
         const factory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
         const outputLog = yield* factory.forInstance("primary");
-        yield* outputLog.writeSessionBoundary({
-          phase: "START",
+        yield* outputLog.beginSession({
           details: "pid=123 port=3773 cwd=/repo",
         });
         yield* outputLog.writeOutputChunk("stdout", new TextEncoder().encode("hello server\n"));
+        assert.isFalse(yield* fileSystem.exists(logPath));
+        yield* outputLog.persistFailure({ details: "code=1" });
+        yield* outputLog.beginSession({ details: "pid=456" });
+        yield* outputLog.writeOutputChunk("stderr", new TextEncoder().encode("normal shutdown\n"));
+        yield* outputLog.discardSession;
       }).pipe(
         Effect.annotateLogs({ runId: "test-run" }),
         Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
@@ -139,16 +168,18 @@ describe("DesktopObservability", () => {
 
       const log = yield* fileSystem.readFileString(logPath);
       const lines = log.trimEnd().split("\n");
-      const boundary = yield* decodeDesktopBackendChildLogRecord(lines[0] ?? "");
+      const start = yield* decodeDesktopBackendChildLogRecord(lines[0] ?? "");
       const output = yield* decodeDesktopBackendChildLogRecord(lines[1] ?? "");
+      const end = yield* decodeDesktopBackendChildLogRecord(lines[2] ?? "");
 
-      assert.equal(boundary.message, "backend child process session start");
-      assert.equal(boundary.level, "INFO");
-      assert.equal(boundary.annotations.component, "desktop-backend-child");
-      assert.equal(boundary.annotations.runId, "test-run");
-      assert.equal(boundary.annotations.instanceId, "primary");
-      assert.equal(boundary.annotations.phase, "START");
-      assert.equal(boundary.annotations.details, "pid=123 port=3773 cwd=/repo");
+      assert.equal(lines.length, 3);
+      assert.equal(start.message, "backend child process failure output start");
+      assert.equal(start.level, "ERROR");
+      assert.equal(start.annotations.component, "desktop-backend-child");
+      assert.equal(start.annotations.runId, "test-run");
+      assert.equal(start.annotations.instanceId, "primary");
+      assert.equal(start.annotations.phase, "START");
+      assert.equal(start.annotations.details, "pid=123 port=3773 cwd=/repo");
 
       assert.equal(output.message, "backend child process output");
       assert.equal(output.level, "INFO");
@@ -157,6 +188,141 @@ describe("DesktopObservability", () => {
       assert.equal(output.annotations.instanceId, "primary");
       assert.equal(output.annotations.stream, "stdout");
       assert.equal(output.annotations.text, "hello server\n");
+
+      assert.equal(end.message, "backend child process failure output end");
+      assert.equal(end.level, "ERROR");
+      assert.equal(end.annotations.instanceId, "primary");
+      assert.equal(end.annotations.phase, "END");
+      assert.equal(end.annotations.details, "code=1");
+
+      const traceRecords = (yield* fileSystem.readFileString(tracePath))
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => decodeTraceRecordLine(line));
+      assert.isFalse(
+        traceRecords.some(
+          (record) => record.name === "desktop.observability.backendOutput.writeOutputChunk",
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),
+    ),
+  );
+
+  it.effect("keeps buffering output after a non-terminal failure snapshot", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-output-snapshot-test-",
+      });
+      const environmentLayer = makeEnvironmentLayer(baseDir, false);
+      const logPath = yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        return environment.path.join(environment.logDir, "server-child.log");
+      }).pipe(Effect.provide(environmentLayer));
+
+      yield* Effect.gen(function* () {
+        const factory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
+        const outputLog = yield* factory.forInstance("primary");
+        yield* outputLog.beginSession({ details: "pid=123" });
+        yield* outputLog.writeOutputChunk("stdout", new TextEncoder().encode("before timeout\n"));
+        yield* outputLog.persistFailureSnapshot({ details: "readiness timeout" });
+        yield* outputLog.writeOutputChunk("stderr", new TextEncoder().encode("after timeout\n"));
+        yield* outputLog.persistFailure({ details: "code=1" });
+      }).pipe(
+        Effect.annotateLogs({ runId: "test-run" }),
+        Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
+      );
+
+      const records = yield* Effect.forEach(
+        (yield* fileSystem.readFileString(logPath)).trimEnd().split("\n"),
+        (line) => decodeDesktopBackendChildLogRecord(line),
+      );
+      assert.equal(
+        records.some((record) => record.annotations.text === "after timeout\n"),
+        true,
+      );
+      assert.equal(records.at(-1)?.annotations.details, "code=1");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),
+    ),
+  );
+
+  it.effect("retains only the last mebibyte of backend child output", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-output-bound-test-",
+      });
+      const environmentLayer = makeEnvironmentLayer(baseDir, false);
+      const logPath = yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        return environment.path.join(environment.logDir, "server-child.log");
+      }).pipe(Effect.provide(environmentLayer));
+      const maxBufferedBytes = 1024 * 1024;
+      const discardedPrefixBytes = 128;
+      const output = new Uint8Array(maxBufferedBytes + discardedPrefixBytes);
+      output.fill("x".charCodeAt(0));
+      output.fill("y".charCodeAt(0), 0, discardedPrefixBytes);
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const factory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
+          const outputLog = yield* factory.forInstance("primary");
+          yield* outputLog.beginSession({ details: "pid=123" });
+          yield* outputLog.writeOutputChunk("stderr", output);
+          yield* outputLog.persistFailure({ details: "code=1" });
+        }).pipe(
+          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
+        ),
+      );
+
+      const lines = (yield* fileSystem.readFileString(logPath)).trimEnd().split("\n");
+      const record = yield* decodeDesktopBackendChildLogRecord(lines[1] ?? "");
+      const text = record.annotations.text;
+      assert.equal(typeof text, "string");
+      if (typeof text !== "string") {
+        return;
+      }
+      assert.equal(new TextEncoder().encode(text).byteLength, maxBufferedBytes);
+      assert.isFalse(text.includes("y"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),
+    ),
+  );
+
+  it.effect("bounds the number of retained backend child output chunks", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-output-chunks-test-",
+      });
+      const environmentLayer = makeEnvironmentLayer(baseDir, false);
+      const logPath = yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        return environment.path.join(environment.logDir, "server-child.log");
+      }).pipe(Effect.provide(environmentLayer));
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const factory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
+          const outputLog = yield* factory.forInstance("primary");
+          yield* outputLog.beginSession({ details: "pid=123" });
+          for (let index = 0; index < 300; index += 1) {
+            yield* outputLog.writeOutputChunk("stderr", Uint8Array.of(index % 128));
+          }
+          yield* outputLog.persistFailure({ details: "code=1" });
+        }).pipe(
+          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
+        ),
+      );
+
+      const lines = (yield* fileSystem.readFileString(logPath)).trimEnd().split("\n");
+      assert.equal(lines.length, 258);
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),

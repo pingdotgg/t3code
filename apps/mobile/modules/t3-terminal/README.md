@@ -40,7 +40,7 @@ fails, run `xcodebuild -downloadComponent MetalToolchain`.
 ## Rebuilding libghostty-vt for Android
 
 The checked-in Android shared libraries and headers are pinned to the revision recorded in
-`Vendor/libghostty-vt/VERSION`. Set `ANDROID_NDK_HOME` and run:
+`native/libghostty-vt/VERSION` at the repository root. Set `ANDROID_NDK_HOME` and run:
 
 ```bash
 apps/mobile/modules/t3-terminal/scripts/build-libghostty-android.sh

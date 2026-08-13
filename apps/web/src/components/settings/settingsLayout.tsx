@@ -1,9 +1,109 @@
-import { Undo2Icon } from "lucide-react";
-import { type ComponentPropsWithoutRef, type ReactNode, useEffect, useState } from "react";
+import { InfoIcon, Undo2Icon } from "lucide-react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
+import {
+  createContext,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+interface SettingsSearchTargetContextValue {
+  readonly targetId: string | null;
+  readonly onTargetHandled: () => void;
+}
+
+const noop = () => undefined;
+const SettingsSearchTargetContext = createContext<SettingsSearchTargetContextValue>({
+  targetId: null,
+  onTargetHandled: noop,
+});
+
+export function SettingsSearchTargetProvider({
+  targetId,
+  onTargetHandled = noop,
+  children,
+}: {
+  targetId: string | null;
+  onTargetHandled?: () => void;
+  children: ReactNode;
+}) {
+  const value = useMemo(() => ({ targetId, onTargetHandled }), [onTargetHandled, targetId]);
+  return <SettingsSearchTargetContext value={value}>{children}</SettingsSearchTargetContext>;
+}
+
+function scrollAndFocusSettingsTarget(target: HTMLElement): void {
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const scrollTarget =
+    target.tagName === "SECTION" && target.firstElementChild
+      ? (target.firstElementChild as HTMLElement)
+      : target;
+
+  scrollTarget.scrollIntoView({
+    behavior: prefersReducedMotion ? "auto" : "smooth",
+    block: "center",
+  });
+  target.focus({ preventScroll: true });
+  target.classList.remove("settings-search-target-pulse");
+  if (prefersReducedMotion) return;
+  void target.offsetWidth;
+  target.classList.add("settings-search-target-pulse");
+  // The class also suppresses the focus outline (the pulse is the destination
+  // indicator), so drop it once the element is no longer the destination.
+  target.addEventListener("blur", () => target.classList.remove("settings-search-target-pulse"), {
+    once: true,
+  });
+}
+
+/** The row id a settings-search jump is currently trying to reach, if any. */
+export function useSettingsSearchTargetId(): string | null {
+  return useContext(SettingsSearchTargetContext).targetId;
+}
+
+function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
+  const { targetId, onTargetHandled } = useContext(SettingsSearchTargetContext);
+  const isSearchTarget = id !== undefined && id === targetId;
+  const targetRef = useCallback(
+    (target: T | null) => {
+      if (target && isSearchTarget) {
+        scrollAndFocusSettingsTarget(target);
+        onTargetHandled();
+      }
+    },
+    [isSearchTarget, onTargetHandled],
+  );
+
+  return targetRef;
+}
+
+/** Info affordance explaining how a setting interacts with the shared background policy. */
+export function PolicyTooltip({ children }: { readonly children: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+            aria-label="Background policy details"
+          >
+            <InfoIcon className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-72">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** Re-render every `intervalMs`; return a stable timestamp snapshot for render-time relative labels. */
 export function useRelativeTimeTick(intervalMs = 1_000) {
@@ -28,8 +128,15 @@ export function SettingsSection({
   headerAction?: ReactNode;
   children: ReactNode;
 }) {
+  const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+
   return (
-    <section {...sectionProps} className={cn("space-y-3", className)}>
+    <section
+      {...sectionProps}
+      ref={targetRef}
+      tabIndex={sectionProps.id ? -1 : sectionProps.tabIndex}
+      className={cn("space-y-3", className)}
+    >
       <div className="flex min-h-8 items-center justify-between gap-4 px-3 sm:px-4">
         <h2 className="flex items-center gap-2 text-lg font-semibold tracking-[-0.025em] text-foreground">
           {icon}
@@ -53,15 +160,19 @@ export function SettingsRow({
   ...rowProps
 }: Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   title: ReactNode;
-  description: ReactNode;
+  description?: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;
   children?: ReactNode;
 }) {
+  const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+
   return (
     <div
       {...rowProps}
+      ref={targetRef}
+      tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       className={cn("rounded-xl px-3 sm:px-4", children ? "pt-3 pb-1" : "py-3", className)}
     >
       <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:items-center sm:gap-8">
@@ -72,9 +183,11 @@ export function SettingsRow({
               {resetAction}
             </span>
           </div>
-          <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
-            {description}
-          </p>
+          {description ? (
+            <p className="max-w-xl text-[13px] leading-[1.45] text-muted-foreground/80">
+              {description}
+            </p>
+          ) : null}
           {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
         </div>
         {control ? (
@@ -88,7 +201,15 @@ export function SettingsRow({
   );
 }
 
-export function SettingResetButton({ label, onClick }: { label: string; onClick: () => void }) {
+export function SettingResetButton({
+  label,
+  disabled = false,
+  onClick,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger
@@ -97,6 +218,7 @@ export function SettingResetButton({ label, onClick }: { label: string; onClick:
             size="icon-xs"
             variant="ghost"
             aria-label={`Reset ${label} to default`}
+            disabled={disabled}
             className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
             onClick={(event) => {
               event.stopPropagation();
@@ -119,11 +241,27 @@ export function SettingsPageContainer({
   children: ReactNode;
   className?: string;
 }) {
+  const navigate = useNavigate();
+  const hash = useLocation({ select: (location) => location.hash });
+  const targetId = hash.replace(/^#/, "") || null;
+  const clearTargetHash = useCallback(() => {
+    void navigate({ hash: "", replace: true, resetScroll: false, hashScrollIntoView: false });
+  }, [navigate]);
+
   return (
-    <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
-      <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
-        {children}
+    <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
+      <div className="settings-page-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto px-4 pt-10 pb-7 sm:px-8 sm:pt-12 sm:pb-10">
+        <div className={cn("mx-auto flex w-full max-w-4xl flex-col gap-12", className)}>
+          {children}
+        </div>
       </div>
-    </div>
+    </SettingsSearchTargetProvider>
   );
+}
+
+export function scrollToSettingsTarget(targetId: string): boolean {
+  const target = document.getElementById(targetId);
+  if (!target) return false;
+  scrollAndFocusSettingsTarget(target);
+  return true;
 }

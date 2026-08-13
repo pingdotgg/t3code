@@ -371,16 +371,34 @@ export class RelayEnvironmentLinkProofInvalidError extends Schema.TaggedErrorCla
   }
 }
 
+export const RelayEnvironmentConnectNotAuthorizedReason = Schema.Literals([
+  "client_proof_key_thumbprint_missing",
+  "environment_link_not_found",
+  "endpoint_provider_not_managed",
+  "managed_endpoint_allocation_not_found",
+  "managed_endpoint_base_domain_not_configured",
+  "managed_endpoint_allocation_not_ready",
+  "managed_endpoint_hostname_invalid",
+  "managed_endpoint_mismatch",
+]);
+export type RelayEnvironmentConnectNotAuthorizedReason =
+  typeof RelayEnvironmentConnectNotAuthorizedReason.Type;
+
 export class RelayEnvironmentConnectNotAuthorizedError extends Schema.TaggedErrorClass<RelayEnvironmentConnectNotAuthorizedError>()(
   "RelayEnvironmentConnectNotAuthorizedError",
   {
     code: Schema.Literal("environment_connect_not_authorized"),
+    // Optional so responses from relays deployed before the reason was
+    // threaded through still decode.
+    reason: Schema.optional(RelayEnvironmentConnectNotAuthorizedReason),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 403 },
 ) {
   override get message(): string {
-    return "Relay environment connection is not authorized";
+    return this.reason
+      ? `Relay environment connection is not authorized: ${this.reason}`
+      : "Relay environment connection is not authorized";
   }
 }
 

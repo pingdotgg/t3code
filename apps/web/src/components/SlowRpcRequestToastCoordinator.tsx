@@ -5,7 +5,10 @@ import { toastManager } from "./ui/toast";
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
   const count = requests.length;
-  const thresholdSeconds = Math.round((requests[0]?.thresholdMs ?? 0) / 1000);
+  // Thresholds vary per method, so report the smallest one the batch has passed.
+  const thresholdSeconds = Math.round(
+    Math.min(...requests.map((request) => request.thresholdMs)) / 1000,
+  );
 
   return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
 }

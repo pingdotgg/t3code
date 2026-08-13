@@ -320,12 +320,20 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadMetaUpdatedPayload({
       threadId: "thread-1",
+      regenerateTitle: true,
+      previousTitle: "Previous title",
+      titleRegeneration: {
+        requestId: "cmd-title-regenerate",
+        startedAt: "2026-01-01T00:00:00.000Z",
+      },
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
       },
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
+    assert.strictEqual(parsed.previousTitle, "Previous title");
+    assert.strictEqual(parsed.titleRegeneration?.requestId, "cmd-title-regenerate");
     assert.strictEqual(parsed.modelSelection?.instanceId, "claudeAgent");
   }),
 );
@@ -628,6 +636,53 @@ it.effect("accepts a title seed in thread.turn.start", () =>
   }),
 );
 
+it.effect("accepts a title regeneration intent in thread.meta.update", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-title-regenerate",
+      threadId: "thread-1",
+      regenerateTitle: true,
+    });
+    assert.strictEqual(parsed.type, "thread.meta.update");
+    if (parsed.type === "thread.meta.update") {
+      assert.strictEqual(parsed.regenerateTitle, true);
+    }
+  }),
+);
+
+it.effect("accepts an internal title regeneration completion", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "thread.title.regeneration.complete",
+      commandId: "cmd-title-regeneration-complete",
+      threadId: "thread-1",
+      requestId: "cmd-title-regenerate",
+      title: "Updated title",
+    });
+    assert.strictEqual(parsed.type, "thread.title.regeneration.complete");
+    if (parsed.type === "thread.title.regeneration.complete") {
+      assert.strictEqual(parsed.requestId, "cmd-title-regenerate");
+      assert.strictEqual(parsed.title, "Updated title");
+    }
+  }),
+);
+
+it.effect("rejects an explicit title combined with title regeneration", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.meta.update",
+        commandId: "cmd-title-regenerate-with-title",
+        threadId: "thread-1",
+        title: "Explicit title",
+        regenerateTitle: true,
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
 it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({
@@ -856,5 +911,27 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("project favicon overrides accept only supported image files", () =>
+  Effect.gen(function* () {
+    const valid = yield* decodeOrchestrationCommand({
+      type: "project.meta.update",
+      commandId: "cmd-project-favicon",
+      projectId: "project-1",
+      faviconPath: "brand/icon.svg",
+    });
+    assert.strictEqual(valid.type, "project.meta.update");
+
+    const invalid = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "project.meta.update",
+        commandId: "cmd-project-secret",
+        projectId: "project-1",
+        faviconPath: ".env",
+      }),
+    );
+    assert.strictEqual(invalid._tag, "Failure");
   }),
 );

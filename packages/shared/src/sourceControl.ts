@@ -176,7 +176,15 @@ function isGitLabHost(host: string): boolean {
 }
 
 function isAzureDevOpsHost(host: string): boolean {
-  return host === "dev.azure.com" || host.endsWith(".visualstudio.com");
+  // `ssh.dev.azure.com` is the default Azure DevOps SSH clone host
+  // (git@ssh.dev.azure.com:v3/org/project/repo), so match any `*.dev.azure.com`
+  // subdomain, not just the bare `dev.azure.com`. Legacy hosts stay under
+  // `.visualstudio.com` (including `vs-ssh.visualstudio.com`).
+  return (
+    host === "dev.azure.com" ||
+    host.endsWith(".dev.azure.com") ||
+    host.endsWith(".visualstudio.com")
+  );
 }
 
 function isBitbucketHost(host: string): boolean {
