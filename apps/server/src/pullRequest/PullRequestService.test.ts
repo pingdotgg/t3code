@@ -209,6 +209,44 @@ it.effect("refines unknown self-hosted GitLab projects before listing merge requ
   }),
 );
 
+it.effect("does not refine legacy projects outside the requested project ids", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "selected",
+          workspaceRoot: "/selected",
+          repository: "group/selected",
+          provider: "unknown",
+          host: "selected.example.test",
+        }),
+        project({
+          id: "p2",
+          title: "unrelated",
+          workspaceRoot: "/unrelated",
+          repository: "group/unrelated",
+          provider: "unknown",
+          host: "unrelated.example.test",
+        }),
+      ],
+      providers: [fakeProvider("gitlab")],
+      resolveHandle: ({ cwd, context }) => {
+        asked.push(cwd);
+        return Effect.succeed({
+          context: { ...context!, provider: { ...context!.provider, kind: "gitlab" } },
+          provider: undefined as never,
+        });
+      },
+    });
+
+    yield* service.viewers({ projectIds: ["p1" as ProjectId] });
+
+    assert.deepStrictEqual(asked, ["/selected"]);
+  }),
+);
+
 it.effect("derives a legacy repository host after refining its provider", () =>
   Effect.gen(function* () {
     const current = project({

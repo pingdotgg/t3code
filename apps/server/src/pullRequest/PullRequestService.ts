@@ -402,7 +402,7 @@ export const make = Effect.gen(function* () {
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
-    filter: Pick<PullRequestListInput, "projectId" | "host">,
+    filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
   ) => {
     type RefinementCandidate = {
       readonly project: OrchestrationProjectShell;
@@ -413,6 +413,7 @@ export const make = Effect.gen(function* () {
     const refinements = new Map<string, RefinementCandidate[]>();
     for (const project of projects) {
       if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
+      if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
       const identity = project.repositoryIdentity;
       if (identity?.provider !== "unknown" || repositoryIdentityOf(project) === null) continue;
       const host = pullRequestHostOf(identity, "unknown");
