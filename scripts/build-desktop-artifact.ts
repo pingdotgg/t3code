@@ -300,6 +300,20 @@ export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorCl
   }
 }
 
+export const DESKTOP_MCP_EXECUTABLE_NAME = "t3-desktop-mcp";
+
+export class DesktopMcpBuildOutputMissingError extends Schema.TaggedErrorClass<DesktopMcpBuildOutputMissingError>()(
+  "DesktopMcpBuildOutputMissingError",
+  {
+    candidates: Schema.Array(Schema.String),
+    arch: BuildArch,
+  },
+) {
+  override get message(): string {
+    return `Desktop MCP build for ${this.arch} produced no binary at any of: ${this.candidates.join(", ")}.`;
+  }
+}
+
 const desktopIconPlatformNames = {
   mac: "macOS",
   linux: "Linux",
@@ -1706,6 +1720,67 @@ const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input:
   }
 });
 
+// macOS only. The server drives the Accessibility API, which has no equivalent
+// on Linux or Windows, so there is nothing to build or ship on those platforms.
+const stageDesktopMcp = Effect.fn("stageDesktopMcp")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const packagePath = path.join(input.repoRoot, "native/t3-desktop-mcp");
+  // SwiftPM emits a fat binary directly when handed several --arch flags, so
+  // this needs no separate lipo step the way the Rust monitor does.
+  const archArgs =
+    input.arch === "universal"
+      ? ["--arch", "arm64", "--arch", "x86_64"]
+      : ["--arch", input.arch === "arm64" ? "arm64" : "x86_64"];
+  const spawnCommand = yield* resolveSpawnCommand("swift", [
+    "build",
+    "-c",
+    "release",
+    "--package-path",
+    packagePath,
+    ...archArgs,
+  ]);
+  yield* runCommand(
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      cwd: input.repoRoot,
+      shell: spawnCommand.shell,
+    }),
+    {
+      label: `swift build desktop mcp (${input.arch})`,
+      verbose: input.verbose,
+    },
+  );
+
+  // Multi-arch builds land under .build/apple/Products/Release; single-arch
+  // builds land under .build/release.
+  const candidates = [
+    path.join(packagePath, ".build/apple/Products/Release", DESKTOP_MCP_EXECUTABLE_NAME),
+    path.join(packagePath, ".build/release", DESKTOP_MCP_EXECUTABLE_NAME),
+  ];
+  let binaryPath: string | undefined;
+  for (const candidate of candidates) {
+    if (yield* fs.exists(candidate)) {
+      binaryPath = candidate;
+      break;
+    }
+  }
+  if (binaryPath === undefined) {
+    return yield* new DesktopMcpBuildOutputMissingError({ candidates, arch: input.arch });
+  }
+
+  const destinationDirectory = path.join(input.stageResourcesDir, DESKTOP_MCP_EXECUTABLE_NAME);
+  const destinationPath = path.join(destinationDirectory, DESKTOP_MCP_EXECUTABLE_NAME);
+  yield* fs.remove(destinationDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
+  yield* fs.makeDirectory(destinationDirectory, { recursive: true });
+  yield* fs.copyFile(binaryPath, destinationPath);
+  yield* fs.chmod(destinationPath, 0o755);
+});
+
 function generateMacIconSet(
   sourcePng: string,
   targetIcns: string,
@@ -2757,6 +2832,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     arch: options.arch,
     verbose: options.verbose,
   });
+  if (options.platform === "mac") {
+    yield* stageDesktopMcp({
+      repoRoot,
+      stageResourcesDir,
+      arch: options.arch,
+      verbose: options.verbose,
+    });
+  }
 
   yield* assertPlatformBuildResources(
     options.platform,

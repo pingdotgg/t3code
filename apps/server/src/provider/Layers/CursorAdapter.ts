@@ -42,6 +42,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveDesktopMcpPath } from "../../desktopControl/desktopMcpBinary.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -316,6 +317,8 @@ export function makeCursorAdapter(
 ) {
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("cursor");
+    // Desktop control ships with the macOS app; undefined elsewhere.
+    const desktopMcpPath = yield* resolveDesktopMcpPath();
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -553,6 +556,9 @@ export function makeCursorAdapter(
                         },
                       ],
                     },
+                    ...(desktopMcpPath
+                      ? [{ name: "t3-desktop", command: desktopMcpPath, args: [], env: [] }]
+                      : []),
                   ],
                 }
               : {}),
