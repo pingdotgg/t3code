@@ -38,6 +38,17 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedErrorClass<Envi
       cause,
     });
   }
+
+  static restartedBeforeCompletion(
+    target: EnvironmentSupervisor["Service"]["target"],
+    cause?: unknown,
+  ): EnvironmentRpcUnavailableError {
+    return new EnvironmentRpcUnavailableError({
+      environmentId: target.environmentId,
+      message: `${target.label} restarted before the request completed.`,
+      cause,
+    });
+  }
 }
 
 export interface EnvironmentRpcRequestObservation {
@@ -290,10 +301,7 @@ export const requestIdempotent = Effect.fn("EnvironmentRpc.requestIdempotent")(f
         serverRunId = currentServerRunId;
         hasServerProcessBaseline = true;
       } else if (serverRunId === undefined || currentServerRunId === undefined) {
-        return yield* new EnvironmentRpcUnavailableError({
-          environmentId: supervisor.target.environmentId,
-          message: `${supervisor.target.label} restarted before the request completed.`,
-        });
+        return yield* EnvironmentRpcUnavailableError.restartedBeforeCompletion(supervisor.target);
       }
       if (
         input.type === "thread.turn.start" &&
@@ -384,11 +392,10 @@ export const requestIdempotent = Effect.fn("EnvironmentRpc.requestIdempotent")(f
       outcome._tag === "Failure" &&
       outcome.failure._tag === "OrchestrationCommandDeduplicationWindowChangedError"
     ) {
-      return yield* new EnvironmentRpcUnavailableError({
-        environmentId: supervisor.target.environmentId,
-        message: `${supervisor.target.label} restarted before the request completed.`,
-        cause: outcome.failure,
-      });
+      return yield* EnvironmentRpcUnavailableError.restartedBeforeCompletion(
+        supervisor.target,
+        outcome.failure,
+      );
     }
     if (
       outcome._tag === "Failure" &&

@@ -237,6 +237,28 @@ describe("OrchestrationEngine", () => {
           }),
         ),
       ).toEqual(Option.none());
+
+      await system.run(system.sql`DROP TABLE process_local_command_fingerprints`);
+      await expect(
+        system.run(
+          system.engine.registerProcessLocalCommand!({ commandId, fingerprint: "fingerprint-a" }),
+        ),
+      ).rejects.toMatchObject({
+        _tag: "OrchestrationDispatchCommandError",
+        message: "Failed to persist process-local command identity",
+      });
+      await expect(
+        system.run(
+          system.engine.findAcceptedProcessLocalCommand!({
+            commandId,
+            fingerprint: "fingerprint-a",
+            threadId,
+          }),
+        ),
+      ).rejects.toMatchObject({
+        _tag: "OrchestrationDispatchCommandError",
+        message: "Failed to read process-local command identity",
+      });
     } finally {
       await system.dispose();
     }

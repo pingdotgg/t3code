@@ -106,12 +106,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-  const processLocalSqlError = (cause: unknown) =>
-    new OrchestrationDispatchCommandError({
-      message: "Failed to persist process-local command identity",
-      cause,
-    });
-
   const readProcessLocalFingerprint = (commandId: string) => sql<{ readonly fingerprint: string }>`
     SELECT fingerprint
     FROM process_local_command_fingerprints
@@ -133,7 +127,17 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           message: "The command ID was reused with a different command payload.",
         });
       }
-    }).pipe(Effect.catchTag("SqlError", (cause) => Effect.fail(processLocalSqlError(cause))));
+    }).pipe(
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new OrchestrationDispatchCommandError({
+              message: "Failed to persist process-local command identity",
+              cause,
+            }),
+          ),
+      }),
+    );
 
   const findAcceptedProcessLocalCommand: NonNullable<
     OrchestrationEngineShape["findAcceptedProcessLocalCommand"]
@@ -167,7 +171,17 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         receipt.aggregateId === input.threadId
         ? Option.some({ sequence: receipt.resultSequence })
         : Option.none();
-    }).pipe(Effect.catchTag("SqlError", (cause) => Effect.fail(processLocalSqlError(cause))));
+    }).pipe(
+      Effect.catchTags({
+        SqlError: (cause) =>
+          Effect.fail(
+            new OrchestrationDispatchCommandError({
+              message: "Failed to read process-local command identity",
+              cause,
+            }),
+          ),
+      }),
+    );
   let commandReadModel = createEmptyReadModel(yield* nowIso);
 
   const commandQueue = yield* Queue.unbounded<EngineEnvelope>();
@@ -553,13 +567,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           }),
         )
         .pipe(
-          Effect.catchTag("SqlError", (sqlError) =>
-            Effect.fail(
-              toPersistenceSqlError(
-                "OrchestrationEngine.processProviderTurnIntentEnvelope:transaction",
-              )(sqlError),
-            ),
-          ),
+          Effect.catchTags({
+            SqlError: (sqlError) =>
+              Effect.fail(
+                toPersistenceSqlError(
+                  "OrchestrationEngine.processProviderTurnIntentEnvelope:transaction",
+                )(sqlError),
+              ),
+          }),
         ),
     ).pipe(
       Effect.flatMap((exit) =>
