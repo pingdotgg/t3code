@@ -44,7 +44,9 @@ describe("StyledDiffCodeView", () => {
         diffHeaderHeight: 32,
         hunkSeparatorHeight: 24,
         paddingTop: 0,
-        paddingBottom: 0,
+        // Must match the 8px Pierre's stylesheet paints under a file's last code line, or
+        // expanded files run virtually short and the list tail is clipped out of scroll range.
+        paddingBottom: 8,
       },
       layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
     });
