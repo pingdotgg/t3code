@@ -65,7 +65,7 @@ export interface SidebarThreadHeaderProps {
   onSearchQueryChange: (value: string) => void;
   onSearchKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
   isSearching: boolean;
-  hasSearchResults: boolean;
+  searchResultCount: number;
   activeSearchResultIndex: number;
   onClearSearch: () => void;
 }
@@ -200,7 +200,12 @@ export function SidebarThreadHeader(props: SidebarThreadHeaderProps) {
  * down rather than covering it.
  */
 function SearchRow({ props, onClose }: { props: SidebarThreadHeaderProps; onClose: () => void }) {
-  const resultsVisible = props.isSearching && props.hasSearchResults;
+  const resultsVisible = props.isSearching && props.searchResultCount > 0;
+  // Results shrink as the query narrows, so the active index can outrun the
+  // list; pointing aria-activedescendant at a removed option strands the
+  // screen reader on nothing.
+  const activeResultExists =
+    resultsVisible && props.activeSearchResultIndex < props.searchResultCount;
   return (
     <div
       id={SEARCH_ROW_ID}
@@ -217,7 +222,12 @@ function SearchRow({ props, onClose }: { props: SidebarThreadHeaderProps; onClos
         onKeyDown={(event) => {
           // Escape clears first and closes second: one press to drop the query
           // without losing the field, another to leave search entirely.
-          if (event.key === "Escape" && props.searchQuery.length === 0) {
+          if (
+            event.key === "Escape" &&
+            !event.nativeEvent.isComposing &&
+            event.nativeEvent.keyCode !== 229 &&
+            props.searchQuery.trim().length === 0
+          ) {
             event.preventDefault();
             onClose();
             return;
@@ -231,7 +241,7 @@ function SearchRow({ props, onClose }: { props: SidebarThreadHeaderProps; onClos
         aria-expanded={resultsVisible}
         aria-controls={resultsVisible ? "sidebar-thread-search-results" : undefined}
         aria-activedescendant={
-          resultsVisible
+          activeResultExists
             ? `sidebar-thread-search-result-${props.activeSearchResultIndex}`
             : undefined
         }

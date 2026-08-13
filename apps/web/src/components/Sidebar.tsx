@@ -2226,6 +2226,15 @@ export default function Sidebar() {
     setThreadSearchQuery("");
     setActiveSearchResultIndex(0);
   }, []);
+  // The header owns the search field, and it unmounts when the last project
+  // goes away (environment disconnects, project removed). A query left behind
+  // would keep hiding the thread list and the empty state with no way to clear
+  // it, so drop it as the field leaves.
+  useEffect(() => {
+    if (projectGroups.length === 0 && threadSearchQuery.length > 0) {
+      clearThreadSearch();
+    }
+  }, [clearThreadSearch, projectGroups.length, threadSearchQuery]);
   const selectThreadSearchResult = useCallback(
     (thread: EnvironmentThreadShell) => {
       clearThreadSearch();
@@ -3254,7 +3263,7 @@ export default function Sidebar() {
                 }}
                 onSearchKeyDown={handleThreadSearchKeyDown}
                 isSearching={isSearchingThreads}
-                hasSearchResults={threadSearchResults.length > 0}
+                searchResultCount={threadSearchResults.length}
                 activeSearchResultIndex={activeSearchResultIndex}
                 onClearSearch={clearThreadSearch}
               />
