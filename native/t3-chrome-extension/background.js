@@ -12,6 +12,7 @@
 
 const HOST = "com.t3tools.t3code.desktop";
 const GROUP_TITLE = "T3 Code";
+const OWNED_STATE_KEY = "ownedState";
 
 /** Tabs this extension owns, and the group holding them. */
 let ownedTabs = new Set();
@@ -19,6 +20,57 @@ let groupId = null;
 /** Tabs we have attached the debugger to, so we detach exactly once. */
 const attached = new Set();
 let port = null;
+let stateReady = null;
+
+async function persistOwnedState() {
+  try {
+    await chrome.storage.session.set({
+      [OWNED_STATE_KEY]: {
+        tabs: Array.from(ownedTabs),
+        groupId,
+      },
+    });
+  } catch {
+    // Storage can fail in restricted contexts; ownership still works in-memory.
+  }
+}
+
+async function restoreOwnedState() {
+  try {
+    const stored = await chrome.storage.session.get(OWNED_STATE_KEY);
+    const state = stored?.[OWNED_STATE_KEY];
+    if (!state || typeof state !== "object") return;
+
+    const next = new Set();
+    for (const tabId of Array.isArray(state.tabs) ? state.tabs : []) {
+      if (typeof tabId !== "number") continue;
+      try {
+        await chrome.tabs.get(tabId);
+        next.add(tabId);
+      } catch {
+        // Tab closed while the service worker was asleep.
+      }
+    }
+    ownedTabs = next;
+
+    groupId = typeof state.groupId === "number" ? state.groupId : null;
+    if (groupId !== null) {
+      try {
+        await chrome.tabGroups.get(groupId);
+      } catch {
+        groupId = null;
+      }
+    }
+    await persistOwnedState();
+  } catch {
+    // Fresh start if session storage is unavailable.
+  }
+}
+
+function ensureStateReady() {
+  if (!stateReady) stateReady = restoreOwnedState();
+  return stateReady;
+}
 
 // ── native messaging ────────────────────────────────────────────────────────
 
@@ -81,6 +133,7 @@ async function ensureGroup(tabId) {
   // Agent tabs get the pointer favicon (not the T3 toolbar logo) as soon as
   // they join the group, so the strip reads as "agent-owned" before the first click.
   await markTab(tabId);
+  await persistOwnedState();
   return groupId;
 }
 
@@ -89,6 +142,7 @@ async function openTab(url) {
   const tab = await chrome.tabs.create({ url: url || "about:blank", active: false });
   ownedTabs.add(tab.id);
   await ensureGroup(tab.id);
+  await persistOwnedState();
   // Pages replace their favicon on load (Spotify, YouTube, …). Re-apply the
   // pointer whenever the document finishes, and also when the tab's own icon
   // changes, so the strip stays on the agent cursor rather than the site logo.
@@ -139,6 +193,7 @@ async function closeAllTabs() {
     }
     groupId = null;
   }
+  await persistOwnedState();
   return { closed: ids.length };
 }
 
@@ -425,6 +480,8 @@ const handlers = {
     assertOwned(p.tabId);
     await chrome.tabs.remove(p.tabId);
     ownedTabs.delete(p.tabId);
+    attached.delete(p.tabId);
+    await persistOwnedState();
     return { closed: p.tabId };
   },
   navigate: async (p) => {
@@ -454,6 +511,7 @@ const handlers = {
 };
 
 async function handleCommand(msg) {
+  await ensureStateReady();
   const { id, command, params } = msg || {};
   const handler = handlers[command];
   if (!handler) return replyError(id, `unknown command: ${command}`);
@@ -465,8 +523,10 @@ async function handleCommand(msg) {
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  if (!ownedTabs.has(tabId) && !attached.has(tabId)) return;
   ownedTabs.delete(tabId);
   attached.delete(tabId);
+  void persistOwnedState();
 });
 
-connect();
+void ensureStateReady().then(connect);

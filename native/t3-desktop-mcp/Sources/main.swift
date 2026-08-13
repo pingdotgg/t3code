@@ -305,8 +305,12 @@ enum SkyLight {
     }
 
     static var available: Bool {
-        postToPid != nil && setIntField != nil && postEventRecord != nil
-            && getFrontProcess != nil && getProcessForPID != nil && axGetWindow != nil
+        // setWindowLocation is required: without window-local coordinates,
+        // background mouse events are delivered but never hit-test, so callers
+        // would report success while clicks/scrolls do nothing.
+        postToPid != nil && setIntField != nil && setWindowLocation != nil
+            && postEventRecord != nil && getFrontProcess != nil
+            && getProcessForPID != nil && axGetWindow != nil
     }
 
     static func windowID(_ window: AXUIElement) -> UInt32? {
@@ -363,9 +367,9 @@ enum SkyLight {
         _ event: CGEvent, pid: pid_t, wid: UInt32, windowOrigin: CGPoint,
         screen: CGPoint, clickState: Int64, button: Int64, subtype: Int64, groupID: Int64
     ) {
-        guard let post = postToPid, let setField = setIntField else { return }
+        guard let post = postToPid, let setField = setIntField, let setWindowLocation else { return }
         let ptr = Unmanaged.passUnretained(event).toOpaque()
-        setWindowLocation?(ptr, CGPoint(x: screen.x - windowOrigin.x, y: screen.y - windowOrigin.y))
+        setWindowLocation(ptr, CGPoint(x: screen.x - windowOrigin.x, y: screen.y - windowOrigin.y))
         let w = Int64(wid)
         setField(ptr, 1, clickState)   // click state
         setField(ptr, 3, button)       // button number
@@ -542,7 +546,8 @@ func backgroundScroll(_ target: WindowTarget, at point: CGPoint, dx: Int32, dy: 
         wheel.location = point
 
         let ptr = Unmanaged.passUnretained(wheel).toOpaque()
-        SkyLight.setWindowLocation?(ptr, local)
+        guard let setWindowLocation = SkyLight.setWindowLocation else { return false }
+        setWindowLocation(ptr, local)
         let w = Int64(target.wid)
         setField(ptr, 51, w)
         setField(ptr, 91, w)
@@ -1128,32 +1133,67 @@ enum Chrome {
     }()
 
     private static var cachedWindowID: Int?
+    private static var cachedChromePid: pid_t?
     private static var didLoadState = false
+
+    private static func chromePid() -> pid_t? {
+        NSWorkspace.shared.runningApplications
+            .first(where: { $0.bundleIdentifier == "com.google.Chrome" })?
+            .processIdentifier
+    }
+
+    private static func loadState() {
+        guard !didLoadState else { return }
+        didLoadState = true
+        guard
+            let data = try? Data(contentsOf: stateURL),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let windowId = object["windowId"] as? Int,
+            let chromePid = object["chromePid"] as? Int
+        else {
+            // Legacy plain-integer files from older builds are intentionally
+            // discarded: a reused window id after Chrome restart is unsafe.
+            try? FileManager.default.removeItem(at: stateURL)
+            return
+        }
+        cachedWindowID = windowId
+        cachedChromePid = pid_t(chromePid)
+    }
+
+    private static func persistState() {
+        guard let windowId = cachedWindowID, let chromePid = cachedChromePid else {
+            try? FileManager.default.removeItem(at: stateURL)
+            return
+        }
+        let payload: [String: Any] = ["windowId": windowId, "chromePid": Int(chromePid)]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        try? data.write(to: stateURL, options: .atomic)
+    }
 
     static var agentWindowID: Int? {
         get {
-            if !didLoadState {
-                didLoadState = true
-                if let text = try? String(contentsOf: stateURL, encoding: .utf8) {
-                    cachedWindowID = Int(text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines))
-                }
-            }
+            loadState()
             return cachedWindowID
         }
         set {
             didLoadState = true
             cachedWindowID = newValue
-            if let newValue {
-                try? String(newValue).write(to: stateURL, atomically: true, encoding: .utf8)
-            } else {
-                try? FileManager.default.removeItem(at: stateURL)
-            }
+            cachedChromePid = newValue == nil ? nil : chromePid()
+            persistState()
         }
     }
 
-    /// The stored id, or nil if that window has since been closed.
+    /// The stored id, or nil if that window (or this Chrome instance) is gone.
     static func liveAgentWindowID() -> Int? {
-        guard let id = agentWindowID else { return nil }
+        loadState()
+        guard let id = cachedWindowID else { return nil }
+        // Window ids are only valid within a single Chrome process lifetime.
+        // After a restart Chrome can reuse the numeric id for an ordinary user
+        // window; refuse to reclaim unless the pid still matches.
+        guard let expectedPid = cachedChromePid, let livePid = chromePid(), expectedPid == livePid else {
+            agentWindowID = nil
+            return nil
+        }
         if windowExists(id) { return id }
         agentWindowID = nil
         return nil
