@@ -480,6 +480,34 @@ describe("deriveAgentPanelModel", () => {
     expect(model.workflows).toHaveLength(0);
     expect(model.directAgents.map((agent) => agent.id)).toEqual(["gone:wf:0"]);
   });
+
+  it("keeps native and managed descendants under their nearest visible parent", () => {
+    const nested = fold([
+      activity("task.started", { taskId: "parent", title: "Parent" }),
+      activity("task.started", {
+        taskId: "native-child",
+        title: "Native child",
+        parentAgentId: "parent",
+      }),
+      activity("task.started", {
+        taskId: "managed-grandchild",
+        taskType: "managed_codex_exec",
+        title: "Managed grandchild",
+        parentAgentId: "native-child",
+        agentSource: "managed_codex_exec",
+        cancellationOwner: "t3",
+      }),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents: nested });
+    expect(model.directAgents.map((agent) => agent.id)).toEqual(["parent"]);
+    expect(model.childrenByParentId.get("parent")?.map((agent) => agent.id)).toEqual([
+      "native-child",
+    ]);
+    expect(model.childrenByParentId.get("native-child")?.map((agent) => agent.id)).toEqual([
+      "managed-grandchild",
+    ]);
+  });
 });
 
 describe("workflowCardMembers", () => {
@@ -565,6 +593,35 @@ describe("model and effort attribution", () => {
     expect(agents).toHaveLength(1);
     expect(agents[0]!.model).toBe("claude-sonnet-5[1m]");
     expect(agents[0]!.effort).toBe("high");
+  });
+
+  it("retains managed-run ownership through a terminal lifecycle row", () => {
+    const agents = fold([
+      activity("task.started", {
+        taskId: "managed-codex-exec:stable-id",
+        taskType: "managed_codex_exec",
+        title: "Review implementation",
+        model: "gpt-5.6-sol",
+        effort: "high",
+        agentSource: "managed_codex_exec",
+        cancellationOwner: "t3",
+      }),
+      activity("task.completed", {
+        taskId: "managed-codex-exec:stable-id",
+        status: "stopped",
+        summary: "Cancelled by T3",
+      }),
+    ]);
+
+    expect(agents[0]).toMatchObject({
+      id: "managed-codex-exec:stable-id",
+      model: "gpt-5.6-sol",
+      effort: "high",
+      status: "interrupted",
+      result: "Cancelled by T3",
+      agentSource: "managed_codex_exec",
+      cancellationOwner: "t3",
+    });
   });
 
   it("formatSubagentModelLabel compacts ids and appends effort", () => {

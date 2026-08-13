@@ -22,12 +22,13 @@ import {
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
+import { Bot, Braces, Check, ChevronDown, ChevronRight, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 /**
  * In-flight states all present as Working (one steady state, per the
@@ -137,7 +138,13 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 }
 
 /** Flat, non-interactive agent status line. No unfold. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+function AgentRow({
+  agent,
+  onCancel,
+}: {
+  agent: RuntimeSubagent;
+  onCancel?: ((agent: RuntimeSubagent) => void) | undefined;
+}) {
   const visuals = STATUS_VISUALS[agent.status];
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
@@ -168,6 +175,21 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-[.7rem] text-muted-foreground/80">
         <span className="inline-flex items-center gap-1">
           <AgentElapsed agent={agent} />
+          {onCancel &&
+          agent.cancellationOwner === "t3" &&
+          (agent.status === "pending" ||
+            agent.status === "running" ||
+            agent.status === "waiting") ? (
+            <button
+              type="button"
+              aria-label={`Stop ${agent.title}`}
+              title="Stop managed agent"
+              onClick={() => onCancel?.(agent)}
+              className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Square aria-hidden className="size-2.5 fill-current" />
+            </button>
+          ) : null}
           {agent.status === "completed" ? (
             <Check aria-hidden className="size-3 text-success" />
           ) : null}
@@ -185,6 +207,40 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
         {metadata.join(" · ")}
       </span>
       <span className="sr-only">{visuals.label}</span>
+    </div>
+  );
+}
+
+function AgentTreeRows({
+  agent,
+  childrenByParentId,
+  onCancel,
+  depth = 0,
+  ancestors = new Set<string>(),
+}: {
+  agent: RuntimeSubagent;
+  childrenByParentId: AgentPanelModel["childrenByParentId"];
+  onCancel?: ((agent: RuntimeSubagent) => void) | undefined;
+  depth?: number;
+  ancestors?: ReadonlySet<string>;
+}) {
+  const cyclic = ancestors.has(agent.id);
+  const nextAncestors = new Set(ancestors).add(agent.id);
+  return (
+    <div style={{ paddingLeft: `${Math.min(depth, 6) * 12}px` }}>
+      <AgentRow agent={agent} onCancel={onCancel} />
+      {!cyclic
+        ? (childrenByParentId.get(agent.id) ?? []).map((child) => (
+            <AgentTreeRows
+              key={child.id}
+              agent={child}
+              childrenByParentId={childrenByParentId}
+              onCancel={onCancel}
+              depth={depth + 1}
+              ancestors={nextAncestors}
+            />
+          ))
+        : null}
     </div>
   );
 }
@@ -314,9 +370,13 @@ function WorkflowScriptView({
  */
 function PhaseSection({
   phase,
+  childrenByParentId,
+  onCancel,
   defaultOpen = false,
 }: {
   phase: AgentPanelWorkflowGroup["phases"][number];
+  childrenByParentId: AgentPanelModel["childrenByParentId"];
+  onCancel?: ((agent: RuntimeSubagent) => void) | undefined;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
@@ -366,7 +426,16 @@ function PhaseSection({
           </span>
         ) : null}
       </button>
-      {open ? phase.members.map((member) => <AgentRow key={member.id} agent={member} />) : null}
+      {open
+        ? phase.members.map((member) => (
+            <AgentTreeRows
+              key={member.id}
+              agent={member}
+              childrenByParentId={childrenByParentId}
+              onCancel={onCancel}
+            />
+          ))
+        : null}
     </div>
   );
 }
@@ -377,11 +446,15 @@ function ExpandedWorkflowSection({
   environmentId,
   threadId,
   onCollapse,
+  childrenByParentId,
+  onCancel,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
   onCollapse: () => void;
+  childrenByParentId: AgentPanelModel["childrenByParentId"];
+  onCancel?: ((agent: RuntimeSubagent) => void) | undefined;
 }) {
   const [scriptOpen, setScriptOpen] = useState(false);
   const members = workflowMembers(group);
@@ -436,13 +509,24 @@ function ExpandedWorkflowSection({
         />
       ) : null}
       {group.phases.map((phase) => (
-        <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
+        <PhaseSection
+          key={phase.index}
+          phase={phase}
+          childrenByParentId={childrenByParentId}
+          onCancel={onCancel}
+          defaultOpen={!workflowIsLive(group)}
+        />
       ))}
       {group.unphasedMembers.map((member) => (
-        <AgentRow key={member.id} agent={member} />
+        <AgentTreeRows
+          key={member.id}
+          agent={member}
+          childrenByParentId={childrenByParentId}
+          onCancel={onCancel}
+        />
       ))}
       {group.phases.length === 0 && group.unphasedMembers.length === 0 ? (
-        <AgentRow agent={group.workflow} />
+        <AgentRow agent={group.workflow} onCancel={onCancel} />
       ) : null}
     </section>
   );
@@ -500,10 +584,14 @@ function WorkflowSection({
   group,
   environmentId,
   threadId,
+  childrenByParentId,
+  onCancel,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
+  childrenByParentId: AgentPanelModel["childrenByParentId"];
+  onCancel?: ((agent: RuntimeSubagent) => void) | undefined;
 }) {
   const [open, setOpen] = useState(() => workflowIsLive(group));
   return open ? (
@@ -512,6 +600,8 @@ function WorkflowSection({
       environmentId={environmentId}
       threadId={threadId}
       onCollapse={() => setOpen(false)}
+      childrenByParentId={childrenByParentId}
+      onCancel={onCancel}
     />
   ) : (
     <CollapsedWorkflowSection group={group} onExpand={() => setOpen(true)} />
@@ -527,6 +617,18 @@ export function AgentsPanel({
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
 }) {
+  const cancelManagedAgent = useAtomCommand(orchestrationEnvironment.cancelManagedAgent, {
+    reportFailure: true,
+  });
+  const onCancel =
+    environmentId !== null && threadId !== null
+      ? (agent: RuntimeSubagent) => {
+          void cancelManagedAgent({
+            environmentId,
+            input: { threadId, agentId: agent.id },
+          });
+        }
+      : undefined;
   if (!model.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
@@ -550,6 +652,8 @@ export function AgentsPanel({
               group={group}
               environmentId={environmentId}
               threadId={threadId}
+              childrenByParentId={model.childrenByParentId}
+              onCancel={onCancel}
             />
           ))}
           {model.directAgents.length > 0 ? (
@@ -558,7 +662,12 @@ export function AgentsPanel({
                 Direct spawns
               </div>
               {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
+                <AgentTreeRows
+                  key={agent.id}
+                  agent={agent}
+                  childrenByParentId={model.childrenByParentId}
+                  onCancel={onCancel}
+                />
               ))}
             </section>
           ) : null}

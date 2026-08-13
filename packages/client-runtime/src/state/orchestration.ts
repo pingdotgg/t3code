@@ -1,13 +1,21 @@
 import { ORCHESTRATION_WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    launchManagedCodexExec: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:launch-managed-codex-exec",
+      tag: ORCHESTRATION_WS_METHODS.launchManagedCodexExec,
+    }),
+    cancelManagedAgent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:cancel-managed-agent",
+      tag: ORCHESTRATION_WS_METHODS.cancelManagedAgent,
+    }),
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",
       tag: ORCHESTRATION_WS_METHODS.getTurnDiff,

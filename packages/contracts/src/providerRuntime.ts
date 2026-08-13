@@ -581,6 +581,10 @@ const taskAgentLinkageFields = {
    * belongs in the Agents surface, never the parent timeline.
    */
   timelineBypass: Schema.optional(Schema.Boolean),
+  /** Origin of the agent run. Managed exec runs are launched by this T3 server. */
+  agentSource: Schema.optional(Schema.Literals(["provider", "managed_codex_exec"])),
+  /** Which component owns an actionable cancellation handle for this run. */
+  cancellationOwner: Schema.optional(Schema.Literals(["provider", "t3", "none"])),
 } as const;
 
 export const TaskAgentLinkage = Schema.Struct(taskAgentLinkageFields);

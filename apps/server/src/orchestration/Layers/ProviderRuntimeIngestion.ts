@@ -346,6 +346,8 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
     "outputFile",
     "agentPath",
     "timelineBypass",
+    "agentSource",
+    "cancellationOwner",
     "typedUsage",
     "status",
     "error",
@@ -2062,6 +2064,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     drain: worker.drain,
+    ingestRuntimeEvent: (event) => worker.enqueue({ source: "runtime", event }),
   } satisfies ProviderRuntimeIngestionShape;
 });
 

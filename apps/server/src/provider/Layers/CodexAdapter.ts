@@ -523,6 +523,8 @@ function mapCollabAgentEvent(
   const nickname = typeof payload.nickname === "string" ? payload.nickname : undefined;
   const role =
     (typeof payload.role === "string" ? payload.role : undefined) ?? pathLeaf ?? "general-purpose";
+  const model = typeof payload.model === "string" ? payload.model : undefined;
+  const effort = typeof payload.effort === "string" ? payload.effort : undefined;
   // A bare thread id is not a name. Omitting the title lets the client fold
   // keep the real one from task.started instead of clobbering it (probe
   // finding: progress rows renamed math_one to its UUID).
@@ -535,7 +537,11 @@ function mapCollabAgentEvent(
     role,
     ...(knownName ? { title: knownName } : {}),
     ...(agentPath ? { agentPath } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
     timelineBypass: true,
+    agentSource: "provider" as const,
+    cancellationOwner: "provider" as const,
   } as const;
 
   switch (event.method) {
@@ -548,12 +554,10 @@ function mapCollabAgentEvent(
             taskId,
             description: title,
             title,
-            role,
-            ...(agentPath ? { agentPath } : {}),
+            ...statusLinkage,
             ...(typeof payload.parentThreadId === "string"
               ? { parentAgentId: payload.parentThreadId }
               : {}),
-            timelineBypass: true,
           },
         },
       ];
@@ -581,9 +585,7 @@ function mapCollabAgentEvent(
               taskId,
               description: title,
               title,
-              role,
-              ...(agentPath ? { agentPath } : {}),
-              timelineBypass: true,
+              ...statusLinkage,
             },
           },
         ];

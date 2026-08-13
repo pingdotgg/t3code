@@ -9,6 +9,7 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
+import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 
 /**
  * ProviderRuntimeIngestionShape - Service API for runtime ingestion lifecycle.
@@ -30,6 +31,9 @@ export interface ProviderRuntimeIngestionShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /** Explicit adapter boundary for T3-owned runtimes that do not use a provider session. */
+  readonly ingestRuntimeEvent?: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
 }
 
 /**

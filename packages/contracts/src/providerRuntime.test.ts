@@ -181,6 +181,31 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
   });
+
+  it("decodes managed Codex exec linkage and cancellation ownership", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "task.started",
+      eventId: "event-managed-exec-1",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:05.000Z",
+      threadId: "thread-1",
+      payload: {
+        taskId: "managed-codex-exec:stable-id",
+        taskType: "managed_codex_exec",
+        parentAgentId: "native-child-id",
+        model: "gpt-5.6-sol",
+        effort: "high",
+        agentSource: "managed_codex_exec",
+        cancellationOwner: "t3",
+      },
+    });
+
+    expect(parsed.type).toBe("task.started");
+    if (parsed.type !== "task.started") throw new Error("expected task.started");
+    expect(parsed.payload.agentSource).toBe("managed_codex_exec");
+    expect(parsed.payload.cancellationOwner).toBe("t3");
+    expect(parsed.payload.parentAgentId).toBe("native-child-id");
+  });
 });
 
 describe("classifyTaskAgentKind", () => {

@@ -79,6 +79,8 @@ export interface RuntimeSubagent {
   readonly workflowName: string | null;
   readonly phases: ReadonlyArray<SubagentWorkflowPhase>;
   readonly runHandles: SubagentRunHandles | null;
+  readonly agentSource: "provider" | "managed_codex_exec";
+  readonly cancellationOwner: "provider" | "t3" | "none";
   readonly recentActivity: ReadonlyArray<SubagentActivityEntry>;
   /** First retained observation, used as the roster's stable display order. */
   readonly firstSeenAt: string;
@@ -248,6 +250,8 @@ interface MutableAgent {
   workflowName: string | null;
   phases: ReadonlyArray<SubagentWorkflowPhase>;
   runHandles: SubagentRunHandles | null;
+  agentSource: RuntimeSubagent["agentSource"];
+  cancellationOwner: RuntimeSubagent["cancellationOwner"];
   recentActivity: ReadonlyArray<SubagentActivityEntry>;
   firstSeenAt: string;
   startedAt: string | null;
@@ -302,6 +306,14 @@ function getOrCreate(
     workflowName: asString(payload.workflowName) ?? null,
     phases: [],
     runHandles: null,
+    agentSource:
+      asString(payload.agentSource) === "managed_codex_exec" ? "managed_codex_exec" : "provider",
+    cancellationOwner:
+      asString(payload.cancellationOwner) === "t3"
+        ? "t3"
+        : asString(payload.cancellationOwner) === "provider"
+          ? "provider"
+          : "none",
     recentActivity: [],
     firstSeenAt: at,
     startedAt: null,
@@ -352,6 +364,18 @@ function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): vo
   }
   const outputFile = asString(payload.outputFile);
   if (outputFile) agent.outputFile = outputFile;
+  const agentSource = asString(payload.agentSource);
+  if (agentSource === "provider" || agentSource === "managed_codex_exec") {
+    agent.agentSource = agentSource;
+  }
+  const cancellationOwner = asString(payload.cancellationOwner);
+  if (
+    cancellationOwner === "provider" ||
+    cancellationOwner === "t3" ||
+    cancellationOwner === "none"
+  ) {
+    agent.cancellationOwner = cancellationOwner;
+  }
   if (Array.isArray(payload.phases)) {
     const phases: SubagentWorkflowPhase[] = [];
     for (const entry of payload.phases) {
@@ -692,6 +716,7 @@ export interface AgentPanelWorkflowGroup {
 export interface AgentPanelModel {
   readonly workflows: ReadonlyArray<AgentPanelWorkflowGroup>;
   readonly directAgents: ReadonlyArray<RuntimeSubagent>;
+  readonly childrenByParentId: ReadonlyMap<string, ReadonlyArray<RuntimeSubagent>>;
   readonly runningCount: number;
   readonly waitingCount: number;
   readonly idleCount: number;
@@ -704,6 +729,7 @@ export interface AgentPanelModel {
 const EMPTY_PANEL_MODEL: AgentPanelModel = {
   workflows: [],
   directAgents: [],
+  childrenByParentId: new Map(),
   runningCount: 0,
   waitingCount: 0,
   idleCount: 0,
@@ -741,7 +767,9 @@ export function deriveAgentPanelModel({
     .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id));
   const workflowIds = new Set(workflows.map((workflow) => workflow.id));
   const members = new Map<string, RuntimeSubagent[]>();
+  const childrenByParentId = new Map<string, RuntimeSubagent[]>();
   const direct: RuntimeSubagent[] = [];
+  const agentIds = new Set(source.map((agent) => agent.id));
 
   for (const agent of source) {
     if (agent.kind === "workflow") {
@@ -751,6 +779,10 @@ export function deriveAgentPanelModel({
       const list = members.get(agent.parentAgentId) ?? [];
       list.push(agent);
       members.set(agent.parentAgentId, list);
+    } else if (agent.parentAgentId !== null && agentIds.has(agent.parentAgentId)) {
+      const list = childrenByParentId.get(agent.parentAgentId) ?? [];
+      list.push(agent);
+      childrenByParentId.set(agent.parentAgentId, list);
     } else {
       // Orphaned members (coordinator aged out) fall back to the direct list.
       direct.push(agent);
@@ -844,6 +876,14 @@ export function deriveAgentPanelModel({
     directAgents: direct
       .slice()
       .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id)),
+    childrenByParentId: new Map(
+      Array.from(childrenByParentId, ([parentId, children]) => [
+        parentId,
+        children
+          .slice()
+          .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id)),
+      ]),
+    ),
     runningCount,
     waitingCount,
     idleCount,

@@ -92,6 +92,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
+import * as ManagedCodexExec from "./orchestration/ManagedCodexExec.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
@@ -351,6 +352,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  managedCodexExec: ManagedCodexExec.ManagedCodexExecShape,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -1033,6 +1035,18 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [ORCHESTRATION_WS_METHODS.launchManagedCodexExec]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.launchManagedCodexExec,
+            managedCodexExec.launch(input),
+            { "rpc.aggregate": "thread", threadId: input.threadId },
+          ),
+        [ORCHESTRATION_WS_METHODS.cancelManagedAgent]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.cancelManagedAgent,
+            managedCodexExec.cancel(input),
+            { "rpc.aggregate": "thread", threadId: input.threadId },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -2280,6 +2294,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const managedCodexExec = yield* ManagedCodexExec.ManagedCodexExec;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2299,7 +2314,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, managedCodexExec).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
@@ -2343,4 +2358,4 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       ),
     );
   }),
-);
+).pipe(Layer.provide(ManagedCodexExec.layer));

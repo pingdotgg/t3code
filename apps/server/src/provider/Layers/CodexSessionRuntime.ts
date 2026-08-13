@@ -624,6 +624,8 @@ interface CollabChildAgentState {
   readonly agentPath: string | undefined;
   readonly depth: number | undefined;
   readonly parentThreadId: string | undefined;
+  readonly model: string | undefined;
+  readonly effort: string | undefined;
   /**
    * Parent canonical turn active when the child registered. Stamped on every
    * synthetic collabAgent/* event so clients can batch a fleet by its spawn
@@ -640,6 +642,8 @@ function readThreadSpawnSource(thread: { readonly source: unknown }):
       agentPath: string | undefined;
       depth: number | undefined;
       parentThreadId: string | undefined;
+      model: string | undefined;
+      effort: string | undefined;
     }
   | undefined {
   const source = thread.source;
@@ -655,6 +659,7 @@ function readThreadSpawnSource(thread: { readonly source: unknown }):
     return undefined;
   }
   const record = spawn as Record<string, unknown>;
+  const threadRecord = thread as Record<string, unknown>;
   return {
     nickname: typeof record.agent_nickname === "string" ? record.agent_nickname : undefined,
     role: typeof record.agent_role === "string" ? record.agent_role : undefined,
@@ -662,6 +667,9 @@ function readThreadSpawnSource(thread: { readonly source: unknown }):
     depth: typeof record.depth === "number" ? record.depth : undefined,
     parentThreadId:
       typeof record.parent_thread_id === "string" ? record.parent_thread_id : undefined,
+    model: typeof threadRecord.model === "string" ? threadRecord.model : undefined,
+    effort:
+      typeof threadRecord.reasoningEffort === "string" ? threadRecord.reasoningEffort : undefined,
   };
 }
 
@@ -1008,6 +1016,8 @@ export const makeCodexSessionRuntime = (
             depth: spawn.depth ?? existingChild?.depth,
             parentThreadId:
               spawn.parentThreadId ?? thread.parentThreadId ?? existingChild?.parentThreadId,
+            model: spawn.model ?? existingChild?.model,
+            effort: spawn.effort ?? existingChild?.effort,
             spawnTurnId,
           };
           yield* Ref.update(collabChildAgentsRef, (current) => {
@@ -1027,6 +1037,8 @@ export const makeCodexSessionRuntime = (
               ...(state.agentPath ? { agentPath: state.agentPath } : {}),
               ...(state.depth !== undefined ? { depth: state.depth } : {}),
               ...(state.parentThreadId ? { parentThreadId: state.parentThreadId } : {}),
+              ...(state.model ? { model: state.model } : {}),
+              ...(state.effort ? { effort: state.effort } : {}),
             },
           });
           return true;
@@ -1073,6 +1085,8 @@ export const makeCodexSessionRuntime = (
               agentPath: existing?.agentPath ?? item.agentPath,
               depth: existing?.depth,
               parentThreadId: existing?.parentThreadId,
+              model: existing?.model,
+              effort: existing?.effort,
               spawnTurnId: existing ? existing.spawnTurnId : activitySpawnTurnId,
             });
             return next;
@@ -1114,6 +1128,8 @@ export const makeCodexSessionRuntime = (
           ...(child.nickname ? { nickname: child.nickname } : {}),
           ...(child.role ? { role: child.role } : {}),
           ...(child.agentPath ? { agentPath: child.agentPath } : {}),
+          ...(child.model ? { model: child.model } : {}),
+          ...(child.effort ? { effort: child.effort } : {}),
         };
         switch (notification.method) {
           case "turn/started": {
