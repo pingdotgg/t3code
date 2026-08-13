@@ -182,7 +182,7 @@ const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
 // Agents that are always hidden in OpenCode but the CLI "agent list" command
 // does not expose the hidden flag. Keep in sync with OpenCode agent
 // definitions (in the OpenCode repo: packages/opencode/src/agent/agent.ts).
-const KNOWN_HIDDEN_AGENTS = new Set(["compaction", "summary", "title"]);
+const KNOWN_HIDDEN_AGENTS = new Set(["compaction", "plan", "summary", "title"]);
 
 /** @internal */
 export function parseModelsCliOutput(stdout: string): {
