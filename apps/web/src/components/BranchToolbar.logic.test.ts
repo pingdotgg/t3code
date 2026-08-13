@@ -6,6 +6,7 @@ import {
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
+  resolveDefaultWorktreeBaseBranch,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveEnvModeLabel,
@@ -23,6 +24,24 @@ import {
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+
+describe("resolveDefaultWorktreeBaseBranch", () => {
+  it("prefers the repository default and falls back to the checked-out branch", () => {
+    const refs: VcsRef[] = [
+      {
+        name: "main",
+        isDefault: true,
+        current: false,
+        worktreePath: null,
+      },
+    ];
+
+    expect(resolveDefaultWorktreeBaseBranch({ refs, currentGitBranch: "feature" })).toBe("main");
+    expect(resolveDefaultWorktreeBaseBranch({ refs: [], currentGitBranch: "feature" })).toBe(
+      "feature",
+    );
+  });
+});
 
 describe("resolvePreviousWorktreeSeed", () => {
   it("picks the most recently updated worktree thread", () => {

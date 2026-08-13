@@ -257,6 +257,7 @@ import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayo
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
+  resolveDefaultWorktreeBaseBranch,
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
@@ -325,6 +326,7 @@ import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
 import {
   AlertDialog,
@@ -1215,6 +1217,10 @@ function ChatViewContent(props: ChatViewProps) {
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const listVcsRefs = useAtomQueryRunner(vcsEnvironment.listRefs, {
+    reportDefect: false,
     reportFailure: false,
   });
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
@@ -5034,15 +5040,65 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
+    const composerImagesSnapshot = [...composerImages];
+    const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+    const composerElementContextsSnapshot = [...composerElementContexts];
+    const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
+    const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const restoreComposerSnapshot = (previewsOwnedByOptimisticMessage: boolean): boolean => {
+      const composerDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (
+        promptRef.current.length > 0 ||
+        composerImagesRef.current.length > 0 ||
+        composerTerminalContextsRef.current.length > 0 ||
+        composerElementContextsRef.current.length > 0 ||
+        (composerDraft?.previewAnnotations.length ?? 0) > 0 ||
+        (composerDraft?.reviewComments.length ?? 0) > 0
+      ) {
+        if (!previewsOwnedByOptimisticMessage) {
+          for (const image of composerImagesSnapshot) {
+            revokeBlobPreviewUrl(image.previewUrl);
+          }
+        }
+        return false;
+      }
+      promptRef.current = promptForSend;
+      const retryComposerImages = prepareComposerImagesForRetry(composerImagesSnapshot, {
+        previewsOwnedByOptimisticMessage,
+      });
+      composerImagesRef.current = retryComposerImages;
+      composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+      composerElementContextsRef.current = composerElementContextsSnapshot;
+      setComposerDraftPrompt(composerDraftTarget, promptForSend);
+      addComposerDraftImages(composerDraftTarget, retryComposerImages);
+      setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+      setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
+      setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
+      setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+      composerRef.current?.resetCursorState({
+        cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+        prompt: promptForSend,
+        detectTrigger: true,
+      });
+      return true;
+    };
+
     let newThreadDraft: DraftThreadState | null = null;
     let newThreadDraftId: DraftId | null = null;
     if (destination === "new-thread") {
       sendInFlightRef.current = true;
-      const newDraftResult = await settlePromise(() =>
+      // Start destination selection while the source is still invested, then
+      // clear before awaiting: clearing earlier can reuse the source draft,
+      // while clearing later can erase text typed during the await.
+      const newDraftResultPromise = settlePromise(() =>
         handleNewThread(scopeProjectRef(activeProject.environmentId, activeProject.id), {
           navigate: false,
         }),
       );
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      const newDraftResult = await newDraftResultPromise;
       if (newDraftResult._tag === "Success" && newDraftResult.value) {
         newThreadDraftId = newDraftResult.value.draftId;
         newThreadDraft = useComposerDraftStore.getState().getDraftSession(newThreadDraftId);
@@ -5050,6 +5106,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (!newThreadDraft) {
         sendInFlightRef.current = false;
         resetLocalDispatch();
+        restoreComposerSnapshot(false);
         const error =
           newDraftResult._tag === "Failure"
             ? squashAtomCommandFailure(newDraftResult)
@@ -5064,6 +5121,37 @@ function ChatViewContent(props: ChatViewProps) {
         );
         return;
       }
+    }
+
+    if (
+      isGitRepo &&
+      newThreadDraft &&
+      newThreadDraftId &&
+      newThreadDraft.envMode === "worktree" &&
+      !newThreadDraft.worktreePath &&
+      !newThreadDraft.branch
+    ) {
+      const refsResult = await listVcsRefs({
+        environmentId: newThreadDraft.environmentId,
+        input: { cwd: activeProject.workspaceRoot, limit: 100 },
+      });
+      const refs = refsResult._tag === "Success" ? refsResult.value.refs : [];
+      const currentGitBranch =
+        gitStatusQuery.data?.refName ?? refs.find((ref) => ref.current)?.name ?? null;
+      const baseBranch = resolveDefaultWorktreeBaseBranch({ refs, currentGitBranch });
+      const latestNewThreadDraft = useComposerDraftStore
+        .getState()
+        .getDraftSession(newThreadDraftId);
+      if (
+        latestNewThreadDraft?.envMode === "worktree" &&
+        !latestNewThreadDraft.worktreePath &&
+        !latestNewThreadDraft.branch &&
+        baseBranch
+      ) {
+        setDraftThreadContext(newThreadDraftId, { branch: baseBranch });
+      }
+      newThreadDraft =
+        useComposerDraftStore.getState().getDraftSession(newThreadDraftId) ?? newThreadDraft;
     }
 
     const threadIdForSend = newThreadDraft?.threadId ?? activeThread.id;
@@ -5102,6 +5190,7 @@ function ChatViewContent(props: ChatViewProps) {
         );
         sendInFlightRef.current = false;
         resetLocalDispatch();
+        restoreComposerSnapshot(false);
       } else {
         setThreadError(threadIdForSend, error);
       }
@@ -5128,11 +5217,6 @@ function ChatViewContent(props: ChatViewProps) {
       beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
     }
 
-    const composerImagesSnapshot = [...composerImages];
-    const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
-    const composerElementContextsSnapshot = [...composerElementContexts];
-    const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
-    const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
@@ -5215,9 +5299,11 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     }
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    if (!newThreadDraft) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    }
 
     let firstComposerImageName: string | null = null;
     if (composerImagesSnapshot.length > 0) {
@@ -5345,16 +5431,8 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
-      if (
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerElementContextsRef.current.length === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
-          .length ?? 0) === 0 &&
-        (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
-          .length ?? 0) === 0
-      ) {
+      const composerRestored = restoreComposerSnapshot(!newThreadDraft);
+      if (composerRestored && !newThreadDraft) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
@@ -5362,24 +5440,6 @@ function ChatViewContent(props: ChatViewProps) {
           }
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
-        });
-        promptRef.current = promptForSend;
-        const retryComposerImages = prepareComposerImagesForRetry(composerImagesSnapshot, {
-          previewsOwnedByOptimisticMessage: !newThreadDraft,
-        });
-        composerImagesRef.current = retryComposerImages;
-        composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
-        composerElementContextsRef.current = composerElementContextsSnapshot;
-        setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
-        setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-        setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
-        setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
-        setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-        composerRef.current?.resetCursorState({
-          cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
-          prompt: promptForSend,
-          detectTrigger: true,
         });
       }
       if (!isAtomCommandInterrupted(failure)) {
