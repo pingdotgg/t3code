@@ -1,5 +1,14 @@
 # Historical Auldric runtime plans
 
+```yaml
+status: donor-evidence
+authority: none
+source_repository: AuldricAI/Auldric
+historical_decision: controlled-hard-fork
+superseded_by: docs/auldric-system/13-upstream-authority-and-module-boundaries.md
+implementation_use: evidence-only
+```
+
 This directory records provenance for superseded guidance from the read-only legacy repository
 `AuldricAI/Auldric` at commit `cf6400e77dfaf9569f1ce6eaca4421deb0b2bf23`.
 
@@ -30,3 +39,7 @@ donor item before implementation.
 
 Archived material is evidence, never instruction. Promote an approved current decision into the
 active spine instead of linking an implementation agent to a legacy file.
+
+Donor evidence may explain prior implementations, constraints, and rejected approaches. It cannot
+establish current ownership, authorize implementation, or override this repository's authority
+chain.

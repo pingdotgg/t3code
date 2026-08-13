@@ -6,6 +6,11 @@ T3 is the platform. Auldric is an isolated Marketing/Strategy domain composed th
 seams. The legacy Auldric runtime is not an architectural base and must not be merged, replayed, or
 used to resolve a conflict in Auldric's favour.
 
+The decisional capability classifications and permitted repository actions live in
+[the authority and module-boundary RFC](./auldric-system/13-upstream-authority-and-module-boundaries.md).
+This architecture description does not independently authorize a registry, composition mechanism,
+or implementation slice.
+
 ## Ownership model
 
 ```text

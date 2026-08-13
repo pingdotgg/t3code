@@ -32,8 +32,9 @@ connection, remote, shell, Git, preview, CI, or release implementation.
 9. [Legacy donor inventory decision](./10-legacy-donor-inventory.md)
 10. [Marketing shell design proposal](./11-marketing-shell-design-proposal.md)
 11. [Public surface](./12-public-surface.md)
-12. [Architecture](../auldric-architecture.md)
-13. [Launch readiness](../auldric-launch-readiness.md)
+12. [Upstream authority and domain-module boundaries](./13-upstream-authority-and-module-boundaries.md)
+13. [Architecture](../auldric-architecture.md)
+14. [Launch readiness](../auldric-launch-readiness.md)
 
 The [legacy runtime archive index](../_archive/auldric-runtime/README.md) is provenance only. It is
 not part of this reading order and must not steer implementation.
@@ -48,6 +49,10 @@ in-product Marketing UI. #27 owns public marketing/access surfaces.
 
 When a deeper plan conflicts with this spine or native T3 behaviour, this spine and T3 authority
 win. A completed legacy plan never proves a capability exists in this repository.
+
+The [authority and module-boundary RFC](./13-upstream-authority-and-module-boundaries.md) is the
+decisional implementation gate for composition work. Its acceptance authorizes only the exact rows
+and repository actions marked eligible; it does not authorize a general framework.
 
 ## Document registration
 
