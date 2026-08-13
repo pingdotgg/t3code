@@ -160,8 +160,12 @@ public struct ThreadDetailView: View {
     }
 
     private var workspaceRoot: String? {
-        currentThread.worktreePath
-            ?? model.snapshot.projects.first { $0.id == currentThread.projectID }?.path
+        FeatureWorkspaceFileLink.resolvedWorkspaceRoot(
+            worktreePath: currentThread.worktreePath,
+            projectPath: model.snapshot.projects.first {
+                $0.id == currentThread.projectID
+            }?.path
+        )
     }
 
     private var currentSelection: FeatureSelection? {

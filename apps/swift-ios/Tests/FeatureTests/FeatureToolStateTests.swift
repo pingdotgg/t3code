@@ -44,6 +44,62 @@ struct FeatureToolStateTests {
     }
 
     @Test
+    func workspaceFileLinksUseProjectPathWhenWorktreePathIsBlank() {
+        #expect(
+            FeatureWorkspaceFileLink.resolvedWorkspaceRoot(
+                worktreePath: "  \n",
+                projectPath: "/repo"
+            ) == "/repo"
+        )
+        #expect(
+            FeatureWorkspaceFileLink.resolvedWorkspaceRoot(
+                worktreePath: "C:\\repo\\worktree",
+                projectPath: "C:\\repo"
+            ) == "C:\\repo\\worktree"
+        )
+    }
+
+    @Test
+    func workspaceFileLinksResolveContainedWindowsPaths() throws {
+        let forwardSlash = try #require(URL(string: "C:/repo/Sources/App.swift:42"))
+        #expect(
+            FeatureWorkspaceFileLink(
+                url: forwardSlash,
+                workspaceRoot: "c:\\Repo"
+            )?.path == "Sources/App.swift"
+        )
+
+        let backslash = try #require(URL(string: "C:%5CRepo%5CSources%5CApp.swift:42:7"))
+        #expect(
+            FeatureWorkspaceFileLink(
+                url: backslash,
+                workspaceRoot: "C:/repo/"
+            )?.path == "Sources/App.swift"
+        )
+
+        let fileURL = try #require(URL(string: "file:///C:/repo/Sources/App.swift:42"))
+        #expect(
+            FeatureWorkspaceFileLink(
+                url: fileURL,
+                workspaceRoot: "C:/repo"
+            )?.path == "Sources/App.swift"
+        )
+    }
+
+    @Test
+    func workspaceFileLinksRejectWindowsEscapesAndOtherDrives() throws {
+        let outside = try #require(URL(string: "C:/other/App.swift:42"))
+        let otherDrive = try #require(URL(string: "D:/repo/App.swift:42"))
+        let traversal = try #require(URL(string: "../secret.txt"))
+        let driveRootRelative = try #require(URL(string: "file:///Windows/System32/config.txt"))
+
+        #expect(FeatureWorkspaceFileLink(url: outside, workspaceRoot: "C:\\repo") == nil)
+        #expect(FeatureWorkspaceFileLink(url: otherDrive, workspaceRoot: "C:\\repo") == nil)
+        #expect(FeatureWorkspaceFileLink(url: traversal, workspaceRoot: "C:\\repo") == nil)
+        #expect(FeatureWorkspaceFileLink(url: driveRootRelative, workspaceRoot: "C:\\repo") == nil)
+    }
+
+    @Test
     func workspaceFileLinksStripLineAndColumnPositions() throws {
         let relative = try #require(URL(string: "Sources/App.swift:42:7"))
         let link = try #require(FeatureWorkspaceFileLink(url: relative, workspaceRoot: "/repo"))

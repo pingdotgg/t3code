@@ -31,27 +31,43 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         )
     }
 
+    static func resolvedWorkspaceRoot(worktreePath: String?, projectPath: String?) -> String? {
+        if let worktreePath = Self.nonBlank(worktreePath) {
+            return worktreePath
+        }
+        return Self.nonBlank(projectPath)
+    }
+
     public init?(url: URL, workspaceRoot: String?) {
-        guard let workspaceRoot, !workspaceRoot.isEmpty,
+        guard let workspaceRoot = Self.nonBlank(workspaceRoot),
               url.host == nil, url.user == nil, url.password == nil, url.port == nil else {
             return nil
         }
 
-        let destination: ParsedDestination
-        switch url.scheme?.lowercased() {
-        case nil:
-            destination = Self.parsePosition(from: url.path)
-        case "file":
-            destination = Self.parsePosition(from: url.path)
-        default:
-            guard let positioned = Self.positionedRelativeDestination(from: url) else {
-                return nil
-            }
+        let usesWindowsPaths = Self.windowsAbsolutePath(workspaceRoot) != nil
+        var destination: ParsedDestination
+        if usesWindowsPaths,
+           let positioned = Self.positionedWindowsAbsoluteDestination(from: url) {
             destination = positioned
+        } else {
+            switch url.scheme?.lowercased() {
+            case nil:
+                destination = Self.parsePosition(from: url.path)
+            case "file":
+                destination = Self.parsePosition(from: url.path)
+            default:
+                guard let positioned = Self.positionedRelativeDestination(from: url) else {
+                    return nil
+                }
+                destination = positioned
+            }
+        }
+        if usesWindowsPaths {
+            destination.path = destination.path.replacingOccurrences(of: "\\", with: "/")
         }
 
         guard !destination.path.isEmpty,
-              !destination.path.contains(":"),
+              !Self.containsDisallowedColon(destination.path, usesWindowsPaths: usesWindowsPaths),
               !destination.path.unicodeScalars.contains(where: { $0.value == 0 }) else {
             return nil
         }
@@ -59,6 +75,17 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         if !destination.path.hasPrefix("/"), !destination.path.contains("/"),
            !Self.isRecognizableFilePath(destination.path) {
             return nil
+        }
+
+        if usesWindowsPaths {
+            guard let relative = Self.windowsRelativePath(
+                for: destination.path,
+                in: workspaceRoot
+            ) else {
+                return nil
+            }
+            path = relative
+            return
         }
 
         let root = (workspaceRoot as NSString).standardizingPath
@@ -91,6 +118,39 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         var path: String
         var line: Int?
         var column: Int?
+    }
+
+    private struct WindowsAbsolutePath {
+        var drive: String
+        var components: [String]
+    }
+
+    private static func nonBlank(_ value: String?) -> String? {
+        guard let value,
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private static func positionedWindowsAbsoluteDestination(from url: URL) -> ParsedDestination? {
+        let raw: String
+        if url.scheme?.lowercased() == "file" {
+            raw = url.path
+        } else {
+            raw = url.absoluteString
+                .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
+                .split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0]
+                .description
+        }
+        let decoded = raw.removingPercentEncoding ?? raw
+        var destination = parsePosition(from: decoded)
+        if destination.path.hasPrefix("/"),
+           windowsAbsolutePath(String(destination.path.dropFirst())) != nil {
+            destination.path.removeFirst()
+        }
+        guard windowsAbsolutePath(destination.path) != nil else { return nil }
+        return destination
     }
 
     private static func positionedRelativeDestination(from url: URL) -> ParsedDestination? {
@@ -126,6 +186,76 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         if conventionalFileNames.contains(name) { return true }
         let fileExtension = (name as NSString).pathExtension.lowercased()
         return positionedPathExtensions.contains(fileExtension)
+    }
+
+    private static func containsDisallowedColon(
+        _ path: String,
+        usesWindowsPaths: Bool
+    ) -> Bool {
+        guard usesWindowsPaths, windowsAbsolutePath(path) != nil else {
+            return path.contains(":")
+        }
+        return path.dropFirst(2).contains(":")
+    }
+
+    private static func windowsRelativePath(for destination: String, in root: String) -> String? {
+        guard let normalizedRoot = windowsAbsolutePath(root) else { return nil }
+        let absolute: WindowsAbsolutePath
+        if let normalizedDestination = windowsAbsolutePath(destination) {
+            absolute = normalizedDestination
+        } else {
+            guard !destination.hasPrefix("/") else { return nil }
+            let rootText = "\(normalizedRoot.drive):/\(normalizedRoot.components.joined(separator: "/"))"
+            guard let normalizedDestination = windowsAbsolutePath(rootText + "/" + destination) else {
+                return nil
+            }
+            absolute = normalizedDestination
+        }
+        guard absolute.drive.caseInsensitiveCompare(normalizedRoot.drive) == .orderedSame,
+              absolute.components.count > normalizedRoot.components.count else {
+            return nil
+        }
+        for (rootComponent, destinationComponent) in zip(
+            normalizedRoot.components,
+            absolute.components
+        ) where rootComponent.caseInsensitiveCompare(destinationComponent) != .orderedSame {
+            return nil
+        }
+        return absolute.components.dropFirst(normalizedRoot.components.count).joined(separator: "/")
+    }
+
+    private static func windowsAbsolutePath(_ rawPath: String) -> WindowsAbsolutePath? {
+        var path = rawPath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\", with: "/")
+        if path.hasPrefix("/"), path.dropFirst().dropFirst(1).first == ":" {
+            path.removeFirst()
+        }
+        let scalars = Array(path.unicodeScalars.prefix(3))
+        guard scalars.count == 3,
+              CharacterSet.letters.contains(scalars[0]),
+              scalars[1] == ":",
+              scalars[2] == "/" else {
+            return nil
+        }
+
+        var components: [String] = []
+        for component in path.dropFirst(3).split(separator: "/", omittingEmptySubsequences: true) {
+            switch component {
+            case ".":
+                continue
+            case "..":
+                guard !components.isEmpty else { return nil }
+                components.removeLast()
+            default:
+                guard !component.contains(":"),
+                      !component.unicodeScalars.contains(where: { $0.value == 0 }) else {
+                    return nil
+                }
+                components.append(String(component))
+            }
+        }
+        return WindowsAbsolutePath(drive: String(scalars[0]), components: components)
     }
 
     private static func relativePath(for absolutePath: String, in root: String) -> String? {
