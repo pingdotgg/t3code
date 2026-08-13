@@ -332,9 +332,7 @@ export function keybindingFromKeyboardEvent(
   }
   if (event.altKey) parts.push("alt");
   if (event.shiftKey) parts.push("shift");
-  if (parts.length === 0) {
-    return null;
-  }
+  if (parts.length === 0 && !/^f\d{1,2}$/.test(keyToken)) return null;
   parts.push(keyToken);
   return parts.join("+");
 }
