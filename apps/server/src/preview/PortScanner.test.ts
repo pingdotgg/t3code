@@ -2,13 +2,16 @@ import * as NodeNet from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -114,7 +117,66 @@ describe("Portless route enrichment", () => {
 
     expect([...routes]).toEqual([[3001, "http://current.test:8080"]]);
   });
+
+  it.each(["8080abc", "443.5"])("ignores a malformed proxy port of %s", (proxyPortRaw) => {
+    const routes = PortScanner.__testing.parsePortlessRouteSnapshot({
+      routesJson: JSON.stringify([{ hostname: "current.test", port: 3001, pid: 222 }]),
+      proxyPortRaw,
+      tls: true,
+      isProcessAlive: (pid) => pid === 222,
+    });
+
+    expect([...routes]).toEqual([[3001, "https://current.test"]]);
+  });
 });
+
+effectIt("reads Portless state from the injected host environment", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const stateDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-portless-test-" });
+    yield* fileSystem.writeFileString(
+      path.join(stateDir, "routes.json"),
+      `[{"hostname":"injected.localhost","port":4058,"pid":${process.pid}}]`,
+    );
+    yield* fileSystem.writeFileString(path.join(stateDir, "proxy.port"), "443");
+    yield* fileSystem.writeFileString(path.join(stateDir, "proxy.tls"), "");
+
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: () =>
+              Effect.succeed({
+                stdout: `p${process.pid}\ncnode\nn*:4058\n`,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              }),
+          }),
+          Layer.succeed(Net.NetService, {
+            canListenOnHost: () => Effect.succeed(true),
+            isPortAvailableOnLoopback: () => Effect.succeed(true),
+            reserveLoopbackPort: () => Effect.succeed(40_000),
+            findAvailablePort: (preferred) => Effect.succeed(preferred),
+          }),
+          Layer.succeed(HostProcessEnvironment, { PORTLESS_STATE_DIR: stateDir }),
+          Layer.succeed(HostProcessPlatform, "linux"),
+        ),
+      ),
+    );
+    const result = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) =>
+      scanner.scan(),
+    ).pipe(Effect.provide(layer));
+
+    expect(result.find((server) => server.port === 4058)?.url).toBe("https://injected.localhost");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 const openServer = (port: number): Effect.Effect<NodeNet.Server | null> =>
   Effect.callback((resume) => {

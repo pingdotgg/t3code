@@ -11,10 +11,8 @@
  * Polling is reference-counted via scoped `retain`. A single layer-scoped fiber
  * polls forever, but each tick is a no-op when the retain count is zero.
  */
-import * as NodeOS from "node:os";
-
 import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
 import { LSOF_LOCAL_HOST_TOKENS } from "@t3tools/shared/preview";
 import * as Cause from "effect/Cause";
@@ -84,7 +82,7 @@ const parsePortlessRouteSnapshot = (input: PortlessRouteSnapshot): ReadonlyMap<n
   if (Option.isNone(decoded)) return new Map();
 
   const defaultProxyPort = input.tls ? 443 : 80;
-  const parsedProxyPort = Number.parseInt(input.proxyPortRaw?.trim() ?? "", 10);
+  const parsedProxyPort = Number(input.proxyPortRaw?.trim() ?? "");
   const proxyPort =
     Number.isInteger(parsedProxyPort) && parsedProxyPort > 0 && parsedProxyPort < 65536
       ? parsedProxyPort
@@ -249,6 +247,7 @@ const serversEqual = (
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const hostEnvironment = yield* HostProcessEnvironment;
   const hostPlatform = yield* HostProcessPlatform;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -260,8 +259,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   });
 
   const readPortlessRoutes = Effect.fn("PortDiscovery.readPortlessRoutes")(function* () {
-    const configuredStateDir = process.env.PORTLESS_STATE_DIR?.trim();
-    const stateDir = configuredStateDir || path.join(NodeOS.homedir(), ".portless");
+    const configuredStateDir = hostEnvironment.PORTLESS_STATE_DIR?.trim();
+    const homeDirectory = hostEnvironment.HOME?.trim() || hostEnvironment.USERPROFILE?.trim();
+    const stateDir = configuredStateDir || (homeDirectory && path.join(homeDirectory, ".portless"));
+    if (!stateDir) return new Map<number, string>();
     const routesJson = yield* fileSystem
       .readFileString(path.join(stateDir, "routes.json"))
       .pipe(Effect.option);
