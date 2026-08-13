@@ -385,6 +385,41 @@ func windowTarget(for element: AXUIElement) -> WindowTarget? {
     return makeWindowTarget(pid: pid, window: window)
 }
 
+/// The frontmost on-screen window containing `point`.
+///
+/// `CGWindowListCopyWindowInfo` returns windows front to back, so the first
+/// hit is the one a person clicking there would reach.
+func windowTarget(under point: CGPoint) -> WindowTarget? {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        return nil
+    }
+    for window in windows {
+        // These arrive as NSNumber, which does not bridge straight to pid_t or
+        // UInt32 — casting directly returns nil and the lookup silently fails.
+        guard let bounds = window[kCGWindowBounds as String] as? [String: Any],
+            let pidValue = window[kCGWindowOwnerPID as String] as? NSNumber,
+            let numberValue = window[kCGWindowNumber as String] as? NSNumber,
+            let x = (bounds["X"] as? NSNumber)?.doubleValue,
+            let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+            let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+            let height = (bounds["Height"] as? NSNumber)?.doubleValue
+        else { continue }
+        let pid = pid_t(pidValue.int32Value)
+        let number = numberValue.uint32Value
+        // Skip the agent's own pointer, which sits above everything by design.
+        if pid == getpid() { continue }
+        if CGRect(x: x, y: y, width: width, height: height).contains(point) {
+            return WindowTarget(
+                pid: pid,
+                wid: number,
+                frame: CGRect(x: x, y: y, width: width, height: height)
+            )
+        }
+    }
+    return nil
+}
+
 func windowTarget(forPid pid: pid_t) -> WindowTarget? {
     guard let window = (axCopy(AXUIElementCreateApplication(pid), kAXWindowsAttribute as String) as? [AXUIElement])?.first
     else { return nil }
@@ -731,6 +766,7 @@ func toolClick(_ args: [String: Any]) -> String {
         }
         // Coordinate fallback: see MOUSE_TARGETING.
         guard let center = visibleCenter(of: el) else { return "error: \(id) has no screen position and AXPress failed" }
+        AgentCursor.shared.show(at: center)
         if let target = windowTarget(for: el), backgroundClick(target, at: center, clickCount: clickCount) {
             return "clicked \(id) at (\(Int(center.x)), \(Int(center.y))) in background"
         }
@@ -740,8 +776,13 @@ func toolClick(_ args: [String: Any]) -> String {
 
     if let x = args["x"] as? Double, let y = args["y"] as? Double {
         let point = CGPoint(x: x, y: y)
-        if let pid = resolveTargetPid(args), let target = windowTarget(forPid: pid),
-           backgroundClick(target, at: point, clickCount: clickCount) {
+        AgentCursor.shared.show(at: point)
+        // Prefer the app the caller named, then whatever window actually sits
+        // under the point. Without the second lookup a caller who omits `app`
+        // falls through to the shared cursor, which is exactly what desktop
+        // control should avoid.
+        let target = resolveTargetPid(args).flatMap(windowTarget(forPid:)) ?? windowTarget(under: point)
+        if let target, backgroundClick(target, at: point, clickCount: clickCount) {
             return "clicked at (\(Int(x)), \(Int(y))) in background"
         }
         postClick(at: point, clickCount: clickCount, pid: nil)
@@ -2021,6 +2062,7 @@ func textResult(_ s: String, isError: Bool = false) -> [String: Any] {
 // Chrome launches this same binary as its native messaging host; in that mode
 // it is a relay, not an MCP server.
 if CommandLine.arguments.contains("native-host") { NativeHost.run() }
+if CommandLine.arguments.contains("cursor-overlay") { AgentCursorOverlay.run() }
 
 BrowserBridge.shared.start()
 
