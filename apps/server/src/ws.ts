@@ -1447,6 +1447,19 @@ const makeWsRpcLayer = (
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverListWorkspaceSkills]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverListWorkspaceSkills,
+            providerRegistry
+              .listWorkspaceSkills({
+                ...(input.instanceId !== undefined ? { instanceId: input.instanceId } : {}),
+                cwd: input.cwd,
+              })
+              // Omit the key rather than sending `[]` when discovery could not
+              // run, so the client stays on its fallback.
+              .pipe(Effect.map((skills) => (skills ? { skills } : {}))),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateProvider,

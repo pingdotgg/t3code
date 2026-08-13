@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderSkill,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -496,6 +497,57 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* refreshOneSource(providerSource);
     });
 
+    const listWorkspaceSkills = Effect.fn("listWorkspaceSkills")(function* (input: {
+      readonly instanceId?: ProviderInstanceId | undefined;
+      readonly cwd: string;
+    }) {
+      const instances = Array.from((yield* Ref.get(liveSubsRef)).values());
+      const targets =
+        input.instanceId === undefined
+          ? instances
+          : instances.filter((candidate) => candidate.instanceId === input.instanceId);
+
+      const skillLists = yield* Effect.forEach(
+        targets,
+        (instance) =>
+          // No capability means no skill surface (Grok, Cursor, OpenCode):
+          // an empty answer, not a failure.
+          (
+            instance.listWorkspaceSkills?.(input.cwd) ??
+            Effect.succeed<ReadonlyArray<ServerProviderSkill> | undefined>([])
+          ).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("workspace skill discovery failed", {
+                instanceId: instance.instanceId,
+                driver: instance.driverKind,
+                cwd: input.cwd,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as<ReadonlyArray<ServerProviderSkill> | undefined>(undefined)),
+            ),
+          ),
+        { concurrency: "unbounded" },
+      );
+
+      const answeredSkillLists = skillLists.filter(
+        (skills): skills is ReadonlyArray<ServerProviderSkill> => skills !== undefined,
+      );
+      if (answeredSkillLists.length === 0) {
+        return undefined;
+      }
+
+      // First writer wins: each driver already applied its own precedence
+      // (project over user), and instance order decides between drivers.
+      const skillsByName = new Map<string, ServerProviderSkill>();
+      for (const skills of answeredSkillLists) {
+        for (const skill of skills) {
+          if (!skillsByName.has(skill.name)) {
+            skillsByName.set(skill.name, skill);
+          }
+        }
+      }
+      return [...skillsByName.values()];
+    });
+
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
       "getProviderMaintenanceCapabilitiesForInstance",
     )(function* (instanceId: ProviderInstanceId, provider: ProviderDriverKind) {
@@ -710,6 +762,7 @@ export const ProviderRegistryLive = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      listWorkspaceSkills,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {

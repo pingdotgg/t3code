@@ -64,6 +64,7 @@ import type {
   PendingUserInputDraftAnswer,
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
+import { useWorkspaceSkills } from "../../state/queries";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
@@ -445,11 +446,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
+  const workspaceSkills = useWorkspaceSkills({
+    environmentId: props.environmentId,
+    instanceId: selectedInstanceId,
+    cwd: props.threadCwd,
+  });
   const selectedProviderSkills = useMemo(
     () =>
+      workspaceSkills.skills ??
       props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
-        ?.skills ?? [],
-    [props.serverConfig, selectedInstanceId],
+        ?.skills ??
+      [],
+    [props.serverConfig, selectedInstanceId, workspaceSkills.skills],
   );
 
   useLayoutEffect(() => {
@@ -729,6 +737,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 activeThreadBusy={props.activeThreadBusy}
                 environmentId={props.environmentId}
                 projectCwd={props.projectWorkspaceRoot}
+                skills={selectedProviderSkills}
                 bottomInset={composerBottomInset}
                 onChangeDraftMessage={props.onChangeDraftMessage}
                 onPickDraftImages={props.onPickDraftImages}

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 
-import { searchProviderSkills } from "./providerSkillSearch";
+import { resolveComposerSkills, searchProviderSkills } from "./providerSkillSearch";
 
 function makeSkill(input: Partial<ServerProviderSkill> & Pick<ServerProviderSkill, "name">) {
   return {
@@ -55,5 +55,35 @@ describe("searchProviderSkills", () => {
     ];
 
     expect(searchProviderSkills(skills, "ui").map((skill) => skill.name)).toEqual([]);
+  });
+});
+
+describe("resolveComposerSkills", () => {
+  const snapshotSkills = [makeSkill({ name: "snapshot-skill" })];
+  const workspaceSkills = [makeSkill({ name: "workspace-skill" })];
+
+  it("prefers the workspace answer over the provider snapshot", () => {
+    expect(
+      resolveComposerSkills(workspaceSkills, snapshotSkills).map((skill) => skill.name),
+    ).toEqual(["workspace-skill"]);
+  });
+
+  it("keeps the snapshot list when discovery could not run", () => {
+    expect(resolveComposerSkills(null, snapshotSkills).map((skill) => skill.name)).toEqual([
+      "snapshot-skill",
+    ]);
+    expect(resolveComposerSkills(undefined, snapshotSkills).map((skill) => skill.name)).toEqual([
+      "snapshot-skill",
+    ]);
+  });
+
+  it("honours a workspace that genuinely has no skills", () => {
+    expect(resolveComposerSkills([], snapshotSkills)).toEqual([]);
+  });
+
+  it("returns a stable empty list when nothing is known at all", () => {
+    expect(resolveComposerSkills(null, undefined)).toBe(
+      resolveComposerSkills(undefined, undefined),
+    );
   });
 });

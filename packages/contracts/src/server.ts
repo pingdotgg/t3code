@@ -592,6 +592,31 @@ export const ServerProviderUpdateInput = Schema.Struct({
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 
+/**
+ * Request the skills visible from one workspace directory — unlike
+ * `ServerProvider.skills`, one snapshot of the server's own startup cwd.
+ *
+ * The workspace travels in the request because the server cannot infer it:
+ * `ProviderRegistry` sees only `ServerConfig` and the live provider instances,
+ * never the projects table, so only the client knows which directory to scan.
+ */
+export const ServerWorkspaceSkillsInput = Schema.Struct({
+  /** Omitted asks every live instance and merges the results. */
+  instanceId: Schema.optional(ProviderInstanceId),
+  /** Absolute workspace directory to scan (thread worktree or project root). */
+  cwd: TrimmedNonEmptyString,
+});
+export type ServerWorkspaceSkillsInput = typeof ServerWorkspaceSkillsInput.Type;
+
+export const ServerWorkspaceSkillsResult = Schema.Struct({
+  /**
+   * Absent when nothing could be discovered, so clients keep showing whatever
+   * they had. Present-but-empty means discovery ran and found none.
+   */
+  skills: Schema.optional(Schema.Array(ServerProviderSkill)),
+});
+export type ServerWorkspaceSkillsResult = typeof ServerWorkspaceSkillsResult.Type;
+
 export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerProviderUpdateError>()(
   "ServerProviderUpdateError",
   {

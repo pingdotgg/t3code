@@ -25,6 +25,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -71,6 +72,20 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /**
+   * Enumerate the skills this instance would load for a workspace directory.
+   * Only drivers with a skill surface (Claude, Codex) implement it; the rest
+   * leave it undefined and callers fall back to `snapshot.skills`.
+   *
+   * Never fails, and keeps two outcomes apart: a list (possibly empty) is an
+   * answer, while `undefined` means discovery could not run at all (binary
+   * missing, probe timed out). Reporting `[]` for a failed probe would read as
+   * "no skills here" and suppress every fallback the caller has, blanking the
+   * picker on a transient failure.
+   */
+  readonly listWorkspaceSkills?: (
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSkill> | undefined>;
 }
 
 export interface ProviderContinuationIdentity {

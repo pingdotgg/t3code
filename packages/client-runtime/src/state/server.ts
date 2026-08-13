@@ -685,6 +685,12 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    // The stale time keeps reopening the `$` picker from re-probing.
+    workspaceSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workspace-skills",
+      tag: WS_METHODS.serverListWorkspaceSkills,
+      staleTimeMs: 30_000,
+    }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trace-diagnostics",
       tag: WS_METHODS.serverGetTraceDiagnostics,

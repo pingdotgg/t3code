@@ -1,4 +1,9 @@
-import type { EnvironmentId, OrchestrationThread, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationThread,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
@@ -12,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 import {
@@ -123,6 +129,36 @@ export function useBranches(input: {
         })
       : null,
   );
+}
+
+/**
+ * Skills for one workspace; `null` while nothing is known, hence the `??` at
+ * call sites. An empty array is an answer and is deliberately kept.
+ */
+export function useWorkspaceSkills(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly instanceId: ProviderInstanceId | null;
+  readonly cwd: string | null;
+}) {
+  // A stand-in project carries an empty workspaceRoot, which the schema rejects.
+  const cwd = input.cwd?.trim() ? input.cwd : null;
+  const result = useEnvironmentQuery(
+    input.environmentId !== null && cwd !== null
+      ? serverEnvironment.workspaceSkills({
+          environmentId: input.environmentId,
+          input: {
+            ...(input.instanceId ? { instanceId: input.instanceId } : {}),
+            cwd,
+          },
+        })
+      : null,
+  );
+
+  return {
+    skills: result.data?.skills ?? null,
+    error: result.error,
+    isPending: result.isPending,
+  };
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {

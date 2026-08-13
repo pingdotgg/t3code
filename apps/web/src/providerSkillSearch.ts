@@ -66,6 +66,21 @@ function scoreProviderSkill(skill: ServerProviderSkill, query: string): number |
   return Math.min(...scores);
 }
 
+/** Stable identity so the skill-less case never re-renders its consumers. */
+const NO_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+
+/**
+ * Choose the skill list a composer should offer for the current workspace. An
+ * array — even an empty one — is an answer and wins; `null`/`undefined` means
+ * the server could not look, so the snapshot's list stays up.
+ */
+export function resolveComposerSkills(
+  workspaceSkills: ReadonlyArray<ServerProviderSkill> | null | undefined,
+  snapshotSkills: ReadonlyArray<ServerProviderSkill> | undefined,
+): ReadonlyArray<ServerProviderSkill> {
+  return workspaceSkills ?? snapshotSkills ?? NO_SKILLS;
+}
+
 export function searchProviderSkills(
   skills: ReadonlyArray<ServerProviderSkill>,
   query: string,

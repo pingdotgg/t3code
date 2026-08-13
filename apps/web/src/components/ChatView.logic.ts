@@ -138,6 +138,17 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   );
 }
 
+/**
+ * The instance a thread's already-sent messages were written against.
+ * Deliberately ignores the composer's current pick: choosing a different
+ * provider for the next turn must not re-highlight the existing transcript.
+ */
+export function resolveTranscriptProviderInstanceId(
+  thread: Pick<Thread, "session" | "modelSelection"> | null | undefined,
+): ModelSelection["instanceId"] | null {
+  return thread?.session?.providerInstanceId ?? thread?.modelSelection?.instanceId ?? null;
+}
+
 export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
   threadId: ThreadId;
   turnId?: TurnId;

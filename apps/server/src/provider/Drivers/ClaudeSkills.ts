@@ -106,15 +106,31 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
 
   const skillsByName = new Map<string, ServerProviderSkill>();
   for (const root of roots) {
-    const entries = yield* fileSystem
-      .readDirectory(root.directory)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    // Debug, not warning: a missing skills directory is the common case. Still
+    // logged, so an unreadable one is not silently an empty picker.
+    const entries = yield* fileSystem.readDirectory(root.directory).pipe(
+      Effect.tapError((cause) =>
+        Effect.logDebug("claude skill root is not readable", {
+          directory: root.directory,
+          scope: root.scope,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    );
 
     for (const entry of [...entries].sort()) {
       const skillPath = path.join(root.directory, entry, "SKILL.md");
-      const contents = yield* fileSystem
-        .readFileString(skillPath)
-        .pipe(Effect.orElseSucceed(() => undefined));
+      const contents = yield* fileSystem.readFileString(skillPath).pipe(
+        Effect.tapError((cause) =>
+          Effect.logDebug("claude skill entry has no readable SKILL.md", {
+            path: skillPath,
+            scope: root.scope,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
       if (contents === undefined) {
         continue;
       }
@@ -124,6 +140,10 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       // either — skip it rather than surfacing a broken entry under its
       // directory name.
       if (frontmatter.kind === "malformed") {
+        yield* Effect.logWarning("claude skill has malformed YAML frontmatter; skipping", {
+          path: skillPath,
+          scope: root.scope,
+        });
         continue;
       }
 

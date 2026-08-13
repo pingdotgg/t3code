@@ -222,6 +222,8 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { useWorkspaceSkills } from "../state/queries";
+import { resolveComposerSkills } from "../providerSkillSearch";
 import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
@@ -310,6 +312,7 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  resolveTranscriptProviderInstanceId,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -349,7 +352,6 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
-const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -2659,6 +2661,29 @@ function ChatViewContent(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  // Highlights `$skill` mentions in the transcript against the thread's own
+  // instance, not `activeProviderInstanceId` — that prefers the composer's
+  // pick, which would re-highlight sent messages on a provider switch. Query
+  // and fallback both key off it, or the switch would still bleed through
+  // while the query is unresolved. `ChatComposer` queries for the `$` picker.
+  const transcriptProviderInstanceId = resolveTranscriptProviderInstanceId(activeThread);
+  const timelineWorkspaceSkills = useWorkspaceSkills({
+    environmentId,
+    instanceId: transcriptProviderInstanceId,
+    cwd: activeWorkspaceRoot ?? null,
+  });
+  const transcriptProviderStatus = useMemo(
+    () =>
+      transcriptProviderInstanceId === null
+        ? null
+        : (providerStatuses.find((status) => status.instanceId === transcriptProviderInstanceId) ??
+          null),
+    [providerStatuses, transcriptProviderInstanceId],
+  );
+  const workspaceSkills = resolveComposerSkills(
+    timelineWorkspaceSkills.skills,
+    transcriptProviderStatus?.skills,
+  );
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
@@ -6244,7 +6269,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={workspaceSkills}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 contentInsetEndAdjustment={composerOverlayHeight}

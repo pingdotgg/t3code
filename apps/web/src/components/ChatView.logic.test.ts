@@ -28,6 +28,7 @@ import {
   reconcileRetainedMountedThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  resolveTranscriptProviderInstanceId,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
@@ -715,5 +716,37 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("resolveTranscriptProviderInstanceId", () => {
+  const sessionInstance = ProviderInstanceId.make("codex_personal");
+  const draftInstance = ProviderInstanceId.make("claude_default");
+
+  it("prefers the instance the thread's session actually ran on", () => {
+    expect(
+      resolveTranscriptProviderInstanceId(
+        makeThread({
+          session: { ...readySession, providerInstanceId: sessionInstance },
+          modelSelection: { instanceId: draftInstance, model: "gpt-5.4" },
+        }),
+      ),
+    ).toBe(sessionInstance);
+  });
+
+  it("falls back to the thread's own model selection before it has a session", () => {
+    expect(
+      resolveTranscriptProviderInstanceId(
+        makeThread({
+          session: null,
+          modelSelection: { instanceId: draftInstance, model: "gpt-5.4" },
+        }),
+      ),
+    ).toBe(draftInstance);
+  });
+
+  it("reports nothing for a missing thread", () => {
+    expect(resolveTranscriptProviderInstanceId(null)).toBeNull();
+    expect(resolveTranscriptProviderInstanceId(undefined)).toBeNull();
   });
 });

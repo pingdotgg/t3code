@@ -319,12 +319,15 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
-const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+/**
+ * Spawn `codex app-server` and complete its initialize handshake. Closing the
+ * caller's scope tears the child process down.
+ */
+const openCodexAppServerClient = Effect.fn("openCodexAppServerClient")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly launchArgs?: string;
   readonly cwd: string;
-  readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
@@ -385,6 +388,19 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
   const version = versionMatch ? versionMatch[1] : undefined;
 
+  return { client, version } as const;
+});
+
+const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly customModels?: ReadonlyArray<string>;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const { client, version } = yield* openCodexAppServerClient(input);
+
   const accountResponse = yield* client.request("account/read", {});
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
@@ -414,6 +430,54 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
 });
+
+const requestCodexWorkspaceSkills = Effect.fn("requestCodexWorkspaceSkills")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const { client } = yield* openCodexAppServerClient(input);
+  const response = yield* client.request("skills/list", { cwds: [input.cwd] });
+  return parseCodexSkillsListResponse(response, input.cwd);
+});
+
+/**
+ * List the skills Codex would load for one workspace directory. Answering
+ * needs a live app-server, so unlike Claude's filesystem scan this can yield
+ * `undefined` ("could not look") rather than `[]`.
+ */
+export const listCodexWorkspaceSkills = (
+  codexSettings: CodexSettings,
+  cwd: string,
+  environment?: NodeJS.ProcessEnv,
+): Effect.Effect<
+  ReadonlyArray<ServerProviderSkill> | undefined,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> => {
+  if (!codexSettings.enabled) {
+    return Effect.succeed([]);
+  }
+  const resolvedEnvironment = environment ?? process.env;
+  return requestCodexWorkspaceSkills({
+    binaryPath: codexSettings.binaryPath,
+    homePath: codexSettings.homePath,
+    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
+    cwd,
+    environment: resolvedEnvironment,
+  }).pipe(
+    Effect.scoped,
+    // A typed timeout, not `timeoutOption`, so a slow app-server is logged and
+    // reported like a spawn failure rather than as "no skills here".
+    Effect.timeout(Duration.millis(AUTH_PROBE_TIMEOUT_MS)),
+    Effect.tapError((cause) =>
+      Effect.logDebug("codex workspace skill discovery failed", { cwd, cause }),
+    ),
+    Effect.orElseSucceed((): ReadonlyArray<ServerProviderSkill> | undefined => undefined),
+  );
+};
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] => {
   const models = new Set<string>();

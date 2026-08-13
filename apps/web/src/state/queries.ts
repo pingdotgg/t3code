@@ -14,6 +14,7 @@ import type {
   OrchestrationThread,
   ProjectContentMatch,
   ProjectEntryKind,
+  ProviderInstanceId,
   ThreadId,
   VcsListRefsResult,
   VcsRef,
@@ -28,6 +29,7 @@ import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
+import { serverEnvironment } from "./server";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
 
@@ -300,6 +302,33 @@ export function useProjectPathSearch(
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   return useProjectPathSearch(target, COMPOSER_PATH_SEARCH_LIMIT);
+}
+
+/** Skills for one workspace; `null` until the server answers with a list. */
+export function useWorkspaceSkills(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly instanceId: ProviderInstanceId | null;
+  readonly cwd: string | null;
+}) {
+  // A stand-in project carries an empty workspaceRoot, which the schema rejects.
+  const cwd = input.cwd?.trim() ? input.cwd : null;
+  const result = useEnvironmentQuery(
+    input.environmentId !== null && cwd !== null
+      ? serverEnvironment.workspaceSkills({
+          environmentId: input.environmentId,
+          input: {
+            ...(input.instanceId ? { instanceId: input.instanceId } : {}),
+            cwd,
+          },
+        })
+      : null,
+  );
+
+  return {
+    skills: result.data?.skills ?? null,
+    error: result.error,
+    isPending: result.isPending,
+  };
 }
 
 interface ProjectContentSearchTarget {
