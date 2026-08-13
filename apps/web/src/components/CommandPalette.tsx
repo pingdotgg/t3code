@@ -69,11 +69,7 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import {
-  useAllEnvironmentShellsBootstrapped,
-  useProjects,
-  useThreadShells,
-} from "../state/entities";
+import { useProjects, useThreadShells } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -590,7 +586,6 @@ function OpenCommandPaletteDialog(props: {
     useHandleNewThread();
   const handleNewChat = useHandleNewChat();
   const projects = useProjects();
-  const projectsKnown = useAllEnvironmentShellsBootstrapped();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -704,9 +699,8 @@ function OpenCommandPaletteDialog(props: {
         defaultProjectRef,
         handleNewThread,
         projects,
-        projectsKnown,
       }),
-    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects, projectsKnown],
+    [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, projects],
   );
   const projectPickerEntries = useMemo(
     () =>
@@ -1463,7 +1457,6 @@ function OpenCommandPaletteDialog(props: {
             defaultProjectRef,
             handleNewThread,
             projects,
-            projectsKnown,
           });
         },
       });

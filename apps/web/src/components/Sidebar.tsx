@@ -105,11 +105,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import {
-  useAllEnvironmentShellsBootstrapped,
-  useProjects,
-  useThreadShells,
-} from "../state/entities";
+import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -1639,9 +1635,18 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 
 export default function Sidebar() {
   const projects = useProjects();
-  const projectsKnown = useAllEnvironmentShellsBootstrapped();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const knownEnvironmentIds = useMemo(() => {
+    const environmentIds = new Set<string>();
+    for (const project of projects) {
+      environmentIds.add(project.environmentId);
+    }
+    for (const thread of threads) {
+      environmentIds.add(thread.environmentId);
+    }
+    return environmentIds;
+  }, [projects, threads]);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -3254,14 +3259,13 @@ export default function Sidebar() {
           defaultProjectRef: newThreadContext.defaultProjectRef,
           handleNewThread: newThreadContext.handleNewThread,
           projects,
-          projectsKnown,
         });
         return;
       }
       if (isMobile) setOpenMobile(false);
       openCommandPalette({ open: "new-thread-in" });
     },
-    [isMobile, newThreadContext, projectGroups.length, projects, projectsKnown, setOpenMobile],
+    [isMobile, newThreadContext, projectGroups.length, projects, setOpenMobile],
   );
 
   // The button mirrors chat.new: in multi-project setups both route through
@@ -3522,7 +3526,7 @@ export default function Sidebar() {
                         isChat={isChatThread({
                           thread,
                           projects,
-                          projectsKnown,
+                          projectsKnown: knownEnvironmentIds.has(thread.environmentId),
                         })}
                       />
                     );
@@ -3629,7 +3633,7 @@ export default function Sidebar() {
                         isChat={isChatThread({
                           thread,
                           projects,
-                          projectsKnown,
+                          projectsKnown: knownEnvironmentIds.has(thread.environmentId),
                         })}
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         timestampFormat={timestampFormat}

@@ -34,11 +34,24 @@ export class ChatScratchDirectoryError extends Schema.TaggedErrorClass<ChatScrat
 export class ChatProjectLookupError extends Schema.TaggedErrorClass<ChatProjectLookupError>()(
   "ChatProjectLookupError",
   {
-    detail: Schema.String,
+    projectId: ProjectId,
   },
 ) {
   override get message(): string {
-    return this.detail;
+    return `Chat project '${this.projectId}' was created but could not be read back.`;
+  }
+}
+
+export class ChatScratchThreadPathError extends Schema.TaggedErrorClass<ChatScratchThreadPathError>()(
+  "ChatScratchThreadPathError",
+  {
+    threadId: Schema.String,
+    workspaceRoot: Schema.String,
+    worktreePath: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `Chat scratch thread path for '${this.threadId}' is not a single directory under '${this.workspaceRoot}'.`;
   }
 }
 
@@ -46,6 +59,8 @@ export type GetOrCreateChatProjectError =
   | OrchestrationDispatchError
   | ChatScratchDirectoryError
   | ChatProjectLookupError;
+
+export type PrepareChatScratchError = GetOrCreateChatProjectError | ChatScratchThreadPathError;
 
 export const chatScratchWorkspaceRoot = Effect.fn("chatScratchWorkspaceRoot")(function* () {
   const serverConfig = yield* ServerConfig;
@@ -105,19 +120,20 @@ export const getOrCreateChatProject = Effect.fn("getOrCreateChatProject")(functi
       createdAt,
     })
     .pipe(
-      Effect.catchTag("OrchestrationCommandInvariantError", (error) =>
-        findActiveChatProject().pipe(
-          Effect.flatMap((recovered) =>
-            Option.isSome(recovered) ? Effect.void : Effect.fail(error),
+      Effect.catchTags({
+        OrchestrationCommandInvariantError: (error) =>
+          findActiveChatProject().pipe(
+            Effect.flatMap((recovered) =>
+              Option.isSome(recovered) ? Effect.void : Effect.fail(error),
+            ),
           ),
-        ),
-      ),
+      }),
     );
 
   const createdProject = yield* findActiveChatProject();
   if (Option.isNone(createdProject)) {
     return yield* new ChatProjectLookupError({
-      detail: "Chat project was created but could not be read back.",
+      projectId,
     });
   }
   return createdProject.value;
@@ -137,7 +153,26 @@ export const prepareChatScratchCreateThread = Effect.fn("prepareChatScratchCreat
 
     const chatProject = yield* getOrCreateChatProject();
     const path = yield* Path.Path;
-    const worktreePath = path.join(chatProject.workspaceRoot, input.threadId);
+    if (
+      path.basename(input.threadId) !== input.threadId ||
+      input.threadId === "." ||
+      input.threadId === ".."
+    ) {
+      return yield* new ChatScratchThreadPathError({
+        threadId: input.threadId,
+        workspaceRoot: chatProject.workspaceRoot,
+      });
+    }
+    const workspaceRoot = path.resolve(chatProject.workspaceRoot);
+    const worktreePath = path.resolve(workspaceRoot, input.threadId);
+    const relative = path.relative(workspaceRoot, worktreePath);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      return yield* new ChatScratchThreadPathError({
+        threadId: input.threadId,
+        workspaceRoot,
+        worktreePath,
+      });
+    }
     yield* ensureDirectory(worktreePath, "thread-worktree");
 
     return {

@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { isChatDraft, isChatThread } from "@t3tools/client-runtime/state/project-kind";
+import { isChatDraft, isWorkspaceThread } from "@t3tools/client-runtime/state/project-kind";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
@@ -31,7 +31,6 @@ export interface ChatThreadActionContext {
     readonly environmentId: EnvironmentId;
     readonly id: ProjectId;
   }>;
-  readonly projectsKnown: boolean;
 }
 
 export function resolveNewDraftStartFromOrigin(input: {
@@ -44,12 +43,13 @@ export function resolveNewDraftStartFromOrigin(input: {
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {
-  const activeThreadIsChat = isChatThread({
-    thread: context.activeThread ?? null,
-    projects: context.projects,
-    projectsKnown: context.projectsKnown,
-  });
-  if (context.activeThread && !activeThreadIsChat) {
+  if (
+    context.activeThread &&
+    isWorkspaceThread({
+      thread: context.activeThread,
+      projects: context.projects,
+    })
+  ) {
     return scopeProjectRef(context.activeThread.environmentId, context.activeThread.projectId);
   }
   if (context.activeDraftThread && !isChatDraft(context.activeDraftThread)) {

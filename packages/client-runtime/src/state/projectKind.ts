@@ -26,6 +26,51 @@ export function isChatDraft(
   return draft?.createInChatScratch === true;
 }
 
+function threadProjectIsVisible(input: {
+  readonly thread:
+    | {
+        readonly environmentId: EnvironmentId;
+        readonly projectId: ProjectId;
+      }
+    | null
+    | undefined;
+  readonly projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+  }>;
+}): boolean {
+  return (
+    input.thread != null &&
+    input.projects.some(
+      (project) =>
+        project.environmentId === input.thread!.environmentId &&
+        project.id === input.thread!.projectId,
+    )
+  );
+}
+
+/**
+ * True only when the thread's project is already in the visible (non-chat)
+ * projects list. Loading state and hidden chat projects both return false, so
+ * callers that inherit a project for "New thread" never target the synthetic
+ * chat project.
+ */
+export function isWorkspaceThread(input: {
+  readonly thread:
+    | {
+        readonly environmentId: EnvironmentId;
+        readonly projectId: ProjectId;
+      }
+    | null
+    | undefined;
+  readonly projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+  }>;
+}): boolean {
+  return threadProjectIsVisible(input);
+}
+
 /**
  * Chat threads live under a hidden synthetic project, so they are the ones
  * whose `projectId` is missing from the visible (non-chat) projects list.
@@ -49,9 +94,5 @@ export function isChatThread(input: {
   if (!input.projectsKnown || input.thread == null) {
     return false;
   }
-  return !input.projects.some(
-    (project) =>
-      project.environmentId === input.thread!.environmentId &&
-      project.id === input.thread!.projectId,
-  );
+  return !threadProjectIsVisible(input);
 }

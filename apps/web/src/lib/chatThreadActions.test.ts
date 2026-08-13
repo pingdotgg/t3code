@@ -25,7 +25,6 @@ function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatTh
     defaultProjectRef: scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID),
     handleNewThread: async () => {},
     projects: WORKSPACE_PROJECTS,
-    projectsKnown: true,
     ...overrides,
   };
 }
@@ -80,6 +79,20 @@ describe("chatThreadActions", () => {
     );
 
     expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID));
+  });
+
+  it("skips a chat thread while shells are still loading", () => {
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        activeThread: {
+          environmentId: ENVIRONMENT_ID,
+          projectId: CHAT_PROJECT_ID,
+        },
+        projects: [],
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, FALLBACK_PROJECT_ID));
   });
 
   it("skips a chat thread so new-thread does not target the hidden chat project", () => {

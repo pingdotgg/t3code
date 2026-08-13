@@ -199,4 +199,38 @@ describe("ChatProject", () => {
       await system.dispose();
     }
   });
+
+  it("rejects a chat scratch threadId that would escape the scratch root", async () => {
+    const system = await createChatProjectSystem();
+    try {
+      const result = await system.run(
+        Effect.gen(function* () {
+          return yield* prepareChatScratchCreateThread({
+            threadId: ThreadId.make("../../outside"),
+            createThread: {
+              projectId: ProjectId.make("ignored"),
+              title: "Hello",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.4",
+              },
+              runtimeMode: DEFAULT_RUNTIME_MODE,
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              branch: null,
+              worktreePath: null,
+              createdAt: "2026-08-13T00:00:00.000Z",
+              createInChatScratch: true,
+            },
+          }).pipe(Effect.result);
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure._tag).toBe("ChatScratchThreadPathError");
+      }
+    } finally {
+      await system.dispose();
+    }
+  });
 });

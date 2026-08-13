@@ -7,6 +7,7 @@ import {
   isChatDraft,
   isChatThread,
   isVisibleShellProject,
+  isWorkspaceThread,
   projectHasWorkspace,
 } from "./projectKind.ts";
 
@@ -58,11 +59,25 @@ it("does not treat missing projects as chats until the shell is known", () => {
 });
 
 it("treats threads whose project is in the visible list as workspace threads", () => {
+  const thread = { environmentId: env, projectId: workspaceProjectId };
+  const projects = [{ environmentId: env, id: workspaceProjectId }];
+  expect(isWorkspaceThread({ thread, projects })).toBe(true);
   expect(
     isChatThread({
-      thread: { environmentId: env, projectId: workspaceProjectId },
-      projects: [{ environmentId: env, id: workspaceProjectId }],
+      thread,
+      projects,
       projectsKnown: true,
+    }),
+  ).toBe(false);
+});
+
+it("does not treat a hidden or still-loading project as a workspace thread", () => {
+  const thread = { environmentId: env, projectId: ProjectId.make("hidden") };
+  expect(isWorkspaceThread({ thread, projects: [] })).toBe(false);
+  expect(
+    isWorkspaceThread({
+      thread,
+      projects: [{ environmentId: env, id: workspaceProjectId }],
     }),
   ).toBe(false);
 });
