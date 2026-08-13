@@ -40,7 +40,7 @@ export function useDiscoveredLocalServers(
       mergeServers({
         scanner: scannerSnapshot.map((server) => ({
           ...server,
-          url: resolveDiscoveredServerUrl(input.environmentId, server.url),
+          url: resolveDiscoveredServerUrl(input.environmentId, server.url, server.port),
           requestedUrl: server.url,
         })),
         configuredUrls: input.configuredUrls ?? [],
@@ -126,6 +126,29 @@ export function mergeServers(input: {
 
 function canonicalKey(host: string, port: number): string {
   return `${host.toLowerCase()}:${port}`;
+}
+
+export function formatDiscoveredServerHost(
+  server: Pick<DiscoveredLocalServer, "host" | "port" | "url">,
+): string {
+  try {
+    return new URL(server.url).host;
+  } catch {
+    return `${server.host}:${server.port}`;
+  }
+}
+
+export function selectPreferredDiscoveredServer(
+  servers: ReadonlyArray<DiscoveredLocalServer>,
+): DiscoveredLocalServer | null {
+  const namedServer = servers.find((server) => {
+    try {
+      return new URL(server.url).hostname !== server.host;
+    } catch {
+      return false;
+    }
+  });
+  return namedServer ?? servers[0] ?? null;
 }
 
 function parseLocalUrl(raw: string): { host: string; port: number; url: string } | null {

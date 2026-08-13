@@ -6,6 +6,7 @@ import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui
 
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
+import { findDiscoveredServerTargetPort } from "./previewEmptyStateLogic";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
 
 interface Props {
@@ -14,7 +15,7 @@ interface Props {
   recentlySeenUrls?: ReadonlyArray<string> | undefined;
   recentEntries: ReadonlyArray<BrowserHistoryEntry>;
   onRemoveRecent: (url: string) => void;
-  onOpenUrl: (url: string) => void;
+  onOpenUrl: (url: string, targetPort?: number) => void;
 }
 
 export function PreviewEmptyState({
@@ -61,7 +62,9 @@ export function PreviewEmptyState({
                 <PreviewRecentUrlCard
                   key={entry.url}
                   entry={entry}
-                  onOpen={() => onOpenUrl(entry.url)}
+                  onOpen={() =>
+                    onOpenUrl(entry.url, findDiscoveredServerTargetPort(entry.url, servers))
+                  }
                   onRemove={() => onRemoveRecent(entry.url)}
                 />
               ))}
@@ -79,7 +82,7 @@ export function PreviewEmptyState({
                 <PreviewLocalServerCard
                   key={`${server.host}:${server.port}`}
                   server={server}
-                  onOpen={() => onOpenUrl(server.requestedUrl)}
+                  onOpen={() => onOpenUrl(server.requestedUrl, server.port)}
                 />
               ))}
             </div>

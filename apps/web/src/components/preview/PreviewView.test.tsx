@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
-  emptyStateUrl: null as ((url: string) => void) | null,
+  emptyStateUrl: null as ((url: string, targetPort?: number) => void) | null,
   togglePictureInPicture: null as (() => void) | null,
   toggleNativePictureInPicture: null as (() => void) | null,
   pictureInPicturePressed: false,
@@ -193,7 +193,7 @@ vi.mock("./PreviewChromeRow", () => ({
 }));
 
 vi.mock("./PreviewEmptyState", () => ({
-  PreviewEmptyState: (props: { onOpenUrl: (url: string) => void }) => {
+  PreviewEmptyState: (props: { onOpenUrl: (url: string, targetPort?: number) => void }) => {
     mocks.emptyStateUrl = props.onOpenUrl;
     return null;
   },
@@ -334,6 +334,18 @@ describe("PreviewView navigation", () => {
         expect.objectContaining({ threadId: expect.anything() }),
         "http://localhost:5173/app?mode=test#top",
       ),
+    );
+  });
+
+  it("maps an empty-state Portless server onto its remote listener port", async () => {
+    mocks.showEmptyState = true;
+    renderToStaticMarkup(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+
+    expect(mocks.emptyStateUrl).not.toBeNull();
+    mocks.emptyStateUrl?.("https://artelo.localhost/", 4058);
+
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, "http://172.25.85.75:4058/"),
     );
   });
 

@@ -144,6 +144,30 @@ describe("browser target resolver", () => {
     ).toBe("http://localhost:5173/app?x=1#top");
   });
 
+  it("opens a Portless URL directly for a local environment", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(
+      resolveDiscoveredServerUrl(
+        EnvironmentId.make("environment-1"),
+        "https://feature.artelo.localhost/dashboard",
+        4058,
+      ),
+    ).toBe("https://feature.artelo.localhost/dashboard");
+  });
+
+  it("preserves the target-port fallback for a remote Portless server", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://100.65.180.100:3773" });
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(
+      resolveDiscoveredServerUrl(
+        EnvironmentId.make("environment-1"),
+        "https://feature.artelo.localhost/dashboard?mode=test#results",
+        4058,
+      ),
+    ).toBe("http://100.65.180.100:4058/dashboard?mode=test#results");
+  });
+
   it("normalizes public URLs without treating them as environment ports", async () => {
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "example.com/app")).toBe(
