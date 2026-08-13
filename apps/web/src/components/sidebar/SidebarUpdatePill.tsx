@@ -10,6 +10,7 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateProgressLabel,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -113,6 +114,7 @@ function SidebarUpdateControl() {
 
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const isDownloading = state?.status === "downloading";
+  const progressLabel = state ? getDesktopUpdateProgressLabel(state) : null;
   const isUpdateState = action !== "none" || isDownloading;
   const tooltip = isUpdateState
     ? state
@@ -252,7 +254,14 @@ function SidebarUpdateControl() {
               )}
               onClick={handleAction}
             >
-              {action === "install" ? (
+              {isDownloading && typeof state.downloadPercent === "number" ? (
+                <span
+                  className="text-[9px] leading-none font-semibold tabular-nums"
+                  aria-hidden="true"
+                >
+                  {Math.min(100, Math.max(0, Math.floor(state.downloadPercent)))}%
+                </span>
+              ) : action === "install" ? (
                 <RotateCwIcon className="size-4" />
               ) : isUpdateState ? (
                 <DownloadIcon className="size-4" />
@@ -286,7 +295,7 @@ function SidebarUpdateControl() {
           variant={isUpdateState ? "glass" : "default"}
         >
           {isUpdateState && state ? (
-            <SidebarUpdateReleaseNotesTooltip state={state} tooltip={tooltip} />
+            <SidebarUpdateReleaseNotesTooltip state={state} tooltip={progressLabel ?? tooltip} />
           ) : (
             tooltip
           )}

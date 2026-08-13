@@ -42,6 +42,7 @@ import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../..
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateProgressLabel,
   getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -357,7 +358,10 @@ function AboutVersionSection() {
     "up-to-date": "Up to Date",
   };
   const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
+    (updateState ? getDesktopUpdateProgressLabel(updateState) : null) ??
+    actionLabel[action] ??
+    statusLabel[updateState?.status ?? ""] ??
+    "Check for Updates";
   const description =
     action === "download" || action === "install"
       ? "Update available."

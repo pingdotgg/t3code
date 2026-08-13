@@ -6,6 +6,7 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
+  getDesktopUpdateProgressLabel,
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
@@ -333,5 +334,41 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
     );
+  });
+});
+
+describe("getDesktopUpdateProgressLabel", () => {
+  it("shows rounded download progress", () => {
+    expect(
+      getDesktopUpdateProgressLabel({
+        ...baseState,
+        status: "downloading",
+        downloadPercent: 42.9,
+      }),
+    ).toBe("Downloading 42%");
+  });
+
+  it("falls back to indeterminate copy when progress is unavailable", () => {
+    expect(
+      getDesktopUpdateProgressLabel({
+        ...baseState,
+        status: "downloading",
+        downloadPercent: null,
+      }),
+    ).toBe("Downloading…");
+  });
+
+  it("clamps updater values to a valid percentage", () => {
+    expect(
+      getDesktopUpdateProgressLabel({
+        ...baseState,
+        status: "downloading",
+        downloadPercent: 101.2,
+      }),
+    ).toBe("Downloading 100%");
+  });
+
+  it("omits progress outside the download state", () => {
+    expect(getDesktopUpdateProgressLabel(baseState)).toBeNull();
   });
 });

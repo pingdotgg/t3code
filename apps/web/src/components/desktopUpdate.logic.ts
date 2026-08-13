@@ -95,6 +95,15 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
   return "Up to date";
 }
 
+export function getDesktopUpdateProgressLabel(state: DesktopUpdateState): string | null {
+  if (state.status !== "downloading") return null;
+  if (typeof state.downloadPercent !== "number" || !Number.isFinite(state.downloadPercent)) {
+    return "Downloading…";
+  }
+  const percent = Math.min(100, Math.max(0, Math.floor(state.downloadPercent)));
+  return `Downloading ${percent}%`;
+}
+
 export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
   platform = "",
