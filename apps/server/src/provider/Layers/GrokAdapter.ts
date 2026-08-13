@@ -228,8 +228,6 @@ export function grokPromptSettlementBelongsToContext(input: {
 export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapterLiveOptions) {
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("grok");
-    // Desktop control ships with the macOS app; undefined elsewhere.
-    const desktopMcp = yield* resolveEnabledDesktopMcp();
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -573,9 +571,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           });
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          // Desktop MCP must be offered whenever the binary resolves — same as
-          // ClaudeAdapter. Gating it on the HTTP t3-code MCP session left Grok
-          // sessions with no Computer Use tools on a fresh thread.
+          // Desktop MCP must be offered whenever the binary resolves and
+          // Computer Use is enabled — same as ClaudeAdapter. Resolve per
+          // session so Settings toggles apply without an app restart. Gating
+          // it on the HTTP t3-code MCP session left Grok sessions with no
+          // Computer Use tools on a fresh thread.
+          const desktopMcp = yield* resolveEnabledDesktopMcp();
           const mcpServers = [
             ...(mcpSession
               ? [

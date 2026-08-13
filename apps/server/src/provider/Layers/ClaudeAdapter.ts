@@ -1635,9 +1635,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     claudeSettings.binaryPath,
     claudeEnvironment,
   );
-  // Resolved once here rather than per turn: the bundled binary does not move,
-  // and this is where FileSystem/Path are in context.
-  const desktopMcp = yield* resolveEnabledDesktopMcp();
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -4102,10 +4099,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
       ];
-      // Desktop control ships with the macOS app and is offered whenever the
-      // bundled binary is present (resolved at adapter construction). It is
-      // undefined on other platforms and in checkouts that have not built it,
-      // so the tools simply do not appear rather than failing at call time.
+      // Desktop MCP is offered when the platform binary resolves and Computer
+      // Use is enabled in settings. Resolve per session so Settings toggles
+      // apply without restarting the app.
+      const desktopMcp = yield* resolveEnabledDesktopMcp();
       const mcpServers = {
         ...(mcpSession
           ? {
