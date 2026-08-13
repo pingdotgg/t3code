@@ -130,6 +130,85 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
         ).toBe(false);
       }),
     );
+
+    it.effect("rejects a baseline when dirty workspace contents change without moving HEAD", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-checkpoint-store-dirty-workspace"),
+          0,
+        );
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        yield* writeTextFile(path.join(tmp, "README.md"), "# dirty\n");
+        yield* writeTextFile(path.join(tmp, "untracked.md"), "untracked\n");
+
+        expect(
+          yield* checkpointStore.checkpointRefMatchesWorkspace({
+            cwd: tmp,
+            checkpointRef,
+          }),
+        ).toBe(false);
+      }),
+    );
+
+    it.effect("rejects a baseline when only the staged workspace contents change", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-checkpoint-store-staged-workspace"),
+          0,
+        );
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+        yield* writeTextFile(path.join(tmp, "README.md"), "# staged\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* writeTextFile(path.join(tmp, "README.md"), "# test\n");
+
+        expect(
+          yield* checkpointStore.checkpointRefMatchesWorkspace({
+            cwd: tmp,
+            checkpointRef,
+          }),
+        ).toBe(false);
+      }),
+    );
+  });
+
+  describe("restoreCheckpoint", () => {
+    it.effect("restores staged, unstaged, and untracked workspace state separately", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("thread-checkpoint-store-restore-staging"),
+          0,
+        );
+
+        yield* writeTextFile(path.join(tmp, "README.md"), "# staged\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* writeTextFile(path.join(tmp, "README.md"), "# unstaged\n");
+        yield* writeTextFile(path.join(tmp, "untracked.md"), "untracked\n");
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+        yield* writeTextFile(path.join(tmp, "README.md"), "# changed\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* git(tmp, ["clean", "-fd"]);
+
+        expect(yield* checkpointStore.restoreCheckpoint({ cwd: tmp, checkpointRef })).toBe(true);
+        expect(yield* git(tmp, ["show", ":README.md"])).toBe("# staged");
+        expect(yield* fileSystem.readFileString(path.join(tmp, "README.md"))).toBe("# unstaged\n");
+        expect(yield* fileSystem.readFileString(path.join(tmp, "untracked.md"))).toBe(
+          "untracked\n",
+        );
+      }),
+    );
   });
 
   describe("diffCheckpoints", () => {

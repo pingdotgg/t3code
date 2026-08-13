@@ -8,7 +8,7 @@ import { Effect, Layer, Option, Schema } from "effect";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { CheckpointInvariantError, CheckpointUnavailableError } from "../Errors.ts";
-import { checkpointRefForThreadTurn } from "../Utils.ts";
+import { checkpointBaselineRefForThreadTurn, checkpointRefForThreadTurn } from "../Utils.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import {
   CheckpointDiffQuery,
@@ -83,18 +83,34 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const effectiveFromTurnCount = input.scope === "snapshot" ? 0 : input.fromTurnCount;
-      const fromCheckpointRef =
-        effectiveFromTurnCount === 0
+      const preferredFromCheckpointRef =
+        input.scope === "turn"
+          ? checkpointBaselineRefForThreadTurn(input.threadId, input.toTurnCount)
+          : input.fromTurnCount === 0
+            ? checkpointBaselineRefForThreadTurn(input.threadId, 1)
+            : threadContext.value.checkpoints.find(
+                (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
+              )?.checkpointRef;
+      const legacyFromCheckpointRef =
+        input.fromTurnCount === 0
           ? checkpointRefForThreadTurn(input.threadId, 0)
           : threadContext.value.checkpoints.find(
-              (checkpoint) => checkpoint.checkpointTurnCount === effectiveFromTurnCount,
+              (checkpoint) => checkpoint.checkpointTurnCount === input.fromTurnCount,
             )?.checkpointRef;
+      const preferredFromExists = preferredFromCheckpointRef
+        ? yield* checkpointStore.hasCheckpointRef({
+            cwd: workspaceCwd,
+            checkpointRef: preferredFromCheckpointRef,
+          })
+        : false;
+      const fromCheckpointRef = preferredFromExists
+        ? preferredFromCheckpointRef
+        : legacyFromCheckpointRef;
       if (!fromCheckpointRef) {
         return yield* new CheckpointUnavailableError({
           threadId: input.threadId,
-          turnCount: effectiveFromTurnCount,
-          detail: `Checkpoint ref is unavailable for turn ${effectiveFromTurnCount}.`,
+          turnCount: input.fromTurnCount,
+          detail: `Checkpoint ref is unavailable for turn ${input.fromTurnCount}.`,
         });
       }
 
@@ -111,10 +127,12 @@ const make = Effect.gen(function* () {
 
       const [fromExists, toExists] = yield* Effect.all(
         [
-          checkpointStore.hasCheckpointRef({
-            cwd: workspaceCwd,
-            checkpointRef: fromCheckpointRef,
-          }),
+          preferredFromExists
+            ? Effect.succeed(true)
+            : checkpointStore.hasCheckpointRef({
+                cwd: workspaceCwd,
+                checkpointRef: fromCheckpointRef,
+              }),
           checkpointStore.hasCheckpointRef({
             cwd: workspaceCwd,
             checkpointRef: toCheckpointRef,

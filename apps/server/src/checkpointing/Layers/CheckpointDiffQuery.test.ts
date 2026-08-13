@@ -6,7 +6,7 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionThreadCheckpointContext,
 } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { checkpointRefForThreadTurn } from "../Utils.ts";
+import { checkpointBaselineRefForThreadTurn, checkpointRefForThreadTurn } from "../Utils.ts";
 import { CheckpointDiffQueryLive } from "./CheckpointDiffQuery.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointDiffQuery } from "../Services/CheckpointDiffQuery.ts";
@@ -124,7 +124,7 @@ describe("CheckpointDiffQueryLive", () => {
       }).pipe(Effect.provide(layer)),
     );
 
-    const expectedFromRef = checkpointRefForThreadTurn(threadId, 0);
+    const expectedFromRef = checkpointBaselineRefForThreadTurn(threadId, 1);
     expect(hasCheckpointRefCalls).toEqual([expectedFromRef, toCheckpointRef]);
     expect(diffCheckpointsCalls).toEqual([
       {
@@ -335,7 +335,7 @@ describe("CheckpointDiffQueryLive", () => {
     expect(snapshotRequested).toBe(false);
   });
 
-  it("filters snapshot-scoped diffs to chat-attributed files in the requested range", async () => {
+  it("honors the requested start checkpoint for snapshot-scoped diffs", async () => {
     const projectId = ProjectId.make("project-1");
     const threadId = ThreadId.make("thread-1");
     const diffCheckpointsCalls: Array<{
@@ -435,7 +435,7 @@ describe("CheckpointDiffQueryLive", () => {
 
     expect(diffCheckpointsCalls).toEqual([
       {
-        fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+        fromCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
         toCheckpointRef,
         paths: ["src/first.ts", "src/second.ts"],
       },

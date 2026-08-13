@@ -39,7 +39,7 @@ import {
   CheckpointStore,
   type CheckpointStoreShape,
 } from "../../checkpointing/Services/CheckpointStore.ts";
-import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
+import { checkpointBaselineRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import {
   GitStatusBroadcaster,
   type GitStatusBroadcasterShape,
@@ -144,6 +144,7 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly checkpointIsGitRepository?: boolean;
     readonly checkpointRefExists?: boolean;
+    readonly checkpointBaselineRefExists?: boolean;
     readonly checkpointRefMatchesWorkspace?: boolean;
   }) {
     const now = new Date().toISOString();
@@ -289,7 +290,13 @@ describe("ProviderCommandReactor", () => {
     );
     const checkpointStore: CheckpointStoreShape = {
       isGitRepository: vi.fn(() => Effect.succeed(input?.checkpointIsGitRepository ?? false)),
-      hasCheckpointRef: vi.fn(() => Effect.succeed(input?.checkpointRefExists ?? false)),
+      hasCheckpointRef: vi.fn(({ checkpointRef }) =>
+        Effect.succeed(
+          checkpointRef.includes("/baseline/")
+            ? (input?.checkpointBaselineRefExists ?? false)
+            : (input?.checkpointRefExists ?? false),
+        ),
+      ),
       checkpointRefMatchesWorkspace: vi.fn(() =>
         Effect.succeed(input?.checkpointRefMatchesWorkspace ?? input?.checkpointRefExists ?? false),
       ),
@@ -301,8 +308,7 @@ describe("ProviderCommandReactor", () => {
       restoreCheckpoint: () => Effect.die(new Error("restoreCheckpoint should not be called")),
       diffCheckpoints: () => Effect.die(new Error("diffCheckpoints should not be called")),
       diffCheckpointFiles: () => Effect.die(new Error("diffCheckpointFiles should not be called")),
-      deleteCheckpointRefs: () =>
-        Effect.die(new Error("deleteCheckpointRefs should not be called")),
+      deleteCheckpointRefs: () => Effect.void,
     };
 
     const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
@@ -595,18 +601,16 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.checkpointStore.captureCheckpoint).toHaveBeenCalledWith({
       cwd: "/tmp/provider-project",
-      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+      checkpointRef: checkpointBaselineRefForThreadTurn(ThreadId.make("thread-1"), 1),
     });
     expect(harness.turnStartOrder).toEqual(["captureCheckpoint", "sendTurn"]);
   });
 
-  it("recaptures the pre-turn checkpoint when a shared ref belongs to another worktree", async () => {
-    // After a workspace handoff the checkpoint ref is still visible from the new
-    // worktree, because worktrees share a ref store. Reusing it would leave the
-    // provider running against a baseline captured from a different tree.
+  it("captures a distinct pre-turn baseline when a completion ref already exists", async () => {
     const harness = await createHarness({
       checkpointIsGitRepository: true,
       checkpointRefExists: true,
+      checkpointBaselineRefExists: true,
       checkpointRefMatchesWorkspace: false,
     });
     const now = new Date().toISOString();
@@ -632,7 +636,7 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.checkpointStore.captureCheckpoint).toHaveBeenCalledWith({
       cwd: "/tmp/provider-project",
-      checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+      checkpointRef: checkpointBaselineRefForThreadTurn(ThreadId.make("thread-1"), 1),
     });
     expect(harness.turnStartOrder).toEqual(["captureCheckpoint", "sendTurn"]);
   });
