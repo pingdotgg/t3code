@@ -15,6 +15,7 @@ import type {
   PullRequestListState,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestMergeReadiness,
   PullRequestMergeability,
   PullRequestOmittedFileStat,
   PullRequestReaction,
@@ -157,6 +158,10 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly behindBy?: number;
   /** Absent from a host that does not report whether it is armed to merge this on its own. */
   readonly autoMergeEnabled?: boolean;
+  /** Absent from a host that does not say whether a merge would go through right now. */
+  readonly mergeReadiness?: PullRequestMergeReadiness;
+  /** Absent from a host that does not report the repository's own auto-merge setting. */
+  readonly autoMergeAllowed?: boolean;
 }
 
 /** The conversation-shaped half of a detail, loaded after the core can already render. */

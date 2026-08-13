@@ -73,6 +73,15 @@ export type PullRequestChecksState = typeof PullRequestChecksState.Type;
 export const PullRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
 export type PullRequestMergeability = typeof PullRequestMergeability.Type;
 
+/**
+ * Whether the host would carry out a merge right now, aside from the conflicts `mergeability`
+ * already reports: "blocked" is a required check or review still outstanding. "unknown" changes
+ * nothing on the page — the Merge button stays, and the host's own refusal explains anything
+ * that fails.
+ */
+export const PullRequestMergeReadiness = Schema.Literals(["ready", "blocked", "unknown"]);
+export type PullRequestMergeReadiness = typeof PullRequestMergeReadiness.Type;
+
 export const PullRequestMergeMethod = Schema.Literals(["merge", "squash", "rebase"]);
 export type PullRequestMergeMethod = typeof PullRequestMergeMethod.Type;
 
@@ -686,6 +695,17 @@ export const PullRequestDetail = Schema.Struct({
    * arm something that is already armed, and a second arming is a write nobody asked for.
    */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
+  /**
+   * Whether the host would carry out a merge right now. Absent where the host does not say,
+   * which leaves the Merge button exactly as it was — only "blocked" moves the primary action
+   * from merging now to arming a merge for when the block lifts.
+   */
+  mergeReadiness: Schema.optional(PullRequestMergeReadiness),
+  /**
+   * Whether this repository has auto-merge switched on at all. Absent where the host does not
+   * say; "blocked" without this never offers to arm what the repository would only refuse.
+   */
+  autoMergeAllowed: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 

@@ -101,6 +101,7 @@ describe("gitHubViewerPermissions", () => {
               mergedAt: null,
               closedAt: null,
               checks: [],
+              mergeReadiness: "unknown",
               comments: [],
               commits: [],
             }),
@@ -144,6 +145,7 @@ describe("getViewerPermissions", () => {
     mergedAt: null,
     closedAt: null,
     checks: [],
+    mergeReadiness: "unknown" as const,
     comments: [],
     commits: [],
   };
@@ -237,6 +239,7 @@ describe("getChangeRequest commits", () => {
     mergedAt: null,
     closedAt: null,
     checks: [],
+    mergeReadiness: "unknown" as const,
     comments: [],
   };
 
