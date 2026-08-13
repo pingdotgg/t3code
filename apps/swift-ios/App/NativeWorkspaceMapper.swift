@@ -384,7 +384,11 @@ struct NativeSourceControlStatusAccumulator {
             remote = nextRemote
         case let .localUpdated(nextGeneration, nextLocal):
             if let generation, let nextGeneration, nextGeneration < generation { break }
-            if nextGeneration == nil || generation != nextGeneration { remote = nil }
+            if nextGeneration == nil
+                || generation != nextGeneration
+                || local?.refName != nextLocal.refName {
+                remote = nil
+            }
             generation = nextGeneration
             if nextGeneration != nil {
                 acceptsLegacyRemote = false

@@ -58,6 +58,24 @@ struct FeatureToolStateTests {
     }
 
     @Test
+    func cachedSourceControlClearsRemoteWhenRefChangesWithinGeneration() {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                generation: 1,
+                local: vcsLocal(refName: "feature/a"),
+                remote: vcsRemote(aheadCount: 4)
+            )
+        )
+
+        let status = accumulator.consume(
+            .localUpdated(generation: 1, local: vcsLocal(refName: "feature/b"))
+        )
+
+        #expect(status == nil)
+    }
+
+    @Test
     func cachedSourceControlAcceptsRemoteForCurrentRefGeneration() throws {
         var accumulator = NativeSourceControlStatusAccumulator()
         _ = accumulator.consume(
