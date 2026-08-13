@@ -53,6 +53,18 @@ struct FeatureToolStateTests {
         )
         #expect(
             FeatureWorkspaceFileLink.resolvedWorkspaceRoot(
+                worktreePath: "  /repo/worktree \n",
+                projectPath: "/repo"
+            ) == "/repo/worktree"
+        )
+        #expect(
+            FeatureWorkspaceFileLink.resolvedWorkspaceRoot(
+                worktreePath: "  C:\\repo\\worktree \n",
+                projectPath: "C:\\repo"
+            ) == "C:\\repo\\worktree"
+        )
+        #expect(
+            FeatureWorkspaceFileLink.resolvedWorkspaceRoot(
                 worktreePath: "C:\\repo\\worktree",
                 projectPath: "C:\\repo"
             ) == "C:\\repo\\worktree"
@@ -97,6 +109,34 @@ struct FeatureToolStateTests {
         #expect(FeatureWorkspaceFileLink(url: otherDrive, workspaceRoot: "C:\\repo") == nil)
         #expect(FeatureWorkspaceFileLink(url: traversal, workspaceRoot: "C:\\repo") == nil)
         #expect(FeatureWorkspaceFileLink(url: driveRootRelative, workspaceRoot: "C:\\repo") == nil)
+
+        let containedWithoutPosition = try #require(URL(string: "C:/repo/App.swift"))
+        let outsideWithoutPosition = try #require(URL(string: "C:/other/App.swift"))
+        #expect(
+            FeatureWorkspaceFileLink(url: containedWithoutPosition, workspaceRoot: "C:\\repo")?.path
+                == "App.swift"
+        )
+        #expect(FeatureWorkspaceFileLink(url: outsideWithoutPosition, workspaceRoot: "C:\\repo") == nil)
+        #expect(FeatureWorkspaceFileLink.isWorkspaceDestination(outsideWithoutPosition))
+    }
+
+    @Test
+    func workspaceFileLinksResolveContainedUNCPathsAndRejectUNCLeaks() throws {
+        let contained = try #require(URL(string: "%5C%5Cserver%5Cshare%5Crepo%5CSources%5CApp.swift"))
+        let outside = try #require(URL(string: "%5C%5Cserver%5Cshare%5Cother%5CApp.swift"))
+        let otherShare = try #require(URL(string: "%5C%5Cserver%5Cother%5Crepo%5CApp.swift"))
+        let otherServer = try #require(URL(string: "%5C%5Cother%5Cshare%5Crepo%5CApp.swift"))
+        let traversal = try #require(URL(string: "..%5C..%5Csecret.txt"))
+        let authority = try #require(URL(string: "file://server/share/repo/App.swift"))
+        let root = "\\\\server\\share\\repo"
+
+        #expect(FeatureWorkspaceFileLink(url: contained, workspaceRoot: root)?.path == "Sources/App.swift")
+        #expect(FeatureWorkspaceFileLink(url: outside, workspaceRoot: root) == nil)
+        #expect(FeatureWorkspaceFileLink(url: otherShare, workspaceRoot: root) == nil)
+        #expect(FeatureWorkspaceFileLink(url: otherServer, workspaceRoot: root) == nil)
+        #expect(FeatureWorkspaceFileLink(url: traversal, workspaceRoot: root) == nil)
+        // UNC links are accepted in serialized path form; file URL authorities remain external.
+        #expect(FeatureWorkspaceFileLink(url: authority, workspaceRoot: root) == nil)
     }
 
     @Test

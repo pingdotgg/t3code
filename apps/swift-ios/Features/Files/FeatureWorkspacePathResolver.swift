@@ -106,6 +106,7 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
             return false
         }
         if url.scheme?.lowercased() == "file" { return true }
+        if positionedWindowsAbsoluteDestination(from: url) != nil { return true }
         if url.scheme == nil {
             return url.path.hasPrefix("/")
                 || url.path.contains("/")
@@ -120,17 +121,23 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         var column: Int?
     }
 
+    private enum WindowsRoot {
+        case drive(String)
+        case unc(server: String, share: String)
+    }
+
     private struct WindowsAbsolutePath {
-        var drive: String
+        var root: WindowsRoot
         var components: [String]
     }
 
     private static func nonBlank(_ value: String?) -> String? {
-        guard let value,
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
             return nil
         }
-        return value
+        return trimmed
     }
 
     private static func positionedWindowsAbsoluteDestination(from url: URL) -> ParsedDestination? {
@@ -205,13 +212,17 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
             absolute = normalizedDestination
         } else {
             guard !destination.hasPrefix("/") else { return nil }
-            let rootText = "\(normalizedRoot.drive):/\(normalizedRoot.components.joined(separator: "/"))"
+            let rootPrefix = switch normalizedRoot.root {
+            case let .drive(drive): "\(drive):/"
+            case let .unc(server, share): "//\(server)/\(share)/"
+            }
+            let rootText = rootPrefix + normalizedRoot.components.joined(separator: "/")
             guard let normalizedDestination = windowsAbsolutePath(rootText + "/" + destination) else {
                 return nil
             }
             absolute = normalizedDestination
         }
-        guard absolute.drive.caseInsensitiveCompare(normalizedRoot.drive) == .orderedSame,
+        guard windowsRootsMatch(absolute.root, normalizedRoot.root),
               absolute.components.count > normalizedRoot.components.count else {
             return nil
         }
@@ -228,8 +239,20 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
         var path = rawPath
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\\", with: "/")
-        if path.hasPrefix("/"), path.dropFirst().dropFirst(1).first == ":" {
+        if path.hasPrefix("/"), !path.hasPrefix("//"), path.dropFirst().dropFirst(1).first == ":" {
             path.removeFirst()
+        }
+        if path.hasPrefix("//") {
+            let parts = path.dropFirst(2).split(separator: "/", omittingEmptySubsequences: true)
+            guard parts.count >= 2 else { return nil }
+            let server = String(parts[0])
+            let share = String(parts[1])
+            guard isValidWindowsComponent(server), isValidWindowsComponent(share) else { return nil }
+            guard let components = normalizedWindowsComponents(parts.dropFirst(2)) else { return nil }
+            return WindowsAbsolutePath(
+                root: .unc(server: server, share: share),
+                components: components
+            )
         }
         let scalars = Array(path.unicodeScalars.prefix(3))
         guard scalars.count == 3,
@@ -239,8 +262,16 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
             return nil
         }
 
+        guard let components = normalizedWindowsComponents(
+            path.dropFirst(3).split(separator: "/", omittingEmptySubsequences: true)
+        ) else { return nil }
+        return WindowsAbsolutePath(root: .drive(String(scalars[0])), components: components)
+    }
+
+    private static func normalizedWindowsComponents<S: Sequence>(_ raw: S) -> [String]?
+    where S.Element: StringProtocol {
         var components: [String] = []
-        for component in path.dropFirst(3).split(separator: "/", omittingEmptySubsequences: true) {
+        for component in raw {
             switch component {
             case ".":
                 continue
@@ -248,14 +279,29 @@ public struct FeatureWorkspaceFileLink: Identifiable, Sendable, Equatable, Hasha
                 guard !components.isEmpty else { return nil }
                 components.removeLast()
             default:
-                guard !component.contains(":"),
-                      !component.unicodeScalars.contains(where: { $0.value == 0 }) else {
-                    return nil
-                }
+                guard isValidWindowsComponent(component) else { return nil }
                 components.append(String(component))
             }
         }
-        return WindowsAbsolutePath(drive: String(scalars[0]), components: components)
+        return components
+    }
+
+    private static func isValidWindowsComponent(_ component: some StringProtocol) -> Bool {
+        !component.isEmpty
+            && !component.contains(":")
+            && !component.unicodeScalars.contains(where: { $0.value == 0 })
+    }
+
+    private static func windowsRootsMatch(_ lhs: WindowsRoot, _ rhs: WindowsRoot) -> Bool {
+        switch (lhs, rhs) {
+        case let (.drive(left), .drive(right)):
+            left.caseInsensitiveCompare(right) == .orderedSame
+        case let (.unc(leftServer, leftShare), .unc(rightServer, rightShare)):
+            leftServer.caseInsensitiveCompare(rightServer) == .orderedSame
+                && leftShare.caseInsensitiveCompare(rightShare) == .orderedSame
+        default:
+            false
+        }
     }
 
     private static func relativePath(for absolutePath: String, in root: String) -> String? {
