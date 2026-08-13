@@ -573,6 +573,36 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           });
 
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          // Desktop MCP must be offered whenever the binary resolves — same as
+          // ClaudeAdapter. Gating it on the HTTP t3-code MCP session left Grok
+          // sessions with no Computer Use tools on a fresh thread.
+          const mcpServers = [
+            ...(mcpSession
+              ? [
+                  {
+                    type: "http" as const,
+                    name: "t3-code",
+                    url: mcpSession.endpoint,
+                    headers: [
+                      {
+                        name: "Authorization",
+                        value: mcpSession.authorizationHeader,
+                      },
+                    ],
+                  },
+                ]
+              : []),
+            ...(desktopMcp
+              ? [
+                  {
+                    name: "t3-desktop",
+                    command: desktopMcp.path,
+                    args: [] as string[],
+                    env: [...desktopMcp.env],
+                  },
+                ]
+              : []),
+          ];
           const acp = yield* makeGrokAcpRuntime({
             grokSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
@@ -580,33 +610,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(mcpSession
-              ? {
-                  mcpServers: [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                    ...(desktopMcp
-                      ? [
-                          {
-                            name: "t3-desktop",
-                            command: desktopMcp.path,
-                            args: [],
-                            env: [...desktopMcp.env],
-                          },
-                        ]
-                      : []),
-                  ],
-                }
-              : {}),
+            ...(mcpServers.length > 0 ? { mcpServers } : {}),
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
