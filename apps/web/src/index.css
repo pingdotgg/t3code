@@ -275,27 +275,27 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-art-secondary: oklch(0.794668 0.12136 235.46);
     --stage-art-tertiary: oklch(0.678991 0.170261 275.365);
     --stage-art-line: oklch(0.959666 0.029238 218.179);
-    --stage-art-glow-highlight: #d4f6ff;
-    --stage-art-glow-secondary: #65c8ff;
-    --stage-art-glow-bottom: #276af1;
-    --stage-art-celeste-highlight: #d2ffff;
-    --stage-art-celeste-secondary: #48dcf5;
-    --stage-art-celeste-bottom: #277ef1;
-    --stage-art-violet-highlight: #d9d8ff;
-    --stage-art-violet-secondary: #7c8bff;
-    --stage-art-violet-bottom: #3155df;
-    --stage-art-grid-line: #eaf6ff;
-    --stage-night-top: #32155b;
-    --stage-night-mid: #151443;
-    --stage-night-bottom: #07152f;
-    --stage-night-highlight: #4ea4ff;
-    --stage-night-secondary: #696fea;
-    --stage-night-tertiary: #a85bea;
-    --stage-night-line: #e4eaff;
-    --stage-night-glow-highlight: #5165d8;
-    --stage-night-glow-secondary: #283075;
-    --stage-night-glow-bottom: #111635;
-    --stage-night-sparkle: #c8d7ff;
+    --stage-art-glow-highlight: oklch(0.951597 0.037289 215.482);
+    --stage-art-glow-secondary: oklch(0.794668 0.12136 235.46);
+    --stage-art-glow-bottom: oklch(0.565116 0.214215 262.182);
+    --stage-art-celeste-highlight: oklch(0.968763 0.045822 196.42);
+    --stage-art-celeste-secondary: oklch(0.827395 0.126071 211.26);
+    --stage-art-celeste-bottom: oklch(0.605817 0.191005 257.378);
+    --stage-art-violet-highlight: oklch(0.895381 0.053248 286.447);
+    --stage-art-violet-secondary: oklch(0.678991 0.170261 275.365);
+    --stage-art-violet-bottom: oklch(0.513658 0.213542 266.954);
+    --stage-art-grid-line: oklch(0.966822 0.01757 239.99);
+    --stage-night-top: oklch(0.283792 0.117327 297.201);
+    --stage-night-mid: oklch(0.227147 0.086086 277.99);
+    --stage-night-bottom: oklch(0.200528 0.055699 261.216);
+    --stage-night-highlight: oklch(0.707246 0.157418 252.091);
+    --stage-night-secondary: oklch(0.600473 0.182225 277.296);
+    --stage-night-tertiary: oklch(0.62583 0.210886 305.994);
+    --stage-night-line: oklch(0.938794 0.029114 273.103);
+    --stage-night-glow-highlight: oklch(0.553749 0.176543 271.958);
+    --stage-night-glow-secondary: oklch(0.345571 0.117466 273.568);
+    --stage-night-glow-bottom: oklch(0.215296 0.060604 273.351);
+    --stage-night-sparkle: oklch(0.880867 0.057747 269.011);
   }
 
   .dark {
