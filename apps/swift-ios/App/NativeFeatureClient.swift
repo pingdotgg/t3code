@@ -2235,13 +2235,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } else {
             detail.approvals.removeAll { $0.id == id }
         }
-        if detail.approvals.isEmpty, detail.thread.state == .waitingForApproval {
-            detail.thread.state = detail.userInputs.isEmpty ? .idle : .waitingForInput
-        }
-        detail.thread.settlementInput = detail.thread.settlementInput?.withPendingRequests(
-            approvals: !detail.approvals.isEmpty,
-            userInput: !detail.userInputs.isEmpty
-        )
+        reconcilePendingRequestState(&detail, threadID: threadID)
         publish(detail, threadID: threadID)
     }
 
@@ -2253,14 +2247,41 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } else {
             detail.userInputs.removeAll { $0.id == id }
         }
-        if detail.userInputs.isEmpty, detail.thread.state == .waitingForInput {
-            detail.thread.state = detail.approvals.isEmpty ? .idle : .waitingForApproval
+        reconcilePendingRequestState(&detail, threadID: threadID)
+        publish(detail, threadID: threadID)
+    }
+
+    private func reconcilePendingRequestState(
+        _ detail: inout FeatureThreadDetail,
+        threadID: String
+    ) {
+        let shellThread = threadEnvironmentIDs[threadID].flatMap { environmentID in
+            threadWireIDs[threadID].flatMap { wireID in
+                shellsByEnvironmentID[environmentID]?.threads.first { $0.id == wireID }
+            }
+        }
+        let hasApprovals = shellThread?.hasPendingApprovals == true || !detail.approvals.isEmpty
+        let hasUserInput = shellThread?.hasPendingUserInput == true || !detail.userInputs.isEmpty
+        if let shellThread {
+            detail.thread.state = Self.resolveThreadState(
+                latestTurn: shellThread.latestTurn,
+                session: shellThread.session,
+                hasApprovals: hasApprovals,
+                hasUserInput: hasUserInput,
+                backgroundLiveness: shellThread.backgroundLiveness
+            )
+        } else if hasApprovals {
+            detail.thread.state = .waitingForApproval
+        } else if hasUserInput {
+            detail.thread.state = .waitingForInput
+        } else if detail.thread.state == .waitingForApproval
+                    || detail.thread.state == .waitingForInput {
+            detail.thread.state = .idle
         }
         detail.thread.settlementInput = detail.thread.settlementInput?.withPendingRequests(
-            approvals: !detail.approvals.isEmpty,
-            userInput: !detail.userInputs.isEmpty
+            approvals: hasApprovals,
+            userInput: hasUserInput
         )
-        publish(detail, threadID: threadID)
     }
 
     private func workspaceContext(route: NativeThreadRoute) throws -> (

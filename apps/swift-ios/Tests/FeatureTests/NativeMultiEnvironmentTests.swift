@@ -168,6 +168,112 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testResolvingVisibleApprovalPreservesShellOnlyBlockerWhenRefreshFails() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-one",
+                threadID: "thread-one",
+                title: "Pending approval",
+                hasPendingApprovals: true
+            ),
+            host: "one.example"
+        )
+        await fixture.transport.setDetail(
+            multiEnvironmentDetail(
+                projectID: "project-one",
+                threadID: "thread-one",
+                activities: [visibleApprovalActivity()]
+            ),
+            host: "one.example"
+        )
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(snapshot.threads.first(where: { $0.wireID == "thread-one" }))
+        let initialDetail = try await fixture.client.loadThread(id: thread.id)
+        let approval = try XCTUnwrap(initialDetail.approvals.first)
+        let events = fixture.client.events()
+        var iterator = events.makeAsyncIterator()
+        await fixture.transport.failThreadReadsAfterNextDispatch(host: "one.example")
+
+        try await fixture.client.resolveApproval(id: approval.id, decision: .allowOnce)
+        var resolvedDetail: FeatureThreadDetail?
+        while let event = await iterator.next() {
+            if case let .detail(detail) = event,
+               detail.thread.id == thread.id,
+               detail.approvals.isEmpty {
+                resolvedDetail = detail
+                break
+            }
+        }
+
+        let detail = try XCTUnwrap(resolvedDetail)
+        XCTAssertEqual(detail.thread.state, .waitingForApproval)
+        XCTAssertFalse(detail.thread.canSettle)
+        XCTAssertFalse(
+            HomeThreadSwipeActions.allowsFullSwipe(
+                for: detail.thread,
+                isArchived: false,
+                now: .now
+            )
+        )
+        await fixture.client.disconnect()
+    }
+
+    func testResolvingVisibleInputPreservesShellOnlyBlockerWhenRefreshFails() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-one",
+                threadID: "thread-one",
+                title: "Pending input",
+                hasPendingUserInput: true
+            ),
+            host: "one.example"
+        )
+        await fixture.transport.setDetail(
+            multiEnvironmentDetail(
+                projectID: "project-one",
+                threadID: "thread-one",
+                activities: [visibleUserInputActivity()]
+            ),
+            host: "one.example"
+        )
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(snapshot.threads.first(where: { $0.wireID == "thread-one" }))
+        let initialDetail = try await fixture.client.loadThread(id: thread.id)
+        let input = try XCTUnwrap(initialDetail.userInputs.first)
+        let events = fixture.client.events()
+        var iterator = events.makeAsyncIterator()
+        await fixture.transport.failThreadReadsAfterNextDispatch(host: "one.example")
+
+        try await fixture.client.resolveUserInput(id: input.id, answers: [:])
+        var resolvedDetail: FeatureThreadDetail?
+        while let event = await iterator.next() {
+            if case let .detail(detail) = event,
+               detail.thread.id == thread.id,
+               detail.userInputs.isEmpty {
+                resolvedDetail = detail
+                break
+            }
+        }
+
+        let detail = try XCTUnwrap(resolvedDetail)
+        XCTAssertEqual(detail.thread.state, .waitingForInput)
+        XCTAssertFalse(detail.thread.canSettle)
+        XCTAssertFalse(
+            HomeThreadSwipeActions.allowsFullSwipe(
+                for: detail.thread,
+                isArchived: false,
+                now: .now
+            )
+        )
+        await fixture.client.disconnect()
+    }
+
     func testSnapshotKeepsRepositoryIdentityForCrossComputerProjectGrouping() async throws {
         let identity = RepositoryIdentity(
             canonicalKey: "github.com/t3/example",
@@ -717,8 +823,11 @@ private struct MultiEnvironmentFixture {
 private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private let shells: [String: OrchestrationShellSnapshot]
     private var shellData: [String: Data]
+    private var detailData: [String: Data] = [:]
     private var reachableHosts: Set<String>
     private var shellReadsEnabledHosts: Set<String>
+    private var threadReadsEnabledHosts: Set<String>
+    private var hostsFailingThreadReadsAfterDispatch = Set<String>()
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
 
@@ -727,6 +836,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         shellData = shells.mapValues { try! JSONEncoder.t3.encode($0) }
         reachableHosts = Set(shells.keys)
         shellReadsEnabledHosts = Set(shells.keys)
+        threadReadsEnabledHosts = Set(shells.keys)
     }
 
     func setReachable(_ reachable: Bool, host: String) {
@@ -747,6 +857,14 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
 
     func setShell(_ shell: OrchestrationShellSnapshot, host: String) {
         shellData[host] = try! JSONEncoder.t3.encode(shell)
+    }
+
+    func setDetail(_ detail: OrchestrationThreadDetailSnapshot, host: String) {
+        detailData[host] = try! JSONEncoder.t3.encode(detail)
+    }
+
+    func failThreadReadsAfterNextDispatch(host: String) {
+        hostsFailingThreadReadsAfterDispatch.insert(host)
     }
 
     func dispatchHosts() -> [String] {
@@ -772,7 +890,11 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
            let data = shellData[host] {
             return (data, multiEnvironmentResponse(request))
         }
-        if path.hasPrefix("/api/orchestration/threads/") {
+        if path.hasPrefix("/api/orchestration/threads/"),
+           threadReadsEnabledHosts.contains(host) {
+            if let detail = detailData[host] {
+                return (detail, multiEnvironmentResponse(request))
+            }
             let threadID = request.url?.lastPathComponent.removingPercentEncoding ?? "thread"
             let projectID = shells[host]?.threads
                 .first(where: { $0.id == threadID })?
@@ -790,6 +912,9 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
             dispatched.append(
                 MultiEnvironmentDispatchRecord(host: host, command: command)
             )
+            if hostsFailingThreadReadsAfterDispatch.remove(host) != nil {
+                threadReadsEnabledHosts.remove(host)
+            }
             if command["type"]?.stringValue == "thread.create",
                hostsDroppingNextCreateReply.remove(host) != nil,
                let projectID = command["projectId"]?.stringValue,
@@ -897,7 +1022,8 @@ private func multiEnvironmentShell(
 
 private func multiEnvironmentDetail(
     projectID: String,
-    threadID: String
+    threadID: String,
+    activities: [OrchestrationActivity] = []
 ) -> OrchestrationThreadDetailSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     return OrchestrationThreadDetailSnapshot(
@@ -922,10 +1048,51 @@ private func multiEnvironmentDetail(
             pinnedAt: nil,
             deletedAt: nil,
             messages: [],
-            activities: [],
+            activities: activities,
             checkpoints: [],
             session: nil
         )
+    )
+}
+
+private func visibleApprovalActivity() -> OrchestrationActivity {
+    OrchestrationActivity(
+        id: "activity-approval",
+        tone: "warning",
+        kind: "approval.requested",
+        summary: "Approve command",
+        payload: .object([
+            "requestId": .string("approval-visible"),
+            "requestKind": .string("command"),
+            "detail": .string("Run focused tests"),
+        ]),
+        turnId: "turn-one",
+        sequence: 1,
+        createdAt: "2026-07-31T12:00:00.000Z"
+    )
+}
+
+private func visibleUserInputActivity() -> OrchestrationActivity {
+    OrchestrationActivity(
+        id: "activity-input",
+        tone: "warning",
+        kind: "user-input.requested",
+        summary: "Choose an option",
+        payload: .object([
+            "requestId": .string("input-visible"),
+            "questions": .array([
+                .object([
+                    "id": .string("choice"),
+                    "header": .string("Choice"),
+                    "question": .string("Continue?"),
+                    "options": .array([]),
+                    "multiSelect": .bool(false),
+                ]),
+            ]),
+        ]),
+        turnId: "turn-one",
+        sequence: 1,
+        createdAt: "2026-07-31T12:00:00.000Z"
     )
 }
 
