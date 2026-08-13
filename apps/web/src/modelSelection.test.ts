@@ -7,6 +7,7 @@ import {
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
+  resolvePlanAgentHealPatch,
   withoutPlanAgentSelection,
 } from "./modelSelection";
 
@@ -351,5 +352,54 @@ describe("withoutPlanAgentSelection", () => {
   it("returns null and undefined selections unchanged", () => {
     expect(withoutPlanAgentSelection(null)).toBeNull();
     expect(withoutPlanAgentSelection(undefined)).toBeUndefined();
+  });
+});
+
+describe("resolvePlanAgentHealPatch", () => {
+  const instance = ProviderInstanceId.make("opencode");
+  const model = "opencode/gpt-5.4";
+  const healed = createModelSelection(instance, model, [{ id: "variant", value: "high" }]);
+  const storedPlan = createModelSelection(instance, model, [
+    { id: "variant", value: "high" },
+    { id: "agent", value: "plan" },
+  ]);
+  const nullPatch = {
+    planModeEnabled: true,
+    textGenerationModelSelection: storedPlan,
+    sourceControlWriterModelSelection: null,
+  };
+
+  it("returns null when plan mode is on", () => {
+    expect(resolvePlanAgentHealPatch(nullPatch)).toBeNull();
+  });
+
+  it("returns null when nothing needs healing", () => {
+    expect(
+      resolvePlanAgentHealPatch({
+        planModeEnabled: false,
+        textGenerationModelSelection: healed,
+        sourceControlWriterModelSelection: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("patches the stored text generation selection to drop the plan agent", () => {
+    expect(
+      resolvePlanAgentHealPatch({
+        planModeEnabled: false,
+        textGenerationModelSelection: storedPlan,
+        sourceControlWriterModelSelection: null,
+      }),
+    ).toEqual({ textGenerationModelSelection: healed });
+  });
+
+  it("patches a stored source control writer selection that uses the plan agent", () => {
+    expect(
+      resolvePlanAgentHealPatch({
+        planModeEnabled: false,
+        textGenerationModelSelection: healed,
+        sourceControlWriterModelSelection: storedPlan,
+      }),
+    ).toEqual({ sourceControlWriterModelSelection: healed });
   });
 });

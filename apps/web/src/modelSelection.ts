@@ -6,6 +6,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import {
   createModelSelection,
@@ -295,6 +296,31 @@ export function withoutPlanAgentSelection(
     return selection;
   }
   return createModelSelection(selection.instanceId, selection.model, options);
+}
+
+// The dropdown hides the opencode "plan" agent while legacy plan mode is off,
+// but the persisted text-generation selections are only healed when the toggle
+// flips. Users who already have plan mode off and a stored "plan" selection
+// never trip the toggle handler, so resolve the heal once per settings load.
+export function resolvePlanAgentHealPatch(input: {
+  readonly planModeEnabled: boolean;
+  readonly textGenerationModelSelection: ModelSelection | null | undefined;
+  readonly sourceControlWriterModelSelection: ModelSelection | null | undefined;
+}): ServerSettingsPatch | null {
+  if (input.planModeEnabled) {
+    return null;
+  }
+  const healedText = withoutPlanAgentSelection(input.textGenerationModelSelection);
+  const healedSourceControl = withoutPlanAgentSelection(input.sourceControlWriterModelSelection);
+  const patch: ServerSettingsPatch = {
+    ...(healedText && healedText !== input.textGenerationModelSelection
+      ? { textGenerationModelSelection: healedText }
+      : {}),
+    ...(healedSourceControl && healedSourceControl !== input.sourceControlWriterModelSelection
+      ? { sourceControlWriterModelSelection: healedSourceControl }
+      : {}),
+  };
+  return Object.keys(patch).length > 0 ? patch : null;
 }
 
 export function resolveAppModelSelectionState(
