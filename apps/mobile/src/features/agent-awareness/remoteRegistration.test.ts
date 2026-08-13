@@ -12,6 +12,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/relay";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { cryptoLayer } from "../cloud/dpop";
@@ -195,7 +196,7 @@ const activeAgentActivitySnapshot = {
       },
     ],
   },
-};
+} satisfies RelayAgentActivitySnapshotResponse;
 
 function snapshotRelayLayer() {
   Constants.expoConfig!.extra = {

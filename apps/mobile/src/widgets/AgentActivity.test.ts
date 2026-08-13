@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import type { WidgetEnvironment } from "expo-widgets";
 
 vi.mock("@expo/ui/swift-ui", () => ({
+  Divider: "Divider",
   HStack: "HStack",
   Image: "Image",
   Spacer: "Spacer",
@@ -71,6 +73,16 @@ const lightEnvironment = {
   isLuminanceReduced: false,
 } as const;
 
+function widgetEnvironment(widgetFamily: WidgetEnvironment["widgetFamily"]): WidgetEnvironment {
+  return {
+    date: new Date(0),
+    widgetFamily,
+    colorScheme: "dark",
+    isLuminanceReduced: false,
+    configuration: undefined,
+  };
+}
+
 describe("AgentActivity widget layout", () => {
   it("tints each row by its own phase using the web sidebar's dark palette", () => {
     const layout = AgentActivity(
@@ -82,7 +94,7 @@ describe("AgentActivity widget layout", () => {
           makeRow({ threadId: "thread-2", phase: "waiting_for_approval", status: "Approval" }),
         ],
       },
-      environment as never,
+      environment,
     );
     const banner = JSON.stringify(layout.banner);
     expect(banner).toContain("#7dd3fc"); // sky-300: running
@@ -101,7 +113,7 @@ describe("AgentActivity widget layout", () => {
           makeRow({ threadId: "thread-2", phase: "waiting_for_approval", status: "Approval" }),
         ],
       },
-      lightEnvironment as never,
+      lightEnvironment,
     );
     const banner = JSON.stringify(layout.banner);
     expect(banner).toContain("#0284c7"); // sky-600: running
@@ -125,7 +137,7 @@ describe("AgentActivity widget layout", () => {
           }),
         ],
       },
-      environment as never,
+      environment,
     );
     const banner = JSON.stringify(layout.banner);
     expect(banner.indexOf("Blocked thread")).toBeGreaterThan(-1);
@@ -142,7 +154,7 @@ describe("AgentActivity widget layout", () => {
           makeRow({ threadId: "thread-2", phase: "waiting_for_input", status: "Input" }),
         ],
       },
-      environment as never,
+      environment,
     );
     const banner = JSON.stringify(layout.banner);
     expect(banner).toContain("3 active agents");
@@ -159,7 +171,7 @@ describe("AgentActivity widget layout", () => {
           makeRow({ threadId: "thread-2", phase: "waiting_for_input", status: "Input" }),
         ],
       },
-      environment as never,
+      environment,
     );
     expect(JSON.stringify(layout.compactLeading)).toContain("#a5b4fc"); // indigo-300
     expect(JSON.stringify(layout.compactTrailing)).toContain("Input");
@@ -181,7 +193,7 @@ describe("AgentActivity widget layout", () => {
           }),
         ],
       },
-      environment as never,
+      environment,
     );
     expect(JSON.stringify(layout.banner)).toContain(
       '"widgetURL":"t3code://threads/env-1/thread-2"',
@@ -189,19 +201,19 @@ describe("AgentActivity widget layout", () => {
   });
 
   it("deep links the banner to the first row when nothing needs attention", () => {
-    const layout = AgentActivity({ ...props, activities: [makeRow({})] }, environment as never);
+    const layout = AgentActivity({ ...props, activities: [makeRow({})] }, environment);
     expect(JSON.stringify(layout.banner)).toContain(
       '"widgetURL":"t3code://threads/env-1/thread-1"',
     );
   });
 
   it("omits the deep link for unsafe paths and empty aggregates", () => {
-    expect(JSON.stringify(AgentActivity(props, environment as never))).not.toContain("widgetURL");
+    expect(JSON.stringify(AgentActivity(props, environment))).not.toContain("widgetURL");
     expect(
       JSON.stringify(
         AgentActivity(
           { ...props, activities: [makeRow({ deepLink: "//evil.example" })] },
-          environment as never,
+          environment,
         ),
       ),
     ).not.toContain("widgetURL");
@@ -215,7 +227,7 @@ describe("AgentActivity widget layout", () => {
         activeCount: 0,
         activities: [makeRow({ phase: "completed", status: "Done" })],
       },
-      environment as never,
+      environment,
     );
     const banner = JSON.stringify(layout.banner);
     expect(banner).toContain("Agent work completed");
@@ -236,7 +248,7 @@ describe("AgentActivity widget layout", () => {
         activeCount: 0,
         activities: [makeRow({ phase: "failed", status: "Failed" })],
       },
-      environment as never,
+      environment,
     );
     const banner = JSON.stringify(layout.banner);
     expect(banner).toContain("Agent work failed");
@@ -260,7 +272,7 @@ describe("AgentActivity widget layout", () => {
           makeRow({ threadId: "thread-2", phase: "failed", status: "Failed" }),
         ],
       },
-      environment as never,
+      environment,
     );
     const banner = JSON.stringify(layout.banner);
     expect(banner).toContain("Agent work failed");
@@ -271,30 +283,60 @@ describe("AgentActivity widget layout", () => {
     expect(JSON.stringify(layout.minimal)).toContain("xmark.octagon.fill");
   });
 
-  it("adopts containerBackground and returns a view for home-screen widgets", () => {
-    const medium = AgentActivity({ ...props, activities: [makeRow({})] }, {
-      ...environment,
-      widgetFamily: "systemMedium",
-    } as never);
+  it("renders branded, top-aligned home-screen layouts", () => {
+    const medium = AgentActivity(
+      {
+        ...props,
+        activeCount: 3,
+        activities: [
+          makeRow({ threadTitle: "First thread", projectTitle: "First project" }),
+          makeRow({
+            threadId: "thread-2",
+            threadTitle: "Second thread",
+            projectTitle: "Second project",
+          }),
+          makeRow({
+            threadId: "thread-3",
+            threadTitle: "Overflow thread",
+            phase: "completed",
+            status: "Done",
+          }),
+        ],
+      },
+      widgetEnvironment("systemMedium"),
+    );
     const mediumJson = JSON.stringify(medium);
     expect(medium).not.toHaveProperty("banner");
     expect(mediumJson).toContain('"containerBackground":{"color":"clear","container":"widget"}');
-    expect(mediumJson).toContain('"all":14');
+    expect(mediumJson).toContain("T3Mark");
+    expect(mediumJson).toContain("Code");
+    expect(mediumJson).toContain("3 active agents");
+    expect(mediumJson).toContain("arrow.up.right");
+    expect(mediumJson).toContain("folder.fill");
+    expect(mediumJson.indexOf("T3Mark")).toBeLessThan(mediumJson.indexOf("First thread"));
+    expect(mediumJson.indexOf("First thread")).toBeLessThan(mediumJson.indexOf("Second thread"));
+    expect(mediumJson).not.toContain("Overflow thread");
+    expect(mediumJson).not.toContain('"all":14');
 
-    const small = AgentActivity({ ...props, activities: [makeRow({})] }, {
-      ...environment,
-      widgetFamily: "systemSmall",
-    } as never);
+    const small = AgentActivity(
+      { ...props, activities: [makeRow({})] },
+      widgetEnvironment("systemSmall"),
+    );
     const smallJson = JSON.stringify(small);
     expect(small).not.toHaveProperty("banner");
     expect(smallJson).toContain('"containerBackground":{"color":"clear","container":"widget"}');
-    expect(smallJson).toContain('"all":10');
+    expect(smallJson).toContain("T3Mark");
+    expect(smallJson).toContain("Code");
+    expect(smallJson).toContain("1 active agent");
+    expect(smallJson).toContain("folder.fill");
+    expect(smallJson.indexOf("T3Mark")).toBeLessThan(smallJson.indexOf("Thread"));
+    expect(smallJson).not.toContain('"all":10');
     expect(smallJson).not.toContain('"all":14');
 
-    const accessory = AgentActivity({ ...props, activities: [makeRow({})] }, {
-      ...environment,
-      widgetFamily: "accessoryRectangular",
-    } as never);
+    const accessory = AgentActivity(
+      { ...props, activities: [makeRow({})] },
+      widgetEnvironment("accessoryRectangular"),
+    );
     const accessoryJson = JSON.stringify(accessory);
     expect(accessory).not.toHaveProperty("banner");
     expect(accessoryJson).toContain('"containerBackground":{"color":"clear","container":"widget"}');
@@ -303,19 +345,13 @@ describe("AgentActivity widget layout", () => {
   });
 
   it("does not apply containerBackground to the Live Activity layout", () => {
-    const layout = AgentActivity({ ...props, activities: [makeRow({})] }, environment as never);
+    const layout = AgentActivity({ ...props, activities: [makeRow({})] }, environment);
     expect(layout).toHaveProperty("banner");
     expect(JSON.stringify(layout)).not.toContain("containerBackground");
   });
 
   it("renders an idle home-screen widget when props are missing", () => {
-    const view = AgentActivity(
-      {} as AgentActivityProps,
-      {
-        ...environment,
-        widgetFamily: "systemMedium",
-      } as never,
-    );
+    const view = AgentActivity({} as AgentActivityProps, widgetEnvironment("systemMedium"));
     const json = JSON.stringify(view);
     expect(json).toContain("No active agents");
     expect(json).toContain('"containerBackground":{"color":"clear","container":"widget"}');
@@ -331,7 +367,7 @@ describe("AgentActivity widget layout", () => {
           makeRow({ threadId: `t${n}`, threadTitle: `Thread ${n}` }),
         ),
       },
-      environment as never,
+      environment,
     );
     const banner = JSON.stringify(layout.banner);
     for (const visible of [1, 2, 3, 4, 5]) {

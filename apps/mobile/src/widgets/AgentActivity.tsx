@@ -1,5 +1,5 @@
-import { HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
-import type { ComponentProps } from "react";
+import { Divider, HStack, Image, Spacer, Text, VStack, ZStack } from "@expo/ui/swift-ui";
+import type { ComponentProps, JSX } from "react";
 import {
   containerBackground,
   font,
@@ -14,8 +14,9 @@ import {
 import {
   createLiveActivity,
   createWidget,
-  type LiveActivityComponent,
+  type LiveActivityEnvironment,
   type LiveActivityLayout,
+  type WidgetEnvironment,
 } from "expo-widgets";
 
 export type AgentActivityPhase =
@@ -47,44 +48,28 @@ export interface AgentActivityProps {
   readonly activities: ReadonlyArray<AgentActivityRowProps>;
 }
 
-type LiveActivityEnvironment = Parameters<LiveActivityComponent<AgentActivityProps>>[1];
-
-// Home-screen widgets pass widgetFamily; Live Activities do not. The same
-// serialized function serves both surfaces.
-type AgentActivityEnvironment = LiveActivityEnvironment & {
-  readonly widgetFamily?:
-    | "systemSmall"
-    | "systemMedium"
-    | "systemLarge"
-    | "systemExtraLarge"
-    | "accessoryCircular"
-    | "accessoryRectangular"
-    | "accessoryInline";
-};
-
 // This function is serialized into the widget extension's JS bundle, so it
 // must stay self-contained: no references to module-scope helpers, only the
 // imported view/modifier factories.
 export function AgentActivity(
   props: AgentActivityProps,
-  environment: AgentActivityEnvironment,
-): LiveActivityLayout {
+  environment: WidgetEnvironment,
+): JSX.Element;
+export function AgentActivity(
+  props: AgentActivityProps,
+  environment: LiveActivityEnvironment,
+): LiveActivityLayout;
+export function AgentActivity(
+  props: AgentActivityProps,
+  environment: WidgetEnvironment | LiveActivityEnvironment,
+): JSX.Element | LiveActivityLayout {
   "widget";
 
   // Placeholder / first-paint entries arrive with empty props. Treat missing
   // fields as idle rather than throwing inside the widget JS runtime.
   const activities = Array.isArray(props.activities) ? props.activities : [];
   const activeCount = typeof props.activeCount === "number" ? props.activeCount : 0;
-  const widgetFamily = environment.widgetFamily;
-  const isHomeScreenWidget = typeof widgetFamily === "string";
-  const useCompactWidget =
-    widgetFamily === "systemSmall" ||
-    widgetFamily === "accessoryCircular" ||
-    widgetFamily === "accessoryInline" ||
-    widgetFamily === "accessoryRectangular";
-  // expo-widgets 56 stopped applying this natively. iOS 17+ home-screen
-  // widgets that omit it render "Please adopt containerBackground API".
-  const homeScreenBackground = isHomeScreenWidget ? [containerBackground("clear", "widget")] : [];
+  const widgetFamily = "widgetFamily" in environment ? environment.widgetFamily : undefined;
 
   // Use SwiftUI's semantic label colors rather than fixed hex keyed off the
   // device color scheme. A Live Activity banner always renders over a dark
@@ -268,15 +253,214 @@ export function AgentActivity(
     </HStack>
   );
 
+  // Compact card for the watchOS Smart Stack + CarPlay (the `.small` family)
+  // and lock-screen accessory widgets.
+  const renderCompactLayout = () => (
+    <VStack
+      alignment="leading"
+      spacing={5}
+      modifiers={[
+        padding({ all: 10 }),
+        ...(widgetFamily ? [containerBackground("clear", "widget")] : []),
+      ]}
+    >
+      <HStack spacing={7} alignment="center">
+        {renderLogo(14, primaryForeground)}
+        <Text
+          modifiers={[
+            font({ weight: "bold", size: 13 }),
+            foregroundStyle(headerTint),
+            lineLimit(1),
+          ]}
+        >
+          {attentionRows.length > 0 ? summary : activeLabel}
+        </Text>
+        <Spacer minLength={6} />
+      </HStack>
+      {row0 ? (
+        <HStack spacing={7} alignment="center">
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 12 }),
+              foregroundStyle(primaryForeground),
+              lineLimit(1),
+            ]}
+          >
+            {row0.threadTitle}
+          </Text>
+          <Spacer minLength={6} />
+          <Text modifiers={[font({ size: 11 }), foregroundStyle(phaseTint(row0.phase))]}>
+            {row0.status}
+          </Text>
+        </HStack>
+      ) : null}
+    </VStack>
+  );
+
+  if (
+    widgetFamily === "accessoryCircular" ||
+    widgetFamily === "accessoryInline" ||
+    widgetFamily === "accessoryRectangular"
+  ) {
+    return renderCompactLayout();
+  }
+
+  if (widgetFamily) {
+    // iOS supplies content margins for home-screen widgets, so adding explicit
+    // padding here would double-inset the layout.
+    const widgetModifiers = [
+      ...(deepLink ? [widgetURL(deepLink)] : []),
+      containerBackground("clear", "widget"),
+    ];
+    const homeSummaryTint = allDone && !hasRows ? secondaryForeground : headerTint;
+    const homeSummary = attentionSuffix || agentsLabel;
+    const renderHomeProjectIcon = (size: number) =>
+      renderGlyph("folder.fill", size, secondaryForeground);
+
+    if (widgetFamily === "systemSmall") {
+      return (
+        <VStack alignment="leading" spacing={5} modifiers={widgetModifiers}>
+          <HStack spacing={5} alignment="center" modifiers={[padding({ bottom: 3 })]}>
+            {renderLogo(12, primaryForeground)}
+            <Text
+              modifiers={[
+                font({ weight: "medium", size: 12 }),
+                foregroundStyle(secondaryForeground),
+              ]}
+            >
+              Code
+            </Text>
+            <Spacer minLength={4} />
+            {renderGlyph("arrow.up.right", 10, secondaryForeground)}
+          </HStack>
+          <Text
+            modifiers={[
+              font({ weight: "bold", size: 15 }),
+              foregroundStyle(homeSummaryTint),
+              lineLimit(1),
+            ]}
+          >
+            {homeSummary}
+          </Text>
+          {heroRow ? (
+            <Text
+              modifiers={[
+                font({ weight: "semibold", size: 12 }),
+                foregroundStyle(primaryForeground),
+                lineLimit(2),
+              ]}
+            >
+              {heroRow.threadTitle}
+            </Text>
+          ) : (
+            <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground)]}>
+              {outcomeLabel}
+            </Text>
+          )}
+          {heroRow ? (
+            <HStack spacing={5} alignment="center">
+              {renderHomeProjectIcon(11)}
+              <Text
+                modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
+              >
+                {heroRow.projectTitle}
+              </Text>
+              <Spacer minLength={4} />
+              <Text
+                modifiers={[
+                  font({ weight: "semibold", size: 11 }),
+                  foregroundStyle(phaseTint(heroRow.phase)),
+                  lineLimit(1),
+                  layoutPriority(1),
+                ]}
+              >
+                {heroRow.status}
+              </Text>
+            </HStack>
+          ) : null}
+          <Spacer minLength={0} />
+        </VStack>
+      );
+    }
+
+    const renderHomeRow = (row: AgentActivityRowProps) => (
+      <HStack spacing={9} alignment="center">
+        {renderHomeProjectIcon(17)}
+        <VStack alignment="leading" spacing={1}>
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 13 }),
+              foregroundStyle(primaryForeground),
+              lineLimit(1),
+            ]}
+          >
+            {row.threadTitle}
+          </Text>
+          <Text
+            modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
+          >
+            {row.projectTitle}
+          </Text>
+        </VStack>
+        <Spacer minLength={8} />
+        <Text
+          modifiers={[
+            font({ weight: "semibold", size: 12 }),
+            foregroundStyle(phaseTint(row.phase)),
+            layoutPriority(1),
+          ]}
+        >
+          {row.status}
+        </Text>
+      </HStack>
+    );
+
+    return (
+      <VStack alignment="leading" spacing={0} modifiers={widgetModifiers}>
+        <HStack spacing={5} alignment="center" modifiers={[padding({ bottom: 10 })]}>
+          {renderLogo(13, primaryForeground)}
+          <Text
+            modifiers={[font({ weight: "medium", size: 13 }), foregroundStyle(secondaryForeground)]}
+          >
+            Code
+          </Text>
+          <Spacer minLength={8} />
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 12 }),
+              foregroundStyle(homeSummaryTint),
+              lineLimit(1),
+              layoutPriority(1),
+            ]}
+          >
+            {homeSummary}
+          </Text>
+          {renderGlyph("arrow.up.right", 10, secondaryForeground)}
+        </HStack>
+        {row0 ? (
+          renderHomeRow(row0)
+        ) : (
+          <Text
+            modifiers={[
+              font({ weight: "semibold", size: 14 }),
+              foregroundStyle(secondaryForeground),
+            ]}
+          >
+            {outcomeLabel}
+          </Text>
+        )}
+        {row1 ? <Divider modifiers={[padding({ vertical: 7, leading: 26 })]} /> : null}
+        {row1 ? renderHomeRow(row1) : null}
+        <Spacer minLength={0} />
+      </VStack>
+    );
+  }
+
   const banner = (
     <VStack
       alignment="leading"
       spacing={6}
-      modifiers={[
-        padding({ all: 14 }),
-        ...(deepLink ? [widgetURL(deepLink)] : []),
-        ...homeScreenBackground,
-      ]}
+      modifiers={[padding({ all: 14 }), ...(deepLink ? [widgetURL(deepLink)] : [])]}
     >
       {/* Logo pinned to the leading edge; the status texts centered across the
           full width (ZStack so the logo doesn't skew the centering). No footer —
@@ -323,54 +507,10 @@ export function AgentActivity(
       {row4 ? renderCompactRow(row4) : null}
     </VStack>
   );
-  // Compact card for the watchOS Smart Stack + CarPlay (the `.small` family),
-  // the home-screen systemSmall widget, and lock-screen accessory families.
-  const bannerSmall = (
-    <VStack
-      alignment="leading"
-      spacing={5}
-      modifiers={[padding({ all: 10 }), ...homeScreenBackground]}
-    >
-      <HStack spacing={7} alignment="center">
-        {renderLogo(14, primaryForeground)}
-        <Text
-          modifiers={[
-            font({ weight: "bold", size: 13 }),
-            foregroundStyle(headerTint),
-            lineLimit(1),
-          ]}
-        >
-          {attentionRows.length > 0 ? summary : activeLabel}
-        </Text>
-        <Spacer minLength={6} />
-      </HStack>
-      {row0 ? (
-        <HStack spacing={7} alignment="center">
-          <Text
-            modifiers={[
-              font({ weight: "semibold", size: 12 }),
-              foregroundStyle(primaryForeground),
-              lineLimit(1),
-            ]}
-          >
-            {row0.threadTitle}
-          </Text>
-          <Spacer minLength={6} />
-          <Text modifiers={[font({ size: 11 }), foregroundStyle(phaseTint(row0.phase))]}>
-            {row0.status}
-          </Text>
-        </HStack>
-      ) : null}
-    </VStack>
-  );
-
-  if (isHomeScreenWidget) {
-    return (useCompactWidget ? bannerSmall : banner) as unknown as LiveActivityLayout;
-  }
 
   return {
     banner,
-    bannerSmall,
+    bannerSmall: renderCompactLayout(),
     compactLeading: renderLogo(14, tint),
     compactTrailing: (
       <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint)]}>
@@ -426,10 +566,7 @@ export function AgentActivity(
   };
 }
 
-export const AgentActivityWidget = createWidget<AgentActivityProps>(
-  "AgentActivity",
-  AgentActivity as never,
-);
+export const AgentActivityWidget = createWidget<AgentActivityProps>("AgentActivity", AgentActivity);
 
 export function publishAgentActivityWidget(props: AgentActivityProps): void {
   try {
