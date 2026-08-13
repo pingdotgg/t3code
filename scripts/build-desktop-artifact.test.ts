@@ -16,6 +16,7 @@ import {
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
+  desktopMcpExecutableName,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
@@ -915,6 +916,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
+
+  it("suffixes the desktop server executable only on Windows", () => {
+    // The server's resolver builds the same name; if these drift the packaged
+    // app silently offers no desktop tools.
+    assert.equal(desktopMcpExecutableName("win"), "t3-desktop-mcp.exe");
+    assert.equal(desktopMcpExecutableName("mac"), "t3-desktop-mcp");
+    assert.equal(desktopMcpExecutableName("linux"), "t3-desktop-mcp");
+  });
+
+  it("builds the desktop server for the same Rust targets as the resource monitor", () => {
+    // stageDesktopMcpRust reuses this mapping, so a Windows or Linux artifact
+    // build compiles the crate for exactly the architectures it ships.
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("win", "x64"), [
+      "x86_64-pc-windows-msvc",
+    ]);
+    assert.deepStrictEqual(resolveResourceMonitorRustTargets("linux", "arm64"), [
+      "aarch64-unknown-linux-gnu",
+    ]);
+  });
 
   it.effect("declares the Apple Events usage description on macOS builds", () =>
     Effect.gen(function* () {

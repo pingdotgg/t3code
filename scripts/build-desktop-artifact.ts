@@ -302,6 +302,17 @@ export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorCl
 
 export const DESKTOP_MCP_EXECUTABLE_NAME = "t3-desktop-mcp";
 
+/**
+ * On-disk name of the desktop-control server for a platform.
+ *
+ * The staged directory keeps the bare name on every platform; only the
+ * executable inside it carries Windows' suffix. The server's resolver has to
+ * agree with this exactly or it will look for a file that is not there.
+ */
+export function desktopMcpExecutableName(platform: typeof BuildPlatform.Type): string {
+  return platform === "win" ? `${DESKTOP_MCP_EXECUTABLE_NAME}.exe` : DESKTOP_MCP_EXECUTABLE_NAME;
+}
+
 export class DesktopMcpBuildOutputMissingError extends Schema.TaggedErrorClass<DesktopMcpBuildOutputMissingError>()(
   "DesktopMcpBuildOutputMissingError",
   {
@@ -1662,8 +1673,7 @@ const stageDesktopMcpRust = Effect.fn("stageDesktopMcpRust")(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const manifestPath = path.join(input.repoRoot, "native/t3-desktop-mcp-rs/Cargo.toml");
-  const executableName =
-    input.platform === "win" ? `${DESKTOP_MCP_EXECUTABLE_NAME}.exe` : DESKTOP_MCP_EXECUTABLE_NAME;
+  const executableName = desktopMcpExecutableName(input.platform);
   // The desktop server has the same per-platform target matrix as the resource
   // monitor, so it reuses that mapping rather than growing a parallel one.
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
