@@ -37,6 +37,7 @@ export const invalidMcpCredentialResponse = HttpServerResponse.jsonUnsafe(
     status: 401,
     headers: {
       "cache-control": "no-store",
+      "www-authenticate": "Bearer",
     },
   },
 );

@@ -20,6 +20,21 @@ import * as BrowserSession from "./BrowserSession.ts";
 import * as PreviewEnvironment from "./PreviewEnvironment.ts";
 import * as PreviewManager from "./Manager.ts";
 
+describe("fitPictureInPictureContentSize", () => {
+  it("preserves the PiP content area across aspect-ratio changes", () => {
+    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 16 / 9)).toEqual([523, 294]);
+    expect(PreviewManager.fitPictureInPictureContentSize([480, 320], 9 / 16)).toEqual([294, 523]);
+  });
+
+  it("does not collapse toward the minimum size when orientation changes repeatedly", () => {
+    const portrait = PreviewManager.fitPictureInPictureContentSize([523, 294], 9 / 16);
+    const landscape = PreviewManager.fitPictureInPictureContentSize(portrait, 16 / 9);
+
+    expect(portrait).toEqual([294, 523]);
+    expect(landscape).toEqual([523, 294]);
+  });
+});
+
 const {
   browserWindowConstructor,
   createFromPath,
