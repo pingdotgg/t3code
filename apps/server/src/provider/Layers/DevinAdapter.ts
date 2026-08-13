@@ -768,24 +768,26 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
   };
 
   const stopSessionInternal = (ctx: DevinSessionContext) =>
-    Effect.gen(function* () {
-      if (ctx.stopped) return;
-      ctx.stopped = true;
-      yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
-      yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
-      if (ctx.notificationFiber) {
-        yield* Fiber.interrupt(ctx.notificationFiber);
-      }
-      yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
-      sessions.delete(ctx.threadId);
-      yield* offerRuntimeEvent({
-        type: "session.exited",
-        ...(yield* makeEventStamp()),
-        provider: PROVIDER,
-        threadId: ctx.threadId,
-        payload: { exitKind: "graceful" },
-      });
-    });
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        if (ctx.stopped) return;
+        ctx.stopped = true;
+        yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+        yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
+        if (ctx.notificationFiber) {
+          yield* Fiber.interrupt(ctx.notificationFiber);
+        }
+        yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
+        sessions.delete(ctx.threadId);
+        yield* offerRuntimeEvent({
+          type: "session.exited",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          payload: { exitKind: "graceful" },
+        });
+      }),
+    );
 
   const startSession: DevinAdapterShape["startSession"] = (input) =>
     withThreadLock(
