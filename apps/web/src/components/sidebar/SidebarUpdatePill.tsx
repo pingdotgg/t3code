@@ -122,11 +122,12 @@ function SidebarUpdateControl() {
       ? "Checking for updates…"
       : "Check for updates";
   const disabled = isUpdateState ? isDesktopUpdateButtonDisabled(state) : !canCheckForUpdate(state);
+  const interactionDisabled = disabled || isActionPending;
 
   const handleAction = useCallback(async () => {
     const bridge = window.desktopBridge;
     if (!bridge || !state) return;
-    if (disabled || isActionPending) return;
+    if (interactionDisabled) return;
 
     setIsActionPending(true);
 
@@ -232,7 +233,7 @@ function SidebarUpdateControl() {
         );
       })
       .finally(() => setIsActionPending(false));
-  }, [action, disabled, isActionPending, state]);
+  }, [action, interactionDisabled, state]);
 
   return (
     <SidebarMenuItem className="ml-auto shrink-0">
@@ -242,13 +243,20 @@ function SidebarUpdateControl() {
             <button
               type="button"
               aria-label={tooltip}
-              aria-disabled={disabled || isActionPending || undefined}
-              disabled={disabled || isActionPending}
+              aria-disabled={interactionDisabled || undefined}
               className={cn(
-                "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors enabled:cursor-pointer focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60",
+                "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2",
+                interactionDisabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
                 isUpdateState
-                  ? "bg-update-surface text-update-foreground enabled:hover:bg-update/12"
-                  : "text-[var(--sidebar-icon-color)] enabled:hover:bg-sidebar-row-hover enabled:hover:text-sidebar-foreground",
+                  ? cn(
+                      "bg-update-surface text-update-foreground",
+                      !interactionDisabled && "hover:bg-update/12",
+                    )
+                  : cn(
+                      "text-[var(--sidebar-icon-color)]",
+                      !interactionDisabled &&
+                        "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                    ),
               )}
               onClick={handleAction}
             >
