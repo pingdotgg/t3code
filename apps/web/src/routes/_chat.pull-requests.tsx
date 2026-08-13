@@ -8,6 +8,7 @@ import type {
   PullRequestListFilters,
   PullRequestListInput,
   PullRequestListResult,
+  PullRequestListStatsInput,
   PullRequestListState,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -1132,67 +1133,62 @@ function PullRequestsRouteView() {
     viewers,
   ]);
 
-  // Line counts are decoration, so they start only when a row reaches (or nears) the viewport.
-  // One shared observer avoids one observer per row, and remembered keys keep counts loaded as a
-  // reader scrolls back and forth without making an off-screen cold page hit the host at all.
-  const [visibleStatsKeys, setVisibleStatsKeys] = useState<ReadonlySet<string>>(() => new Set());
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const elements = document.querySelectorAll<HTMLElement>("[data-pull-request-stats-key]");
-    if (typeof IntersectionObserver === "undefined") {
-      setVisibleStatsKeys(
-        new Set([...elements].map((element) => element.dataset.pullRequestStatsKey ?? "")),
+  // Line counts are decoration, so one shared observer asks only for rows reaching the viewport.
+  // Each intersection callback becomes an immutable batch: rows already fetched remain on their
+  // original query key instead of being resent whenever the next row appears.
+  const entriesByStatsKey = useRef<ReadonlyMap<string, EnvironmentPullRequestEntry>>(new Map());
+  entriesByStatsKey.current = new Map(
+    groups.flatMap((group) =>
+      group.entries.map((entry) => [pullRequestEntryKey(entry), entry] as const),
+    ),
+  );
+  const requestedStatsKeys = useRef(new Set<string>());
+  const [statsTargets, setStatsTargets] = useState<
+    ReadonlyArray<EnvironmentQueryTarget<PullRequestListStatsInput>>
+  >([]);
+  const statsObserver = useRef<IntersectionObserver | null>(null);
+  const registerStatsRow = useCallback((node: HTMLButtonElement | null) => {
+    if (node === null || typeof IntersectionObserver === "undefined") return;
+    if (statsObserver.current === null) {
+      statsObserver.current = new IntersectionObserver(
+        (observed) => {
+          const refsByEnvironment = new Map<
+            EnvironmentId,
+            Array<{ projectId: ProjectId; repository: string; number: number }>
+          >();
+          for (const item of observed) {
+            if (!item.isIntersecting) continue;
+            statsObserver.current?.unobserve(item.target);
+            const key = (item.target as HTMLElement).dataset.pullRequestStatsKey;
+            if (key === undefined || requestedStatsKeys.current.has(key)) continue;
+            const entry = entriesByStatsKey.current.get(key);
+            if (entry === undefined) continue;
+            requestedStatsKeys.current.add(key);
+            const refs = refsByEnvironment.get(entry.environmentId) ?? [];
+            refs.push({
+              projectId: entry.projectId,
+              repository: entry.repository,
+              number: entry.number,
+            });
+            refsByEnvironment.set(entry.environmentId, refs);
+          }
+          if (refsByEnvironment.size === 0) return;
+          setStatsTargets((current) => [
+            ...current,
+            ...[...refsByEnvironment].map(([environmentId, refs]) => ({
+              environmentId,
+              input: { refs },
+            })),
+          ]);
+        },
+        { rootMargin: "480px" },
       );
-      return;
     }
-    const observer = new IntersectionObserver(
-      (observed) => {
-        const newlyVisible = observed.flatMap((item) => {
-          if (!item.isIntersecting) return [];
-          observer.unobserve(item.target);
-          const key = (item.target as HTMLElement).dataset.pullRequestStatsKey;
-          return key === undefined ? [] : [key];
-        });
-        if (newlyVisible.length === 0) return;
-        setVisibleStatsKeys((current) => {
-          const next = new Set(current);
-          for (const key of newlyVisible) next.add(key);
-          return next;
-        });
-      },
-      { rootMargin: "480px" },
-    );
-    for (const element of elements) {
-      const key = element.dataset.pullRequestStatsKey;
-      if (key !== undefined && !visibleStatsKeys.has(key)) observer.observe(element);
-    }
-    return () => observer.disconnect();
-  }, [groups, visibleStatsKeys]);
+    statsObserver.current.observe(node);
+    return () => statsObserver.current?.unobserve(node);
+  }, []);
+  useEffect(() => () => statsObserver.current?.disconnect(), []);
 
-  // One read per environment, each asking only about its own near-visible rows: a reference names
-  // a project, and a project belongs to one machine.
-  const statsTargets = useMemo(() => {
-    const refsByEnvironment = new Map<
-      EnvironmentId,
-      Array<{ projectId: ProjectId; repository: string; number: number }>
-    >();
-    for (const group of groups) {
-      for (const entry of group.entries) {
-        if (!visibleStatsKeys.has(pullRequestEntryKey(entry))) continue;
-        const refs = refsByEnvironment.get(entry.environmentId) ?? [];
-        refs.push({
-          projectId: entry.projectId,
-          repository: entry.repository,
-          number: entry.number,
-        });
-        refsByEnvironment.set(entry.environmentId, refs);
-      }
-    }
-    return [...refsByEnvironment].map(([environmentId, refs]) => ({
-      environmentId,
-      input: { refs },
-    }));
-  }, [groups, visibleStatsKeys]);
   const statsQuery = usePullRequestListStats(statsTargets);
   // Adding or removing one row keys a fresh stats query with nothing in it yet, so the counts
   // are merged into what is already held rather than rebuilt: every count on screen stays until
@@ -1382,12 +1378,13 @@ function PullRequestsRouteView() {
                   {group.label}
                 </h2>
               ) : null}
-              {group.entries.map((entry) => (
-                <div
-                  key={pullRequestEntryKey(entry)}
-                  data-pull-request-stats-key={pullRequestEntryKey(entry)}
-                >
+              {group.entries.map((entry) => {
+                const entryKey = pullRequestEntryKey(entry);
+                return (
                   <PullRequestRow
+                    key={entryKey}
+                    statsKey={entryKey}
+                    statsRef={registerStatsRow}
                     // A row whose host reported its line counts keeps them; one whose host left
                     // them for later takes whatever has arrived since, and draws without them
                     // until it does.
@@ -1411,8 +1408,8 @@ function PullRequestsRouteView() {
                     }
                     onSelect={selectEntry}
                   />
-                </div>
-              ))}
+                );
+              })}
             </div>
           ))}
         </div>
