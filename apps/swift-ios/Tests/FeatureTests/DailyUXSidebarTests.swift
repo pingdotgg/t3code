@@ -150,7 +150,8 @@ struct DailyUXSidebarTests {
             id: state.rawValue,
             created: -100,
             updated: -50,
-            state: state
+            state: state,
+            settlementEligible: false
         )
 
         #expect(blocked.canSettle == false)
@@ -160,6 +161,61 @@ struct DailyUXSidebarTests {
                 isArchived: false,
                 now: now
             ) == [.archive, .delete]
+        )
+        #expect(
+            !HomeThreadSwipeActions.allowsFullSwipe(
+                for: blocked,
+                isArchived: false,
+                now: now
+            )
+        )
+    }
+
+    @Test
+    func freshUnadoptedUserMessageBlocksSettlementProjection() {
+        let eligible = FeatureSettlementProjection.canSettle(
+            FeatureSettlementProjectionInput(
+                hasPendingApprovals: false,
+                hasPendingUserInput: false,
+                sessionStatus: nil,
+                latestUserMessageAt: now.addingTimeInterval(-30).ISO8601Format(),
+                latestTurnRequestedAt: nil,
+                latestTurnStartedAt: nil,
+                latestTurnCompletedAt: nil
+            ),
+            now: now
+        )
+
+        #expect(!eligible)
+    }
+
+    @Test(arguments: [FeatureThreadState.working, .monitoring])
+    func backgroundOnlyShellsRemainSettlementEligible(state: FeatureThreadState) {
+        let eligible = FeatureSettlementProjection.canSettle(
+            FeatureSettlementProjectionInput(
+                hasPendingApprovals: false,
+                hasPendingUserInput: false,
+                sessionStatus: nil,
+                latestUserMessageAt: now.addingTimeInterval(-300).ISO8601Format(),
+                latestTurnRequestedAt: nil,
+                latestTurnStartedAt: nil,
+                latestTurnCompletedAt: nil
+            ),
+            now: now
+        )
+        let projected = thread(
+            id: state.rawValue,
+            created: -300,
+            updated: -300,
+            state: state,
+            settlementEligible: eligible
+        )
+
+        #expect(eligible)
+        #expect(projected.canSettle)
+        #expect(
+            HomeThreadSwipeActions.kinds(for: projected, isArchived: false, now: now).first
+                == .settle
         )
     }
 
@@ -529,7 +585,8 @@ struct DailyUXSidebarTests {
         created: TimeInterval,
         updated: TimeInterval,
         state: FeatureThreadState = .idle,
-        isSettled: Bool = false
+        isSettled: Bool = false,
+        settlementEligible: Bool = true
     ) -> FeatureThread {
         FeatureThread(
             id: id,
@@ -539,6 +596,15 @@ struct DailyUXSidebarTests {
             updatedAt: now.addingTimeInterval(updated),
             state: state,
             isSettled: isSettled,
+            settlementInput: FeatureSettlementProjectionInput(
+                hasPendingApprovals: !settlementEligible,
+                hasPendingUserInput: false,
+                sessionStatus: nil,
+                latestUserMessageAt: nil,
+                latestTurnRequestedAt: nil,
+                latestTurnStartedAt: nil,
+                latestTurnCompletedAt: nil
+            ),
             lastActivityAt: now.addingTimeInterval(updated)
         )
     }

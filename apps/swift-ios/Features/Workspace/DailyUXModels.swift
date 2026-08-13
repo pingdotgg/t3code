@@ -654,12 +654,9 @@ extension FeatureThread {
     }
 
     var canSettle: Bool {
-        switch state {
-        case .idle, .failed, .completed:
-            true
-        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
-            false
-        }
+        isSettled || settlementInput.map {
+            FeatureSettlementProjection.canSettle($0, now: .now)
+        } == true
     }
 
     func isEffectivelySettled(at now: Date) -> Bool {

@@ -178,6 +178,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsSnooze: Bool?
     public var supportsPinning: Bool?
     public var supportsTitleRegeneration: Bool?
+    public var settlementInput: FeatureSettlementProjectionInput?
     public var attentionAt: Date?
     public var workingStartedAt: Date?
     public var latestTurnCompletedAt: Date?
@@ -213,6 +214,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsSnooze: Bool? = nil,
         supportsPinning: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
+        settlementInput: FeatureSettlementProjectionInput? = nil,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
         latestTurnCompletedAt: Date? = nil,
@@ -247,6 +249,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsSnooze = supportsSnooze
         self.supportsPinning = supportsPinning
         self.supportsTitleRegeneration = supportsTitleRegeneration
+        self.settlementInput = settlementInput
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt
@@ -266,6 +269,67 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
 
     public var canToggleSnooze: Bool {
         snoozedUntil != nil || supportsSnooze != false
+    }
+}
+
+public struct FeatureSettlementProjectionInput: Sendable, Equatable, Hashable, Codable {
+    public var hasPendingApprovals: Bool
+    public var hasPendingUserInput: Bool
+    public var sessionStatus: String?
+    public var latestUserMessageAt: String?
+    public var latestTurnRequestedAt: String?
+    public var latestTurnStartedAt: String?
+    public var latestTurnCompletedAt: String?
+
+    public init(
+        hasPendingApprovals: Bool,
+        hasPendingUserInput: Bool,
+        sessionStatus: String?,
+        latestUserMessageAt: String?,
+        latestTurnRequestedAt: String?,
+        latestTurnStartedAt: String?,
+        latestTurnCompletedAt: String?
+    ) {
+        self.hasPendingApprovals = hasPendingApprovals
+        self.hasPendingUserInput = hasPendingUserInput
+        self.sessionStatus = sessionStatus
+        self.latestUserMessageAt = latestUserMessageAt
+        self.latestTurnRequestedAt = latestTurnRequestedAt
+        self.latestTurnStartedAt = latestTurnStartedAt
+        self.latestTurnCompletedAt = latestTurnCompletedAt
+    }
+}
+
+enum FeatureSettlementProjection {
+    static let queuedTurnStartGrace: TimeInterval = 2 * 60
+
+    static func canSettle(
+        _ input: FeatureSettlementProjectionInput,
+        now: Date
+    ) -> Bool {
+        if input.hasPendingApprovals || input.hasPendingUserInput { return false }
+        if input.sessionStatus == "starting" || input.sessionStatus == "running" { return false }
+        if input.sessionStatus == "error" { return true }
+        guard let rawMessageAt = input.latestUserMessageAt,
+              let messageAt = parseDate(rawMessageAt),
+              abs(now.timeIntervalSince(messageAt)) <= queuedTurnStartGrace else {
+            return true
+        }
+        let latestTurnDates = [
+            input.latestTurnRequestedAt,
+            input.latestTurnStartedAt,
+            input.latestTurnCompletedAt,
+        ]
+        let queued = latestTurnDates.allSatisfy { candidate in
+            guard let candidate else { return true }
+            guard let date = parseDate(candidate) else { return false }
+            return date < messageAt
+        }
+        return !queued
+    }
+
+    private static func parseDate(_ value: String) -> Date? {
+        try? Date(value, strategy: .iso8601)
     }
 }
 

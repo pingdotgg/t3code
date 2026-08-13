@@ -11,6 +11,15 @@ enum HomeThreadSwipeActionKind: Equatable {
 }
 
 enum HomeThreadSwipeActions {
+    static func allowsFullSwipe(
+        for thread: FeatureThread,
+        isArchived: Bool,
+        now: Date
+    ) -> Bool {
+        if isArchived || !thread.canToggleSettlement { return true }
+        return thread.isEffectivelySettled(at: now) || thread.canSettle
+    }
+
     static func kinds(
         for thread: FeatureThread,
         isArchived: Bool,
@@ -239,7 +248,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             let configuration = UISwipeActionsConfiguration(actions: actions)
             // UIKit performs actions[0] on a full swipe. The model keeps the
             // reversible lifecycle action first and destructive Delete last.
-            configuration.performsFirstActionWithFullSwipe = true
+            configuration.performsFirstActionWithFullSwipe = HomeThreadSwipeActions.allowsFullSwipe(
+                for: thread,
+                isArchived: isArchived,
+                now: .now
+            )
             return configuration
         }
 

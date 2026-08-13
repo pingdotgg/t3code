@@ -3788,6 +3788,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            settlementInput: FeatureSettlementProjectionInput(
+                hasPendingApprovals: thread.hasPendingApprovals,
+                hasPendingUserInput: thread.hasPendingUserInput,
+                sessionStatus: thread.session?.status,
+                latestUserMessageAt: thread.latestUserMessageAt,
+                latestTurnRequestedAt: thread.latestTurn?.requestedAt,
+                latestTurnStartedAt: thread.latestTurn?.startedAt,
+                latestTurnCompletedAt: thread.latestTurn?.completedAt
+            ),
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -3857,6 +3866,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            settlementInput: FeatureSettlementProjectionInput(
+                hasPendingApprovals: false,
+                hasPendingUserInput: false,
+                sessionStatus: thread.session?.status,
+                latestUserMessageAt: thread.messages
+                    .last(where: { $0.role == "user" })?.createdAt,
+                latestTurnRequestedAt: thread.latestTurn?.requestedAt,
+                latestTurnStartedAt: thread.latestTurn?.startedAt,
+                latestTurnCompletedAt: thread.latestTurn?.completedAt
+            ),
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
