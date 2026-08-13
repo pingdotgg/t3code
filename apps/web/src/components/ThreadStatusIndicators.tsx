@@ -3,7 +3,12 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import type { VcsStatusResult } from "@t3tools/contracts";
+import { selectVcsStatusAtomForDemand } from "@t3tools/client-runtime/state/vcs";
+import type {
+  EnvironmentId,
+  VcsStatusAccumulatedResult,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -34,6 +39,97 @@ export interface TerminalStatusIndicator {
 }
 
 export type ThreadPr = VcsStatusResult["pr"];
+export type ThreadPrLifecycleState = NonNullable<ThreadPr>["state"] | null;
+export interface ThreadPrLifecycleSnapshot {
+  readonly targetKey: string;
+  readonly refName: string | null;
+  readonly state: ThreadPrLifecycleState | undefined;
+}
+
+export function threadPrLifecycleTargetKey(input: {
+  environmentId: EnvironmentId;
+  cwd: string | null;
+}): string | null {
+  return input.cwd === null ? null : JSON.stringify([input.environmentId, input.cwd.trim()]);
+}
+
+export function threadPrLifecycleSnapshot(
+  gitStatus: VcsStatusAccumulatedResult | null,
+  targetKey: string | null,
+  requestedRefName: string | null = null,
+): ThreadPrLifecycleSnapshot | undefined {
+  if (gitStatus === null || targetKey === null) {
+    return undefined;
+  }
+  return {
+    targetKey,
+    refName: gitStatus.isRepo ? gitStatus.refName : requestedRefName,
+    state:
+      !gitStatus.isRepo || gitStatus.remoteStatusKnown ? (gitStatus.pr?.state ?? null) : undefined,
+  };
+}
+
+export function mergeThreadPrLifecycleSnapshot(
+  current: ThreadPrLifecycleSnapshot | undefined,
+  next: ThreadPrLifecycleSnapshot,
+): ThreadPrLifecycleSnapshot {
+  if (
+    next.state === undefined &&
+    current?.targetKey === next.targetKey &&
+    current.refName === next.refName
+  ) {
+    return current;
+  }
+  return next;
+}
+
+export function resolveThreadPrLifecycleState(
+  snapshot: ThreadPrLifecycleSnapshot | undefined,
+  threadBranch: string | null,
+  targetKey: string | null,
+): ThreadPrLifecycleState | undefined {
+  if (threadBranch === null) return null;
+  return snapshot?.targetKey === targetKey && snapshot.refName === threadBranch
+    ? snapshot.state
+    : undefined;
+}
+
+export function resolveVisibleVcsStatusTarget(input: {
+  isVisible: boolean;
+  shouldSubscribe: boolean;
+  environmentId: EnvironmentId;
+  cwd: string | null;
+}) {
+  if (!input.isVisible || !input.shouldSubscribe || input.cwd === null) {
+    return null;
+  }
+  return {
+    environmentId: input.environmentId,
+    input: { cwd: input.cwd },
+  };
+}
+
+export function resolvePassiveRowVcsDemand(input: {
+  isVisible: boolean;
+  shouldSubscribe: boolean;
+  environmentId: EnvironmentId;
+  cwd: string | null;
+}) {
+  const target = resolveVisibleVcsStatusTarget(input);
+  return target === null ? null : { demand: "local" as const, target };
+}
+
+export function usePassiveRowVcsStatus(input: {
+  isVisible: boolean;
+  shouldSubscribe: boolean;
+  environmentId: EnvironmentId;
+  cwd: string | null;
+}) {
+  const demand = resolvePassiveRowVcsDemand(input);
+  return useEnvironmentQuery(
+    demand === null ? null : selectVcsStatusAtomForDemand(vcsEnvironment, demand),
+  );
+}
 
 export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]): string {
   switch (state) {
@@ -47,7 +143,7 @@ export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]):
 }
 
 export function prStatusIndicator(
-  pr: ThreadPr,
+  pr: ThreadPr | undefined,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): PrStatusIndicator | null {
   function formatPrState(state: NonNullable<ThreadPr>["state"]): string {
@@ -112,15 +208,20 @@ export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }
 
 export function resolveThreadPr(input: {
   threadBranch: string | null;
-  gitStatus: VcsStatusResult | null;
-}): ThreadPr | null {
+  gitStatus: VcsStatusAccumulatedResult | null;
+}): ThreadPr | undefined {
   const { threadBranch, gitStatus } = input;
-  if (gitStatus === null) {
+  if (threadBranch === null) {
     return null;
   }
-
-  if (threadBranch === null || gitStatus.refName !== threadBranch) {
+  if (gitStatus === null) {
+    return undefined;
+  }
+  if (!gitStatus.isRepo) {
     return null;
+  }
+  if (gitStatus.remoteStatusKnown !== true || gitStatus.refName !== threadBranch) {
+    return undefined;
   }
 
   return gitStatus.pr ?? null;
@@ -242,14 +343,12 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   );
   const threadProjectCwd = threadProject?.workspaceRoot ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
-  const gitStatus = useEnvironmentQuery(
-    (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
-      ? vcsEnvironment.status({
-          environmentId: thread.environmentId,
-          input: { cwd: gitCwd },
-        })
-      : null,
-  );
+  const gitStatus = usePassiveRowVcsStatus({
+    isVisible: true,
+    shouldSubscribe: thread.branch != null || thread.worktreePath !== null,
+    environmentId: thread.environmentId,
+    cwd: gitCwd,
+  });
   const pr = resolveThreadPr({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,

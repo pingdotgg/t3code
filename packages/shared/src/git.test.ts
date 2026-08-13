@@ -1,4 +1,9 @@
-import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts";
+import type {
+  VcsStatusLocalResult,
+  VcsStatusRemoteResult,
+  VcsStatusResult,
+  VcsStatusStreamEvent,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -102,6 +107,48 @@ describe("isTemporaryWorktreeBranch", () => {
 });
 
 describe("applyGitStatusStreamEvent", () => {
+  const localStatus = (refName: string): VcsStatusLocalResult => ({
+    isRepo: true,
+    sourceControlProvider: {
+      kind: "github",
+      name: "GitHub",
+      baseUrl: "https://github.com",
+    },
+    hasPrimaryRemote: true,
+    isDefaultRef: false,
+    refName,
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+  });
+
+  const remoteStatus = (
+    refName: string,
+    number: number,
+    aheadCount: number,
+  ): VcsStatusRemoteResult => ({
+    hasUpstream: true,
+    aheadCount,
+    behindCount: number,
+    aheadOfDefaultCount: aheadCount + number,
+    pr: {
+      number,
+      title: `PR for ${refName}`,
+      url: `https://github.com/t3tools/t3code/pull/${number}`,
+      baseRef: "main",
+      headRef: refName,
+      state: "open",
+    },
+  });
+
+  const withRemoteRef = (
+    event: VcsStatusStreamEvent,
+    remoteRefName: string,
+  ): VcsStatusStreamEvent =>
+    ({
+      ...event,
+      remoteRefName,
+    }) as VcsStatusStreamEvent;
+
   it("treats a remote-only update as a repository when local state is missing", () => {
     const remote: VcsStatusRemoteResult = {
       hasUpstream: true,
@@ -121,6 +168,7 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+      remoteStatusKnown: true,
     });
   });
 
@@ -160,6 +208,155 @@ describe("applyGitStatusStreamEvent", () => {
       aheadCount: 2,
       behindCount: 1,
       pr: null,
+      remoteStatusKnown: true,
     });
+  });
+
+  it("exposes remote data only when it is bound to the observed local ref", () => {
+    const refA = "feature/a";
+    const refB = "feature/b";
+    const remoteA = remoteStatus(refA, 101, 3);
+    const refreshedRemoteA = remoteStatus(refA, 102, 4);
+    const remoteB = remoteStatus(refB, 202, 1);
+
+    let status = applyGitStatusStreamEvent(
+      null,
+      withRemoteRef(
+        {
+          _tag: "snapshot",
+          local: localStatus(refA),
+          remote: remoteA,
+        },
+        refA,
+      ),
+    );
+    status = applyGitStatusStreamEvent(
+      status,
+      withRemoteRef({ _tag: "remoteUpdated", remote: refreshedRemoteA }, refA),
+    );
+
+    expect(status).toMatchObject({
+      refName: refA,
+      aheadCount: refreshedRemoteA.aheadCount,
+      behindCount: refreshedRemoteA.behindCount,
+      pr: refreshedRemoteA.pr,
+      remoteStatusKnown: true,
+    });
+
+    status = applyGitStatusStreamEvent(status, {
+      _tag: "localUpdated",
+      local: localStatus(refB),
+    });
+
+    expect(status).toMatchObject({
+      refName: refB,
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      aheadOfDefaultCount: 0,
+      pr: null,
+      remoteStatusKnown: false,
+    });
+
+    status = applyGitStatusStreamEvent(
+      status,
+      withRemoteRef({ _tag: "remoteUpdated", remote: remoteA }, refA),
+    );
+
+    expect(status).toMatchObject({
+      refName: refB,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+      remoteStatusKnown: false,
+    });
+
+    status = applyGitStatusStreamEvent(
+      status,
+      withRemoteRef({ _tag: "remoteUpdated", remote: remoteB }, refB),
+    );
+
+    expect(status).toMatchObject({
+      refName: refB,
+      aheadCount: remoteB.aheadCount,
+      behindCount: remoteB.behindCount,
+      aheadOfDefaultCount: remoteB.aheadOfDefaultCount,
+      pr: remoteB.pr,
+      remoteStatusKnown: true,
+    });
+  });
+
+  it("treats a same-ref null remote result as known", () => {
+    const refName = "feature/no-pr";
+    const status = applyGitStatusStreamEvent(
+      applyGitStatusStreamEvent(
+        null,
+        withRemoteRef(
+          {
+            _tag: "snapshot",
+            local: localStatus(refName),
+            remote: remoteStatus(refName, 303, 2),
+          },
+          refName,
+        ),
+      ),
+      withRemoteRef({ _tag: "remoteUpdated", remote: null }, refName),
+    );
+
+    expect(status).toMatchObject({
+      refName,
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      aheadOfDefaultCount: 0,
+      pr: null,
+      remoteStatusKnown: true,
+    });
+  });
+
+  it("clears null-ref remote state when a repository becomes a non-repository", () => {
+    const detachedLocal: VcsStatusLocalResult = {
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: null,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    const nonRepositoryLocal: VcsStatusLocalResult = {
+      isRepo: false,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: null,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    };
+    const current = applyGitStatusStreamEvent(null, {
+      _tag: "snapshot",
+      local: detachedLocal,
+      remote: remoteStatus("detached", 404, 5),
+      remoteRefName: null,
+    });
+
+    const afterRepositoryLoss = applyGitStatusStreamEvent(current, {
+      _tag: "localUpdated",
+      local: nonRepositoryLocal,
+    });
+    expect(afterRepositoryLoss).toEqual({
+      ...nonRepositoryLocal,
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      aheadOfDefaultCount: 0,
+      pr: null,
+      remoteStatusKnown: false,
+    });
+    expect(
+      applyGitStatusStreamEvent(afterRepositoryLoss, {
+        _tag: "remoteUpdated",
+        remote: remoteStatus("detached", 405, 6),
+        remoteRefName: null,
+      }),
+    ).toBe(afterRepositoryLoss);
   });
 });

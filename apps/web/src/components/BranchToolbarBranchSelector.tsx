@@ -79,6 +79,81 @@ interface BranchToolbarBranchSelectorProps {
   onComposerFocusRequest?: () => void;
 }
 
+export function resolveBranchPickerRefTarget(input: {
+  isOpen: boolean;
+  environmentId: EnvironmentId;
+  cwd: string | null;
+  query: string;
+}) {
+  if (!input.isOpen) {
+    return { environmentId: null, cwd: null, query: null };
+  }
+  return {
+    environmentId: input.environmentId,
+    cwd: input.cwd,
+    query: input.query,
+  };
+}
+
+export function resolveWorktreeBaseBranchCandidate(input: {
+  isOpen: boolean;
+  isInitialLoadPending: boolean;
+  defaultBranchName: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  if (!input.isOpen) {
+    return input.currentGitBranch;
+  }
+  if (input.isInitialLoadPending) {
+    return null;
+  }
+  return input.defaultBranchName ?? input.currentGitBranch;
+}
+
+export interface ImplicitWorktreeBaseBranch {
+  readonly scopeKey: string;
+  readonly branch: string;
+}
+
+export function resolveWorktreeBaseBranchLifecycle(input: {
+  enabled: boolean;
+  scopeKey: string | null;
+  activeThreadBranch: string | null;
+  candidate: string | null;
+  preferredBranch: string | null;
+  implicitBranch: ImplicitWorktreeBaseBranch | null;
+}): {
+  branchToSet: string | null;
+  implicitBranch: ImplicitWorktreeBaseBranch | null;
+} {
+  if (!input.enabled || input.scopeKey === null) {
+    return { branchToSet: null, implicitBranch: null };
+  }
+
+  const sameScopeImplicitBranch =
+    input.implicitBranch?.scopeKey === input.scopeKey ? input.implicitBranch : null;
+  if (input.activeThreadBranch === null) {
+    if (input.candidate === null) {
+      return { branchToSet: null, implicitBranch: sameScopeImplicitBranch };
+    }
+    return {
+      branchToSet: input.candidate,
+      implicitBranch: { scopeKey: input.scopeKey, branch: input.candidate },
+    };
+  }
+
+  if (sameScopeImplicitBranch?.branch !== input.activeThreadBranch) {
+    return { branchToSet: null, implicitBranch: null };
+  }
+  if (input.preferredBranch === null || input.preferredBranch === input.activeThreadBranch) {
+    return { branchToSet: null, implicitBranch: sameScopeImplicitBranch };
+  }
+  return {
+    branchToSet: input.preferredBranch,
+    implicitBranch: { scopeKey: input.scopeKey, branch: input.preferredBranch },
+  };
+}
+
 function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
@@ -212,7 +287,7 @@ export function BranchToolbarBranchSelector({
   const branchStatusQuery = useEnvironmentQuery(
     branchCwd === null
       ? null
-      : vcsEnvironment.status({
+      : vcsEnvironment.remoteStatus({
           environmentId,
           input: { cwd: branchCwd },
         }),
@@ -220,15 +295,43 @@ export function BranchToolbarBranchSelector({
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const branchRefTarget = useMemo(
-    () => ({
-      environmentId,
-      cwd: branchCwd,
-      query: deferredTrimmedBranchQuery,
-    }),
-    [branchCwd, deferredTrimmedBranchQuery, environmentId],
+    () =>
+      resolveBranchPickerRefTarget({
+        isOpen: isBranchMenuOpen,
+        environmentId,
+        cwd: branchCwd,
+        query: deferredTrimmedBranchQuery,
+      }),
+    [branchCwd, deferredTrimmedBranchQuery, environmentId, isBranchMenuOpen],
   );
   const branchRefState = usePaginatedBranches(branchRefTarget);
   const refs = branchRefState.refs;
+  const branchRefScopeKey = useMemo(
+    () => (branchCwd === null ? null : JSON.stringify([environmentId, branchCwd.trim()])),
+    [branchCwd, environmentId],
+  );
+  const [cachedBranchClassification, setCachedBranchClassification] = useState<{
+    scopeKey: string;
+    isRemoteByName: ReadonlyMap<string, boolean>;
+  } | null>(null);
+  useEffect(() => {
+    if (!isBranchMenuOpen || branchRefScopeKey === null || refs.length === 0) {
+      return;
+    }
+    setCachedBranchClassification((current) => {
+      const isSameScope = current?.scopeKey === branchRefScopeKey;
+      const isRemoteByName = new Map(isSameScope ? current.isRemoteByName : []);
+      let changed = !isSameScope;
+      for (const refName of refs) {
+        const isRemote = refName.isRemote === true;
+        if (isRemoteByName.get(refName.name) !== isRemote) {
+          isRemoteByName.set(refName.name, isRemote);
+          changed = true;
+        }
+      }
+      return changed ? { scopeKey: branchRefScopeKey, isRemoteByName } : current;
+    });
+  }, [branchRefScopeKey, isBranchMenuOpen, refs]);
   const hasNextPage =
     branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;
   const isFetchingNextPage = branchRefState.isFetchingNextPage;
@@ -297,27 +400,16 @@ export function BranchToolbarBranchSelector({
   );
   const listedActiveBranch =
     resolvedActiveBranch === null ? null : (branchByName.get(resolvedActiveBranch) ?? null);
-  const activeBranchRefQuery = useEnvironmentQuery(
-    branchCwd !== null && resolvedActiveBranch !== null
-      ? vcsEnvironment.listRefs({
-          environmentId,
-          input: {
-            cwd: branchCwd,
-            query: resolvedActiveBranch,
-            limit: 10,
-          },
-        })
-      : null,
-  );
-  const queriedActiveBranch = activeBranchRefQuery.data?.refs.find(
-    (refName) => refName.name === resolvedActiveBranch,
-  );
   const resolvedActiveBranchIsRemote =
-    listedActiveBranch !== null
-      ? listedActiveBranch.isRemote === true
-      : queriedActiveBranch
-        ? queriedActiveBranch.isRemote === true
-        : null;
+    resolvedActiveBranch === null
+      ? null
+      : branchStatusQuery.data?.refName === resolvedActiveBranch
+        ? false
+        : listedActiveBranch !== null
+          ? listedActiveBranch.isRemote === true
+          : cachedBranchClassification?.scopeKey === branchRefScopeKey
+            ? (cachedBranchClassification.isRemoteByName.get(resolvedActiveBranch) ?? null)
+            : null;
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const totalBranchCount = branchRefState.data?.totalCount ?? 0;
   const branchStatusText = isInitialBranchesLoadPending
@@ -373,7 +465,6 @@ export function BranchToolbarBranchSelector({
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
       await action();
-      branchRefState.refresh();
       branchStatusQuery.refresh();
     });
   };
@@ -382,6 +473,7 @@ export function BranchToolbarBranchSelector({
     if (!branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
     if (isSelectingWorktreeBase) {
+      implicitWorktreeBaseBranchRef.current = null;
       setThreadBranch(refName.name, null);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
@@ -481,24 +573,35 @@ export function BranchToolbarBranchSelector({
     () => refs.find((refName) => refName.isDefault)?.name ?? null,
     [refs],
   );
-  const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
-    ? null
-    : (defaultBranchName ?? currentGitBranch);
+  const worktreeBaseBranchCandidate = resolveWorktreeBaseBranchCandidate({
+    isOpen: isBranchMenuOpen,
+    isInitialLoadPending: isInitialBranchesLoadPending,
+    defaultBranchName,
+    currentGitBranch,
+  });
+  const implicitWorktreeBaseBranchRef = useRef<ImplicitWorktreeBaseBranch | null>(null);
 
   useEffect(() => {
-    if (
-      effectiveEnvMode !== "worktree" ||
-      activeWorktreePath ||
-      activeThreadBranch ||
-      !worktreeBaseBranchCandidate
-    ) {
-      return;
+    const resolution = resolveWorktreeBaseBranchLifecycle({
+      enabled: effectiveEnvMode === "worktree" && activeWorktreePath === null,
+      scopeKey: branchRefScopeKey,
+      activeThreadBranch,
+      candidate: worktreeBaseBranchCandidate,
+      preferredBranch: isBranchMenuOpen && !isInitialBranchesLoadPending ? defaultBranchName : null,
+      implicitBranch: implicitWorktreeBaseBranchRef.current,
+    });
+    implicitWorktreeBaseBranchRef.current = resolution.implicitBranch;
+    if (resolution.branchToSet !== null) {
+      setThreadBranch(resolution.branchToSet, null);
     }
-    setThreadBranch(worktreeBaseBranchCandidate, null);
   }, [
     activeThreadBranch,
     activeWorktreePath,
+    branchRefScopeKey,
+    defaultBranchName,
     effectiveEnvMode,
+    isBranchMenuOpen,
+    isInitialBranchesLoadPending,
     setThreadBranch,
     worktreeBaseBranchCandidate,
   ]);

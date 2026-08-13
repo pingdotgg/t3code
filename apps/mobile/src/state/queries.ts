@@ -10,6 +10,10 @@ import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useState } from "react";
 
 import { orchestrationEnvironment } from "./orchestration";
+import {
+  resolveMobileGitStatusTarget,
+  type MobileGitStatusTargetInput,
+} from "./mobile-git-status-target";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
 import { useEnvironmentThread } from "./threads";
@@ -108,11 +112,12 @@ export function useThreadDetail(
 export function useBranches(input: {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
+  readonly enabled?: boolean;
   readonly query?: string | null;
 }) {
   const query = input.query?.trim() ?? "";
   return useEnvironmentQuery(
-    input.environmentId !== null && input.cwd !== null
+    input.enabled !== false && input.environmentId !== null && input.cwd !== null
       ? vcsEnvironment.listRefs({
           environmentId: input.environmentId,
           input: {
@@ -123,6 +128,18 @@ export function useBranches(input: {
         })
       : null,
   );
+}
+
+export function useMobileGitStatus(input: MobileGitStatusTargetInput) {
+  const target = resolveMobileGitStatusTarget(input);
+  const result = useEnvironmentQuery(
+    target === null
+      ? null
+      : target.demand === "remote"
+        ? vcsEnvironment.remoteStatus(target)
+        : vcsEnvironment.status(target),
+  );
+  return { ...result, target };
 }
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {

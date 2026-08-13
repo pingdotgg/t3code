@@ -9,7 +9,7 @@ import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
-export function useSelectedThreadGitState() {
+export function useSelectedThreadGitState(options: { readonly refsEnabled?: boolean } = {}) {
   const { selectedThread, selectedThreadProject } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
 
@@ -34,9 +34,10 @@ export function useSelectedThreadGitState() {
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
       cwd: selectedThreadProject?.workspaceRoot ?? null,
+      enabled: options.refsEnabled ?? false,
       query: null,
     }),
-    [selectedThread?.environmentId, selectedThreadProject?.workspaceRoot],
+    [options.refsEnabled, selectedThread?.environmentId, selectedThreadProject?.workspaceRoot],
   );
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);
   const selectedThreadBranches = useMemo(

@@ -45,7 +45,9 @@ import {
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
+  resolveGitStatusForActions,
   resolveLiveThreadBranchUpdate,
+  resolvePublishDiscoveryTarget,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
   resolveThreadBranchUpdate,
@@ -380,13 +382,12 @@ interface PublishRepositoryDialogProps {
 
 function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const navigate = useNavigate();
+  const discoveryTarget = resolvePublishDiscoveryTarget({
+    open: props.open,
+    environmentId: props.environmentId,
+  });
   const sourceControlDiscovery = useEnvironmentQuery(
-    props.environmentId === null
-      ? null
-      : sourceControlEnvironment.discovery({
-          environmentId: props.environmentId,
-          input: {},
-        }),
+    discoveryTarget === null ? null : sourceControlEnvironment.discovery(discoveryTarget),
   );
   const [selectedPublishProvider, setSelectedPublishProvider] =
     useState<PublishProviderKind | null>(null);
@@ -1088,7 +1089,7 @@ export default function GitActionsControl({
 
   const gitStatusQuery = useEnvironmentQuery(
     activeEnvironmentId !== null && gitCwd !== null
-      ? vcsEnvironment.status({
+      ? vcsEnvironment.remoteStatus({
           environmentId: activeEnvironmentId,
           input: { cwd: gitCwd },
         })
@@ -1107,7 +1108,8 @@ export default function GitActionsControl({
   // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
-  const gitStatusForActions = gitStatus;
+  const gitStatusForActions = resolveGitStatusForActions(gitStatus);
+  const actionHasPrimaryRemote = gitStatusForActions?.hasPrimaryRemote ?? false;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -1154,13 +1156,18 @@ export default function GitActionsControl({
   }, [gitStatusForActions?.isDefaultRef]);
 
   const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasPrimaryRemote),
-    [gitStatusForActions, hasPrimaryRemote, isGitActionRunning],
+    () => buildMenuItems(gitStatusForActions, isGitActionRunning, actionHasPrimaryRemote),
+    [actionHasPrimaryRemote, gitStatusForActions, isGitActionRunning],
   );
   const quickAction = useMemo(
     () =>
-      resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
-    [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
+      resolveQuickAction(
+        gitStatusForActions,
+        isGitActionRunning,
+        isDefaultRef,
+        actionHasPrimaryRemote,
+      ),
+    [actionHasPrimaryRemote, gitStatusForActions, isDefaultRef, isGitActionRunning],
   );
   const quickActionDisabledReason = quickAction.disabled
     ? (quickAction.hint ?? "This action is currently unavailable.")

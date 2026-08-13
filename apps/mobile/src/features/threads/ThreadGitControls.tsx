@@ -3,11 +3,13 @@ import {
   type GitRunStackedActionResult,
   type ProjectScript,
   ThreadId,
+  type VcsStatusAccumulatedResult,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import {
   type GitActionRequestInput,
   requiresDefaultBranchConfirmation,
+  resolveGitStatusForActions,
   resolveQuickAction,
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
@@ -15,6 +17,7 @@ import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { compactStatusSummary } from "./git/gitStatusPresentation";
 import {
   basename,
   getTerminalStatusLabel,
@@ -37,33 +40,6 @@ function compactMenuBranchLabel(branch: string): string {
   return truncateMiddle(branch, 24);
 }
 
-function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
-  if (!gitStatus) {
-    return "Checking status";
-  }
-  if (!gitStatus.isRepo) {
-    return "Not a repo";
-  }
-
-  const parts: string[] = [];
-  if (gitStatus.hasWorkingTreeChanges) {
-    parts.push(`${gitStatus.workingTree.files.length} changed`);
-  } else if (gitStatus.aheadCount === 0 && gitStatus.behindCount === 0) {
-    parts.push("Clean");
-  }
-  if (gitStatus.aheadCount > 0) {
-    parts.push(`${gitStatus.aheadCount} ahead`);
-  }
-  if (gitStatus.behindCount > 0) {
-    parts.push(`${gitStatus.behindCount} behind`);
-  }
-  if (gitStatus.pr?.state === "open") {
-    parts.push(`PR #${gitStatus.pr.number}`);
-  }
-
-  return parts.join(" · ");
-}
-
 type HeaderItem = Record<string, unknown>;
 type HeaderItems = HeaderItem[];
 type ThreadGitHeaderActionItems = {
@@ -81,8 +57,9 @@ type QuickActionIcon =
 export type ThreadGitMenuProps = {
   readonly environmentId: EnvironmentId | string;
   readonly threadId: ThreadId | string;
+  readonly gitCwd: string | null;
   readonly currentBranch: string | null;
-  readonly gitStatus: VcsStatusResult | null;
+  readonly gitStatus: VcsStatusResult | VcsStatusAccumulatedResult | null;
   readonly gitOperationLabel: string | null;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
@@ -111,6 +88,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const environmentId = props.environmentId;
   const threadId = props.threadId;
   const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
+  const actionGitStatus = resolveGitStatusForActions(gitStatus);
 
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
   const busy = gitOperationLabel !== null;
@@ -147,7 +125,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   })();
 
   const openExistingPr = useCallback(async () => {
-    const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
+    const prUrl = actionGitStatus?.pr?.state === "open" ? actionGitStatus.pr.url : null;
     if (!prUrl) {
       Alert.alert("No open PR", "This branch does not have an open pull request.");
       return;
@@ -155,7 +133,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     if (!(await tryOpenExternalUrl(prUrl, "pull-request"))) {
       Alert.alert("Unable to open PR", "The pull request could not be opened.");
     }
-  }, [gitStatus]);
+  }, [actionGitStatus]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {
@@ -166,9 +144,10 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
         input.action === "commit_push_pr"
           ? input.action
           : null;
-      const branchName = gitStatus?.refName;
+      const branchName = actionGitStatus?.refName;
       if (
         branchName &&
+        props.gitCwd &&
         confirmableAction &&
         !input.featureBranch &&
         requiresDefaultBranchConfirmation(input.action, isDefaultRef)
@@ -178,6 +157,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
           threadId: String(threadId),
           confirmAction: confirmableAction,
           branchName,
+          cwd: props.gitCwd,
           includesCommit: String(
             input.action === "commit_push" || input.action === "commit_push_pr",
           ),
@@ -187,7 +167,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 
       await onRunAction(input);
     },
-    [environmentId, gitStatus, isDefaultRef, onRunAction, navigation, threadId],
+    [actionGitStatus, environmentId, isDefaultRef, onRunAction, navigation, props.gitCwd, threadId],
   );
 
   const runQuickAction = useCallback(async () => {
@@ -326,7 +306,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
         menu: {
           items: [
             {
-              description: compactMenuStatus(props.gitStatus),
+              description: compactStatusSummary(props.gitStatus),
               disabled: true,
               icon: {
                 name: "point.topleft.down.curvedto.point.bottomright.up",
@@ -508,7 +488,7 @@ export function ThreadGitMenu(props: ThreadGitMenuProps) {
         icon="point.topleft.down.curvedto.point.bottomright.up"
         disabled
         onPress={() => {}}
-        subtitle={compactMenuStatus(props.gitStatus)}
+        subtitle={compactStatusSummary(props.gitStatus)}
       >
         <NativeHeaderToolbar.Label>
           {compactMenuBranchLabel(model.currentBranchLabel)}

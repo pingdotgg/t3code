@@ -2,25 +2,30 @@ import {
   type EnvironmentId,
   type VcsListRefsInput,
   type VcsListRefsResult,
-  type VcsStatusResult,
+  type VcsStatusAccumulatedResult,
+  type VcsStatusInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
-import { request, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import {
+  EnvironmentRpcUnavailableError,
+  request,
+  subscribe,
+  type EnvironmentRpcFailure,
+  type EnvironmentRpcInput,
+} from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import {
@@ -30,14 +35,58 @@ import {
 } from "./vcsRefInvalidation.ts";
 
 const OFFLINE_BRANCH_LIST_LIMIT = 100;
-const VCS_REFS_IDLE_TTL_MS = 30_000;
-const VCS_REFS_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-  ),
-);
 
-function canUseVcsRefsCache(input: VcsListRefsInput): boolean {
+export interface VcsStatusDemand {
+  readonly demand: "local" | "remote";
+  readonly target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: VcsStatusInput;
+  };
+}
+
+export function selectVcsStatusAtomForDemand<A>(
+  families: {
+    readonly status: (target: VcsStatusDemand["target"]) => A;
+    readonly remoteStatus: (target: VcsStatusDemand["target"]) => A;
+  },
+  request: VcsStatusDemand,
+): A {
+  return request.demand === "remote"
+    ? families.remoteStatus(request.target)
+    : families.status(request.target);
+}
+
+type VcsListRefsRefreshError =
+  | EnvironmentRpcFailure<typeof WS_METHODS.vcsListRefs>
+  | EnvironmentRpcUnavailableError;
+
+type VcsListRefsFailureHandler = (error: VcsListRefsRefreshError) => Effect.Effect<void>;
+
+function normalizeVcsStatusTarget(target: {
+  readonly environmentId: EnvironmentId;
+  readonly input: VcsStatusInput;
+}) {
+  return {
+    environmentId: target.environmentId,
+    input: { cwd: target.input.cwd.trim() },
+  };
+}
+
+function normalizeVcsListRefsInput(input: VcsListRefsInput): VcsListRefsInput {
+  return {
+    cwd: input.cwd.trim(),
+    ...(input.query === undefined ? {} : { query: input.query.trim() }),
+    ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+    ...(input.includeMatchingRemoteRefs === undefined
+      ? {}
+      : { includeMatchingRemoteRefs: input.includeMatchingRemoteRefs }),
+    ...(input.refKind === undefined ? {} : { refKind: input.refKind }),
+    ...(input.refresh === undefined ? {} : { refresh: input.refresh }),
+    ...(input.limit === undefined ? {} : { limit: input.limit }),
+  };
+}
+
+function canPersistVcsRefsCache(input: VcsListRefsInput): boolean {
   return (
     input.query === undefined &&
     input.cursor === undefined &&
@@ -114,17 +163,20 @@ export const commitVcsRefsRefresh = Effect.fn("CachedVcsRefsState.commitRefresh"
  * misleading.
  */
 export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChanges")(function* (
-  input: VcsListRefsInput,
+  rawInput: VcsListRefsInput,
   expectedRevision?: number,
   registry?: AtomRegistry.AtomRegistry,
   persistedCacheReadable = true,
+  onRefreshFailure: VcsListRefsFailureHandler = () => Effect.void,
 ) {
+  const input = normalizeVcsListRefsInput(rawInput);
   const supervisor = yield* EnvironmentSupervisor;
   const cache = yield* EnvironmentCacheStore;
   const environmentId = supervisor.target.environmentId;
-  const useCache = canUseVcsRefsCache(input);
+  const persistCache = canPersistVcsRefsCache(input);
+  const readCache = persistCache && input.refresh !== true;
   const cached =
-    useCache && persistedCacheReadable
+    readCache && persistedCacheReadable
       ? yield* cache.loadVcsRefs(environmentId, input.cwd).pipe(
           Effect.catch((error) =>
             Effect.logWarning("Could not load cached Git refs.").pipe(
@@ -154,7 +206,7 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
       ),
     );
     if (expectedRevision === undefined || registry === undefined) {
-      if (useCache) yield* persist;
+      if (persistCache) yield* persist;
       return Option.some(refs);
     }
     const committed = yield* commitVcsRefsRefresh(registry, cache, {
@@ -162,7 +214,7 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
       cwd: input.cwd,
       refs,
       expectedRevision,
-      persist: useCache,
+      persist: persistCache,
     });
     return committed ? Option.some(refs) : Option.none<VcsListRefsResult>();
   });
@@ -175,7 +227,7 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
       }),
     ),
   );
-  const refreshedRefs = Stream.concat(
+  const refreshedRefs: Stream.Stream<VcsListRefsResult, VcsListRefsRefreshError> = Stream.concat(
     Stream.fromEffect(SubscriptionRef.get(supervisor.state)),
     SubscriptionRef.changes(supervisor.state),
   ).pipe(
@@ -197,7 +249,7 @@ export const makeCachedVcsRefsChanges = Effect.fn("CachedVcsRefsState.makeChange
               ),
             ),
           ).pipe(
-            Stream.retry(VCS_REFS_RETRY_SCHEDULE),
+            Stream.catch((error) => Stream.fromEffect(onRefreshFailure(error)).pipe(Stream.drain)),
             Stream.filterMap((refs) =>
               Option.match(refs, {
                 onNone: () => Result.failVoid,
@@ -216,6 +268,7 @@ export function cachedVcsRefsChanges(
   input: VcsListRefsInput,
   expectedRevision: number,
   persistedCacheReadable: boolean,
+  onRefreshFailure?: VcsListRefsFailureHandler,
 ) {
   return followStreamInEnvironment(
     environmentId,
@@ -227,6 +280,7 @@ export function cachedVcsRefsChanges(
           expectedRevision,
           registry,
           persistedCacheReadable,
+          onRefreshFailure,
         );
       }),
     ),
@@ -247,10 +301,18 @@ export function createVcsEnvironmentAtoms<R, E>(
             input,
             state.revision,
             state.persistedCacheReadable,
+            (error) =>
+              Effect.sync(() =>
+                get.setSelf(
+                  AsyncResult.failWithPrevious(error, {
+                    previous: get.self<AsyncResult.AsyncResult<VcsListRefsResult, unknown>>(),
+                  }),
+                ),
+              ),
           );
         })
         .pipe(
-          Atom.setIdleTTL(VCS_REFS_IDLE_TTL_MS),
+          Atom.setIdleTTL(0),
           Atom.withLabel(`environment-data:vcs:list-refs:${environmentId}:${inputKey}`),
         );
     }),
@@ -258,7 +320,10 @@ export function createVcsEnvironmentAtoms<R, E>(
   const listRefs = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: VcsListRefsInput;
-  }) => listRefsByEnvironment(target.environmentId)(JSON.stringify(target.input));
+  }) =>
+    listRefsByEnvironment(target.environmentId)(
+      JSON.stringify(normalizeVcsListRefsInput(target.input)),
+    );
   const invalidateRefs = (
     target: { readonly environmentId: EnvironmentId; readonly input: { readonly cwd: string } },
     registry: AtomRegistry.AtomRegistry,
@@ -268,21 +333,39 @@ export function createVcsEnvironmentAtoms<R, E>(
       cwd: target.input.cwd,
     });
 
-  return {
-    listRefs,
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:vcs:status",
+  const createStatusFamily = (includeRemote: boolean, label: string) => {
+    const family = createEnvironmentSubscriptionAtomFamily(runtime, {
+      idleTtlMs: 0,
+      label,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
-        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
+        subscribe(WS_METHODS.subscribeVcsStatus, input, {
+          onExpectedFailure: () =>
+            Effect.logWarning("VCS status subscription failed; waiting for the next RPC session.", {
+              includeRemote,
+            }),
+        }).pipe(
           Stream.mapAccum(
-            () => null as VcsStatusResult | null,
+            () => null as VcsStatusAccumulatedResult | null,
             (current, event) => {
               const next = applyGitStatusStreamEvent(current, event);
               return [next, [next]] as const;
             },
           ),
         ),
-    }),
+    });
+    return (target: { readonly environmentId: EnvironmentId; readonly input: VcsStatusInput }) => {
+      const normalized = normalizeVcsStatusTarget(target);
+      return family({
+        environmentId: normalized.environmentId,
+        input: { ...normalized.input, includeRemote },
+      });
+    };
+  };
+
+  return {
+    listRefs,
+    status: createStatusFamily(false, "environment-data:vcs:status"),
+    remoteStatus: createStatusFamily(true, "environment-data:vcs:remote-status"),
     pull: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:pull",
       tag: WS_METHODS.vcsPull,

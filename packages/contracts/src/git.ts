@@ -104,6 +104,12 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
+export const VcsStatusSubscriptionInput = Schema.Struct({
+  ...VcsStatusInput.fields,
+  includeRemote: Schema.optional(Schema.Boolean),
+});
+export type VcsStatusSubscriptionInput = typeof VcsStatusSubscriptionInput.Type;
+
 export const VcsPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });
@@ -238,17 +244,22 @@ export const VcsStatusResult = Schema.Struct({
   ...VcsStatusRemoteShape,
 });
 export type VcsStatusResult = typeof VcsStatusResult.Type;
+export type VcsStatusAccumulatedResult = VcsStatusResult & {
+  readonly remoteStatusKnown: boolean;
+};
 
 export const VcsStatusStreamEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
     local: VcsStatusLocalResult,
     remote: Schema.NullOr(VcsStatusRemoteResult),
+    remoteRefName: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   }),
   Schema.TaggedStruct("localUpdated", {
     local: VcsStatusLocalResult,
   }),
   Schema.TaggedStruct("remoteUpdated", {
     remote: Schema.NullOr(VcsStatusRemoteResult),
+    remoteRefName: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   }),
 ]);
 export type VcsStatusStreamEvent = typeof VcsStatusStreamEvent.Type;

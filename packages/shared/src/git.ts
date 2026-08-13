@@ -1,11 +1,13 @@
 import type {
   VcsRef,
   SourceControlProviderInfo,
+  VcsStatusAccumulatedResult as VcsStatusAccumulatedResultType,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
+export type { VcsStatusAccumulatedResult } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
@@ -231,6 +233,23 @@ export function mergeGitStatusParts(
   };
 }
 
+function mergeAccumulatedGitStatusParts(
+  local: VcsStatusLocalResult,
+  remote: VcsStatusRemoteResult | null,
+  remoteStatusKnown: boolean,
+): VcsStatusAccumulatedResultType {
+  return {
+    ...mergeGitStatusParts(local, remote),
+    remoteStatusKnown,
+  };
+}
+
+function hasAccumulatedRemoteStatus(
+  status: VcsStatusResult,
+): status is VcsStatusAccumulatedResultType {
+  return "remoteStatusKnown" in status && typeof status.remoteStatusKnown === "boolean";
+}
+
 function toRemoteStatusPart(status: VcsStatusResult): VcsStatusRemoteResult {
   return {
     hasUpstream: status.hasUpstream,
@@ -260,15 +279,48 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
 export function applyGitStatusStreamEvent(
   current: VcsStatusResult | null,
   event: VcsStatusStreamEvent,
-): VcsStatusResult {
+): VcsStatusAccumulatedResultType {
   switch (event._tag) {
-    case "snapshot":
-      return mergeGitStatusParts(event.local, event.remote);
-    case "localUpdated":
-      return mergeGitStatusParts(event.local, current ? toRemoteStatusPart(current) : null);
+    case "snapshot": {
+      const hasRemoteBinding = event.remoteRefName !== undefined;
+      const remoteMatchesLocal = hasRemoteBinding
+        ? event.remoteRefName === event.local.refName
+        : event.remote !== null;
+      return mergeAccumulatedGitStatusParts(
+        event.local,
+        remoteMatchesLocal ? event.remote : null,
+        remoteMatchesLocal,
+      );
+    }
+    case "localUpdated": {
+      const sameRepositoryRef =
+        current !== null &&
+        current.isRepo === event.local.isRepo &&
+        current.refName === event.local.refName;
+      const preserveRemote = sameRepositoryRef && hasAccumulatedRemoteStatus(current);
+      return mergeAccumulatedGitStatusParts(
+        event.local,
+        preserveRemote ? toRemoteStatusPart(current) : null,
+        preserveRemote ? current.remoteStatusKnown : false,
+      );
+    }
     case "remoteUpdated":
       if (current === null) {
-        return mergeGitStatusParts(
+        if (event.remoteRefName !== undefined) {
+          return mergeAccumulatedGitStatusParts(
+            {
+              isRepo: true,
+              hasPrimaryRemote: false,
+              isDefaultRef: false,
+              refName: null,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            },
+            event.remoteRefName === null ? event.remote : null,
+            event.remoteRefName === null,
+          );
+        }
+        return mergeAccumulatedGitStatusParts(
           {
             isRepo: true,
             hasPrimaryRemote: false,
@@ -278,8 +330,19 @@ export function applyGitStatusStreamEvent(
             workingTree: { files: [], insertions: 0, deletions: 0 },
           },
           event.remote,
+          event.remote !== null,
         );
       }
-      return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
+      if (!current.isRepo) {
+        return hasAccumulatedRemoteStatus(current)
+          ? current
+          : mergeAccumulatedGitStatusParts(toLocalStatusPart(current), null, false);
+      }
+      if (event.remoteRefName !== undefined && event.remoteRefName !== current.refName) {
+        return hasAccumulatedRemoteStatus(current)
+          ? current
+          : mergeAccumulatedGitStatusParts(toLocalStatusPart(current), null, false);
+      }
+      return mergeAccumulatedGitStatusParts(toLocalStatusPart(current), event.remote, true);
   }
 }

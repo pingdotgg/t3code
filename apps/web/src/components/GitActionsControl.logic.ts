@@ -1,6 +1,8 @@
 import type {
+  EnvironmentId,
   GitRunStackedActionResult,
   GitStackedAction,
+  VcsStatusAccumulatedResult,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
@@ -42,6 +44,32 @@ export type DefaultBranchConfirmableAction =
   | "create_pr"
   | "commit_push"
   | "commit_push_pr";
+
+export function resolvePublishDiscoveryTarget(input: {
+  open: boolean;
+  environmentId: EnvironmentId | null;
+}): { environmentId: EnvironmentId; input: {} } | null {
+  if (!input.open || input.environmentId === null) return null;
+  return { environmentId: input.environmentId, input: {} };
+}
+
+export function resolveGitStatusForActions(
+  gitStatus: VcsStatusResult | VcsStatusAccumulatedResult | null,
+): VcsStatusResult | null {
+  if (gitStatus === null || !("remoteStatusKnown" in gitStatus) || gitStatus.remoteStatusKnown) {
+    return gitStatus;
+  }
+
+  return {
+    ...gitStatus,
+    hasPrimaryRemote: false,
+    hasUpstream: false,
+    aheadCount: 0,
+    behindCount: 0,
+    aheadOfDefaultCount: 0,
+    pr: null,
+  };
+}
 
 function resolveChangeRequestTerminology(
   gitStatus: VcsStatusResult | null,

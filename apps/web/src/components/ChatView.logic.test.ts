@@ -30,6 +30,7 @@ import {
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
+  shouldMountDiffPanel,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -73,6 +74,19 @@ describe("environment reconnect warning grace", () => {
       false,
     );
   });
+});
+
+describe("DiffPanel ownership", () => {
+  it.each([
+    ["closed", false, "diff", false],
+    ["open", true, "diff", true],
+    ["closed again", false, "diff", false],
+  ] as const)(
+    "is %s when panel open is %s and the active surface is %s",
+    (_phase, rightPanelOpen, activeSurfaceKind, expected) => {
+      expect(shouldMountDiffPanel({ rightPanelOpen, activeSurfaceKind })).toBe(expected);
+    },
+  );
 });
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {

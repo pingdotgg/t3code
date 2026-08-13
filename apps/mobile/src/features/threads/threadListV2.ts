@@ -27,6 +27,57 @@ export { snoozeWakeLabel };
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
+export interface ThreadListV2ChangeRequestSnapshot {
+  /** Normalized client status identity: JSON `[environmentId, cwd]`. */
+  readonly targetKey: string;
+  /** Local ref observed for this target. */
+  readonly refName: string | null;
+  /** `undefined` is remote-unknown; `null` is a known absence. */
+  readonly state: "open" | "closed" | "merged" | null | undefined;
+}
+
+export function threadListV2ChangeRequestTargetKey(input: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string | null;
+}): string | null {
+  if (input.cwd === null) return null;
+  const cwd = input.cwd.trim();
+  return cwd.length === 0 ? null : JSON.stringify([input.environmentId, cwd]);
+}
+
+/**
+ * A row remount begins remote-unknown even when the shared target cache already
+ * answered. Preserve the prior answer only while both target and ref identity
+ * remain unchanged; either identity changing invalidates it immediately.
+ */
+export function mergeThreadListV2ChangeRequestSnapshot(
+  current: ThreadListV2ChangeRequestSnapshot | undefined,
+  next: ThreadListV2ChangeRequestSnapshot,
+): ThreadListV2ChangeRequestSnapshot {
+  return next.state === undefined &&
+    current?.targetKey === next.targetKey &&
+    current.refName === next.refName
+    ? current
+    : next;
+}
+
+export function snapshotsForThreadListVisibility<T>(
+  snapshots: ReadonlyMap<string, T>,
+  visible: boolean,
+): ReadonlyMap<string, T> {
+  return visible || snapshots.size === 0 ? snapshots : new Map();
+}
+
+export function resolveThreadListV2ChangeRequestState(
+  snapshot: ThreadListV2ChangeRequestSnapshot | undefined,
+  threadRefName: string,
+  targetKey: string | null,
+): ThreadListV2ChangeRequestSnapshot["state"] {
+  return snapshot?.targetKey === targetKey && snapshot.refName === threadRefName
+    ? snapshot.state
+    : undefined;
+}
+
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;
@@ -319,8 +370,11 @@ export function buildThreadListV2Items(input: {
   }> | null;
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
-  /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
-  readonly changeRequestStateByKey?: ReadonlyMap<string, "open" | "closed" | "merged">;
+  /** Project roots keyed by `environmentId:projectId`. A thread worktree wins. */
+  readonly projectCwdByKey?: ReadonlyMap<string, string>;
+  /** Target/ref-bound PR observations reported by visible rows
+      (`environmentId:threadId` keys). */
+  readonly changeRequestSnapshotByKey?: ReadonlyMap<string, ThreadListV2ChangeRequestSnapshot>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
       un-settle nor pin them. Absent = no gating (tests). */
@@ -380,8 +434,20 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
+    const changeRequestSnapshot = input.changeRequestSnapshotByKey?.get(
+      `${thread.environmentId}:${thread.id}`,
+    );
+    const targetKey = threadListV2ChangeRequestTargetKey({
+      environmentId: thread.environmentId,
+      cwd:
+        thread.worktreePath ??
+        input.projectCwdByKey?.get(`${thread.environmentId}:${thread.projectId}`) ??
+        null,
+    });
     const changeRequestState =
-      input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
+      thread.branch === null
+        ? null
+        : resolveThreadListV2ChangeRequestState(changeRequestSnapshot, thread.branch, targetKey);
     // Visibility parity with web: snooze outranks everything, including a
     // pin — a snoozed thread leaves the list until it wakes (or raises its
     // hand). The pin (and its pinOrderKey) survives underneath, so a woken
@@ -405,7 +471,14 @@ export function buildThreadListV2Items(input: {
     }
     if (
       supportsSettlement &&
-      effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+      effectiveSettled(thread, {
+        now,
+        // Unknown remote state cannot stand in for a known absence of an open
+        // pull request. Explicit server-backed settlement still resolves while
+        // the passive row waits for a same-ref cached result.
+        autoSettleAfterDays: changeRequestState === undefined ? null : autoSettleAfterDays,
+        changeRequestState: changeRequestState ?? null,
+      })
     ) {
       settled.push(thread);
     } else {

@@ -16,12 +16,17 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  mergeThreadListV2ChangeRequestSnapshot,
+  snapshotsForThreadListVisibility,
+  resolveThreadListV2ChangeRequestState,
   resolveThreadListV2Enabled,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
   sortThreadsForListV2,
+  threadListV2ChangeRequestTargetKey,
+  type ThreadListV2ChangeRequestSnapshot,
 } from "./threadListV2";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -262,7 +267,213 @@ describe("sortThreadsForListV2", () => {
   });
 });
 
+describe("Thread List v2 change-request snapshots", () => {
+  const targetA = threadListV2ChangeRequestTargetKey({ environmentId, cwd: " /workspace/a " });
+  const targetB = threadListV2ChangeRequestTargetKey({ environmentId, cwd: "/workspace/b" });
+  const knownA: ThreadListV2ChangeRequestSnapshot = {
+    targetKey: targetA!,
+    refName: "feature/shared",
+    state: "merged",
+  };
+
+  it("normalizes target identity and resolves only the current target and ref", () => {
+    expect(targetA).toBe(JSON.stringify([environmentId, "/workspace/a"]));
+    expect(resolveThreadListV2ChangeRequestState(knownA, "feature/shared", targetA)).toBe("merged");
+    expect(
+      resolveThreadListV2ChangeRequestState(knownA, "feature/shared", targetB),
+    ).toBeUndefined();
+    expect(resolveThreadListV2ChangeRequestState(knownA, "feature/other", targetA)).toBeUndefined();
+  });
+
+  it("preserves known state through same-target remount unknown only", () => {
+    expect(
+      mergeThreadListV2ChangeRequestSnapshot(knownA, {
+        targetKey: targetA!,
+        refName: "feature/shared",
+        state: undefined,
+      }),
+    ).toBe(knownA);
+
+    expect(
+      mergeThreadListV2ChangeRequestSnapshot(knownA, {
+        targetKey: targetB!,
+        refName: "feature/shared",
+        state: undefined,
+      }),
+    ).toEqual({ targetKey: targetB, refName: "feature/shared", state: undefined });
+    expect(
+      mergeThreadListV2ChangeRequestSnapshot(knownA, {
+        targetKey: targetA!,
+        refName: "feature/other",
+        state: undefined,
+      }),
+    ).toEqual({ targetKey: targetA, refName: "feature/other", state: undefined });
+  });
+
+  it("drops retained snapshots while the owning surface is hidden", () => {
+    const snapshots = new Map([["thread-a", knownA]]);
+
+    expect(snapshotsForThreadListVisibility(snapshots, true)).toBe(snapshots);
+    expect(snapshotsForThreadListVisibility(snapshots, false)).toEqual(new Map());
+  });
+});
+
 describe("buildThreadListV2Items", () => {
+  it("keeps inactivity auto-settlement for branchless threads without subscribing", () => {
+    const thread = makeThread({
+      id: ThreadId.make("branchless-inactive"),
+      title: "Branchless inactive",
+      branch: null,
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("branchless-inactive-turn"),
+        state: "completed",
+        requestedAt: "2026-05-01T00:00:00.000Z",
+        startedAt: "2026-05-01T00:00:00.000Z",
+        completedAt: "2026-05-01T00:10:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items[0]?.variant).toBe("slim");
+  });
+
+  it("keeps an inactive thread active while its branch PR state is unknown", () => {
+    const thread = makeThread({
+      id: ThreadId.make("remote-unknown"),
+      title: "Remote status unknown",
+      branch: "feature/current",
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("remote-unknown-turn"),
+        state: "completed",
+        requestedAt: "2026-05-01T00:00:00.000Z",
+        startedAt: "2026-05-01T00:00:00.000Z",
+        completedAt: "2026-05-01T00:10:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestSnapshotByKey: new Map(),
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["remote-unknown", "card"],
+    ]);
+  });
+
+  it("ignores branch A state after switching to B until B becomes known", () => {
+    const thread = makeThread({
+      id: ThreadId.make("ref-transition"),
+      title: "Ref transition",
+      branch: "feature/a",
+      worktreePath: "/worktree",
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("ref-transition-turn"),
+        state: "completed",
+        requestedAt: "2026-05-01T00:00:00.000Z",
+        startedAt: "2026-05-01T00:00:00.000Z",
+        completedAt: "2026-05-01T00:10:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const threadKey = `${environmentId}:${thread.id}`;
+    const targetKey = threadListV2ChangeRequestTargetKey({ environmentId, cwd: "/worktree" })!;
+    const build = (branch: string, snapshot: ThreadListV2ChangeRequestSnapshot) =>
+      buildThreadListV2Items({
+        threads: [{ ...thread, branch }],
+        environmentId: null,
+        searchQuery: "",
+        changeRequestSnapshotByKey: new Map([[threadKey, snapshot]]),
+        now: NOW,
+      });
+
+    expect(
+      build("feature/a", {
+        targetKey,
+        refName: "feature/a",
+        state: "merged",
+      }).items[0]?.variant,
+    ).toBe("slim");
+    // Local status observes B before the durable shell metadata follows the
+    // checkout. That evidence must invalidate A immediately.
+    expect(
+      build("feature/a", { targetKey, refName: "feature/b", state: undefined }).items[0]?.variant,
+    ).toBe("card");
+    expect(
+      build("feature/b", { targetKey, refName: "feature/b", state: undefined }).items[0]?.variant,
+    ).toBe("card");
+    // A same-ref known-null result is materially different from unknown: no
+    // open PR blocks the normal inactivity settlement path.
+    expect(
+      build("feature/b", {
+        targetKey,
+        refName: "feature/b",
+        state: null,
+      }).items[0]?.variant,
+    ).toBe("slim");
+    expect(
+      build("feature/b", {
+        targetKey,
+        refName: "feature/b",
+        state: "merged",
+      }).items[0]?.variant,
+    ).toBe("slim");
+  });
+
+  it("ignores same-ref state from an old cwd until the current target becomes known", () => {
+    const thread = makeThread({
+      id: ThreadId.make("target-transition"),
+      title: "Target transition",
+      branch: "feature/shared",
+      latestUserMessageAt: "2026-05-01T00:00:00.000Z",
+      latestTurn: {
+        turnId: TurnId.make("target-transition-turn"),
+        state: "completed",
+        requestedAt: "2026-05-01T00:00:00.000Z",
+        startedAt: "2026-05-01T00:00:00.000Z",
+        completedAt: "2026-05-01T00:10:00.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const threadKey = `${environmentId}:${thread.id}`;
+    const projectKey = `${environmentId}:${thread.projectId}`;
+    const targetA = threadListV2ChangeRequestTargetKey({ environmentId, cwd: "/workspace/a" })!;
+    const targetB = threadListV2ChangeRequestTargetKey({ environmentId, cwd: "/workspace/b" })!;
+    const build = (snapshot: ThreadListV2ChangeRequestSnapshot) =>
+      buildThreadListV2Items({
+        threads: [thread],
+        environmentId: null,
+        searchQuery: "",
+        projectCwdByKey: new Map([[projectKey, " /workspace/b "]]),
+        changeRequestSnapshotByKey: new Map([[threadKey, snapshot]]),
+        now: NOW,
+      });
+
+    expect(
+      build({ targetKey: targetA, refName: "feature/shared", state: "merged" }).items[0]?.variant,
+    ).toBe("card");
+    expect(
+      build({ targetKey: targetB, refName: "feature/shared", state: undefined }).items[0]?.variant,
+    ).toBe("card");
+    expect(
+      build({ targetKey: targetB, refName: "feature/shared", state: "merged" }).items[0]?.variant,
+    ).toBe("slim");
+  });
+
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({
       threads: [

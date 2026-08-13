@@ -71,7 +71,6 @@ function useAction<
   readonly label: string;
   readonly scope: SourceControlActionScope;
   readonly action: (...args: TArgs) => Promise<R>;
-  readonly onSuccess?: () => void;
   readonly managedExternally?: boolean;
 }): SourceControlActionState<TArgs, R> {
   const operation = ACTION_OPERATION[input.kind];
@@ -88,9 +87,6 @@ function useAction<
         AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R>>
       > => {
         const result = await input.action(...args);
-        if (AsyncResult.isSuccess(result)) {
-          input.onSuccess?.();
-        }
         return result as AtomCommandResult<AtomCommandSuccess<R>, AtomCommandFailure<R>>;
       };
       return input.managedExternally === true
@@ -105,7 +101,7 @@ function useAction<
             execute,
           );
     },
-    [input.action, input.label, input.managedExternally, input.onSuccess, input.scope, operation],
+    [input.action, input.label, input.managedExternally, input.scope, operation],
   );
 
   return {
@@ -163,14 +159,6 @@ export function useVcsInitAction(scope: SourceControlActionScope) {
 
 export function useVcsPullAction(scope: SourceControlActionScope) {
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
-  const status = useEnvironmentQuery(
-    scope.environmentId !== null && scope.cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
-        })
-      : null,
-  );
   const action = useCallback(async () => {
     const target = resolveScope(scope);
     if (target === null) {
@@ -194,7 +182,6 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
     label: "Pulling latest changes",
     scope,
     action,
-    onSuccess: status.refresh,
   });
 }
 
@@ -202,14 +189,6 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
   const runStackedAction = useAtomCommand(vcsActionManager.runStackedAction(scope), {
     reportFailure: false,
   });
-  const status = useEnvironmentQuery(
-    scope.environmentId !== null && scope.cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
-        })
-      : null,
-  );
 
   const action = useCallback(
     async (input: {
@@ -248,7 +227,6 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
     label: "Running source control action",
     scope,
     action,
-    onSuccess: status.refresh,
     managedExternally: true,
   });
 }
@@ -257,14 +235,6 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
-  const status = useEnvironmentQuery(
-    scope.environmentId !== null && scope.cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
-        })
-      : null,
-  );
   const action = useCallback(
     async (input: {
       provider: "github" | "gitlab" | "bitbucket" | "azure-devops";
@@ -300,7 +270,6 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
     label: "Publishing repository",
     scope,
     action,
-    onSuccess: status.refresh,
   });
 }
 

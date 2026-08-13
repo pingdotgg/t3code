@@ -1,5 +1,5 @@
 import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -7,12 +7,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/AppText";
 import { cn } from "../../../lib/cn";
-import { useEnvironmentQuery } from "../../../state/query";
+import { useMobileGitStatus } from "../../../state/queries";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
-import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
 
 type GitBranchesSheetProps = StaticScreenProps<{
@@ -20,22 +19,29 @@ type GitBranchesSheetProps = StaticScreenProps<{
   readonly threadId: string;
 }>;
 
-export function GitBranchesSheet(_props: GitBranchesSheetProps) {
+export function GitBranchesSheet(props: GitBranchesSheetProps) {
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
-  const gitState = useSelectedThreadGitState();
+  const gitStatus = useMobileGitStatus({
+    active: true,
+    focused: isFocused,
+    platform: Platform.OS,
+    route: props.route.params,
+    selected:
+      selectedThread === null
+        ? null
+        : {
+            environmentId: selectedThread.environmentId,
+            threadId: selectedThread.id,
+            cwd: selectedThreadCwd,
+          },
+    surface: "branches",
+  });
+  const gitState = useSelectedThreadGitState({ refsEnabled: gitStatus.target !== null });
   const gitActions = useSelectedThreadGitActions();
-
-  const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
-      ? vcsEnvironment.status({
-          environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
-        })
-      : null,
-  );
 
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentWorktreePath = selectedThreadWorktreePath;
@@ -86,7 +92,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             onPress={() => {
               const branch = sanitizeFeatureBranchName(newBranchName.trim());
               if (branch.length === 0) return;
-              void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
+              void gitActions.onCreateSelectedThreadBranch(branch).then((created) => {
+                if (!created) return;
                 setNewBranchName("");
                 navigation.goBack();
               });

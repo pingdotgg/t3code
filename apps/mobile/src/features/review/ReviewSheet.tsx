@@ -1,6 +1,6 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   NativeHeaderToolbar,
   NativeStackScreenOptions,
@@ -46,12 +46,11 @@ import {
   useAdaptiveWorkspacePaneRole,
   useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
-import { useEnvironmentQuery } from "../../state/query";
+import { useMobileGitStatus } from "../../state/queries";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { vcsEnvironment } from "../../state/vcs";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { ThreadGitMenu } from "../threads/ThreadGitControls";
 import { useReviewCacheForThread } from "./reviewState";
@@ -342,6 +341,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   useAdaptiveWorkspacePaneRole("inspector");
   const { panes, showAuxiliaryPane, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const headerIcon = String(useThemeColor("--color-icon"));
@@ -356,18 +356,27 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const gitStatusQuery = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
-      ? vcsEnvironment.status({
-          environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
-        })
-      : null,
-  );
   // The selection-based git hooks only apply when this review belongs to the
   // selected thread (it always does when reached from the thread's toolbar).
   const gitMenuAvailable =
-    selectedThread !== null && String(selectedThread.id) === String(threadId);
+    selectedThread !== null &&
+    String(selectedThread.environmentId) === String(environmentId) &&
+    String(selectedThread.id) === String(threadId);
+  const gitStatusQuery = useMobileGitStatus({
+    active: true,
+    focused: isFocused,
+    platform: Platform.OS,
+    route: { environmentId: String(environmentId), threadId: String(threadId) },
+    selected:
+      selectedThread === null
+        ? null
+        : {
+            environmentId: selectedThread.environmentId,
+            threadId: selectedThread.id,
+            cwd: selectedThreadCwd,
+          },
+    surface: "review",
+  });
   const selectedTheme = colorScheme === "dark" ? "dark" : "light";
   // With a solid (non-overlay) header the content lays out below the header
   // natively, so no manual top inset is needed. (Android renders its own
@@ -699,6 +708,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
             <ThreadGitMenu
               environmentId={environmentId}
               threadId={threadId}
+              gitCwd={selectedThreadCwd}
               currentBranch={selectedThread.branch ?? null}
               gitStatus={gitStatusQuery.data}
               gitOperationLabel={gitState.gitOperationLabel}

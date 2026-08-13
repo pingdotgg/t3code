@@ -1,16 +1,81 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
-import { assert, describe, it } from "vite-plus/test";
+import { EnvironmentId, type VcsStatusResult } from "@t3tools/contracts";
+import { assert, describe, expect, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
+  resolveGitStatusForActions,
   resolveLiveThreadBranchUpdate,
+  resolvePublishDiscoveryTarget,
   resolveQuickAction,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
+
+const environmentId = EnvironmentId.make("env-1");
+
+describe("publish discovery ownership", () => {
+  it.each([
+    ["closed", false, null],
+    ["open", true, { environmentId, input: {} }],
+    ["closed again", false, null],
+  ] as const)("has a %s target", (_phase, open, expected) => {
+    assert.deepEqual(resolvePublishDiscoveryTarget({ open, environmentId }), expected);
+  });
+});
+
+describe("resolveGitStatusForActions", () => {
+  it("keeps local commit available while withholding unknown remote actions", () => {
+    const localOnly = {
+      ...status({
+        hasWorkingTreeChanges: true,
+        hasUpstream: true,
+        aheadCount: 2,
+        behindCount: 1,
+        pr: {
+          number: 10,
+          title: "Stale PR",
+          url: "https://example.com/pr/10",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open" as const,
+        },
+      }),
+      remoteStatusKnown: false,
+    };
+    const actionStatus = resolveGitStatusForActions(localOnly);
+
+    expect(actionStatus).toMatchObject({
+      hasWorkingTreeChanges: true,
+      hasPrimaryRemote: false,
+      hasUpstream: false,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    });
+    expect(buildMenuItems(actionStatus, false, actionStatus?.hasPrimaryRemote)).toEqual([
+      expect.objectContaining({ id: "commit", disabled: false }),
+    ]);
+    expect(resolveQuickAction(actionStatus, false, false, actionStatus?.hasPrimaryRemote)).toEqual({
+      label: "Commit",
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
+    });
+    expect(resolveGitStatusForActions({ ...localOnly, remoteStatusKnown: true })).toEqual({
+      ...localOnly,
+      remoteStatusKnown: true,
+    });
+  });
+
+  it("preserves unary and legacy status results without accumulated knownness", () => {
+    const unaryStatus = status({ hasWorkingTreeChanges: true });
+
+    expect(resolveGitStatusForActions(unaryStatus)).toBe(unaryStatus);
+  });
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {

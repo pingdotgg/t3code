@@ -2,6 +2,7 @@ import type {
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStackedAction,
+  VcsStatusAccumulatedResult,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
@@ -44,6 +45,16 @@ export type GitActionRequestInput = Pick<
   "action" | "commitMessage" | "featureBranch" | "filePaths"
 >;
 
+type GitActionStatus = VcsStatusResult | VcsStatusAccumulatedResult;
+
+function hasUnknownRemoteStatus(status: GitActionStatus): boolean {
+  return "remoteStatusKnown" in status && status.remoteStatusKnown === false;
+}
+
+export function resolveGitStatusForActions(status: GitActionStatus | null): VcsStatusResult | null {
+  return status !== null && !hasUnknownRemoteStatus(status) ? status : null;
+}
+
 export function buildGitActionProgressStages(input: {
   action: GitStackedAction;
   hasCustomCommitMessage: boolean;
@@ -83,11 +94,24 @@ export function buildGitActionProgressStages(input: {
 }
 
 export function buildMenuItems(
-  gitStatus: VcsStatusResult | null,
+  status: GitActionStatus | null,
   isBusy: boolean,
   hasOriginRemote = true,
 ): GitActionMenuItem[] {
-  if (!gitStatus) return [];
+  if (!status) return [];
+  if (hasUnknownRemoteStatus(status)) {
+    return [
+      {
+        id: "commit",
+        label: "Commit",
+        disabled: isBusy || !status.hasWorkingTreeChanges,
+        icon: "commit",
+        kind: "open_dialog",
+        dialogAction: "commit",
+      },
+    ];
+  }
+  const gitStatus = status;
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -149,7 +173,7 @@ export function buildMenuItems(
 }
 
 export function resolveQuickAction(
-  gitStatus: VcsStatusResult | null,
+  status: GitActionStatus | null,
   isBusy: boolean,
   isDefaultBranch = false,
   hasOriginRemote = true,
@@ -158,7 +182,7 @@ export function resolveQuickAction(
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
   }
 
-  if (!gitStatus) {
+  if (!status) {
     return {
       label: "Commit",
       disabled: true,
@@ -166,6 +190,25 @@ export function resolveQuickAction(
       hint: "Git status is unavailable.",
     };
   }
+  if (hasUnknownRemoteStatus(status)) {
+    if (status.refName === null) {
+      return {
+        label: "Commit",
+        disabled: true,
+        kind: "show_hint",
+        hint: "Create and checkout a branch before committing.",
+      };
+    }
+    return status.hasWorkingTreeChanges
+      ? { label: "Commit", disabled: false, kind: "run_action", action: "commit" }
+      : {
+          label: "Commit",
+          disabled: true,
+          kind: "show_hint",
+          hint: "Remote Git status is unavailable.",
+        };
+  }
+  const gitStatus = status;
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -285,7 +328,7 @@ export function resolveQuickAction(
 
 export function getGitActionDisabledReason(input: {
   item: GitActionMenuItem;
-  gitStatus: VcsStatusResult | null;
+  gitStatus: GitActionStatus | null;
   isBusy: boolean;
   hasOriginRemote: boolean;
 }): string | null {
@@ -293,6 +336,11 @@ export function getGitActionDisabledReason(input: {
   if (!item.disabled) return null;
   if (isBusy) return "Git action in progress.";
   if (!gitStatus) return "Git status is unavailable.";
+  if (hasUnknownRemoteStatus(gitStatus)) {
+    return item.id === "commit" && !gitStatus.hasWorkingTreeChanges
+      ? "Worktree is clean. Make changes before committing."
+      : "Remote Git status is unavailable.";
+  }
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;

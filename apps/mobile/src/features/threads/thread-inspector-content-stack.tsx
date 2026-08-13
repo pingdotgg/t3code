@@ -1,6 +1,8 @@
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { View } from "react-native";
 
+import { isMobileGitInspectorActive } from "../../state/mobile-git-status-target";
+
 export type ThreadInspectorMode = "route" | "git" | "files";
 
 const INSPECTOR_PREWARM_DELAY_MS = 350;
@@ -34,8 +36,10 @@ function InspectorContentPane(props: {
 
 export function ThreadInspectorContentStack(props: {
   readonly Files: ComponentType;
-  readonly Git: ComponentType;
+  readonly Git: ComponentType<{ readonly active: boolean }>;
   readonly mode: ThreadInspectorMode;
+  readonly paneVisible: boolean;
+  readonly registrationActive: boolean;
   readonly Route?: ComponentType;
 }) {
   const [mountedModes, setMountedModes] = useState<ReadonlySet<ThreadInspectorMode>>(
@@ -86,7 +90,13 @@ export function ThreadInspectorContentStack(props: {
         mounted={mountedModes.has("git") || props.mode === "git"}
         visible={props.mode === "git"}
       >
-        <Git />
+        <Git
+          active={isMobileGitInspectorActive({
+            mode: props.mode,
+            paneVisible: props.paneVisible,
+            registrationActive: props.registrationActive,
+          })}
+        />
       </InspectorContentPane>
       {Route ? (
         <InspectorContentPane

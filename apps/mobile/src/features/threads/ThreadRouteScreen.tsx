@@ -2,6 +2,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
   useFocusEffect,
+  useIsFocused,
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
@@ -15,10 +16,9 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useMobileGitStatus } from "../../state/queries";
 import { useWorkspaceState } from "../../state/workspace";
-import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
-import { vcsEnvironment } from "../../state/vcs";
 
 import { EmptyState } from "../../components/EmptyState";
 import {
@@ -215,6 +215,7 @@ function ThreadRouteContent(
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const navigation = useNavigation();
+  const isFocused = useIsFocused();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
@@ -305,14 +306,21 @@ function ThreadRouteContent(
     .filter(Boolean)
     .join(" · ");
   /* ─── Git status for native header trigger ───────────────────────── */
-  const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
-      ? vcsEnvironment.status({
-          environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
-        })
-      : null,
-  );
+  const gitStatus = useMobileGitStatus({
+    active: true,
+    focused: isFocused,
+    platform: Platform.OS,
+    route: { environmentId: environmentIdRaw ?? "", threadId: threadId ?? "" },
+    selected:
+      selectedThread === null
+        ? null
+        : {
+            environmentId: selectedThread.environmentId,
+            threadId: selectedThread.id,
+            cwd: selectedThreadCwd,
+          },
+    surface: "thread-route",
+  });
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
@@ -424,8 +432,9 @@ function ThreadRouteContent(
   const safeAreaInsets = useSafeAreaInsets();
   const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
   const GitInspector = useCallback(
-    () => (
+    ({ active }: { readonly active: boolean }) => (
       <GitOverviewSheet
+        active={active}
         headerInset={inspectorHeaderInset}
         presentation="inspector"
         route={{ params: props.route.params }}
@@ -458,16 +467,25 @@ function ThreadRouteContent(
     [inspectorHeaderInset, props.renderInspector],
   );
   const renderInspectorStack = useCallback(
-    () =>
+    (registrationActive: boolean) =>
       inspectorMode === null ? null : (
         <ThreadInspectorContentStack
           Files={FilesInspector}
           Git={GitInspector}
           mode={inspectorMode}
+          paneVisible={panes.auxiliaryPaneVisible}
+          registrationActive={registrationActive}
           Route={props.renderInspector ? RouteInspector : undefined}
         />
       ),
-    [FilesInspector, GitInspector, RouteInspector, inspectorMode, props.renderInspector],
+    [
+      FilesInspector,
+      GitInspector,
+      RouteInspector,
+      inspectorMode,
+      panes.auxiliaryPaneVisible,
+      props.renderInspector,
+    ],
   );
   const activeInspectorRenderer = inspectorMode === null ? undefined : renderInspectorStack;
   // Hand the inspector to the workspace so it renders beside the navigator,
@@ -611,6 +629,7 @@ function ThreadRouteContent(
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
+    gitCwd: selectedThreadCwd,
     auxiliaryPaneControl:
       !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
         ? {

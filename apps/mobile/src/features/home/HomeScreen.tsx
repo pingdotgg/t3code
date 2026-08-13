@@ -51,8 +51,11 @@ import {
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  mergeThreadListV2ChangeRequestSnapshot,
+  snapshotsForThreadListVisibility,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+  type ThreadListV2ChangeRequestSnapshot,
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
@@ -85,6 +88,8 @@ interface HomeScreenProps {
     HomeListFilterMenuEnvironment & Pick<WorkspaceEnvironment, "connectionState">
   >;
   readonly searchQuery: string;
+  /** Whether this retained native-stack screen is the focused route. */
+  readonly visible: boolean;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
@@ -485,24 +490,26 @@ export function HomeScreen(props: HomeScreenProps) {
   // optimistic holds.
   // PR states stream in per-row (rows own the VCS subscriptions); a merged or
   // closed PR auto-settles its thread on the next partition (mirrors web).
-  const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, "open" | "closed" | "merged">
+  const [changeRequestSnapshotByKey, setChangeRequestSnapshotByKey] = useState<
+    ReadonlyMap<string, ThreadListV2ChangeRequestSnapshot>
   >(() => new Map());
-  const handleChangeRequestState = useCallback(
-    (threadKey: string, state: "open" | "closed" | "merged" | null) => {
-      setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
+  const handleChangeRequestSnapshot = useCallback(
+    (threadKey: string, snapshot: ThreadListV2ChangeRequestSnapshot) => {
+      setChangeRequestSnapshotByKey((current) => {
+        const merged = mergeThreadListV2ChangeRequestSnapshot(current.get(threadKey), snapshot);
+        if (current.get(threadKey) === merged) return current;
         const next = new Map(current);
-        if (state === null) {
-          next.delete(threadKey);
-        } else {
-          next.set(threadKey, state);
-        }
+        next.set(threadKey, merged);
         return next;
       });
     },
     [],
   );
+  useEffect(() => {
+    setChangeRequestSnapshotByKey((current) =>
+      snapshotsForThreadListVisibility(current, props.visible),
+    );
+  }, [props.visible]);
   const handleSettleThread = useCallback(
     (thread: EnvironmentThreadShell) => {
       void props.onSettleThread(thread);
@@ -664,7 +671,8 @@ export function HomeScreen(props: HomeScreenProps) {
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
-      changeRequestStateByKey,
+      projectCwdByKey,
+      changeRequestSnapshotByKey,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
@@ -675,7 +683,7 @@ export function HomeScreen(props: HomeScreenProps) {
       selectedThreadKey: null,
     });
   }, [
-    changeRequestStateByKey,
+    changeRequestSnapshotByKey,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -689,6 +697,7 @@ export function HomeScreen(props: HomeScreenProps) {
     matchedThreadKeys,
     threadListV2Enabled,
     v2ScopedProjectGroup,
+    projectCwdByKey,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
@@ -845,17 +854,18 @@ export function HomeScreen(props: HomeScreenProps) {
           onPinThread={handlePinThread}
           onUnpinThread={handleUnpinThread}
           onMovePinnedThread={handleMovePinnedThread}
-          onChangeRequestState={handleChangeRequestState}
+          onChangeRequestSnapshot={handleChangeRequestSnapshot}
           projectCwd={
             projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null
           }
+          visible={props.visible}
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
         />
       );
     },
     [
-      handleChangeRequestState,
+      handleChangeRequestSnapshot,
       handleDeleteThread,
       arrangedPinnedKeys,
       handleMovePinnedThread,
@@ -877,6 +887,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onSelectPendingTask,
       props.onSelectThread,
       props.savedConnectionsById,
+      props.visible,
       serverConfigs,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
@@ -905,12 +916,14 @@ export function HomeScreen(props: HomeScreenProps) {
       searchQuery: props.searchQuery,
       snoozePresetMinute: nowMinute,
       threadSearchMatchByKey,
+      visible: props.visible,
     }),
     [
       projectByKey,
       projectCwdByKey,
       props.searchQuery,
       props.savedConnectionsById,
+      props.visible,
       serverConfigs,
       nowMinute,
       threadSearchMatchByKey,
@@ -924,8 +937,15 @@ export function HomeScreen(props: HomeScreenProps) {
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
       threadSearchMatchByKey,
+      visible: props.visible,
     }),
-    [projectCwdByKey, props.savedConnectionsById, props.searchQuery, threadSearchMatchByKey],
+    [
+      projectCwdByKey,
+      props.savedConnectionsById,
+      props.searchQuery,
+      props.visible,
+      threadSearchMatchByKey,
+    ],
   );
 
   const renderItem = useCallback(
@@ -977,6 +997,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 projectCwdByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ??
                 null
               }
+              visible={props.visible}
               isLast={item.isLast}
               searchMatch={threadSearchMatchByKey.get(
                 threadSearchMatchKey({
@@ -1020,6 +1041,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onSelectThread,
       props.searchQuery,
       props.savedConnectionsById,
+      props.visible,
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
       updateGroupDisplay,

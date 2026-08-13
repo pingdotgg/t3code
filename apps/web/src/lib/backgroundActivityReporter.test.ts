@@ -35,6 +35,48 @@ describe("wasRecentlyInteracted", () => {
     }),
   );
 
+  it.effect("does not retain background VCS demand for a local-only subscription", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("local-only-observation-test");
+      const release = yield* observeBackgroundActivitySubscription({
+        environmentId,
+        method: WS_METHODS.subscribeVcsStatus,
+        input: { cwd: "/local-only-repo", includeRemote: false },
+      });
+      const retainedWhileObserved = retainedBackgroundScopes(environmentId);
+
+      yield* release;
+
+      expect(retainedWhileObserved).toEqual([]);
+      expect(retainedBackgroundScopes(environmentId)).toEqual([]);
+    }),
+  );
+
+  it.effect("reference-counts duplicate remote VCS demand until the final release", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("duplicate-remote-observation-test");
+      const scope = { type: "vcs-status" as const, cwd: "/shared-repo" };
+      const firstRelease = yield* observeBackgroundActivitySubscription({
+        environmentId,
+        method: WS_METHODS.subscribeVcsStatus,
+        input: { cwd: scope.cwd, includeRemote: true },
+      });
+      const secondRelease = yield* observeBackgroundActivitySubscription({
+        environmentId,
+        method: WS_METHODS.subscribeVcsStatus,
+        input: { cwd: scope.cwd, includeRemote: true },
+      });
+
+      expect(retainedBackgroundScopes(environmentId)).toEqual([scope]);
+
+      yield* firstRelease;
+      expect(retainedBackgroundScopes(environmentId)).toEqual([scope]);
+
+      yield* secondRelease;
+      expect(retainedBackgroundScopes(environmentId)).toEqual([]);
+    }),
+  );
+
   it.effect("keeps delimiter-containing environment and scope values distinct", () =>
     Effect.gen(function* () {
       const firstEnvironmentId = EnvironmentId.make("a");
@@ -42,22 +84,28 @@ describe("wasRecentlyInteracted", () => {
       const releaseFirst = yield* observeBackgroundActivitySubscription({
         environmentId: firstEnvironmentId,
         method: WS_METHODS.subscribeVcsStatus,
-        input: { cwd: "b:vcs-status:c" },
+        input: { cwd: "b:vcs-status:c", includeRemote: true },
+      });
+      const releaseSameEnvironment = yield* observeBackgroundActivitySubscription({
+        environmentId: firstEnvironmentId,
+        method: WS_METHODS.subscribeVcsStatus,
+        input: { cwd: "c", includeRemote: true },
       });
       const releaseSecond = yield* observeBackgroundActivitySubscription({
         environmentId: secondEnvironmentId,
         method: WS_METHODS.subscribeVcsStatus,
-        input: { cwd: "c" },
+        input: { cwd: "c", includeRemote: true },
       });
 
       expect(retainedBackgroundScopes(firstEnvironmentId)).toEqual([
         { type: "vcs-status", cwd: "b:vcs-status:c" },
+        { type: "vcs-status", cwd: "c" },
       ]);
       expect(retainedBackgroundScopes(secondEnvironmentId)).toEqual([
         { type: "vcs-status", cwd: "c" },
       ]);
 
-      yield* Effect.all([releaseFirst, releaseSecond]);
+      yield* Effect.all([releaseFirst, releaseSameEnvironment, releaseSecond]);
     }),
   );
 });

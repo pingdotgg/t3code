@@ -25,7 +25,7 @@ import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { useThreadPr } from "../../state/use-thread-pr";
+import { useThreadPrStatus } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
@@ -33,6 +33,7 @@ import {
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
+  type ThreadListV2ChangeRequestSnapshot,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -369,13 +370,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly canMovePinnedDown?: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  /** Reports this row's live PR state up so the partition can auto-settle
-      merged/closed work (mirrors web's onChangeRequestState). */
-  readonly onChangeRequestState?: (
+  /** Reports this row's target/ref-bound PR observation so the partition can
+      auto-settle merged/closed work without reusing another target's state. */
+  readonly onChangeRequestSnapshot?: (
     threadKey: string,
-    state: "open" | "closed" | "merged" | null,
+    snapshot: ThreadListV2ChangeRequestSnapshot,
   ) => void;
   readonly projectCwd?: string | null;
+  /** Logically visible rows retain local VCS status; CSS-hidden sidebars do not. */
+  readonly visible?: boolean;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<
@@ -397,17 +400,34 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onPinThread,
     onUnpinThread,
     onMovePinnedThread,
-    onChangeRequestState,
+    onChangeRequestSnapshot,
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
+  const statusEnabled = props.visible !== false;
 
-  const pr = useThreadPr(thread, props.projectCwd ?? props.project?.workspaceRoot ?? null);
-  const prState = pr?.state ?? null;
+  const prStatus = useThreadPrStatus(
+    thread,
+    props.projectCwd ?? props.project?.workspaceRoot ?? null,
+    { enabled: statusEnabled },
+  );
+  const pr = prStatus.pr;
   const threadKey = `${thread.environmentId}:${thread.id}`;
   useEffect(() => {
-    onChangeRequestState?.(threadKey, prState);
-  }, [onChangeRequestState, prState, threadKey]);
+    if (!statusEnabled || prStatus.targetKey === null) return;
+    onChangeRequestSnapshot?.(threadKey, {
+      targetKey: prStatus.targetKey,
+      refName: prStatus.refName,
+      state: prStatus.lifecycleState,
+    });
+  }, [
+    onChangeRequestSnapshot,
+    prStatus.lifecycleState,
+    prStatus.refName,
+    prStatus.targetKey,
+    statusEnabled,
+    threadKey,
+  ]);
 
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");

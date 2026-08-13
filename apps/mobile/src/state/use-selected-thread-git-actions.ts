@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback } from "react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, type AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   type GitActionRequestInput,
   type VcsActionOperation,
@@ -15,7 +15,6 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
-import { useBranches } from "../state/queries";
 import { threadEnvironment } from "../state/threads";
 import { vcsActionManager, vcsEnvironment } from "../state/vcs";
 import { uuidv4 } from "../lib/uuid";
@@ -46,15 +45,6 @@ export function useSelectedThreadGitActions() {
   );
 
   const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
-  const branchTarget = useMemo(
-    () => ({
-      environmentId: selectedThread?.environmentId ?? null,
-      cwd: selectedThreadGitRootCwd,
-      query: null,
-    }),
-    [selectedThread?.environmentId, selectedThreadGitRootCwd],
-  );
-  const branchState = useBranches(branchTarget);
   const updateThreadGitContext = useCallback(
     async (
       thread: NonNullable<typeof selectedThread>,
@@ -115,13 +105,6 @@ export function useSelectedThreadGitActions() {
     [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject],
   );
 
-  useEffect(() => {
-    if (!selectedThread || !selectedThreadProject) {
-      return;
-    }
-    void refreshSelectedThreadGitStatus({ quiet: true });
-  }, [refreshSelectedThreadGitStatus, selectedThread, selectedThreadProject]);
-
   const runSelectedThreadGitMutation = useCallback(
     async <T, E>(
       operation: VcsActionOperation,
@@ -165,11 +148,31 @@ export function useSelectedThreadGitActions() {
   );
 
   const refreshSelectedThreadBranches = useCallback(async (): Promise<ReadonlyArray<VcsRef>> => {
-    branchState.refresh();
-    return dedupeRemoteBranchesWithLocalMatches(branchState.data?.refs ?? []).filter(
+    if (selectedThread === null || selectedThreadGitRootCwd === null) {
+      return [];
+    }
+
+    const atom = vcsEnvironment.listRefs({
+      environmentId: selectedThread.environmentId,
+      input: {
+        cwd: selectedThreadGitRootCwd,
+        limit: 100,
+        refresh: true,
+      },
+    });
+    appAtomRegistry.refresh(atom);
+    const result = await executeAtomQuery(appAtomRegistry, atom, {
+      label: "refresh selected thread branches",
+      reportDefect: false,
+      reportFailure: false,
+    });
+    if (AsyncResult.isFailure(result)) {
+      return [];
+    }
+    return dedupeRemoteBranchesWithLocalMatches(result.value.refs).filter(
       (branch) => !branch.isRemote,
     );
-  }, [branchState]);
+  }, [selectedThread, selectedThreadGitRootCwd]);
 
   const syncSelectedThreadBranchState = useCallback(
     async (input: {
@@ -186,11 +189,10 @@ export function useSelectedThreadGitActions() {
           return AsyncResult.failure(updateResult.cause);
         }
       }
-      branchState.refresh();
       await refreshSelectedThreadGitStatus({ quiet: true, cwd: input.cwd });
       return AsyncResult.success(undefined);
     },
-    [branchState, refreshSelectedThreadGitStatus, updateThreadGitContext],
+    [refreshSelectedThreadGitStatus, updateThreadGitContext],
   );
 
   const onCheckoutSelectedThreadBranch = useCallback(
@@ -228,7 +230,7 @@ export function useSelectedThreadGitActions() {
 
   const onCreateSelectedThreadBranch = useCallback(
     async (branch: string) => {
-      await runSelectedThreadGitMutation(
+      const result = await runSelectedThreadGitMutation(
         "create_ref",
         "Creating branch",
         async ({ thread, cwd }) => {
@@ -250,6 +252,7 @@ export function useSelectedThreadGitActions() {
           return AsyncResult.isFailure(syncResult) ? AsyncResult.failure(syncResult.cause) : result;
         },
       );
+      return result !== null;
     },
     [
       runSelectedThreadGitMutation,

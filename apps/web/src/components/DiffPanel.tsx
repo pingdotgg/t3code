@@ -44,6 +44,7 @@ import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { resolveDiffVcsDemand } from "./DiffPanel.logic";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
 import { Button } from "./ui/button";
@@ -142,13 +143,16 @@ export default function DiffPanel({
     serverConfig?.availableEditors ?? [],
   );
   const getDiffFileContents = useAtomCommand(reviewEnvironment.diffFileContents);
+  const diffStatusDemand = resolveDiffVcsDemand({
+    active: true,
+    environmentId: activeThread?.environmentId ?? null,
+    statusCwd: activeCwd ?? null,
+    branchRefsCwd: null,
+    branchScopeActive: false,
+    query: "",
+  });
   const gitStatusQuery = useEnvironmentQuery(
-    activeThread !== null && activeThread !== undefined && activeCwd != null
-      ? vcsEnvironment.status({
-          environmentId: activeThread.environmentId,
-          input: { cwd: activeCwd },
-        })
-      : null,
+    diffStatusDemand.status === null ? null : vcsEnvironment.status(diffStatusDemand.status),
   );
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(
@@ -329,39 +333,19 @@ export default function DiffPanel({
     selectedGitSource,
     selectedTurnId,
   ]);
+  const diffRefDemand = resolveDiffVcsDemand({
+    active: true,
+    environmentId: activeThread?.environmentId ?? null,
+    statusCwd: activeCwd ?? null,
+    branchRefsCwd: branchDiffPreview.data?.cwd ?? null,
+    branchScopeActive: selectedTurnId === null && selectedGitScope === "branch",
+    query: baseRefQuery,
+  });
   const localBranchRefs = useEnvironmentQuery(
-    selectedTurnId === null &&
-      selectedGitScope === "branch" &&
-      activeThread &&
-      branchDiffPreview.data?.cwd
-      ? vcsEnvironment.listRefs({
-          environmentId: activeThread.environmentId,
-          input: {
-            cwd: branchDiffPreview.data.cwd,
-            includeMatchingRemoteRefs: true,
-            refKind: "local",
-            ...(baseRefQuery.trim().length > 0 ? { query: baseRefQuery.trim() } : {}),
-            limit: 100,
-          },
-        })
-      : null,
+    diffRefDemand.localRefs === null ? null : vcsEnvironment.listRefs(diffRefDemand.localRefs),
   );
   const remoteBranchRefs = useEnvironmentQuery(
-    selectedTurnId === null &&
-      selectedGitScope === "branch" &&
-      activeThread &&
-      branchDiffPreview.data?.cwd
-      ? vcsEnvironment.listRefs({
-          environmentId: activeThread.environmentId,
-          input: {
-            cwd: branchDiffPreview.data.cwd,
-            includeMatchingRemoteRefs: true,
-            refKind: "remote",
-            ...(baseRefQuery.trim().length > 0 ? { query: baseRefQuery.trim() } : {}),
-            limit: 100,
-          },
-        })
-      : null,
+    diffRefDemand.remoteRefs === null ? null : vcsEnvironment.listRefs(diffRefDemand.remoteRefs),
   );
   const baseRefChoices = buildBaseRefChoices(
     localBranchRefs.data?.refs.filter((ref) => ref.name !== selectedGitSource?.headRef) ?? [],

@@ -50,6 +50,8 @@ import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 
+type WorkspaceInspectorRenderer = (registrationActive: boolean) => ReactNode;
+
 interface AdaptiveWorkspaceContextValue {
   readonly layout: Layout;
   readonly panes: WorkspacePaneLayout;
@@ -64,7 +66,7 @@ interface AdaptiveWorkspaceContextValue {
    * registration already took over — stale deactivates never clobber it.
    * Prefer useRegisterWorkspaceInspector over calling this directly.
    */
-  readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
+  readonly registerWorkspaceInspector: (render: WorkspaceInspectorRenderer) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
   readonly showAuxiliaryPane: (role: WorkspaceAuxiliaryPaneRole) => void;
   readonly toggleAuxiliaryPane: () => void;
@@ -125,7 +127,7 @@ export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
  * animates closed, or is replaced seamlessly when the next route registers in
  * the same commit); focus re-registers it.
  */
-export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefined) {
+export function useRegisterWorkspaceInspector(render: WorkspaceInspectorRenderer | undefined) {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
   // Raw context values (not the useNavigation/useRoute wrappers) so the
   // portal re-provides exactly what this screen sees.
@@ -136,9 +138,11 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     if (render === undefined) {
       return undefined;
     }
-    return () => (
+    return (registrationActive: boolean) => (
       <NavigationContext.Provider value={navigation}>
-        <NavigationRouteContext.Provider value={route}>{render()}</NavigationRouteContext.Provider>
+        <NavigationRouteContext.Provider value={route}>
+          {render(registrationActive)}
+        </NavigationRouteContext.Provider>
       </NavigationContext.Provider>
     );
   }, [navigation, render, route]);
@@ -306,11 +310,11 @@ function AdaptiveWorkspaceLayoutContent(
   // content mounted so the pane can animate closed (or be replaced
   // seamlessly by the next route's registration in the same commit).
   const [workspaceInspector, setWorkspaceInspector] = useState<{
-    readonly render: () => ReactNode;
+    readonly render: WorkspaceInspectorRenderer;
     readonly active: boolean;
   } | null>(null);
   const workspaceInspectorOwner = useRef<symbol | null>(null);
-  const registerWorkspaceInspector = useCallback((render: () => ReactNode) => {
+  const registerWorkspaceInspector = useCallback((render: WorkspaceInspectorRenderer) => {
     const owner = Symbol("workspace-inspector");
     workspaceInspectorOwner.current = owner;
     setWorkspaceInspector({ render, active: true });

@@ -55,7 +55,7 @@ export function PullRequestThreadDialog({
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
   const { data: gitStatus } = useEnvironmentQuery(
-    cwd === null
+    !open || cwd === null
       ? null
       : vcsEnvironment.status({
           environmentId,

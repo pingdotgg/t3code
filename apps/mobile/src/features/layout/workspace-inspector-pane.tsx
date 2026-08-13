@@ -30,7 +30,7 @@ export function WorkspaceInspectorPane(props: {
   readonly active?: boolean;
   readonly onClosed?: () => void;
   readonly panes: WorkspacePaneLayout;
-  readonly renderInspector?: () => ReactNode;
+  readonly renderInspector?: (registrationActive: boolean) => ReactNode;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
 }) {
   const { panes, setAuxiliaryPaneWidth } = props;
@@ -137,7 +137,7 @@ export function WorkspaceInspectorPane(props: {
           style={inspectorStyle}
         >
           <Animated.View className="flex-1" style={inspectorContentStyle}>
-            {props.renderInspector?.()}
+            {props.renderInspector?.(props.active ?? true)}
           </Animated.View>
         </Animated.View>
       ) : null}
