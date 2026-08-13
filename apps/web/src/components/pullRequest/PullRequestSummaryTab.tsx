@@ -98,10 +98,13 @@ interface CommentEditing {
 function CommentBody({
   comment,
   editing,
+  quoteButton,
   className,
 }: {
   comment: PullRequestComment;
   editing: CommentEditing;
+  /** Built by the owner of the composer, so this stays a view over whatever actions it is handed. */
+  quoteButton?: ReactNode;
   className?: string | undefined;
 }) {
   if (editing.editingId === comment.id) {
@@ -120,6 +123,7 @@ function CommentBody({
   return (
     <div className={cn("flex items-start gap-1", className)}>
       <PullRequestMarkdown className="min-w-0 flex-1" text={comment.body} cwd={editing.cwd} />
+      {quoteButton}
       {editing.canEdit(comment) ? (
         <Button
           size="icon-xs"
@@ -140,11 +144,13 @@ function CollapsedComment({
   comment,
   editing,
   label,
+  quoteButton,
   reactionBar,
 }: {
   comment: PullRequestComment;
   editing: CommentEditing;
   label: string;
+  quoteButton?: ReactNode;
   reactionBar: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -178,7 +184,12 @@ function CollapsedComment({
                   {comment.path}
                 </p>
               ) : null}
-              <CommentBody className="mt-2" comment={comment} editing={editing} />
+              <CommentBody
+                className="mt-2"
+                comment={comment}
+                editing={editing}
+                quoteButton={quoteButton}
+              />
               {reactionBar}
             </div>
           ) : null}
@@ -409,6 +420,31 @@ export function PullRequestSummaryTab({
       element.scrollIntoView({ block: "nearest" });
     });
   };
+
+  // Rides beside the edit pencil on every remark, collapsed conversations included — but only
+  // where the composer below exists to receive the quote, and only for comments with something
+  // to quote: a review that is all verdict and no words would quote as an empty block. Disabled
+  // while posting, when the composer is locked and the success clear would eat the quote.
+  const quoteReplyButton = (comment: PullRequestComment): ReactNode =>
+    canComment && comment.body.trim().length > 0 ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="Quote reply"
+              size="icon-xs"
+              variant="ghost"
+              className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+              disabled={posting}
+              onClick={() => quoteReply(comment.body)}
+            />
+          }
+        >
+          <ReplyIcon className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup>Quote reply</TooltipPopup>
+      </Tooltip>
+    ) : null;
 
   // A comment that already lives on a review thread is that thread: the thread carries the line
   // and side the bare comment has lost, and a resolved one is finished work nobody should be
@@ -727,6 +763,7 @@ export function PullRequestSummaryTab({
                         comment={comment}
                         editing={commentEditing}
                         label={thread?.isResolved ? "Resolved" : "Approval dismissed"}
+                        quoteButton={quoteReplyButton(comment)}
                         reactionBar={
                           <PullRequestReactionBar
                             className="mt-2"
@@ -780,28 +817,6 @@ export function PullRequestSummaryTab({
                               : fixFindingLabel}
                           </Button>
                         ) : null}
-                        {/* Only where the composer below exists to receive the quote, and only
-                            for comments with something to quote — a review that is all verdict
-                            and no words would quote as an empty block. */}
-                        {canComment && comment.body.trim().length > 0 ? (
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <Button
-                                  aria-label="Quote reply"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  className="-mr-1 -mt-1 shrink-0 text-muted-foreground hover:text-foreground"
-                                  disabled={posting}
-                                  onClick={() => quoteReply(comment.body)}
-                                />
-                              }
-                            >
-                              <ReplyIcon className="size-3" />
-                            </TooltipTrigger>
-                            <TooltipPopup>Quote reply</TooltipPopup>
-                          </Tooltip>
-                        ) : null}
                       </div>
                       {comment.path ? (
                         <p
@@ -811,7 +826,12 @@ export function PullRequestSummaryTab({
                           {comment.path}
                         </p>
                       ) : null}
-                      <CommentBody className="mt-2" comment={comment} editing={commentEditing} />
+                      <CommentBody
+                        className="mt-2"
+                        comment={comment}
+                        editing={commentEditing}
+                        quoteButton={quoteReplyButton(comment)}
+                      />
                       <PullRequestReactionBar
                         className="mt-2"
                         reactions={comment.reactions ?? []}
