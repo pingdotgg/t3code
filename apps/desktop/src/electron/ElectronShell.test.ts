@@ -79,7 +79,23 @@ describe("ElectronShell", () => {
       const electronShell = yield* ElectronShell.ElectronShell;
       const error = yield* Effect.flip(electronShell.openPath("/tmp/product.bin"));
 
-      assert.include(error.message, "There is no application set to open the file.");
+      assert.equal(error.reason, "open-refused");
+      assert.equal(error.cause, undefined);
+      assert.equal(error.message, 'Unable to open "/tmp/product.bin" in its default application');
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("preserves Electron rejections as the underlying cause", () =>
+    Effect.gen(function* () {
+      const cause = new Error("open failed");
+      openPathMock.mockRejectedValue(cause);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const error = yield* Effect.flip(electronShell.openPath("/tmp/product.bin"));
+
+      assert.equal(error.reason, "shell-rejected");
+      assert.equal(error.cause, cause);
+      assert.equal(error.message, 'Unable to open "/tmp/product.bin" in its default application');
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 });

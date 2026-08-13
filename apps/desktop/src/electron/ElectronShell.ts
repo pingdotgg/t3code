@@ -12,12 +12,12 @@ export class ElectronShellOpenPathError extends Schema.TaggedErrorClass<Electron
   "ElectronShellOpenPathError",
   {
     path: Schema.String,
-    reason: Schema.String,
-    cause: Schema.Defect(),
+    reason: Schema.Literals(["shell-rejected", "open-refused"]),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Unable to open ${JSON.stringify(this.path)} in its default application: ${this.reason}`;
+    return `Unable to open ${JSON.stringify(this.path)} in its default application`;
   }
 }
 
@@ -61,15 +61,14 @@ export const make = ElectronShell.of({
       catch: (cause) =>
         new ElectronShellOpenPathError({
           path,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: "shell-rejected",
           cause,
         }),
     });
     if (result !== "") {
       return yield* new ElectronShellOpenPathError({
         path,
-        reason: result,
-        cause: new Error(result),
+        reason: "open-refused",
       });
     }
   }),
