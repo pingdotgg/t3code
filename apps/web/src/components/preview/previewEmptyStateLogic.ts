@@ -20,5 +20,9 @@ export function findDiscoveredServerTargetPort(
 ): number | undefined {
   const normalizedUrl = normalizeHistoryUrl(url);
   if (normalizedUrl === null) return undefined;
-  return servers.find((server) => normalizeHistoryUrl(server.requestedUrl) === normalizedUrl)?.port;
+  const origin = new URL(normalizedUrl).origin;
+  return servers.find((server) => {
+    const normalizedRequestedUrl = normalizeHistoryUrl(server.requestedUrl);
+    return normalizedRequestedUrl !== null && new URL(normalizedRequestedUrl).origin === origin;
+  })?.port;
 }

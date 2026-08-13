@@ -60,7 +60,11 @@ describe("findDiscoveredServerTargetPort", () => {
       listening: true,
     } satisfies PreviewableServer;
 
-    expect(findDiscoveredServerTargetPort("https://artelo.localhost/", [server])).toBe(4058);
+    expect(
+      findDiscoveredServerTargetPort("https://artelo.localhost/products?sort=new#featured", [
+        server,
+      ]),
+    ).toBe(4058);
     expect(findDiscoveredServerTargetPort("https://other.localhost/", [server])).toBeUndefined();
   });
 });
