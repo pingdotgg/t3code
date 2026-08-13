@@ -1,7 +1,12 @@
 import type { PreviewSessionSnapshot, ProjectScript } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getConfiguredPreviewUrls, shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
+import {
+  findDiscoveredServerTargetPort,
+  getConfiguredPreviewUrls,
+  shouldShowPreviewEmptyState,
+} from "./previewEmptyStateLogic";
+import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
 const snapshot = (navStatus: PreviewSessionSnapshot["navStatus"]): PreviewSessionSnapshot => ({
   threadId: "thread-1",
@@ -38,5 +43,24 @@ describe("getConfiguredPreviewUrls", () => {
       "http://localhost:5173",
       "http://localhost:3000",
     ]);
+  });
+});
+
+describe("findDiscoveredServerTargetPort", () => {
+  it("finds the listener port for a Portless history URL", () => {
+    const server = {
+      host: "localhost",
+      port: 4058,
+      url: "http://100.65.180.100:4058/",
+      requestedUrl: "https://artelo.localhost/",
+      processName: "node",
+      pid: 123,
+      terminal: null,
+      source: "scanner",
+      listening: true,
+    } satisfies PreviewableServer;
+
+    expect(findDiscoveredServerTargetPort("https://artelo.localhost/", [server])).toBe(4058);
+    expect(findDiscoveredServerTargetPort("https://other.localhost/", [server])).toBeUndefined();
   });
 });

@@ -188,9 +188,9 @@ export function PreviewView({
   );
 
   const handleOpenServerUrl = useCallback(
-    async (next: string) => {
+    async (next: string, targetPort?: number) => {
       try {
-        const resolved = resolveDiscoveredServerUrl(threadRef.environmentId, next);
+        const resolved = resolveDiscoveredServerUrl(threadRef.environmentId, next, targetPort);
         if (await navigateToResolvedUrl(resolved)) {
           recordVisitForThread(threadRef, next);
         }
