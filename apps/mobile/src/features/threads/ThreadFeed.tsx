@@ -103,6 +103,7 @@ import {
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
+import { createAndroidSelectableMarkdownRenderers } from "./androidSelectableMarkdownRenderers";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
@@ -569,6 +570,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
     };
 
     const createMarkdownRenderers = (
+      bodyTextColor: string,
       inlineTextColor: string,
       inlineCodeTextColor: string,
       blockBackgroundColor: string,
@@ -577,6 +579,48 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
     ): CustomRenderers => ({
+      ...(Platform.OS === "android"
+        ? createAndroidSelectableMarkdownRenderers({
+            paragraph: {
+              color: bodyTextColor,
+              fontFamily: regularFontFamily,
+              fontSize: markdownFontSizes.m,
+              lineHeight: markdownFontSizes.bodyLineHeight,
+              marginBottom: preserveSoftBreaks ? 0 : 10,
+            },
+            heading: (level) => ({
+              color: bodyTextColor,
+              fontFamily: boldFontFamily,
+              fontSize:
+                level === 1
+                  ? markdownFontSizes.h1
+                  : level === 2
+                    ? markdownFontSizes.h2
+                    : level === 3
+                      ? markdownFontSizes.h3
+                      : level === 4
+                        ? markdownFontSizes.h4
+                        : level === 5
+                          ? markdownFontSizes.h5
+                          : markdownFontSizes.h6,
+              lineHeight:
+                (level === 1
+                  ? markdownFontSizes.h1
+                  : level === 2
+                    ? markdownFontSizes.h2
+                    : level === 3
+                      ? markdownFontSizes.h3
+                      : level === 4
+                        ? markdownFontSizes.h4
+                        : level === 5
+                          ? markdownFontSizes.h5
+                          : markdownFontSizes.h6) * 1.3,
+              fontWeight: "700",
+              marginTop: preserveSoftBreaks ? 8 : 18,
+              marginBottom: preserveSoftBreaks ? 4 : 8,
+            }),
+          })
+        : {}),
       link: ({ children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
@@ -741,6 +785,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         theme: userTheme,
         styles: userStyles,
         renderers: createMarkdownRenderers(
+          markdownUserBodyColor,
           markdownUserCodeText,
           markdownUserInlineCodeText,
           markdownUserFenceBg,
@@ -774,6 +819,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         theme: assistantTheme,
         styles: assistantStyles,
         renderers: createMarkdownRenderers(
+          markdownBodyColor,
           markdownCodeText,
           markdownInlineCodeText,
           markdownCodeBg,
