@@ -34,7 +34,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { makeResolveEnabledDesktopMcp } from "../../desktopControl/resolveEnabledDesktopMcp.ts";
+import { makeResolveEnabledDesktopMcp } from "../../desktopControl/desktopMcpLaunch.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
