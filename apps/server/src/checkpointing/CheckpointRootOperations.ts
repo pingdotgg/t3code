@@ -89,32 +89,59 @@ export const restoreCheckpointAcrossRoots = Effect.fn("restoreCheckpointAcrossRo
   function* (input: {
     readonly threadId: ThreadId;
     readonly turnCount: number;
-    readonly targets: ReadonlyArray<{
+    readonly capturedTargets: ReadonlyArray<{
       readonly root: string;
       readonly checkpointRef: CheckpointRef;
     }>;
-    readonly fallbackToHead: boolean;
+    readonly legacyRoots: ReadonlyArray<string>;
+    readonly legacyCheckpointRef: CheckpointRef;
   }) {
     const checkpointStore = yield* CheckpointStore.CheckpointStore;
+    const legacyRootAvailability =
+      input.capturedTargets.length > 0
+        ? []
+        : yield* Effect.forEach(
+            input.legacyRoots,
+            (root) =>
+              checkpointStore
+                .hasCheckpointRef({ cwd: root, checkpointRef: input.legacyCheckpointRef })
+                .pipe(
+                  Effect.map((available) => ({ root, available })),
+                  Effect.catch((error) =>
+                    Effect.logWarning("checkpoint restore preflight failed for root", {
+                      threadId: input.threadId,
+                      turnCount: input.turnCount,
+                      root,
+                      detail: error.message,
+                    }).pipe(Effect.as({ root, available: false })),
+                  ),
+                ),
+            { concurrency: 4 },
+          );
+    const targets =
+      input.capturedTargets.length > 0
+        ? input.capturedTargets
+        : legacyRootAvailability
+            .filter(({ available }) => available)
+            .map(({ root }) => ({ root, checkpointRef: input.legacyCheckpointRef }));
     const results = yield* Effect.forEach(
-      input.targets,
+      targets,
       ({ root, checkpointRef }) =>
-        checkpointStore
-          .restoreCheckpoint({ cwd: root, checkpointRef, fallbackToHead: input.fallbackToHead })
-          .pipe(
-            Effect.map((restored) => ({ root, restored })),
-            Effect.catch((error) =>
-              Effect.logWarning("checkpoint restore failed for root", {
-                threadId: input.threadId,
-                turnCount: input.turnCount,
-                root,
-                detail: error.message,
-              }).pipe(Effect.as({ root, restored: false })),
-            ),
+        checkpointStore.restoreCheckpoint({ cwd: root, checkpointRef, fallbackToHead: false }).pipe(
+          Effect.map((restored) => ({ root, restored })),
+          Effect.catch((error) =>
+            Effect.logWarning("checkpoint restore failed for root", {
+              threadId: input.threadId,
+              turnCount: input.turnCount,
+              root,
+              detail: error.message,
+            }).pipe(Effect.as({ root, restored: false })),
           ),
+        ),
       { concurrency: 4 },
     );
     return {
+      targetCount: targets.length,
       restoredRoots: results.filter((entry) => entry.restored).map((entry) => entry.root),
       failedRoots: results.filter((entry) => !entry.restored).map((entry) => entry.root),
     };

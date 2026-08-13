@@ -1153,6 +1153,62 @@ describe("CheckpointReactor", () => {
     ).toBe(false);
   });
 
+  it("preserves repositories added after the turn-zero baseline", async () => {
+    const attachedRepo = createGitRepository();
+    tempDirs.push(attachedRepo);
+    const harness = await createHarness({ threadWorktreePath: null });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const threadId = ThreadId.make("thread-1");
+    const untrackedPath = NodePath.join(attachedRepo, "keep.txt");
+
+    await harness.dispatch({
+      type: "project.meta.update",
+      commandId: CommandId.make("cmd-add-root-after-baseline"),
+      projectId: asProjectId("project-1"),
+      repoRoots: [harness.cwd, attachedRepo],
+    });
+    NodeFS.writeFileSync(untrackedPath, "keep\n", "utf8");
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-set-turn-zero-root"),
+      threadId,
+      session: {
+        threadId,
+        status: "ready",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+    await harness.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make("cmd-turn-zero-root-diff"),
+      threadId,
+      turnId: asTurnId("turn-1"),
+      completedAt: createdAt,
+      checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+      status: "ready",
+      files: [],
+      checkpointTurnCount: 1,
+      createdAt,
+    });
+
+    await harness.dispatch({
+      type: "thread.checkpoint.revert",
+      commandId: CommandId.make("cmd-revert-turn-zero-root"),
+      threadId,
+      turnCount: 0,
+      createdAt,
+    });
+
+    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v1\n");
+    expect(NodeFS.readFileSync(untrackedPath, "utf8")).toBe("keep\n");
+  });
+
   it("keeps conversation and checkpoint state intact when one repository cannot revert", async () => {
     const attachedRepo = createGitRepository();
     tempDirs.push(attachedRepo);

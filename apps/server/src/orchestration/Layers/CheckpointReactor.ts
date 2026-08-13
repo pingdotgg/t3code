@@ -768,31 +768,28 @@ const make = Effect.gen(function* () {
             threadId: event.payload.threadId,
             checkpointTurnCount: event.payload.turnCount,
           });
-    const restoreTargets =
-      persistedCheckpointRefs.length > 0
-        ? persistedCheckpointRefs.map((entry) => ({
-            root: entry.repoRoot,
-            checkpointRef: entry.checkpointRef,
-          }))
-        : currentRestoreRoots.map((root) => ({ root, checkpointRef: targetCheckpointRef }));
-    if (restoreTargets.length === 0) {
+
+    // Persisted targets are authoritative. Legacy checkpoints have no per-root
+    // rows, so the operation preflights the exact ref on each current root.
+    const { targetCount, restoredRoots, failedRoots } = yield* restoreCheckpointAcrossRoots({
+      threadId: event.payload.threadId,
+      turnCount: event.payload.turnCount,
+      capturedTargets: persistedCheckpointRefs.map((entry) => ({
+        root: entry.repoRoot,
+        checkpointRef: entry.checkpointRef,
+      })),
+      legacyRoots: currentRestoreRoots,
+      legacyCheckpointRef: targetCheckpointRef,
+    });
+    if (targetCount === 0) {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
-        detail: "Checkpoints are unavailable because this project is not a git repository.",
+        detail: "No filesystem checkpoint refs are available for the selected turn.",
         createdAt: now,
       }).pipe(Effect.catch(() => Effect.void));
       return;
     }
-
-    // Restore exactly the roots captured by the selected checkpoint. Legacy
-    // checkpoints have no per-root rows and fall back to the current root set.
-    const { restoredRoots, failedRoots } = yield* restoreCheckpointAcrossRoots({
-      threadId: event.payload.threadId,
-      turnCount: event.payload.turnCount,
-      targets: restoreTargets,
-      fallbackToHead: event.payload.turnCount === 0,
-    });
 
     if (restoredRoots.length === 0) {
       yield* appendRevertFailureActivity({
@@ -811,7 +808,7 @@ const make = Effect.gen(function* () {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
-        detail: `Reverted ${restoredRoots.length} of ${restoreTargets.length} repositories; failed: ${failedRoots.join(", ")}. Retry the revert to finish all repositories.`,
+        detail: `Reverted ${restoredRoots.length} of ${targetCount} repositories; failed: ${failedRoots.join(", ")}. Retry the revert to finish all repositories.`,
         createdAt: now,
       }).pipe(Effect.catch(() => Effect.void));
       return;
