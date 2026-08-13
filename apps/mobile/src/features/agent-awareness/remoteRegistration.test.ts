@@ -11,7 +11,8 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/relay";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { cryptoLayer } from "../cloud/dpop";
@@ -38,11 +39,13 @@ import {
   shouldRegisterAgentAwarenessDeviceForProvider,
   unregisterAgentAwarenessConnection,
 } from "./remoteRegistration";
+import { publishAgentActivityWidget } from "../../widgets/AgentActivity";
 import * as Notifications from "expo-notifications";
 
 const secureStore = vi.hoisted(() => new Map<string, string>());
 const widgetMocks = vi.hoisted(() => ({
   getInstances: vi.fn(() => []),
+  start: vi.fn(),
 }));
 const backgroundRuntime = vi.hoisted(() => ({
   pending: [] as Array<{
@@ -77,7 +80,9 @@ vi.mock("expo-widgets", () => ({
 vi.mock("../../widgets/AgentActivity", () => ({
   default: {
     getInstances: widgetMocks.getInstances,
+    start: widgetMocks.start,
   },
+  publishAgentActivityWidget: vi.fn(),
 }));
 
 vi.mock("expo-notifications", () => ({
@@ -171,6 +176,54 @@ function proofIat(proof: string): number {
   return decoded.iat;
 }
 
+const activeAgentActivitySnapshot = {
+  aggregate: {
+    title: "T3 Code",
+    subtitle: "Agent work in progress",
+    activeCount: 1,
+    updatedAt: "2026-05-25T13:07:00.000Z",
+    activities: [
+      {
+        environmentId: "env-1" as EnvironmentId,
+        threadId: "thread-1" as ThreadId,
+        projectTitle: "Project",
+        threadTitle: "Thread",
+        modelTitle: "gpt-5.4",
+        phase: "running" as const,
+        status: "Working",
+        updatedAt: "2026-05-25T13:07:00.000Z",
+        deepLink: "/threads/env-1/thread-1",
+      },
+    ],
+  },
+} satisfies RelayAgentActivitySnapshotResponse;
+
+function snapshotRelayLayer() {
+  Constants.expoConfig!.extra = {
+    relay: {
+      url: "https://relay.example.test/",
+    },
+  };
+  return Layer.succeed(
+    ManagedRelay.ManagedRelayClient,
+    ManagedRelay.ManagedRelayClient.of({
+      relayUrl: "https://relay.example.test",
+      listEnvironments: () => Effect.die("unused"),
+      listDevices: () => Effect.die("unused"),
+      createEnvironmentLinkChallenge: () => Effect.die("unused"),
+      linkEnvironment: () => Effect.die("unused"),
+      unlinkEnvironment: () => Effect.die("unused"),
+      getEnvironmentStatus: () => Effect.die("unused"),
+      connectEnvironment: () => Effect.die("unused"),
+      registerDevice: () => Effect.die("unused"),
+      unregisterDevice: () => Effect.die("unused"),
+      registerLiveActivity: () => Effect.succeed({ ok: true }),
+      getAgentActivitySnapshot: () => Effect.succeed(activeAgentActivitySnapshot),
+      resetTokenCache: Effect.void,
+    }),
+  );
+}
+
 function savedConnection(): SavedRemoteConnection {
   return {
     environmentId: "env-1" as EnvironmentId,
@@ -227,6 +280,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockResolvedValue("device-1");
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
+    widgetMocks.start.mockReset();
+    vi.mocked(publishAgentActivityWidget).mockClear();
   });
 
   it("preserves disabled Live Activity preferences in relay registrations", () => {
@@ -432,6 +487,48 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     },
   );
 
+  it.effect("publishes the home-screen widget when a Live Activity is already armed", () => {
+    const activity = {
+      getPushToken: vi.fn(() => Promise.resolve("activity-token")),
+      addPushTokenListener: vi.fn(),
+      start: vi.fn(),
+      update: vi.fn(),
+      end: vi.fn(),
+    };
+    widgetMocks.getInstances.mockReturnValue([activity] as never);
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* refreshActiveLiveActivityRemoteRegistration();
+
+      expect(publishAgentActivityWidget).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeCount: 1,
+          subtitle: "Agent work in progress",
+          activities: [expect.objectContaining({ status: "Working" })],
+        }),
+      );
+      expect(widgetMocks.start).not.toHaveBeenCalled();
+      expect(activity.start).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(snapshotRelayLayer()));
+  });
+
+  it.effect("publishes the home-screen widget when Live Activities are disabled", () => {
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* refreshActiveLiveActivityRemoteRegistration();
+
+      expect(publishAgentActivityWidget).toHaveBeenCalledWith(
+        expect.objectContaining({
+          activeCount: 1,
+          subtitle: "Agent work in progress",
+        }),
+      );
+      expect(widgetMocks.start).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(snapshotRelayLayer()));
+  });
+
   it.effect(
     "re-registers active Live Activity tokens when the app returns to the foreground",
     () => {
@@ -520,11 +617,13 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     return Effect.gen(function* () {
       yield* runBackgroundOperations();
 
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      const [request, init] = fetchMock.mock.calls[1] as unknown as [
-        unknown,
-        RequestInit | undefined,
-      ];
+      const deviceCall = fetchMock.mock.calls.find((call) => {
+        const request = call[0];
+        const url = request instanceof Request ? request.url : String(request);
+        return url === "https://relay.example.test/v1/mobile/devices";
+      });
+      expect(deviceCall).toBeDefined();
+      const [request, init] = deviceCall as unknown as [unknown, RequestInit | undefined];
       const url = request instanceof Request ? request.url : String(request);
       const method = request instanceof Request ? request.method : init?.method;
       const headers = request instanceof Request ? request.headers : new Headers(init?.headers);
@@ -770,7 +869,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* runBackgroundOperations();
 
       expect(backgroundRuntime.pending).toHaveLength(0);
-      expect(tokenProvider).toHaveBeenCalledTimes(2);
+      // Device registration retries after the first auth miss, and the
+      // home-screen widget refresh independently reads the relay token.
+      expect(tokenProvider).toHaveBeenCalledTimes(3);
     }).pipe(Effect.provide(relayTestLayer));
   });
 
