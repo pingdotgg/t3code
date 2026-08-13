@@ -637,7 +637,7 @@ extension FeatureThread {
         let resolvedEnvironmentID = environmentID ?? projectEnvironmentID
         let providers = resolvedEnvironmentID.flatMap {
             snapshot.providersByEnvironment?[$0]
-        } ?? []
+        } ?? snapshot.providers
         return providers.first(where: { $0.id == providerID })?.name ?? providerID
     }
 
