@@ -68,6 +68,7 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    subscribedEventGate: null as Promise<void> | null,
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
@@ -88,6 +89,7 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.subscribedEventGate = null;
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
@@ -206,6 +208,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       event: {
         subscribe: async () => ({
           stream: (async function* () {
+            if (runtimeMock.state.subscribedEventGate) {
+              await runtimeMock.state.subscribedEventGate;
+            }
             for (const event of runtimeMock.state.subscribedEvents) {
               yield event;
             }
@@ -1066,6 +1071,75 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         ["Hello", "lo world", ""],
       );
       NodeAssert.equal(secondUpdate.latestText, "Hellolo world");
+    }),
+  );
+
+  it.effect("emits the actual response model on turn completion", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-actual-model");
+      let releaseEvents: (() => void) | undefined;
+      runtimeMock.state.subscribedEventGate = new Promise<void>((resolve) => {
+        releaseEvents = resolve;
+      });
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: { id: "msg-actual-model", role: "assistant" },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-step-finish",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-actual-model",
+              type: "step-finish",
+              reason: "stop",
+              modelID: "gpt-5.6-luna",
+              cost: 0,
+              tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+          },
+        },
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            status: { type: "idle" },
+          },
+        },
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "identify the model",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "kedvai/auto"),
+      });
+      releaseEvents?.();
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        NodeAssert.equal(completed.payload.actualModel, "gpt-5.6-luna");
+      }
     }),
   );
 

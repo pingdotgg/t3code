@@ -204,6 +204,14 @@ function openCodeEventSessionTitle(event: OpenCodeSubscribedEvent): string | und
   return trimText(event.properties.info.title);
 }
 
+function actualModelFromPart(part: Part): string | undefined {
+  if (part.type !== "step-finish") {
+    return undefined;
+  }
+  const modelID = (part as Part & { readonly modelID?: unknown }).modelID;
+  return typeof modelID === "string" ? trimText(modelID) : undefined;
+}
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -218,6 +226,7 @@ interface OpenCodeSessionContext {
   readonly completedAssistantPartIds: Set<string>;
   readonly turns: Array<OpenCodeTurnSnapshot>;
   activeTurnId: TurnId | undefined;
+  activeActualModel: string | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   /**
@@ -893,6 +902,11 @@ export function makeOpenCodeAdapter(
           context.partById.set(part.id, part);
           const messageRole = messageRoleForPart(context, part);
 
+          const actualModel = actualModelFromPart(part);
+          if (messageRole === "assistant" && context.activeTurnId && actualModel) {
+            context.activeActualModel = actualModel;
+          }
+
           if (messageRole === "assistant") {
             yield* emitAssistantTextDelta(context, part, turnId, event);
           }
@@ -1057,7 +1071,9 @@ export function makeOpenCodeAdapter(
           }
 
           if (event.properties.status.type === "idle" && turnId) {
+            const actualModel = context.activeActualModel;
             context.activeTurnId = undefined;
+            context.activeActualModel = undefined;
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
@@ -1068,6 +1084,7 @@ export function makeOpenCodeAdapter(
               type: "turn.completed",
               payload: {
                 state: "completed",
+                ...(actualModel ? { actualModel } : {}),
               },
             });
           }
@@ -1077,7 +1094,9 @@ export function makeOpenCodeAdapter(
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          const actualModel = context.activeActualModel;
           context.activeTurnId = undefined;
+          context.activeActualModel = undefined;
           yield* updateProviderSession(
             context,
             {
@@ -1097,6 +1116,7 @@ export function makeOpenCodeAdapter(
               payload: {
                 state: "failed",
                 errorMessage: message,
+                ...(actualModel ? { actualModel } : {}),
               },
             });
           }
@@ -1382,6 +1402,7 @@ export function makeOpenCodeAdapter(
           completedAssistantPartIds: new Set(),
           turns: [],
           activeTurnId: undefined,
+          activeActualModel: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
           stopped: yield* Ref.make(false),
@@ -1458,6 +1479,9 @@ export function makeOpenCodeAdapter(
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
       context.activeTurnId = turnId;
+      if (steeringTurnId === undefined) {
+        context.activeActualModel = undefined;
+      }
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
       yield* updateProviderSession(
@@ -1501,6 +1525,7 @@ export function makeOpenCodeAdapter(
             ? Effect.void
             : Effect.gen(function* () {
                 context.activeTurnId = undefined;
+                context.activeActualModel = undefined;
                 context.activeAgent = undefined;
                 context.activeVariant = undefined;
                 yield* updateProviderSession(

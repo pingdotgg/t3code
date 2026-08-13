@@ -2617,6 +2617,72 @@ describe("ProviderRuntimeIngestion", () => {
     expect(completionEvents).toHaveLength(1);
   });
 
+  it("enriches an already completed assistant message with the actual turn model", async () => {
+    const harness = await createHarness();
+    const now = "2026-08-14T00:00:00.000Z";
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-actual-model");
+    const itemId = asItemId("item-actual-model");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-actual-model"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId,
+      turnId,
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.activeTurnId === turnId);
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-actual-model"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId,
+      turnId,
+      itemId,
+      payload: { streamKind: "assistant_text", delta: "done" },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-actual-model"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId,
+      turnId,
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message) => message.id === "assistant:item-actual-model" && !message.streaming,
+      ),
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-actual-model"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: now,
+      threadId,
+      turnId,
+      payload: { state: "completed", actualModel: "gpt-5.6-luna" },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:item-actual-model" && message.actualModel === "gpt-5.6-luna",
+      ),
+    );
+    const messages = thread.messages.filter(
+      (message) => message.id === "assistant:item-actual-model",
+    );
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.actualModel).toBe("gpt-5.6-luna");
+  });
+
   it("maps canonical request events into approval activities with requestKind", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

@@ -1189,6 +1189,7 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
+    actualModel?: string;
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
@@ -1219,6 +1220,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           messageId: input.messageId,
           ...(input.turnId ? { turnId: input.turnId } : {}),
+          ...(input.actualModel ? { actualModel: input.actualModel } : {}),
           createdAt: input.createdAt,
         });
       }
@@ -1828,7 +1830,20 @@ const make = Effect.gen(function* () {
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
-          const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
+          const trackedAssistantMessageIds = yield* getAssistantMessageIdsForTurn(
+            thread.id,
+            turnId,
+          );
+          const completedAssistantMessageId = messages.findLast(
+            (message) => message.role === "assistant" && message.turnId === turnId,
+          )?.id;
+          const assistantMessageIds =
+            trackedAssistantMessageIds.size > 0
+              ? Array.from(trackedAssistantMessageIds)
+              : event.payload.actualModel && completedAssistantMessageId
+                ? [completedAssistantMessageId]
+                : [];
+          const terminalAssistantMessageId = assistantMessageIds.at(-1);
           yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
@@ -1841,6 +1856,9 @@ const make = Effect.gen(function* () {
                 commandTag: "assistant-complete-finalize",
                 finalDeltaCommandTag: "assistant-delta-finalize-fallback",
                 hasProjectedMessage: findMessageById(messages, assistantMessageId) !== undefined,
+                ...(event.payload.actualModel && assistantMessageId === terminalAssistantMessageId
+                  ? { actualModel: event.payload.actualModel }
+                  : {}),
               }),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
