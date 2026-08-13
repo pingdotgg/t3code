@@ -20,7 +20,7 @@ export const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
   : "com.t3tools.t3code";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 14;
+const LAUNCHER_VERSION = 15;
 const defaultIconPath = NodePath.join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
