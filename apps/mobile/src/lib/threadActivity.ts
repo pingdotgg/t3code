@@ -71,6 +71,7 @@ interface WorkLogEntry {
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
+  toolCallId?: string;
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
@@ -352,6 +353,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
+  const toolCallId =
+    activity.kind === "task.progress" ||
+    activity.kind === "task.completed" ||
+    activity.kind === "task.updated"
+      ? null
+      : extractToolCallId(payload);
   // task.updated included: terminal bypassed updates (Codex children's only
   // terminal signal) must carry task identity so they collapse per child
   // instead of stacking anonymous "Task idle" rows.
@@ -426,6 +433,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (title) {
     entry.toolTitle = title;
+  }
+  if (toolCallId) {
+    entry.toolCallId = toolCallId;
   }
   if (itemType === "mcp_tool_call") {
     const data = asRecord(payload?.data);
@@ -511,6 +521,7 @@ function mergeDerivedWorkLogEntries(
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
+  const toolCallId = next.toolCallId ?? previous.toolCallId;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
@@ -524,6 +535,7 @@ function mergeDerivedWorkLogEntries(
     ...(rawCommand ? { rawCommand } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
+    ...(toolCallId ? { toolCallId } : {}),
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
@@ -546,6 +558,13 @@ function mergeChangedFiles(
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
+  }
+  // Collapse by the stable tool invocation id when one is stamped (ACP/Grok,
+  // Cursor, Claude). The fallback key below embeds `detail`, which for command
+  // tools is now the output summary — present only on the completed row — so
+  // keying on it would split an in-progress row from its completion.
+  if (entry.toolCallId) {
+    return `tool:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -926,6 +945,11 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   return asTrimmedString(payload?.title);
+}
+
+function extractToolCallId(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  return asTrimmedString(data?.toolCallId);
 }
 
 function extractWorkLogToolLifecycleStatus(
