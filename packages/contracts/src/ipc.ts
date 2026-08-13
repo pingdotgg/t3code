@@ -500,6 +500,48 @@ export const DesktopWslStateSchema = Schema.Struct({
   preflightError: Schema.NullOr(Schema.String),
 });
 
+/** macOS Privacy panes Computer Use needs; other platforms report notRequired. */
+export const DesktopComputerUsePrivacyPaneSchema = Schema.Literals([
+  "accessibility",
+  "screenRecording",
+]);
+export type DesktopComputerUsePrivacyPane = typeof DesktopComputerUsePrivacyPaneSchema.Type;
+
+export const DesktopComputerUsePermissionStatusSchema = Schema.Literals([
+  "granted",
+  "denied",
+  "notDetermined",
+  "notRequired",
+  "unknown",
+]);
+export type DesktopComputerUsePermissionStatus =
+  typeof DesktopComputerUsePermissionStatusSchema.Type;
+
+export const DesktopComputerUsePermissionSchema = Schema.Struct({
+  kind: DesktopComputerUsePrivacyPaneSchema,
+  status: DesktopComputerUsePermissionStatusSchema,
+  label: Schema.String,
+});
+export type DesktopComputerUsePermission = typeof DesktopComputerUsePermissionSchema.Type;
+
+export const DesktopChromeExtensionStatusSchema = Schema.Literals([
+  "installed",
+  "missing",
+  "unknown",
+]);
+export type DesktopChromeExtensionStatus = typeof DesktopChromeExtensionStatusSchema.Type;
+
+export const DesktopComputerUsePermissionsStateSchema = Schema.Struct({
+  platform: Schema.Literals(["darwin", "win32", "linux", "other"]),
+  permissions: Schema.Array(DesktopComputerUsePermissionSchema),
+  chromeExtension: Schema.Struct({
+    status: DesktopChromeExtensionStatusSchema,
+    detail: Schema.String,
+  }),
+});
+export type DesktopComputerUsePermissionsState =
+  typeof DesktopComputerUsePermissionsStateSchema.Type;
+
 /**
  * Renderer-facing snapshot of a desktop preview tab. Mirrors the main-process
  * PreviewTabState shape but uses serialisable primitives only.
@@ -1079,6 +1121,17 @@ export interface DesktopBridge {
    * builds lack it; callers fall back to VS Code only.
    */
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
+  /**
+   * Computer Use TCC / extension readiness. Optional so older desktop builds
+   * still load the settings page without crashing.
+   */
+  getComputerUsePermissions?: () => Promise<DesktopComputerUsePermissionsState>;
+  /**
+   * Open the OS privacy pane for a Computer Use permission (macOS System
+   * Settings → Privacy & Security). Also prompts Accessibility trust when
+   * needed so the app appears in the list.
+   */
+  openComputerUsePrivacySettings?: (pane: DesktopComputerUsePrivacyPane) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;

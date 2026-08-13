@@ -203,14 +203,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "computer-use",
   },
   {
+    id: "computer-use-browser",
+    title: "Google Chrome",
+    to: "/settings/computer-use",
+    targetId: "computer-use",
+  },
+  {
     id: "computer-use-agent-cursor",
     title: "Agent cursor overlay",
     to: "/settings/computer-use",
     targetId: "computer-use",
   },
   {
-    id: "computer-use-browser",
-    title: "Browser control",
+    id: "computer-use-accessibility",
+    title: "Accessibility",
+    to: "/settings/computer-use",
+    targetId: "computer-use",
+  },
+  {
+    id: "computer-use-screen-recording",
+    title: "Screen Recording",
     to: "/settings/computer-use",
     targetId: "computer-use",
   },

@@ -15,14 +15,15 @@ use uiautomation::patterns::{UIInvokePattern, UITextPattern, UIValuePattern};
 use uiautomation::types::{Handle, Point as UIPoint};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::core::BOOL;
+use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ChildWindowFromPointEx, CWP_SKIPDISABLED, CWP_SKIPINVISIBLE, EnumWindows,
-    GetWindowThreadProcessId, IsWindowVisible, PostMessageW, ScreenToClient, SW_RESTORE,
-    SetForegroundWindow, ShowWindow, WindowFromPoint, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-    WM_RBUTTONDOWN, WM_RBUTTONUP,
+    GetWindowThreadProcessId, IsWindowVisible, PostMessageW, SW_RESTORE, SetForegroundWindow,
+    ShowWindow, WindowFromPoint, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONDOWN,
+    WM_RBUTTONUP,
 };
 
 use super::{Desktop, DesktopError, Point, Result, ScrollDirection, format_app_list};
