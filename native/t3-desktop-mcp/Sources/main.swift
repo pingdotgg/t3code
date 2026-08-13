@@ -488,7 +488,7 @@ var clickGroupCounter: Int64 = 0x4000
 func backgroundClick(_ target: WindowTarget, at point: CGPoint, clickCount: Int) -> Bool {
     guard SkyLight.available else { return false }
     CursorOverlay.shared.press(at: point)
-    SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid)
+    guard SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid) else { return false }
     usleep(80_000)
 
     clickGroupCounter += 1
@@ -502,26 +502,30 @@ func backgroundClick(_ target: WindowTarget, at point: CGPoint, clickCount: Int)
                            screen: point, clickState: 0, button: 0, subtype: 3, groupID: group)
     }
     usleep(12_000)
+    var delivered = false
     for i in 1...max(1, clickCount) {
         if let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left) {
             SkyLight.postMouse(down, pid: target.pid, wid: target.wid, windowOrigin: target.origin,
                                screen: point, clickState: Int64(i), button: 0, subtype: 3, groupID: group)
+            delivered = true
         }
         usleep(28_000)
         if let up = CGEvent(mouseEventSource: src, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) {
             SkyLight.postMouse(up, pid: target.pid, wid: target.wid, windowOrigin: target.origin,
                                screen: point, clickState: Int64(i), button: 0, subtype: 3, groupID: group)
+            delivered = true
         }
         if i < clickCount { usleep(80_000) }
     }
-    return true
+    return delivered
 }
 
 func backgroundScroll(_ target: WindowTarget, at point: CGPoint, dx: Int32, dy: Int32, steps: Int) -> Bool {
-    guard SkyLight.available, let post = SkyLight.postToPid, let setField = SkyLight.setIntField
+    guard SkyLight.available, let post = SkyLight.postToPid, let setField = SkyLight.setIntField,
+          let setWindowLocation = SkyLight.setWindowLocation
     else { return false }
     CursorOverlay.shared.show(at: point)
-    SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid)
+    guard SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid) else { return false }
     usleep(80_000)
     clickGroupCounter += 1
     let group = clickGroupCounter
@@ -536,6 +540,7 @@ func backgroundScroll(_ target: WindowTarget, at point: CGPoint, dx: Int32, dy: 
     usleep(12_000)
 
     let local = CGPoint(x: point.x - target.origin.x, y: point.y - target.origin.y)
+    var delivered = 0
     for _ in 0..<max(1, steps) {
         guard let wheel = CGEvent(scrollWheelEvent2Source: CGEventSource(stateID: .hidSystemState),
                                   units: .line, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)
@@ -546,7 +551,6 @@ func backgroundScroll(_ target: WindowTarget, at point: CGPoint, dx: Int32, dy: 
         wheel.location = point
 
         let ptr = Unmanaged.passUnretained(wheel).toOpaque()
-        guard let setWindowLocation = SkyLight.setWindowLocation else { return false }
         setWindowLocation(ptr, local)
         let w = Int64(target.wid)
         setField(ptr, 51, w)
@@ -555,45 +559,51 @@ func backgroundScroll(_ target: WindowTarget, at point: CGPoint, dx: Int32, dy: 
         setField(ptr, 40, Int64(target.pid))
         post(target.pid, ptr)
         wheel.postToPid(target.pid)
+        delivered += 1
         usleep(30_000)
     }
-    return true
+    return delivered > 0
 }
 
 func backgroundRightClick(_ target: WindowTarget, at point: CGPoint) -> Bool {
     guard SkyLight.available else { return false }
     CursorOverlay.shared.press(at: point)
-    SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid)
+    guard SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid) else { return false }
     usleep(80_000)
     clickGroupCounter += 1
     let group = clickGroupCounter
     let src = CGEventSource(stateID: .combinedSessionState)
+    var delivered = false
     if let down = CGEvent(mouseEventSource: src, mouseType: .rightMouseDown, mouseCursorPosition: point, mouseButton: .right) {
         SkyLight.postMouse(down, pid: target.pid, wid: target.wid, windowOrigin: target.origin,
                            screen: point, clickState: 1, button: 1, subtype: 3, groupID: group)
+        delivered = true
     }
     usleep(28_000)
     if let up = CGEvent(mouseEventSource: src, mouseType: .rightMouseUp, mouseCursorPosition: point, mouseButton: .right) {
         SkyLight.postMouse(up, pid: target.pid, wid: target.wid, windowOrigin: target.origin,
                            screen: point, clickState: 1, button: 1, subtype: 3, groupID: group)
+        delivered = true
     }
-    return true
+    return delivered
 }
 
 func backgroundDrag(_ target: WindowTarget, from start: CGPoint, to end: CGPoint) -> Bool {
     guard SkyLight.available else { return false }
     CursorOverlay.shared.press(at: start)
-    SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid)
+    guard SkyLight.activateWithoutRaise(pid: target.pid, wid: target.wid) else { return false }
     usleep(80_000)
     clickGroupCounter += 1
     let group = clickGroupCounter
     let src = CGEventSource(stateID: .combinedSessionState)
+    var delivered = false
 
     func send(_ type: CGEventType, _ point: CGPoint, _ clickState: Int64, _ subtype: Int64) {
         guard let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
         else { return }
         SkyLight.postMouse(e, pid: target.pid, wid: target.wid, windowOrigin: target.origin,
                            screen: point, clickState: clickState, button: 0, subtype: subtype, groupID: group)
+        delivered = true
     }
 
     send(.mouseMoved, start, 0, 3)
@@ -612,7 +622,7 @@ func backgroundDrag(_ target: WindowTarget, from start: CGPoint, to end: CGPoint
     usleep(40_000)
     send(.leftMouseUp, end, 1, 3)
     CursorOverlay.shared.press(at: end)
-    return true
+    return delivered
 }
 
 func postClick(at point: CGPoint, clickCount: Int = 1, pid: pid_t?) {

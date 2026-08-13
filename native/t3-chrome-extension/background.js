@@ -115,26 +115,41 @@ function replyError(id, message) {
 
 // ── tab + group management ──────────────────────────────────────────────────
 
+/** Serialize group mutation so concurrent open_tab calls share one group. */
+const groupQueue = (() => {
+  let chain = Promise.resolve();
+  return (task) => {
+    const run = chain.then(task, task);
+    chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
+})();
+
 async function ensureGroup(tabId) {
-  // Re-create the group if the user dismissed it or Chrome dropped it.
-  if (groupId !== null) {
-    try {
-      await chrome.tabGroups.get(groupId);
-    } catch {
-      groupId = null;
+  return groupQueue(async () => {
+    // Re-create the group if the user dismissed it or Chrome dropped it.
+    if (groupId !== null) {
+      try {
+        await chrome.tabGroups.get(groupId);
+      } catch {
+        groupId = null;
+      }
     }
-  }
-  if (groupId === null) {
-    groupId = await chrome.tabs.group({ tabIds: [tabId] });
-    await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: "blue" });
-  } else {
-    await chrome.tabs.group({ groupId, tabIds: [tabId] });
-  }
-  // Agent tabs get the pointer favicon (not the T3 toolbar logo) as soon as
-  // they join the group, so the strip reads as "agent-owned" before the first click.
-  await markTab(tabId);
-  await persistOwnedState();
-  return groupId;
+    if (groupId === null) {
+      groupId = await chrome.tabs.group({ tabIds: [tabId] });
+      await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: "blue" });
+    } else {
+      await chrome.tabs.group({ groupId, tabIds: [tabId] });
+    }
+    // Agent tabs get the pointer favicon (not the T3 toolbar logo) as soon as
+    // they join the group, so the strip reads as "agent-owned" before the first click.
+    await markTab(tabId);
+    await persistOwnedState();
+    return groupId;
+  });
 }
 
 async function openTab(url) {
