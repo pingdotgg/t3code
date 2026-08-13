@@ -279,9 +279,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-art-celeste-secondary: oklch(0.827395 0.126071 211.26);
     --stage-art-violet-highlight: oklch(0.895381 0.053248 286.447);
     --stage-art-grid-line: oklch(0.966822 0.01757 239.99);
-    --stage-night-top: oklch(0.283792 0.117327 297.201);
-    --stage-night-mid: oklch(0.227147 0.086086 277.99);
-    --stage-night-bottom: oklch(0.200528 0.055699 261.216);
+    --stage-night-base-top: oklch(0.283792 0.117327 297.201);
+    --stage-night-base-mid: oklch(0.227147 0.086086 277.99);
+    --stage-night-base-bottom: oklch(0.200528 0.055699 261.216);
+    --stage-night-top: var(--stage-night-base-top);
+    --stage-night-mid: var(--stage-night-base-mid);
+    --stage-night-bottom: var(--stage-night-base-bottom);
     --stage-night-highlight: oklch(0.707246 0.157418 252.091);
     --stage-night-secondary: oklch(0.600473 0.182225 277.296);
     --stage-night-tertiary: oklch(0.62583 0.210886 305.994);
@@ -498,20 +501,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   :is(html[data-theme-id="t3-chat"], html[data-theme-id="ocean"], html[data-theme-id="iris"]) {
-    --stage-night-top: color-mix(
-      in oklch,
-      var(--stage-art-top) 38%,
-      oklch(0.283792 0.117327 297.201)
-    );
-    --stage-night-mid: color-mix(
-      in oklch,
-      var(--stage-art-mid) 38%,
-      oklch(0.227147 0.086086 277.99)
-    );
+    --stage-night-top: color-mix(in oklch, var(--stage-art-top) 38%, var(--stage-night-base-top));
+    --stage-night-mid: color-mix(in oklch, var(--stage-art-mid) 38%, var(--stage-night-base-mid));
     --stage-night-bottom: color-mix(
       in oklch,
       var(--stage-art-bottom) 38%,
-      oklch(0.200528 0.055699 261.216)
+      var(--stage-night-base-bottom)
     );
     --stage-night-highlight: var(--stage-art-highlight);
     --stage-night-secondary: color-mix(
