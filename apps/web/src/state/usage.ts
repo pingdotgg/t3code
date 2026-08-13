@@ -27,7 +27,6 @@ export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPending: boolean;
-  /** Ready-to-render sentence for why this environment contributed nothing. */
   readonly error: string | null;
   readonly summary: UsageSummary | null;
 }
@@ -49,19 +48,15 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       const result = get(serverEnvironment.usageSummary({ environmentId, input }));
       const label = presentation.entry.target.label;
       const summary = Option.getOrNull(AsyncResult.value(result));
-      // A sleeping device leaves its request pending indefinitely: the query
-      // only fails once a connection exists to fail on. Its dropped connection
-      // is the terminal signal, so the page never waits on it.
-      const unreachable =
-        summary === null && !connectionPhaseCanAnswer(presentation.connection.phase);
+      const canAnswer = connectionPhaseCanAnswer(presentation.connection.phase);
       statuses.push({
         environmentId,
         label,
-        isPending: result.waiting && !unreachable,
+        isPending: result.waiting && canAnswer,
         error:
           result._tag === "Failure"
             ? `${label} could not report usage.`
-            : unreachable
+            : summary === null && !canAnswer
               ? `${label} is not reachable and is left out of these totals.`
               : null,
         summary,

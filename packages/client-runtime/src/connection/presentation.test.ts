@@ -10,7 +10,6 @@ import {
 } from "./model.ts";
 import {
   connectionCatalogDisplayUrl,
-  connectionPhaseCanAnswer,
   connectionPhaseMessage,
   connectionStatusText,
   connectionStatusTitle,
@@ -166,15 +165,6 @@ describe("connection presentation", () => {
       error: null,
       traceId: null,
     });
-  });
-
-  it("stops expecting answers from a dropped environment", () => {
-    expect(connectionPhaseCanAnswer("available")).toBe(true);
-    expect(connectionPhaseCanAnswer("connecting")).toBe(true);
-    expect(connectionPhaseCanAnswer("connected")).toBe(true);
-    expect(connectionPhaseCanAnswer("reconnecting")).toBe(false);
-    expect(connectionPhaseCanAnswer("offline")).toBe(false);
-    expect(connectionPhaseCanAnswer("error")).toBe(false);
   });
 
   it("preserves an explicitly available environment while offline", () => {

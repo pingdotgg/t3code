@@ -55,24 +55,8 @@ export function presentConnectionState(
   }
 }
 
-/**
- * True while the client can still expect this environment to answer a request.
- * A device that has dropped out sits in `reconnecting`, `offline` or `error`
- * and its in-flight queries stay pending until it comes back, so callers that
- * must settle within a bounded time read the connection as the terminal signal
- * instead of waiting on a request that never fails.
- */
 export function connectionPhaseCanAnswer(phase: EnvironmentConnectionPhase): boolean {
-  switch (phase) {
-    case "available":
-    case "connecting":
-    case "connected":
-      return true;
-    case "offline":
-    case "reconnecting":
-    case "error":
-      return false;
-  }
+  return phase === "available" || phase === "connecting" || phase === "connected";
 }
 
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
