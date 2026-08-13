@@ -316,6 +316,7 @@ import {
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadErrorBannerMessage,
+  resolveThreadErrorBannerSessionError,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -1606,9 +1607,12 @@ function ChatViewContent(props: ChatViewProps) {
     : localDraftError;
   // Dismissals can only mask the shown error, never clear it: a server thread
   // keeps its error in session.lastError, so clearing the local shadow would
-  // just fall through to the persisted one. Mask the current error until a
-  // different error arrives, mirroring the provider status banner.
-  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
+  // just fall through to the persisted one. Key the remount-safe session mask
+  // by occurrence so a later identical failure still appears.
+  const threadErrorBannerKey = getThreadErrorBannerKey(
+    routeThreadKey,
+    resolveThreadErrorBannerSessionError({ runtimeErrorKey, threadError }),
+  );
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,
     threadError,

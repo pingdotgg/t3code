@@ -28,6 +28,7 @@ import {
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveThreadErrorBannerMessage,
+  resolveThreadErrorBannerSessionError,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   startNewThreadForProject,
@@ -145,6 +146,26 @@ describe("resolveThreadErrorBannerMessage", () => {
         dismissedRuntimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
       }),
     ).toBe("event stream stalled");
+  });
+});
+
+describe("resolveThreadErrorBannerSessionError", () => {
+  it("keys the remount-safe session dismiss by occurrence when present", () => {
+    expect(
+      resolveThreadErrorBannerSessionError({
+        runtimeErrorKey: '["2026-08-11T12:00:00Z","event stream stalled"]',
+        threadError: "event stream stalled",
+      }),
+    ).toBe('["2026-08-11T12:00:00Z","event stream stalled"]');
+  });
+
+  it("falls back to the visible message for local errors", () => {
+    expect(
+      resolveThreadErrorBannerSessionError({
+        runtimeErrorKey: null,
+        threadError: "send failed",
+      }),
+    ).toBe("send failed");
   });
 });
 

@@ -18,9 +18,9 @@ export function shouldShowThreadErrorBanner(
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route
 // changes between threads). Mirrors the branch-mismatch banner: a dismissal
-// is remembered per thread key plus message, so navigating away to a thread
-// with no error cannot resurrect the banner, while a different error message
-// on the same thread still appears.
+// is remembered per thread key plus the current occurrence, so navigating
+// away to a thread with no error cannot resurrect the banner, while a later
+// occurrence on the same thread still appears.
 const sessionDismissedThreadErrorBannerKeys = new Set<string>();
 
 export function dismissThreadErrorBannerForSession(bannerKey: string | null): void {

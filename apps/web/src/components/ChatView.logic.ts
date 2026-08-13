@@ -164,6 +164,13 @@ export function threadRuntimeErrorDismissalKey(input: {
   return JSON.stringify([input.runtimeErrorAt, input.runtimeError]);
 }
 
+export function resolveThreadErrorBannerSessionError(input: {
+  readonly runtimeErrorKey: string | null;
+  readonly threadError: string | null;
+}): string | null {
+  return input.runtimeErrorKey ?? input.threadError;
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;
