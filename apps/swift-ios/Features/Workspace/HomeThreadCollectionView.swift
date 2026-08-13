@@ -24,8 +24,8 @@ struct HomeThreadSwipeActionPlan: Equatable, Sendable {
             primary = .restore
         } else if thread.pinnedAt != nil, thread.canTogglePin {
             primary = .unpin
-        } else if thread.canToggleSettlement {
-            primary = settlementAction(for: thread, now: now)
+        } else if let settlement = settlementAction(for: thread, now: now) {
+            primary = settlement
         } else {
             primary = .archive
         }
@@ -38,8 +38,11 @@ struct HomeThreadSwipeActionPlan: Equatable, Sendable {
     static func settlementAction(
         for thread: FeatureThread,
         now: Date
-    ) -> HomeThreadSwipeActionKind {
-        thread.isEffectivelySettled(at: now) ? .reopen : .settle
+    ) -> HomeThreadSwipeActionKind? {
+        guard thread.canToggleSettlement else { return nil }
+        if thread.isEffectivelySettled(at: now) { return .reopen }
+        if thread.isSettled { return nil }
+        return .settle
     }
 }
 
@@ -464,11 +467,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                         }
                     )
                 }
-                if thread.canToggleSettlement {
-                    let settlementAction = HomeThreadSwipeActionPlan.settlementAction(
+                if let settlementAction = HomeThreadSwipeActionPlan.settlementAction(
                         for: thread,
                         now: .now
-                    )
+                    ) {
                     let wasSettled = settlementAction == .reopen
                     actions.append(
                         UIAction(

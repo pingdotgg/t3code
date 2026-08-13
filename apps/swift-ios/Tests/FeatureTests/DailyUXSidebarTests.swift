@@ -90,13 +90,13 @@ struct DailyUXSidebarTests {
 
         #expect(activePlan.actions == [.settle, .delete])
         #expect(settledPlan.actions == [.reopen, .delete])
-        #expect(settledButWorkingPlan.actions == [.settle, .delete])
+        #expect(settledButWorkingPlan.actions == [.archive, .delete])
         #expect(archivedPlan.actions == [.restore, .delete])
         #expect(pinnedPlan.actions == [.unpin, .delete])
         #expect(archiveOnlyPlan.actions == [.archive, .delete])
         #expect(activePlan.performsFirstActionWithFullSwipe)
         #expect(settledPlan.performsFirstActionWithFullSwipe)
-        #expect(settledButWorkingPlan.performsFirstActionWithFullSwipe)
+        #expect(!settledButWorkingPlan.performsFirstActionWithFullSwipe)
         #expect(!archivedPlan.performsFirstActionWithFullSwipe)
         #expect(!pinnedPlan.performsFirstActionWithFullSwipe)
         #expect(!archiveOnlyPlan.performsFirstActionWithFullSwipe)
@@ -121,7 +121,7 @@ struct DailyUXSidebarTests {
         #expect(HomeThreadSwipeActionPlan.settlementAction(for: settled, now: now) == .reopen)
         #expect(
             HomeThreadSwipeActionPlan.settlementAction(for: settledButWorking, now: now)
-                == .settle
+                == nil
         )
     }
 
@@ -153,7 +153,7 @@ struct DailyUXSidebarTests {
             HomeThreadSettleUndoRestoration.capture(from: snoozedOnly)
                 == HomeThreadSettleUndoRestoration(
                     restoresPin: false,
-                    restoresSnoozeUntil: nil
+                    restoresSnoozeUntil: snoozeUntil
                 )
         )
     }

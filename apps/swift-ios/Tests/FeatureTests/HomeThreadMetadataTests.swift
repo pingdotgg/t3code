@@ -199,4 +199,36 @@ struct HomeThreadMetadataTests {
             ) == nil
         )
     }
+
+    @Test
+    func environmentCatalogMissDoesNotUseLegacyProviders() throws {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Use provider",
+            providerID: "shared-id"
+        )
+        let snapshot = FeatureSnapshot(
+            projects: [
+                FeatureProject(
+                    id: "project",
+                    environmentID: "remote",
+                    name: "Remote",
+                    path: "/remote"
+                ),
+            ],
+            threads: [thread],
+            providers: [
+                FeatureProvider(id: "shared-id", name: "Wrong environment", driver: "codex"),
+            ],
+            providersByEnvironment: ["local": [
+                FeatureProvider(id: "shared-id", name: "Local only", driver: "codex"),
+            ]]
+        )
+
+        #expect(thread.homeProviderLabel(in: snapshot) == "shared-id")
+        let context = try #require(HomeThreadRowContext.index(snapshot: snapshot)[thread.id])
+        #expect(context.providerName == "shared-id")
+        #expect(context.providerDriver == "shared-id")
+    }
 }

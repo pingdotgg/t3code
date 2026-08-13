@@ -34,9 +34,7 @@ struct HomeThreadSettleUndoRestoration: Equatable, Sendable {
         let restoresPin = thread.pinnedAt != nil
         return Self(
             restoresPin: restoresPin,
-            // Restoring a pin clears snooze state, so preserve snooze only
-            // when Undo will re-pin the thread.
-            restoresSnoozeUntil: restoresPin ? thread.snoozedUntil : nil
+            restoresSnoozeUntil: thread.snoozedUntil
         )
     }
 }
@@ -577,8 +575,10 @@ public struct WorkspaceView: View {
                 }
                 let didReopen = await model.setSettled(undo.threadID, settled: false)
                 let reopened = model.snapshot.threads.first { $0.id == undo.threadID }
-                guard didReopen, reopened?.isSettled == false, undo.restoresPin else { return }
-                guard await model.setPinned(undo.threadID, pinned: true) else { return }
+                guard didReopen, reopened?.isSettled == false else { return }
+                if undo.restoresPin {
+                    guard await model.setPinned(undo.threadID, pinned: true) else { return }
+                }
                 if let snoozeUntil = undo.restoresSnoozeUntil {
                     guard await model.setSnoozed(undo.threadID, until: snoozeUntil) else { return }
                 }
@@ -1146,9 +1146,12 @@ struct HomeThreadRowContext: Equatable {
             let explicitProvider = thread.providerName?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let configuredProvider = thread.providerID.flatMap { providerID in
-                environmentID.flatMap {
-                    snapshot.providersByEnvironment?[$0]?.first(where: { $0.id == providerID })
-                } ?? snapshot.providers.first(where: { $0.id == providerID })
+                if let providersByEnvironment = snapshot.providersByEnvironment {
+                    return environmentID.flatMap {
+                        providersByEnvironment[$0]?.first(where: { $0.id == providerID })
+                    }
+                }
+                return snapshot.providers.first(where: { $0.id == providerID })
             }
             let providerName = (explicitProvider?.isEmpty == false ? explicitProvider : nil)
                 ?? configuredProvider?.name
