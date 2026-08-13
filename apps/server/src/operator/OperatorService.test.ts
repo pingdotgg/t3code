@@ -216,6 +216,7 @@ interface HarnessOptions {
 
 function makeHarness(options: HarnessOptions = {}) {
   const details = new Map<ThreadId, OrchestrationThread>();
+  const threadDetailReads = new Map<ThreadId, number>();
   const commands: OrchestrationCommand[] = [];
   const initialCoordinator = options.coordinator ?? thread(coordinatorId);
   details.set(initialCoordinator.id, initialCoordinator);
@@ -223,6 +224,7 @@ function makeHarness(options: HarnessOptions = {}) {
     details.set(child.id, child);
   }
   let sequence = 0;
+  let shellSnapshotReads = 0;
 
   const dispatch: OrchestrationEngineService["Service"]["dispatch"] = (command) => {
     const failure = options.dispatchFailure?.(command) ?? null;
@@ -305,15 +307,22 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(ProjectionSnapshotQuery)({
       getProjectShellById: (id) =>
         Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
-      getThreadDetailById: (id) => Effect.succeed(Option.fromNullishOr(details.get(id))),
+      getThreadDetailById: (id) =>
+        Effect.sync(() => {
+          threadDetailReads.set(id, (threadDetailReads.get(id) ?? 0) + 1);
+          return Option.fromNullishOr(details.get(id));
+        }),
       getThreadShellById: (id) =>
         Effect.succeed(Option.fromNullishOr(details.get(id)).pipe(Option.map(shellFromThread))),
       getShellSnapshot: () =>
-        Effect.succeed({
-          snapshotSequence: sequence,
-          projects: [project],
-          threads: Array.from(details.values(), shellFromThread),
-          updatedAt: NOW,
+        Effect.sync(() => {
+          shellSnapshotReads += 1;
+          return {
+            snapshotSequence: sequence,
+            projects: [project],
+            threads: Array.from(details.values(), shellFromThread),
+            updatedAt: NOW,
+          };
         }),
     }),
     Layer.mock(ProviderRegistry)({
@@ -345,6 +354,10 @@ function makeHarness(options: HarnessOptions = {}) {
     commands,
     details,
     layer: OperatorService.layer.pipe(Layer.provide(dependencies)),
+    get shellSnapshotReads() {
+      return shellSnapshotReads;
+    },
+    threadDetailReadCount: (threadId: ThreadId) => threadDetailReads.get(threadId) ?? 0,
   };
 }
 
@@ -353,10 +366,36 @@ describe("OperatorService", () => {
     const harness = makeHarness({ agenticOperatorEnabled: false });
     return Effect.gen(function* () {
       const operator = yield* OperatorService;
-      const error = yield* operator.listModels(coordinatorId).pipe(Effect.flip);
+      const errors = [
+        yield* operator.listModels(coordinatorId).pipe(Effect.flip),
+        yield* operator
+          .spawn({
+            coordinatorThreadId: coordinatorId,
+            workspaceMode: "current",
+            tasks: [
+              {
+                title: "Backend",
+                prompt: "Build the backend.",
+                modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+              },
+            ],
+          })
+          .pipe(Effect.flip),
+        yield* operator
+          .resume(coordinatorId, [
+            { taskId: ThreadId.make("disabled-task"), prompt: "Continue the task." },
+          ])
+          .pipe(Effect.flip),
+        yield* operator.status(coordinatorId).pipe(Effect.flip),
+        yield* operator.wait(coordinatorId).pipe(Effect.flip),
+      ];
 
-      assert.equal(error.reason, "disabled");
-      assert.match(error.detail, /Settings > Operator/i);
+      for (const error of errors) {
+        assert.equal(error.reason, "disabled");
+        assert.match(error.detail, /Settings > Operator/i);
+      }
+      assert.equal(harness.shellSnapshotReads, 0);
+      assert.equal(harness.commands.length, 0);
     }).pipe(Effect.provide(harness.layer));
   });
 
@@ -531,6 +570,106 @@ describe("OperatorService", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("keeps created tasks when another task fails to be created", () => {
+    const harness = makeHarness({
+      dispatchFailure: (command) =>
+        command.type === "thread.create" && command.title === "Backend"
+          ? new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "Backend creation failed.",
+            })
+          : null,
+    });
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const result = yield* operator.spawn({
+        coordinatorThreadId: coordinatorId,
+        workspaceMode: "current",
+        tasks: [
+          {
+            title: "Frontend",
+            prompt: "Build frontend.",
+            modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+          },
+          {
+            title: "Backend",
+            prompt: "Build backend.",
+            modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+          },
+        ],
+      });
+
+      assert.deepStrictEqual(
+        result.tasks.map((task) => ({ title: task.title, status: task.status })),
+        [
+          { title: "Frontend", status: "running" },
+          { title: "Backend", status: "failed" },
+        ],
+      );
+      assert.match(result.tasks[1]?.error ?? "", /Backend creation failed/i);
+      assert.isFalse(harness.details.has(result.tasks[1]!.taskId));
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.create").length,
+        1,
+      );
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.turn.start").length,
+        1,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("surfaces a retained worktree when every task fails to be created", () => {
+    const harness = makeHarness({
+      onCreateWorktree: () =>
+        Effect.succeed({
+          worktree: { path: "/worktrees/operator-new", refName: "feat/operator-new" },
+        }),
+      dispatchFailure: (command) =>
+        command.type === "thread.create"
+          ? new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `${command.title} creation failed.`,
+            })
+          : null,
+    });
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const error = yield* operator
+        .spawn({
+          coordinatorThreadId: coordinatorId,
+          workspaceMode: "new-worktree",
+          branch: "feat/operator-new",
+          baseBranch: "main",
+          tasks: [
+            {
+              title: "Frontend",
+              prompt: "Build frontend.",
+              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+            },
+            {
+              title: "Backend",
+              prompt: "Build backend.",
+              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.6-sol" },
+            },
+          ],
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.operation, "create-task");
+      assert.match(error.detail, /Every Operator task failed to be created/);
+      assert.match(error.detail, /Frontend creation failed/);
+      assert.match(error.detail, /Backend creation failed/);
+      assert.match(error.detail, /\/worktrees\/operator-new/);
+      assert.match(error.detail, /feat\/operator-new/);
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.create").length,
+        0,
+      );
+      assert.equal(harness.details.size, 1);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("returns successful task IDs when another task fails to start", () => {
     const harness = makeHarness({
       dispatchFailure: (command) =>
@@ -577,6 +716,11 @@ describe("OperatorService", () => {
 
   it.effect("cleans up the spawn when every task fails to start", () => {
     const harness = makeHarness({
+      onCreateWorktree: () =>
+        Effect.succeed({
+          worktree: { path: "/worktrees/operator-new", refName: "feat/operator-new" },
+        }),
+      onRunSetupScript: () => Effect.succeed({ status: "no-script" as const }),
       dispatchFailure: (command) =>
         command.type === "thread.turn.start"
           ? new OrchestrationCommandInvariantError({
@@ -590,7 +734,9 @@ describe("OperatorService", () => {
       const error = yield* operator
         .spawn({
           coordinatorThreadId: coordinatorId,
-          workspaceMode: "operator",
+          workspaceMode: "new-worktree",
+          branch: "feat/operator-new",
+          baseBranch: "main",
           tasks: [
             {
               title: "Frontend",
@@ -610,6 +756,8 @@ describe("OperatorService", () => {
       assert.match(error.detail, /Every Operator task failed to start/);
       assert.match(error.detail, /Frontend/);
       assert.match(error.detail, /Backend/);
+      assert.match(error.detail, /\/worktrees\/operator-new/);
+      assert.match(error.detail, /feat\/operator-new/);
       const createdTaskIds = harness.commands
         .filter((command) => command.type === "thread.create")
         .map((command) => command.threadId);
@@ -628,7 +776,7 @@ describe("OperatorService", () => {
           )
           .map((command) => [command.operatorWorkspacePath, command.operatorWorkspaceBranch]),
         [
-          ["/worktrees/operator", "feat/operator"],
+          ["/worktrees/operator-new", "feat/operator-new"],
           [null, null],
         ],
       );
@@ -691,6 +839,30 @@ describe("OperatorService", () => {
       assert.match(
         resumedFrontend?.messages.at(-1)?.text ?? "",
         /^Fix the responsive navigation\./,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("rejects duplicate task IDs before resuming any task", () => {
+    const taskId = ThreadId.make("operator-duplicate-resume");
+    const harness = makeHarness({
+      children: [completedOperatorTask(taskId, "Duplicate resume")],
+    });
+
+    return Effect.gen(function* () {
+      const operator = yield* OperatorService;
+      const error = yield* operator
+        .resume(coordinatorId, [
+          { taskId, prompt: "Fix the first issue." },
+          { taskId, prompt: "Fix the second issue." },
+        ])
+        .pipe(Effect.flip);
+
+      assert.equal(error.reason, "invalid-task");
+      assert.match(error.detail, /only be resumed once/);
+      assert.equal(
+        harness.commands.filter((command) => command.type === "thread.turn.start").length,
+        0,
       );
     }).pipe(Effect.provide(harness.layer));
   });
@@ -843,8 +1015,30 @@ describe("OperatorService", () => {
     });
     let readCursor: number | null = null;
     let harness: ReturnType<typeof makeHarness>;
-    const completionEvent: OrchestrationEvent = {
+    const streamingEvent: OrchestrationEvent = {
       sequence: 1,
+      eventId: EventId.make("event-streaming-delta"),
+      aggregateKind: "thread",
+      aggregateId: taskId,
+      occurredAt: "2026-08-12T10:00:30.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "thread.message-sent",
+      payload: {
+        threadId: taskId,
+        messageId: MessageId.make("assistant-streaming"),
+        role: "assistant",
+        text: "Working...",
+        turnId,
+        streaming: true,
+        createdAt: "2026-08-12T10:00:30.000Z",
+        updatedAt: "2026-08-12T10:00:30.000Z",
+      },
+    };
+    const completionEvent: OrchestrationEvent = {
+      sequence: 2,
       eventId: EventId.make("event-complete"),
       aggregateKind: "thread",
       aggregateId: taskId,
@@ -853,48 +1047,58 @@ describe("OperatorService", () => {
       causationEventId: null,
       correlationId: null,
       metadata: {},
-      type: "thread.meta-updated",
+      type: "thread.message-sent",
       payload: {
         threadId: taskId,
+        messageId: MessageId.make("assistant-1"),
+        role: "assistant",
+        text: "Backend implementation is ready.",
+        turnId,
+        streaming: false,
+        createdAt: "2026-08-12T10:01:00.000Z",
         updatedAt: "2026-08-12T10:01:00.000Z",
       },
     };
     harness = makeHarness({
       children: [running],
-      readEvents: (cursor) =>
-        Stream.fromEffect(
-          Effect.sync(() => {
-            readCursor = cursor;
-            harness.details.set(
-              taskId,
-              thread(taskId, {
-                title: "Backend",
-                operatorParentThreadId: coordinatorId,
-                operatorBatchId: "batch-1",
-                latestTurn: {
-                  turnId,
-                  state: "completed",
-                  requestedAt: NOW,
-                  startedAt: NOW,
-                  completedAt: "2026-08-12T10:01:00.000Z",
-                  assistantMessageId: MessageId.make("assistant-1"),
-                },
-                messages: [
-                  {
-                    id: MessageId.make("assistant-1"),
-                    role: "assistant",
-                    text: "Backend implementation is ready.",
+      readEvents: (cursor) => {
+        readCursor = cursor;
+        return Stream.concat(
+          Stream.succeed(streamingEvent),
+          Stream.fromEffect(
+            Effect.sync(() => {
+              harness.details.set(
+                taskId,
+                thread(taskId, {
+                  title: "Backend",
+                  operatorParentThreadId: coordinatorId,
+                  operatorBatchId: "batch-1",
+                  latestTurn: {
                     turnId,
-                    streaming: false,
-                    createdAt: "2026-08-12T10:01:00.000Z",
-                    updatedAt: "2026-08-12T10:01:00.000Z",
+                    state: "completed",
+                    requestedAt: NOW,
+                    startedAt: NOW,
+                    completedAt: "2026-08-12T10:01:00.000Z",
+                    assistantMessageId: MessageId.make("assistant-1"),
                   },
-                ],
-              }),
-            );
-            return completionEvent;
-          }),
-        ),
+                  messages: [
+                    {
+                      id: MessageId.make("assistant-1"),
+                      role: "assistant",
+                      text: "Backend implementation is ready.",
+                      turnId,
+                      streaming: false,
+                      createdAt: "2026-08-12T10:01:00.000Z",
+                      updatedAt: "2026-08-12T10:01:00.000Z",
+                    },
+                  ],
+                }),
+              );
+              return completionEvent;
+            }),
+          ),
+        );
+      },
     });
 
     return Effect.gen(function* () {
@@ -908,6 +1112,7 @@ describe("OperatorService", () => {
       assert.equal(waitUpdates.length, 2);
       assert.equal(typeof waitUpdates[0], "string");
       assert.equal(waitUpdates[1], null);
+      assert.equal(harness.threadDetailReadCount(taskId), 2);
       assert.deepStrictEqual(tasks, [
         {
           taskId,
@@ -952,8 +1157,10 @@ describe("OperatorService", () => {
     });
     return Effect.gen(function* () {
       const operator = yield* OperatorService;
+      const scopedTasks = yield* operator.wait(coordinatorId, [abandonedId]);
       const tasks = yield* operator.wait(coordinatorId);
 
+      assert.deepStrictEqual(scopedTasks, []);
       assert.deepStrictEqual(
         tasks.map((task) => task.taskId),
         [completedId],

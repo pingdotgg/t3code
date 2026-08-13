@@ -69,7 +69,7 @@ export const OperatorModelsTool = Tool.make("operator_models", {
 
 export const OperatorSpawnTool = Tool.make("operator_spawn", {
   description:
-    "Create one or more durable, top-level T3 Code sidebar task threads with the exact provider, model, and options supplied. These are independent T3 Code tasks, not native provider subagents. Parallel tasks share one checkout, so give them disjoint file ownership. Omit workspaceMode or use 'current' to use the coordinator checkout without asking the user. Use 'new-worktree' with branch and baseBranch only when the user explicitly requests a new worktree. After that, use 'operator' to reuse the remembered Operator worktree. Returns immediately. Call operator_wait once for the returned task IDs whose status is not failed, then use their results to prompt an integration task if needed. Never use this unless the user explicitly requested Operator.",
+    "Create one or more durable, top-level T3 Code sidebar task threads with the exact provider, model, and options supplied. These are independent T3 Code tasks, not native provider subagents. Parallel tasks share one checkout, so give them disjoint file ownership. Omit workspaceMode or use 'current' to use the coordinator checkout without asking the user. Use 'new-worktree' with branch and baseBranch only when the user explicitly requests a new worktree. After that, use 'operator' to reuse the remembered Operator worktree. Returns immediately. Call operator_wait once for the returned task IDs whose status is not failed, then use their results to prompt an integration task if needed. Never use this unless the user explicitly requested Operator or requested creation of T3 Code tasks.",
   parameters: Schema.Struct({
     tasks: Schema.Array(
       Schema.Struct({
@@ -105,7 +105,15 @@ export const OperatorResumeTool = Tool.make("operator_resume", {
         taskId: ThreadId,
         prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(100_000)),
       }),
-    ).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+    ).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(8),
+      Schema.makeFilter(
+        (tasks) =>
+          new Set(tasks.map((task) => task.taskId)).size === tasks.length ||
+          "Operator resume task IDs must be unique.",
+      ),
+    ),
   }),
   success: Schema.Struct({ tasks: Schema.Array(OperatorTaskStatusSchema) }) as Schema.Schema<{
     readonly tasks: ReadonlyArray<OperatorTaskStatus>;

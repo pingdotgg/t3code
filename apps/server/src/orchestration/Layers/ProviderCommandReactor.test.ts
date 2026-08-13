@@ -435,6 +435,23 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+    if (input?.operatorParentThreadId) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-operator-parent-create"),
+          threadId: input.operatorParentThreadId,
+          projectId: asProjectId("project-1"),
+          title: "Operator coordinator",
+          modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        }),
+      );
+    }
     await Effect.runPromise(
       engine.dispatch({
         type: "thread.create",
@@ -1469,7 +1486,7 @@ describe("ProviderCommandReactor", () => {
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-branch"),
         threadId: ThreadId.make("thread-1"),
-        branch: "t3code/1234abcd",
+        branch: "t3code/deadbeef",
         worktreePath: "/tmp/provider-project-worktree",
       }),
     );
@@ -1507,9 +1524,15 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => harness.renameBranch.mock.calls.length === 1);
     await waitFor(() => harness.refreshStatus.mock.calls.length === 1);
     expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
       message: "Add a safer reconnect backoff.",
+    });
+    expect(harness.renameBranch).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-project-worktree",
+      oldBranch: "t3code/deadbeef",
+      newBranch: "t3code/feature/gpt-5-6-luna",
     });
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
   });
@@ -1526,7 +1549,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-operator-child-metadata"),
         threadId: ThreadId.make("thread-1"),
         title: "Backend implementation",
-        branch: "t3code/shared-operator",
+        branch: "t3code/deadbeef",
         worktreePath: "/tmp/shared-operator-worktree",
       }),
     );
@@ -1560,7 +1583,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Backend implementation");
-    expect(thread?.branch).toBe("t3code/shared-operator");
+    expect(thread?.branch).toBe("t3code/deadbeef");
   });
 
   it("forwards codex model options through session start and turn send", async () => {

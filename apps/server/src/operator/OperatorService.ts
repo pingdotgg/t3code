@@ -2,6 +2,7 @@ import {
   CommandId,
   MessageId,
   type ModelSelection,
+  type OrchestrationEvent,
   type OrchestrationThread,
   type OrchestrationThreadShell,
   type ProviderOptionDescriptor,
@@ -13,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -199,6 +201,30 @@ function canStillSettle(shell: OrchestrationThreadShell): boolean {
     shell.hasPendingApprovals ||
     shell.hasPendingUserInput
   );
+}
+
+function canChangeTaskStatus(event: OrchestrationEvent): boolean {
+  switch (event.type) {
+    case "thread.turn-start-requested":
+    case "thread.turn-interrupt-requested":
+    case "thread.session-stop-requested":
+    case "thread.session-set":
+    case "thread.turn-diff-completed":
+      return true;
+    case "thread.message-sent":
+      return !event.payload.streaming;
+    case "thread.activity-appended":
+      return (
+        event.payload.activity.kind === "approval.requested" ||
+        event.payload.activity.kind === "approval.resolved" ||
+        event.payload.activity.kind === "user-input.requested" ||
+        event.payload.activity.kind === "user-input.resolved" ||
+        event.payload.activity.kind === "provider.approval.respond.failed" ||
+        event.payload.activity.kind === "provider.user-input.respond.failed"
+      );
+    default:
+      return false;
+  }
 }
 
 const CHILD_TASK_INSTRUCTIONS = `
@@ -628,40 +654,92 @@ export class OperatorService extends Context.Service<
             );
         }
 
+        const restoreRememberedWorkspace = Effect.gen(function* () {
+          if (!rememberedWorkspace) return;
+          yield* engine
+            .dispatch({
+              type: "thread.meta.update",
+              commandId: yield* commandId("restore-workspace"),
+              threadId: coordinator.id,
+              operatorWorkspacePath: coordinator.operatorWorkspacePath,
+              operatorWorkspaceBranch: coordinator.operatorWorkspaceBranch,
+            })
+            .pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Failed to restore Operator workspace metadata", {
+                  threadId: coordinator.id,
+                  cause: error,
+                }),
+              ),
+            );
+        });
+        const retainedWorktreeDetail =
+          input.workspaceMode === "new-worktree"
+            ? ` The new Operator worktree remains available at '${workspacePath}'${
+                branch === null ? "" : ` on branch '${branch}'`
+              }.`
+            : "";
+
         const batchId = yield* randomUuid;
         const createdAt = yield* nowIso;
-        const pendingTasks = yield* Effect.forEach(input.tasks, (task) =>
+        const createOutcomes = yield* Effect.forEach(input.tasks, (task) =>
           Effect.gen(function* () {
             const taskId = ThreadId.make(yield* randomUuid);
-            yield* engine
-              .dispatch({
-                type: "thread.create",
-                commandId: yield* commandId("create-task"),
-                threadId: taskId,
-                projectId: coordinator.projectId,
-                title: task.title,
-                modelSelection: task.modelSelection,
-                runtimeMode: coordinator.runtimeMode,
-                interactionMode: "default",
-                branch,
-                worktreePath: workspacePath,
-                operatorParentThreadId: coordinator.id,
-                operatorBatchId: batchId,
-                createdAt,
-              })
-              .pipe(
-                Effect.mapError(
-                  (error) =>
-                    new OperatorError({
-                      operation: "create-task",
-                      reason: "dispatch-failed",
-                      detail: errorDetail(error),
-                    }),
+            return yield* Effect.gen(function* () {
+              yield* engine
+                .dispatch({
+                  type: "thread.create",
+                  commandId: yield* commandId("create-task"),
+                  threadId: taskId,
+                  projectId: coordinator.projectId,
+                  title: task.title,
+                  modelSelection: task.modelSelection,
+                  runtimeMode: coordinator.runtimeMode,
+                  interactionMode: "default",
+                  branch,
+                  worktreePath: workspacePath,
+                  operatorParentThreadId: coordinator.id,
+                  operatorBatchId: batchId,
+                  createdAt,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new OperatorError({
+                        operation: "create-task",
+                        reason: "dispatch-failed",
+                        detail: errorDetail(error),
+                      }),
+                  ),
+                );
+              return { _tag: "Created" as const, task, taskId };
+            }).pipe(
+              Effect.catch((error) =>
+                nowIso.pipe(
+                  Effect.map((failedAt) => ({
+                    _tag: "Failed" as const,
+                    task,
+                    taskId,
+                    error,
+                    failedAt,
+                  })),
                 ),
-              );
-            return { task, taskId };
+              ),
+            );
           }),
         );
+        const pendingTasks = createOutcomes.filter((outcome) => outcome._tag === "Created");
+        const failedCreates = createOutcomes.filter((outcome) => outcome._tag === "Failed");
+        if (input.tasks.length > 0 && pendingTasks.length === 0) {
+          yield* restoreRememberedWorkspace;
+          return yield* new OperatorError({
+            operation: "create-task",
+            reason: "dispatch-failed",
+            detail: `Every Operator task failed to be created: ${failedCreates
+              .map((outcome) => `${outcome.task.title}: ${outcome.error.detail}`)
+              .join("; ")}${retainedWorktreeDetail}`,
+          });
+        }
 
         if (input.workspaceMode === "new-worktree") {
           const setupThread = pendingTasks[0];
@@ -707,27 +785,10 @@ export class OperatorService extends Context.Service<
             { concurrency: "unbounded" },
           );
 
-          if (rememberedWorkspace) {
-            yield* engine
-              .dispatch({
-                type: "thread.meta.update",
-                commandId: yield* commandId("restore-workspace"),
-                threadId: coordinator.id,
-                operatorWorkspacePath: coordinator.operatorWorkspacePath,
-                operatorWorkspaceBranch: coordinator.operatorWorkspaceBranch,
-              })
-              .pipe(
-                Effect.catch((error) =>
-                  Effect.logWarning("Failed to restore Operator workspace metadata", {
-                    threadId: coordinator.id,
-                    cause: error,
-                  }),
-                ),
-              );
-          }
+          yield* restoreRememberedWorkspace;
         });
 
-        const tasks = yield* startTurns(
+        const startedTasks = yield* startTurns(
           coordinator.id,
           pendingTasks.map(({ task, taskId }) => ({
             taskId,
@@ -741,10 +802,39 @@ export class OperatorService extends Context.Service<
         ).pipe(
           Effect.catch((error) =>
             error.operation === "start-task" && error.reason === "dispatch-failed"
-              ? cleanupFailedSpawn.pipe(Effect.andThen(Effect.fail(error)))
+              ? cleanupFailedSpawn.pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      retainedWorktreeDetail.length === 0
+                        ? error
+                        : new OperatorError({
+                            operation: error.operation,
+                            reason: error.reason,
+                            detail: `${error.detail}${retainedWorktreeDetail}`,
+                          }),
+                    ),
+                  ),
+                )
               : Effect.fail(error),
           ),
         );
+        const startedTaskById = new Map(startedTasks.map((task) => [task.taskId, task] as const));
+        const tasks = createOutcomes.map((outcome): OperatorTaskStatus => {
+          if (outcome._tag === "Failed") {
+            return {
+              taskId: outcome.taskId,
+              batchId,
+              title: outcome.task.title,
+              modelSelection: outcome.task.modelSelection,
+              status: "failed",
+              startedAt: outcome.failedAt,
+              completedAt: outcome.failedAt,
+              result: null,
+              error: outcome.error.detail,
+            };
+          }
+          return startedTaskById.get(outcome.taskId)!;
+        });
         return { batchId, workspacePath, branch, tasks };
       });
 
@@ -840,16 +930,18 @@ export class OperatorService extends Context.Service<
         coordinatorThreadId: ThreadId,
         taskIds?: ReadonlyArray<ThreadId>,
       ) {
-        const selectedIds =
-          taskIds ??
-          (yield* getOwnedShells(coordinatorThreadId))
-            .filter(canStillSettle)
-            .map((task) => task.id);
+        yield* getCoordinator(coordinatorThreadId);
+        const selectedIds = (yield* getOwnedShells(coordinatorThreadId, taskIds))
+          .filter(canStillSettle)
+          .map((task) => task.id);
         if (selectedIds.length === 0) {
           return [];
         }
         const cursor = yield* engine.latestSequence;
-        const initial = yield* readStatuses(coordinatorThreadId, selectedIds);
+        const readSelectedStatuses = getOwnedShells(coordinatorThreadId, selectedIds).pipe(
+          Effect.flatMap(readShellStatuses),
+        );
+        const initial = yield* readSelectedStatuses;
         if (initial.every((task) => isSettled(task.status))) {
           return initial;
         }
@@ -857,6 +949,7 @@ export class OperatorService extends Context.Service<
         yield* setWaitStartedAt(coordinatorThreadId, yield* nowIso);
         return yield* Effect.gen(function* () {
           const selected = new Set<string>(selectedIds);
+          const seenSequences = yield* Ref.make(new Set<number>());
           const relevant = (event: { readonly aggregateId: string }) =>
             selected.has(event.aggregateId);
           const eventTriggers = Stream.merge(
@@ -872,9 +965,19 @@ export class OperatorService extends Context.Service<
               ),
             ),
             engine.streamDomainEvents.pipe(Stream.filter(relevant)),
+          ).pipe(
+            Stream.filter(canChangeTaskStatus),
+            Stream.filterEffect((event) =>
+              Ref.modify(seenSequences, (seen) => {
+                if (seen.has(event.sequence)) return [false, seen];
+                const next = new Set(seen);
+                next.add(event.sequence);
+                return [true, next];
+              }),
+            ),
           );
           const completed = yield* eventTriggers.pipe(
-            Stream.mapEffect(() => readStatuses(coordinatorThreadId, selectedIds)),
+            Stream.mapEffect(() => readSelectedStatuses),
             Stream.filter((tasks) => tasks.every((task) => isSettled(task.status))),
             Stream.runHead,
           );

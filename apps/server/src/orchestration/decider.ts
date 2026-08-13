@@ -355,6 +355,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
+      const operatorParentThread =
+        command.operatorParentThreadId == null
+          ? null
+          : yield* requireThread({
+              readModel,
+              command,
+              threadId: command.operatorParentThreadId,
+            });
+      if (operatorParentThread !== null && operatorParentThread.projectId !== command.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Operator parent thread '${operatorParentThread.id}' belongs to a different project.`,
+        });
+      }
       yield* requireThreadAbsent({
         readModel,
         command,

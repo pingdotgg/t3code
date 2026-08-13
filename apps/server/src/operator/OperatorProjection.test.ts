@@ -76,6 +76,12 @@ it.layer(TestLayer)("Operator projections", (it) => {
           worktreePath: "/worktrees/operator",
           createdAt,
         });
+        const freshCoordinator = Option.getOrThrow(yield* query.getThreadDetailById(coordinatorId));
+        assert.equal(freshCoordinator.operatorParentThreadId, null);
+        assert.equal(freshCoordinator.operatorBatchId, null);
+        assert.equal(freshCoordinator.operatorWorkspacePath, null);
+        assert.equal(freshCoordinator.operatorWorkspaceBranch, null);
+        assert.equal(freshCoordinator.operatorWaitStartedAt, null);
         yield* engine.dispatch({
           type: "thread.meta.update",
           commandId: CommandId.make("operator-coordinator-workspace"),
