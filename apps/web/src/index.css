@@ -1800,6 +1800,35 @@ label:has(> select#reasoning-effort) select {
   height: 100%;
 }
 
+.assistant-selection-action {
+  transition-duration: 160ms;
+  transition-property: opacity, scale, translate, box-shadow;
+  transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@starting-style {
+  .assistant-selection-action {
+    opacity: 0;
+    scale: 0.96;
+    translate: 0 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-selection-action {
+    transition-duration: 120ms;
+    transition-property: opacity;
+  }
+
+  @starting-style {
+    .assistant-selection-action {
+      opacity: 0;
+      scale: 1;
+      translate: 0;
+    }
+  }
+}
+
 /* Chat markdown rendering */
 .chat-markdown {
   min-width: 0;

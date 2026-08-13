@@ -29,6 +29,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
@@ -114,6 +115,7 @@ import {
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
@@ -140,6 +142,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onReplyToAssistantSelection: (text: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
@@ -196,6 +199,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
     layout: true,
   },
 } as const;
+const NOOP_REPLY_TO_ASSISTANT_SELECTION = () => {};
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -215,6 +219,7 @@ interface MessagesTimelineProps {
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onReplyToAssistantSelection?: (text: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -261,6 +266,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
+  onReplyToAssistantSelection = NOOP_REPLY_TO_ASSISTANT_SELECTION,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -425,6 +431,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
+
   const handleAnchorReady = useCallback(
     (info: { anchorIndex: number | undefined }) => {
       if (anchorMessageId !== null && info.anchorIndex !== undefined) {
@@ -513,6 +520,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onReplyToAssistantSelection,
       onToggleTurnFold,
       onToggleWorkGroup,
       agentPanelModel,
@@ -529,6 +537,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onReplyToAssistantSelection,
       onToggleTurnFold,
       onToggleWorkGroup,
       agentPanelModel,
@@ -1104,10 +1113,83 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const markdownRootRef = useRef<HTMLDivElement>(null);
+  const [selectionAction, setSelectionAction] = useState<{
+    text: string;
+    top: number;
+    left: number;
+  } | null>(null);
+
+  const captureSelection = useCallback(() => {
+    const root = markdownRootRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.isCollapsed || selection.rangeCount !== 1) {
+      setSelectionAction(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) {
+      setSelectionAction(null);
+      return;
+    }
+
+    const text = chatMarkdownClipboardPayload(selection)?.text.trim();
+    const rect = Array.from(range.getClientRects()).at(-1) ?? range.getBoundingClientRect();
+    if (!text || (rect.width === 0 && rect.height === 0)) {
+      setSelectionAction(null);
+      return;
+    }
+
+    setSelectionAction({
+      text,
+      top: Math.min(window.innerHeight - 44, rect.bottom + 8),
+      left: Math.max(48, Math.min(window.innerWidth - 48, rect.left + rect.width / 2)),
+    });
+  }, []);
+
+  const scheduleSelectionCapture = useCallback(() => {
+    window.requestAnimationFrame(captureSelection);
+  }, [captureSelection]);
+
+  useEffect(() => {
+    if (!selectionAction) return;
+
+    const dismissIfSelectionMoved = () => {
+      const root = markdownRootRef.current;
+      const selection = window.getSelection();
+      const range = selection?.rangeCount === 1 ? selection.getRangeAt(0) : null;
+      if (
+        !root ||
+        !selection ||
+        selection.isCollapsed ||
+        !range ||
+        !root.contains(range.startContainer) ||
+        !root.contains(range.endContainer)
+      ) {
+        setSelectionAction(null);
+      }
+    };
+    const dismiss = () => setSelectionAction(null);
+
+    document.addEventListener("selectionchange", dismissIfSelectionMoved);
+    document.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      document.removeEventListener("selectionchange", dismissIfSelectionMoved);
+      document.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [selectionAction]);
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
+      <div
+        ref={markdownRootRef}
+        className="relative min-w-0 px-1 py-0.5"
+        onKeyUp={scheduleSelectionCapture}
+        onPointerUp={scheduleSelectionCapture}
+      >
         <ChatMarkdown
           text={messageText}
           cwd={ctx.markdownCwd}
@@ -1139,6 +1221,35 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           </div>
         ) : null}
       </div>
+      {selectionAction
+        ? createPortal(
+            <div
+              className="fixed z-[70]"
+              style={{
+                top: selectionAction.top,
+                left: selectionAction.left,
+                transform: "translateX(-50%)",
+              }}
+            >
+              <Button
+                size="sm"
+                variant="outline"
+                className="assistant-selection-action dropdown-glass h-8 gap-1.5 rounded-full px-3 shadow-lg shadow-black/15"
+                aria-label="Reply to selected assistant text"
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  ctx.onReplyToAssistantSelection(selectionAction.text);
+                  window.getSelection()?.removeAllRanges();
+                  setSelectionAction(null);
+                }}
+              >
+                <MessageCircleIcon className="size-3.5" />
+                Reply
+              </Button>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }
