@@ -19,6 +19,7 @@ use crate::platform::{DesktopError, Result};
 /// versions. Those are ordinary conditions for us — a headless box, an old
 /// Wayland — so they become tool errors instead of killing the process.
 fn guarded<T>(what: &str, call: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _display = PreferX11::engage();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)) {
         Ok(result) => result,
         Err(_) => Err(DesktopError::new(format!(
@@ -26,6 +27,38 @@ fn guarded<T>(what: &str, call: impl FnOnce() -> Result<T>) -> Result<T> {
              vary by compositor. Use get_app_state to read the UI instead; it does not need a \
              screen capture"
         ))),
+    }
+}
+
+/// Steer `xcap` to X11 for the duration of a capture when both display servers
+/// are reachable.
+///
+/// `xcap` picks Wayland whenever `WAYLAND_DISPLAY` is set, and its Wayland path
+/// panics outright on compositors whose protocol version it does not know —
+/// WSLg among them — while the X11 path works fine there through XWayland.
+/// Restores the variable afterwards so nothing else sees the change.
+struct PreferX11(Option<std::ffi::OsString>);
+
+impl PreferX11 {
+    fn engage() -> Option<Self> {
+        if !cfg!(target_os = "linux") {
+            return None;
+        }
+        let wayland = std::env::var_os("WAYLAND_DISPLAY")?;
+        // Without an X server there is nothing to fall back to.
+        std::env::var_os("DISPLAY")?;
+        // SAFETY: capture runs on the single request-dispatch thread, and the
+        // value is restored before the guard is dropped.
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+        Some(Self(Some(wayland)))
+    }
+}
+
+impl Drop for PreferX11 {
+    fn drop(&mut self) {
+        if let Some(value) = self.0.take() {
+            unsafe { std::env::set_var("WAYLAND_DISPLAY", value) };
+        }
     }
 }
 
