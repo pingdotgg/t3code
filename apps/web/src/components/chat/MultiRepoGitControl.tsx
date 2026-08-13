@@ -135,7 +135,10 @@ export function MultiRepoGitControl({
         title: `Syncing ${steps.length} ${noun}…`,
       });
       const results = await Promise.allSettled(
-        steps.map((step) => runSyncStep(environmentId, step)),
+        steps.map(async (step) => {
+          await runSyncStep(environmentId, step);
+          refreshVcsStatusGroup({ environmentId, repoRoots: [step.repoRoot] });
+        }),
       );
       const failures = results
         .map((result, index) => ({ result, step: steps[index]! }))

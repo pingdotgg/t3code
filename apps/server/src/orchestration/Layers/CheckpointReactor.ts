@@ -305,7 +305,7 @@ const make = Effect.gen(function* () {
         detail: "Checkpoint capture failed in every repository.",
         createdAt: input.createdAt,
       }).pipe(Effect.catch(() => Effect.void));
-      yield* publishCheckpointTerminalReceipts(receiptBus, {
+      yield* publishCheckpointTerminalReceipts({
         threadId: input.threadId,
         turnId: input.turnId,
         checkpointTurnCount: input.turnCount,
@@ -343,7 +343,7 @@ const make = Effect.gen(function* () {
       checkpointTurnCount: input.turnCount,
       createdAt: input.createdAt,
     });
-    yield* publishCheckpointTerminalReceipts(receiptBus, {
+    yield* publishCheckpointTerminalReceipts({
       threadId: input.threadId,
       turnId: input.turnId,
       checkpointTurnCount: input.turnCount,
@@ -525,7 +525,7 @@ const make = Effect.gen(function* () {
         0,
       );
       const baselineCheckpointRef = checkpointRefForThreadTurn(thread.id, currentTurnCount);
-      const captured = yield* captureBaselineAcrossRoots(checkpointStore, {
+      const captured = yield* captureBaselineAcrossRoots({
         threadId: thread.id,
         roots: checkpointRoots,
         baselineCheckpointRef,
@@ -679,7 +679,7 @@ const make = Effect.gen(function* () {
       0,
     );
     const baselineCheckpointRef = checkpointRefForThreadTurn(threadId, currentTurnCount);
-    const captured = yield* captureBaselineAcrossRoots(checkpointStore, {
+    const captured = yield* captureBaselineAcrossRoots({
       threadId,
       roots: checkpointRoots,
       baselineCheckpointRef,
@@ -787,7 +787,7 @@ const make = Effect.gen(function* () {
 
     // Restore exactly the roots captured by the selected checkpoint. Legacy
     // checkpoints have no per-root rows and fall back to the current root set.
-    const { restoredRoots, failedRoots } = yield* restoreCheckpointAcrossRoots(checkpointStore, {
+    const { restoredRoots, failedRoots } = yield* restoreCheckpointAcrossRoots({
       threadId: event.payload.threadId,
       turnCount: event.payload.turnCount,
       targets: restoreTargets,
@@ -837,7 +837,7 @@ const make = Effect.gen(function* () {
     }
 
     if (staleCheckpointRefs.length > 0) {
-      yield* deleteCheckpointRefsAcrossRoots(checkpointStore, {
+      yield* deleteCheckpointRefsAcrossRoots({
         threadId: event.payload.threadId,
         roots: restoredRoots,
         checkpointRefs: staleCheckpointRefs,
@@ -943,7 +943,7 @@ const make = Effect.gen(function* () {
     | OrchestrationDispatchError
     | PlatformError.PlatformError
     | ProjectionRepositoryError,
-    never
+    CheckpointStore.CheckpointStore | RuntimeReceiptBus
   > =>
     input.source === "domain" ? processDomainEvent(input.event) : processRuntimeEvent(input.event);
 
