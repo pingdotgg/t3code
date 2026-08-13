@@ -423,10 +423,11 @@ export function PullRequestSummaryTab({
 
   // Rides beside the edit pencil on every remark, collapsed conversations included — but only
   // where the composer below exists to receive the quote, and only for comments with something
-  // to quote: a review that is all verdict and no words would quote as an empty block. Disabled
-  // while posting, when the composer is locked and the success clear would eat the quote.
+  // to quote: a review that is all verdict and no words would quote as an empty block. Gone
+  // rather than disabled while posting — the composer is locked and the success clear would eat
+  // the quote, and a disabled button's own opacity would defeat the hover reveal.
   const quoteReplyButton = (comment: PullRequestComment): ReactNode =>
-    canComment && comment.body.trim().length > 0 ? (
+    canComment && !posting && comment.body.trim().length > 0 ? (
       <Tooltip>
         <TooltipTrigger
           render={
@@ -435,7 +436,6 @@ export function PullRequestSummaryTab({
               size="icon-xs"
               variant="ghost"
               className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
-              disabled={posting}
               onClick={() => quoteReply(comment.body)}
             />
           }
