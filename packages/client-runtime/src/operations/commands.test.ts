@@ -38,6 +38,7 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   createProject,
+  interruptThreadTurn,
   forkThreadFromRun,
   mergeThreadBack,
   cancelQueuedRun,
@@ -71,6 +72,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projects: ProjectMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
+  readonly projectionRequests?: ThreadId[];
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -78,8 +80,13 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
         input.commands.push(command);
         return { sequence: input.commands.length };
       }),
-    [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: () =>
-      Effect.succeed(input.projection ?? v2Projection),
+    [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (requestInput: {
+      readonly threadId: ThreadId;
+    }) =>
+      Effect.sync(() => {
+        input.projectionRequests?.push(requestInput.threadId);
+        return input.projection ?? v2Projection;
+      }),
     [ORCHESTRATION_V2_WS_METHODS.launchThread]: (launchInput: OrchestrationV2ThreadLaunchInput) =>
       Effect.sync(() => {
         input.launches?.push(launchInput);
@@ -507,6 +514,69 @@ describe("V2 environment commands", () => {
           commandId: "unsettle-command",
           threadId: "thread-1",
           reason: "user",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches an explicit idle start without fetching the full projection", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: ThreadId[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projectionRequests,
+      });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("direct-start"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("direct-start-message"),
+          role: "user",
+          text: "continue",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        dispatchMode: "start",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([]);
+      expect(commands).toMatchObject([
+        {
+          type: "message.dispatch",
+          threadId: v2ThreadId,
+          dispatchMode: { type: "start_immediately" },
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("interrupts a known run without fetching the full projection", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: ThreadId[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projectionRequests,
+      });
+
+      yield* interruptThreadTurn({
+        commandId: CommandId.make("direct-interrupt"),
+        threadId: v2ThreadId,
+        runId: RunId.make("active-run"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([]);
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: "direct-interrupt",
+          threadId: v2ThreadId,
+          runId: "active-run",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
