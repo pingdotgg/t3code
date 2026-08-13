@@ -18,6 +18,8 @@ serde_json = "1.0.150"
 base64 = "0.22.1"
 # Window capture on both targets; encodes to PNG through `image`.
 xcap = "0.9.8"
+# Local IPC for the Chrome bridge: named pipes on Windows, Unix sockets on Linux.
+interprocess = "2.4.3"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
