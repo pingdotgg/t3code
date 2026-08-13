@@ -323,7 +323,7 @@ interface DevinUsageTranscriptRecord {
 function writeDevinUsageTranscriptLine(
   config: Pick<DevinSettings, "homePath">,
   record: DevinUsageTranscriptRecord,
-): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path> {
+): Effect.Effect<boolean, never, FileSystem.FileSystem | Path.Path> {
   let filePath: string | undefined;
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -339,14 +339,15 @@ function writeDevinUsageTranscriptLine(
     const dir = path.dirname(filePath);
     yield* fileSystem.makeDirectory(dir, { recursive: true });
     yield* fileSystem.writeFileString(filePath, line, { flag: "a" });
+    return true;
   }).pipe(
     Effect.catch((error) =>
       Effect.logWarning("Failed to append Devin usage transcript", {
         filePath: filePath ?? "[unknown]",
         error: error.message,
-      }),
+      }).pipe(Effect.as(false)),
     ),
-    Effect.catchCause(() => Effect.void),
+    Effect.catchCause(() => Effect.succeed(false)),
   );
 }
 
@@ -437,7 +438,7 @@ function buildThreadTokenUsageSnapshot(input: {
   const inputTokens = input.inputTokens ?? 0;
   const outputTokens = input.outputTokens ?? 0;
   const cachedReadTokens = input.cachedReadTokens ?? 0;
-  const turnTokens = inputTokens + outputTokens + cachedReadTokens;
+  const turnTokens = inputTokens + outputTokens;
   const usedDelta = Math.max(0, input.usedTokens - previousUsedTokens);
 
   const totalProcessedTokens =
@@ -777,11 +778,6 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
       }
       yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
       sessions.delete(ctx.threadId);
-      yield* SynchronizedRef.update(threadLocksRef, (current) => {
-        const next = new Map(current);
-        next.delete(ctx.threadId);
-        return next;
-      });
       yield* offerRuntimeEvent({
         type: "session.exited",
         ...(yield* makeEventStamp()),
@@ -1419,10 +1415,9 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                 deltaTotals.outputTokens;
 
               if (totalDeltaTokens > 0) {
-                ctx.lastWrittenAcpUsage = usage;
                 const observedAt = yield* nowIso;
                 const usageModel = prepared.displayModel ?? ctx.session.model ?? "adaptive";
-                yield* writeDevinUsageTranscriptLine(devinSettings, {
+                const written = yield* writeDevinUsageTranscriptLine(devinSettings, {
                   timestamp: observedAt,
                   sessionId: ctx.acpSessionId,
                   turnId: prepared.turnId,
@@ -1433,6 +1428,9 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 );
+                if (written) {
+                  ctx.lastWrittenAcpUsage = usage;
+                }
               }
             }
 

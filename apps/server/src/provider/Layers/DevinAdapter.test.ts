@@ -165,7 +165,7 @@ describe("makeDevinTokenUsageSnapshotFromUsageUpdate", () => {
     expect(snapshot).toMatchObject({
       usedTokens: 21_776,
       maxTokens: 262_000,
-      totalProcessedTokens: 21_687 + 89 + 448,
+      totalProcessedTokens: 21_687 + 89,
       inputTokens: 21_687,
       outputTokens: 89,
       cachedInputTokens: 448,
