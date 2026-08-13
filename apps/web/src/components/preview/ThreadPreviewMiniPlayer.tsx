@@ -2,7 +2,7 @@
 
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
-import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef } from "react";
+import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useRef, useState } from "react";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
@@ -32,6 +32,8 @@ interface ResizeState {
   readonly pointerId: number;
   readonly pointerX: number;
   readonly pointerY: number;
+  readonly playerX: number;
+  readonly playerY: number;
   readonly width: number;
   readonly height: number;
 }
@@ -46,6 +48,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
   const rootRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const resizeRef = useRef<ResizeState | null>(null);
+  const [defaultLayoutVersion, setDefaultLayoutVersion] = useState("");
   const miniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
   );
@@ -92,7 +95,10 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         bottomInset,
       );
       usePreviewMiniPlayerStore.getState().resize(threadRef, tabId, nextSize);
-      if (!position) return;
+      if (!position) {
+        setDefaultLayoutVersion(`${parent.clientWidth}:${parent.clientHeight}`);
+        return;
+      }
       const next = clampPreviewMiniPlayerPosition(
         position,
         { width: parent.clientWidth, height: parent.clientHeight },
@@ -161,11 +167,16 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
   const handleResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
     const root = rootRef.current;
-    if (!root) return;
+    const parent = root?.offsetParent;
+    if (!root || !(parent instanceof HTMLElement)) return;
+    const rootRect = root.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
     resizeRef.current = {
       pointerId: event.pointerId,
       pointerX: event.clientX,
       pointerY: event.clientY,
+      playerX: rootRect.left - parentRect.left,
+      playerY: rootRect.top - parentRect.top,
       width: root.offsetWidth,
       height: root.offsetHeight,
     };
@@ -195,9 +206,8 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
       bottomInset,
     );
     usePreviewMiniPlayerStore.getState().resize(threadRef, tabId, nextSize);
-    if (!position) return;
     const nextPosition = clampPreviewMiniPlayerPosition(
-      position,
+      { x: resize.playerX, y: resize.playerY },
       { width: parent.clientWidth, height: parent.clientHeight },
       nextSize,
       bottomInset,
@@ -293,7 +303,11 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
           visible={Boolean(desktopOverlay?.hasWebContents)}
           cornerRadius={12}
           fitSourceContent
-          layoutVersion={position ? `${position.x}:${position.y}` : `initial:${bottomInset}`}
+          layoutVersion={
+            position
+              ? `${position.x}:${position.y}`
+              : `initial:${bottomInset}:${defaultLayoutVersion}`
+          }
           className="absolute inset-0"
         />
         <div className="pointer-events-none absolute inset-0 z-[31] rounded-xl ring-1 ring-inset ring-border/80" />
