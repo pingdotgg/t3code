@@ -1809,8 +1809,8 @@ const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input:
   }
 });
 
-// macOS only. The server drives the Accessibility API, which has no equivalent
-// on Linux or Windows, so there is nothing to build or ship on those platforms.
+// macOS Swift desktop MCP. Windows/Linux stage the Rust binary via
+// `stageDesktopMcpRust` instead — this helper is the Darwin path only.
 const stageDesktopMcp = Effect.fn("stageDesktopMcp")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;

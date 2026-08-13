@@ -82,16 +82,24 @@ function chromeProfileRoots(): string[] {
 }
 
 function profileDirectories(root: string): string[] {
-  const names = ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5"];
-  return names
-    .map((name) => NodePath.join(root, name))
-    .filter((dir) => {
-      try {
-        return NodeFS.statSync(dir).isDirectory();
-      } catch {
-        return false;
-      }
-    });
+  try {
+    return NodeFS.readdirSync(root, { withFileTypes: true })
+      .filter((entry) => {
+        if (!entry.isDirectory()) {
+          return false;
+        }
+        // Chrome uses "Default" plus "Profile N"; also pick up Guest/System if present.
+        return (
+          entry.name === "Default" ||
+          entry.name.startsWith("Profile ") ||
+          entry.name === "Guest Profile" ||
+          entry.name === "System Profile"
+        );
+      })
+      .map((entry) => NodePath.join(root, entry.name));
+  } catch {
+    return [];
+  }
 }
 
 function chromeExtensionInstalledInPreferences(preferencesPath: string): boolean {
