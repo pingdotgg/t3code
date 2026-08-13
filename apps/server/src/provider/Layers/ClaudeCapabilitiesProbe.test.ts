@@ -10,6 +10,7 @@ import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   isLegacyClaudeModel,
+  mapClaudeUsageToStatus,
   probeClaudeCapabilities,
 } from "./ClaudeProvider.ts";
 
@@ -54,6 +55,69 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
 });
 
+it("maps Claude Code plan windows to the status snapshot", () => {
+  assert.deepEqual(
+    mapClaudeUsageToStatus(
+      {
+        session: {
+          total_cost_usd: 0,
+          total_api_duration_ms: 0,
+          total_duration_ms: 0,
+          total_lines_added: 0,
+          total_lines_removed: 0,
+          model_usage: {},
+        },
+        subscription_type: "pro",
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: {
+            utilization: 66.4,
+            resets_at: "2026-08-12T20:49:59.750101+00:00",
+          },
+          seven_day: {
+            utilization: 12,
+            resets_at: "2026-08-17T02:59:59.750124+00:00",
+          },
+        },
+        behaviors: {
+          day: {
+            request_count: 0,
+            session_count: 0,
+            behaviors: [],
+            agents: [],
+            skills: [],
+            plugins: [],
+            mcp_servers: [],
+          },
+          week: {
+            request_count: 0,
+            session_count: 0,
+            behaviors: [],
+            agents: [],
+            skills: [],
+            plugins: [],
+            mcp_servers: [],
+          },
+        },
+      },
+      "+50% weekly limits promo through Aug 19 · clau.de/cc-50-promo",
+    ),
+    {
+      rateLimits: {
+        currentSession: {
+          usedPercent: 66,
+          resetsAt: "2026-08-12T20:49:59.750101+00:00",
+        },
+        currentWeek: {
+          usedPercent: 12,
+          resetsAt: "2026-08-17T02:59:59.750124+00:00",
+        },
+        currentWeekPromo: "+50% weekly limits promo through Aug 19 · clau.de/cc-50-promo",
+      },
+    },
+  );
+});
+
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
   it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>
     Effect.gen(function* () {
@@ -88,6 +152,17 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "const lines = createInterface({ input: process.stdin });",
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
+          '  if (message.type === "control_request" && message.request?.subtype === "get_usage") {',
+          "    process.stdout.write(JSON.stringify({",
+          '      type: "control_response",',
+          "      response: {",
+          '        subtype: "success",',
+          "        request_id: message.request_id,",
+          "        response: { rate_limits_available: false, rate_limits: null },",
+          "      },",
+          '    }) + "\\n");',
+          "    return;",
+          "  }",
           '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
           "  process.stdout.write(JSON.stringify({",
           '    type: "control_response",',

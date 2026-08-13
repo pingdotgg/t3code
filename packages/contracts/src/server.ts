@@ -19,7 +19,6 @@ import {
 } from "./keybindings.ts";
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
-import { ProviderSession } from "./provider.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
 
@@ -130,6 +129,24 @@ export const ServerProviderCodexStatus = Schema.Struct({
 });
 export type ServerProviderCodexStatus = typeof ServerProviderCodexStatus.Type;
 
+/** Live Claude Code plan rate-limit windows returned by the Agent SDK. */
+export const ServerProviderClaudeRateLimitWindow = Schema.Struct({
+  usedPercent: Schema.Int,
+  resetsAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
+});
+export type ServerProviderClaudeRateLimitWindow = typeof ServerProviderClaudeRateLimitWindow.Type;
+
+export const ServerProviderClaudeStatus = Schema.Struct({
+  rateLimits: Schema.optionalKey(
+    Schema.Struct({
+      currentSession: Schema.optionalKey(Schema.NullOr(ServerProviderClaudeRateLimitWindow)),
+      currentWeek: Schema.optionalKey(Schema.NullOr(ServerProviderClaudeRateLimitWindow)),
+      currentWeekPromo: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+    }),
+  ),
+});
+export type ServerProviderClaudeStatus = typeof ServerProviderClaudeStatus.Type;
+
 /**
  * Availability of a configured provider instance from the runtime's POV.
  *
@@ -228,6 +245,8 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Live account and rate-limit data returned by Codex app-server. */
   codexStatus: Schema.optionalKey(ServerProviderCodexStatus),
+  /** Live plan rate-limit data returned by Claude Code's Agent SDK. */
+  claudeStatus: Schema.optionalKey(ServerProviderClaudeStatus),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });
@@ -621,11 +640,6 @@ export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
 });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
-
-export const ServerCodexStatus = Schema.Struct({
-  sessions: Schema.Array(ProviderSession),
-});
-export type ServerCodexStatus = typeof ServerCodexStatus.Type;
 
 export const ServerProviderUpdateInput = Schema.Struct({
   provider: ProviderDriverKind,

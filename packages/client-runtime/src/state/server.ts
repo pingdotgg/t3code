@@ -714,11 +714,6 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
     }),
-    codexStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:codex-status",
-      tag: WS_METHODS.serverGetCodexStatus,
-      staleTimeMs: 5_000,
-    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

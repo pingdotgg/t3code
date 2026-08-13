@@ -5,6 +5,7 @@ import {
   codexRateLimitWindowLabel,
   codexRemainingPercent,
   describeCodexRuntimeMode,
+  formatStatusTimestampWithTimeZone,
 } from "./StatusPage.logic";
 
 describe("describeCodexRuntimeMode", () => {
@@ -50,5 +51,10 @@ describe("Codex status presentation", () => {
     expect(codexRemainingPercent(-10)).toBe(100);
     expect(codexRemainingPercent(120)).toBe(0);
     expect(codexRateLimitWindowLabel(10_080)).toBe("Weekly limit");
+  });
+
+  it("adds the local timezone to status timestamps", () => {
+    expect(formatStatusTimestampWithTimeZone("2026-08-12T19:22:00.000Z")).toMatch(/\(.+\)$/);
+    expect(formatStatusTimestampWithTimeZone("not-a-date")).toBe("not-a-date");
   });
 });

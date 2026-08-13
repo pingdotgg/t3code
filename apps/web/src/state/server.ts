@@ -1,7 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
-  type ServerCodexStatus,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -80,14 +79,6 @@ export const primaryServerProvidersAtom = Atom.make(
   (get): ReadonlyArray<ServerProvider> =>
     get(primaryServerConfigAtom)?.providers ?? EMPTY_SERVER_PROVIDERS,
 ).pipe(Atom.withLabel("web-primary-server-providers"));
-
-export const primaryCodexStatusAtom = Atom.make((get): ServerCodexStatus | null => {
-  const environmentId = get(primaryEnvironmentIdAtom);
-  if (environmentId === null) return null;
-  return Option.getOrNull(
-    AsyncResult.value(get(serverEnvironment.codexStatus({ environmentId, input: {} }))),
-  );
-}).pipe(Atom.withLabel("web-primary-codex-status"));
 
 export const primaryServerKeybindingsAtom = Atom.make(
   (get): ServerConfig["keybindings"] =>

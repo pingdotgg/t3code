@@ -6,11 +6,9 @@ import {
   ProviderItemId,
   type ProviderInstanceId,
   type ProviderApprovalDecision,
-  type ProviderApprovalPolicy,
   type ProviderEvent,
   type ProviderInteractionMode,
   type ProviderRequestKind,
-  type ProviderSandboxMode,
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
@@ -446,33 +444,6 @@ export function isRecoverableThreadResumeError(error: unknown): boolean {
 type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
   | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
-
-type CodexSessionDetails = NonNullable<ProviderSession["codex"]>;
-
-function providerSandboxMode(sandbox: CodexThreadOpenResponse["sandbox"]): ProviderSandboxMode {
-  switch (sandbox.type) {
-    case "readOnly":
-      return "read-only";
-    case "workspaceWrite":
-      return "workspace-write";
-    case "dangerFullAccess":
-      return "danger-full-access";
-    case "externalSandbox":
-      return "workspace-write";
-  }
-}
-
-function codexSessionDetails(opened: CodexThreadOpenResponse): CodexSessionDetails {
-  return {
-    providerThreadId: opened.thread.id,
-    modelProvider: opened.modelProvider,
-    ...(opened.reasoningEffort ? { reasoningEffort: opened.reasoningEffort } : {}),
-    approvalPolicy: opened.approvalPolicy as ProviderApprovalPolicy,
-    sandbox: providerSandboxMode(opened.sandbox),
-    instructionSources: opened.instructionSources ?? [],
-    ...(opened.serviceTier ? { serviceTier: opened.serviceTier } : {}),
-  };
-}
 
 type CodexThreadOpenMethod = "thread/start" | "thread/resume";
 
@@ -1733,7 +1704,6 @@ export const makeCodexSessionRuntime = (
         status: "ready",
         cwd: opened.cwd,
         model: opened.model,
-        codex: codexSessionDetails(opened),
         resumeCursor: { threadId: providerThreadId },
         updatedAt: yield* nowIso,
       } satisfies ProviderSession;

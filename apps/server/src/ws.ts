@@ -79,7 +79,6 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
-import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -380,7 +379,6 @@ const makeWsRpcLayer = (
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
-      const providerService = yield* Effect.serviceOption(ProviderService.ProviderService);
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
@@ -1440,20 +1438,6 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {
             "rpc.aggregate": "server",
           }),
-        [WS_METHODS.serverGetCodexStatus]: (_input) =>
-          observeRpcEffect(
-            WS_METHODS.serverGetCodexStatus,
-            Option.match(providerService, {
-              onNone: () => Effect.succeed({ sessions: [] }),
-              onSome: (service) =>
-                service.listSessions().pipe(
-                  Effect.map((sessions) => ({
-                    sessions: sessions.filter((session) => session.provider === "codex"),
-                  })),
-                ),
-            }),
-            { "rpc.aggregate": "server" },
-          ),
         [WS_METHODS.serverRefreshProviders]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverRefreshProviders,
