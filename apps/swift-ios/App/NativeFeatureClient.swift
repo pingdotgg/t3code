@@ -2233,6 +2233,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if detail.approvals.isEmpty, detail.thread.state == .waitingForApproval {
             detail.thread.state = detail.userInputs.isEmpty ? .idle : .waitingForInput
         }
+        detail.thread.settlementInput = detail.thread.settlementInput?.withPendingRequests(
+            approvals: !detail.approvals.isEmpty,
+            userInput: !detail.userInputs.isEmpty
+        )
         publish(detail, threadID: threadID)
     }
 
@@ -2242,6 +2246,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if detail.userInputs.isEmpty, detail.thread.state == .waitingForInput {
             detail.thread.state = detail.approvals.isEmpty ? .idle : .waitingForApproval
         }
+        detail.thread.settlementInput = detail.thread.settlementInput?.withPendingRequests(
+            approvals: !detail.approvals.isEmpty,
+            userInput: !detail.userInputs.isEmpty
+        )
         publish(detail, threadID: threadID)
     }
 
@@ -3389,6 +3397,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             hasUserInput: !detail.userInputs.isEmpty,
             backgroundLiveness: backgroundLiveness
         )
+        detail.thread.settlementInput = FeatureSettlementProjectionInput(
+            hasPendingApprovals: !detail.approvals.isEmpty,
+            hasPendingUserInput: !detail.userInputs.isEmpty,
+            sessionStatus: shellThread.session?.status,
+            latestUserMessageAt: shellThread.latestUserMessageAt,
+            latestTurnRequestedAt: shellThread.latestTurn?.requestedAt,
+            latestTurnStartedAt: shellThread.latestTurn?.startedAt,
+            latestTurnCompletedAt: shellThread.latestTurn?.completedAt
+        )
         detail.thread.workingStartedAt = workingStartedAt(
             latestTurn: shellThread.latestTurn,
             session: shellThread.session,
@@ -3954,6 +3971,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             hasApprovals: !cache.approvals.isEmpty,
             hasUserInput: !cache.userInputs.isEmpty,
             backgroundLiveness: backgroundLiveness
+        )
+        mappedThread.settlementInput = mappedThread.settlementInput?.withPendingRequests(
+            approvals: !cache.approvals.isEmpty,
+            userInput: !cache.userInputs.isEmpty
         )
         return FeatureThreadDetail(
             thread: mappedThread,

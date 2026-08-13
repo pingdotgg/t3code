@@ -298,6 +298,13 @@ public struct FeatureSettlementProjectionInput: Sendable, Equatable, Hashable, C
         self.latestTurnStartedAt = latestTurnStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt
     }
+
+    func withPendingRequests(approvals: Bool, userInput: Bool) -> Self {
+        var copy = self
+        copy.hasPendingApprovals = approvals
+        copy.hasPendingUserInput = userInput
+        return copy
+    }
 }
 
 enum FeatureSettlementProjection {

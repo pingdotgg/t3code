@@ -220,6 +220,50 @@ struct DailyUXSidebarTests {
     }
 
     @Test
+    func detailPendingRequestsKeepHomeSettlementAndFullSwipeBlocked() {
+        let base = FeatureSettlementProjectionInput(
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            sessionStatus: nil,
+            latestUserMessageAt: now.addingTimeInterval(-300).ISO8601Format(),
+            latestTurnRequestedAt: nil,
+            latestTurnStartedAt: nil,
+            latestTurnCompletedAt: nil
+        )
+        var pendingApproval = thread(
+            id: "approval",
+            created: -300,
+            updated: -300,
+            settlementEligible: true
+        )
+        pendingApproval.settlementInput = base.withPendingRequests(
+            approvals: true,
+            userInput: false
+        )
+        var pendingInput = thread(
+            id: "input",
+            created: -300,
+            updated: -300,
+            settlementEligible: true
+        )
+        pendingInput.settlementInput = base.withPendingRequests(
+            approvals: false,
+            userInput: true
+        )
+
+        for thread in [pendingApproval, pendingInput] {
+            #expect(!thread.canSettle)
+            #expect(
+                HomeThreadSwipeActions.kinds(for: thread, isArchived: false, now: now)
+                    == [.archive, .delete]
+            )
+            #expect(
+                !HomeThreadSwipeActions.allowsFullSwipe(for: thread, isArchived: false, now: now)
+            )
+        }
+    }
+
+    @Test
     func fullSwipeAlwaysChoosesAReversibleAction() {
         let settled = thread(
             id: "settled",
