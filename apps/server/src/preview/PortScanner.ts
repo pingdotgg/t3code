@@ -11,6 +11,8 @@
  * Polling is reference-counted via scoped `retain`. A single layer-scoped fiber
  * polls forever, but each tick is a no-op when the retain count is zero.
  */
+import * as NodeOS from "node:os";
+
 import { ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
@@ -19,9 +21,13 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -53,6 +59,60 @@ export const COMMON_DEV_PORTS: ReadonlyArray<number> = Object.freeze([
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+
+const PortlessRoute = Schema.Struct({
+  hostname: Schema.String,
+  port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536)),
+  pid: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+const isPortlessRoute = Schema.is(PortlessRoute);
+const decodePortlessRouteEntries = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(Schema.Unknown)),
+);
+const PORTLESS_HOSTNAME_PATTERN =
+  /^(?=.{1,253}$)(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)*[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?$/i;
+
+interface PortlessRouteSnapshot {
+  readonly routesJson: string;
+  readonly proxyPortRaw: string | null;
+  readonly tls: boolean;
+  readonly isProcessAlive: (pid: number) => boolean;
+}
+
+const parsePortlessRouteSnapshot = (input: PortlessRouteSnapshot): ReadonlyMap<number, string> => {
+  const decoded = decodePortlessRouteEntries(input.routesJson);
+  if (Option.isNone(decoded)) return new Map();
+
+  const defaultProxyPort = input.tls ? 443 : 80;
+  const parsedProxyPort = Number.parseInt(input.proxyPortRaw?.trim() ?? "", 10);
+  const proxyPort =
+    Number.isInteger(parsedProxyPort) && parsedProxyPort > 0 && parsedProxyPort < 65536
+      ? parsedProxyPort
+      : defaultProxyPort;
+  const protocol = input.tls ? "https" : "http";
+  const urlsByTargetPort = new Map<number, string>();
+
+  for (const entry of decoded.value) {
+    if (!isPortlessRoute(entry)) continue;
+    if (entry.pid !== 0 && !input.isProcessAlive(entry.pid)) continue;
+    if (!PORTLESS_HOSTNAME_PATTERN.test(entry.hostname)) continue;
+    if (urlsByTargetPort.has(entry.port)) continue;
+
+    const portSuffix = proxyPort === defaultProxyPort ? "" : `:${proxyPort}`;
+    urlsByTargetPort.set(entry.port, `${protocol}://${entry.hostname}${portSuffix}`);
+  }
+
+  return urlsByTargetPort;
+};
+
+const applyPortlessRoutes = (
+  servers: ReadonlyArray<DiscoveredLocalServer>,
+  urlsByTargetPort: ReadonlyMap<number, string>,
+): ReadonlyArray<DiscoveredLocalServer> =>
+  servers.map((server) => {
+    const portlessUrl = urlsByTargetPort.get(server.port);
+    return portlessUrl === undefined ? server : { ...server, url: portlessUrl };
+  });
 
 type Listener = (servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>;
 
@@ -190,11 +250,43 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const stateRef = yield* Ref.make<ScannerState>({
     lastSnapshot: [],
     listeners: new Set(),
     terminalProcesses: new Map(),
     retainCount: 0,
+  });
+
+  const readPortlessRoutes = Effect.fn("PortDiscovery.readPortlessRoutes")(function* () {
+    const configuredStateDir = process.env.PORTLESS_STATE_DIR?.trim();
+    const stateDir = configuredStateDir || path.join(NodeOS.homedir(), ".portless");
+    const routesJson = yield* fileSystem
+      .readFileString(path.join(stateDir, "routes.json"))
+      .pipe(Effect.option);
+    if (Option.isNone(routesJson)) return new Map<number, string>();
+
+    const proxyPortRaw = yield* fileSystem
+      .readFileString(path.join(stateDir, "proxy.port"))
+      .pipe(Effect.option);
+    const tls = yield* fileSystem
+      .exists(path.join(stateDir, "proxy.tls"))
+      .pipe(Effect.orElseSucceed(() => false));
+
+    return parsePortlessRouteSnapshot({
+      routesJson: routesJson.value,
+      proxyPortRaw: Option.getOrNull(proxyPortRaw),
+      tls,
+      isProcessAlive: (pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    });
   });
 
   const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
@@ -231,6 +323,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const scanOnce = Effect.fn("PortDiscovery.scan")(function* () {
     const state = yield* Ref.get(stateRef);
+    const portlessRoutes = yield* readPortlessRoutes();
     const terminalByProcessId = new Map<number, TerminalProcessOwner>();
     for (const registration of state.terminalProcesses.values()) {
       for (const processId of registration.processIds) {
@@ -259,8 +352,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             ProcessTimeoutError: recoverWindowsProbeFailure,
           }),
         );
-      if (listeners !== null) return listeners;
-      return yield* probeCommonPorts();
+      if (listeners !== null) return applyPortlessRoutes(listeners, portlessRoutes);
+      return applyPortlessRoutes(yield* probeCommonPorts(), portlessRoutes);
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     const lsofResult = yield* processRunner
@@ -281,8 +374,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ProcessTimeoutError: recoverLsofProbeFailure,
         }),
       );
-    if (lsofResult !== null) return lsofResult;
-    return yield* probeCommonPorts();
+    if (lsofResult !== null) return applyPortlessRoutes(lsofResult, portlessRoutes);
+    return applyPortlessRoutes(yield* probeCommonPorts(), portlessRoutes);
   });
 
   const broadcast = Effect.fn("PortDiscovery.broadcast")(function* (
@@ -388,3 +481,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 
 export const layer = Layer.effect(PortDiscovery, make);
+
+export const __testing = {
+  applyPortlessRoutes,
+  parsePortlessRouteSnapshot,
+};

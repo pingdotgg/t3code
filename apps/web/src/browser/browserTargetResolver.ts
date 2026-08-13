@@ -129,9 +129,34 @@ export function resolveBrowserNavigationTarget(
   return resolveEnvironmentPortTarget(environmentId, target, readEnvironmentUrl(environmentId));
 }
 
-export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl: string): string {
+export function resolveDiscoveredServerUrl(
+  environmentId: EnvironmentId,
+  rawUrl: string,
+  targetPort?: number,
+): string {
   try {
     const normalizedUrl = normalizePreviewUrl(rawUrl);
+    const parsed = new URL(normalizedUrl);
+    if (
+      targetPort !== undefined &&
+      parsed.hostname !== "localhost" &&
+      parsed.hostname.endsWith(".localhost")
+    ) {
+      const environmentUrl = readEnvironmentUrl(environmentId);
+      if (!isLocalLoopbackHost(environmentUrl.hostname)) {
+        return resolveEnvironmentPortTarget(
+          environmentId,
+          {
+            kind: "environment-port",
+            port: targetPort,
+            protocol: "http",
+            path: `${parsed.pathname}${parsed.search}${parsed.hash}`,
+          },
+          environmentUrl,
+          normalizedUrl,
+        ).resolvedUrl;
+      }
+    }
     return resolveBrowserNavigationTarget(environmentId, {
       kind: "url",
       url: normalizedUrl,

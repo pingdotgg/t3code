@@ -251,8 +251,8 @@ export const PreviewEvent = Schema.Union([
 export type PreviewEvent = typeof PreviewEvent.Type;
 
 /**
- * A localhost server detected by the port scanner. Used to populate the
- * "Local" recommendations in the empty-state of the preview panel.
+ * A local server detected by the port scanner. `url` may be a named local
+ * proxy URL while `host` and `port` identify the underlying listener.
  */
 export const DiscoveredLocalServer = Schema.Struct({
   host: TrimmedNonEmptyString,

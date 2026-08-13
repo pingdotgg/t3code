@@ -43,6 +43,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  Globe2Icon,
   MessageSquareIcon,
   PinIcon,
   PlusIcon,
@@ -160,6 +161,13 @@ import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
+import { useThreadDiscoveredPorts } from "../portDiscoveryState";
+import { previewEnvironment } from "../state/preview";
+import { openDiscoveredPort } from "./preview/openDiscoveredPort";
+import {
+  formatDiscoveredServerHost,
+  selectPreferredDiscoveredServer,
+} from "./preview/useDiscoveredLocalServers";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -739,6 +747,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
+  const discoveredPorts = useThreadDiscoveredPorts({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
+  const preferredDiscoveredPort = selectPreferredDiscoveredServer(discoveredPorts);
+  const openPreview = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const terminalProcessCount = runningTerminalIds.length;
 
@@ -1020,6 +1036,32 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [onThreadActivate, openPrLink, openPullRequestsInRightPanel, pr, props.isActive, threadRef],
   );
+  const handleOpenDiscoveredPort = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      if (!preferredDiscoveredPort) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onThreadActivate(threadRef);
+      void (async () => {
+        const result = await openDiscoveredPort({
+          threadRef,
+          port: preferredDiscoveredPort,
+          openPreview,
+        });
+        if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open preview",
+            description:
+              error instanceof Error ? error.message : "The preview could not be opened.",
+          }),
+        );
+      })();
+    },
+    [onThreadActivate, openPreview, preferredDiscoveredPort, threadRef],
+  );
 
   // All sidebar rows share one surface model. Live threads used to look
   // like elevated cards while settled threads were plain rows, leaving neither
@@ -1119,6 +1161,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       <TerminalIcon className={cn("size-3.5", terminalStatus.pulse && "animate-status-pulse")} />
     </span>
   ) : null;
+  const discoveredPortButton = preferredDiscoveredPort ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Open ${formatDiscoveredServerHost(preferredDiscoveredPort)}`}
+            onClick={handleOpenDiscoveredPort}
+            className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-sm text-emerald-600 outline-none hover:text-emerald-700 focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-400 dark:hover:text-emerald-300"
+          />
+        }
+      >
+        <Globe2Icon aria-hidden className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        Open {formatDiscoveredServerHost(preferredDiscoveredPort)}
+      </TooltipPopup>
+    </Tooltip>
+  ) : null;
 
   if (variant === "slim") {
     return (
@@ -1160,6 +1221,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               />
             </span>
             {title}
+            {discoveredPortButton}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -1442,6 +1504,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {discoveredPortButton}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (

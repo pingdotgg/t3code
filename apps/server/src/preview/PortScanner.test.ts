@@ -1,6 +1,7 @@
 import * as NodeNet from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
@@ -8,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
-import { expect } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
@@ -33,6 +34,7 @@ const makeProbeFailureLayer = (run: ProcessRunner.ProcessRunner["Service"]["run"
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodeServices.layer,
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
@@ -47,9 +49,72 @@ const makeProbeFailureLayer = (run: ProcessRunner.ProcessRunner["Service"]["run"
 
 const TestPortDiscoveryLive = PortScanner.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(TestProcessRunner, Net.layer, Layer.succeed(HostProcessPlatform, "win32")),
+    Layer.mergeAll(
+      NodeServices.layer,
+      TestProcessRunner,
+      Net.layer,
+      Layer.succeed(HostProcessPlatform, "win32"),
+    ),
   ),
 );
+
+describe("Portless route enrichment", () => {
+  it("uses the live Portless URL for its target listener", () => {
+    const routes = PortScanner.__testing.parsePortlessRouteSnapshot({
+      routesJson: JSON.stringify([
+        {
+          hostname: "eng-1252-simplify-the-onboarding.artelo.localhost",
+          port: 4058,
+          pid: 123,
+        },
+      ]),
+      proxyPortRaw: "443\n",
+      tls: true,
+      isProcessAlive: (pid) => pid === 123,
+    });
+
+    expect(routes.get(4058)).toBe("https://eng-1252-simplify-the-onboarding.artelo.localhost");
+    expect(
+      PortScanner.__testing.applyPortlessRoutes(
+        [
+          {
+            host: "localhost",
+            port: 4058,
+            url: "http://localhost:4058",
+            processName: "node",
+            pid: 456,
+            terminal: null,
+          },
+        ],
+        routes,
+      ),
+    ).toEqual([
+      {
+        host: "localhost",
+        port: 4058,
+        url: "https://eng-1252-simplify-the-onboarding.artelo.localhost",
+        processName: "node",
+        pid: 456,
+        terminal: null,
+      },
+    ]);
+  });
+
+  it("ignores stale routes and preserves custom proxy settings", () => {
+    const routes = PortScanner.__testing.parsePortlessRouteSnapshot({
+      routesJson: JSON.stringify([
+        { hostname: "stale.localhost", port: 3000, pid: 111 },
+        { hostname: "current.test", port: 3001, pid: 222 },
+        { hostname: "not a hostname", port: 3002, pid: 222 },
+      ]),
+      proxyPortRaw: "8080",
+      tls: false,
+      isProcessAlive: (pid) => pid === 222,
+    });
+
+    expect([...routes]).toEqual([[3001, "http://current.test:8080"]]);
+  });
+});
 
 const openServer = (port: number): Effect.Effect<NodeNet.Server | null> =>
   Effect.callback((resume) => {

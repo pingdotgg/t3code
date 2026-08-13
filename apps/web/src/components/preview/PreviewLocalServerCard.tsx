@@ -1,5 +1,5 @@
 import { BrowserMockup } from "./BrowserMockup";
-import type { PreviewableServer } from "./useDiscoveredLocalServers";
+import { formatDiscoveredServerHost, type PreviewableServer } from "./useDiscoveredLocalServers";
 
 interface Props {
   server: PreviewableServer;
@@ -18,7 +18,7 @@ export function PreviewLocalServerCard({ server, onOpen }: Props) {
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm font-medium text-foreground">{subtitle}</span>
         <span className="truncate text-xs text-muted-foreground">
-          {server.host}:{server.port}
+          {formatDiscoveredServerHost(server)}
         </span>
       </div>
       {server.listening ? <PulsingDot /> : <DimDot />}
