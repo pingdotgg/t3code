@@ -81,8 +81,14 @@ struct MarkdownMessageView: View {
             UIPasteboard.general.string = source
         }
         .environment(\.openURL, OpenURLAction { url in
-            if onOpenURL?(url) == true { return .handled }
-            return .systemAction
+            switch MarkdownOpenURLDisposition.resolve(url: url, onOpenURL: onOpenURL) {
+            case .handled:
+                return .handled
+            case .discarded:
+                return .discarded
+            case .systemAction:
+                return .systemAction
+            }
         })
         .task(id: RenderRequest(revision: revision, isStreaming: isStreaming)) {
             if !isStreaming {
