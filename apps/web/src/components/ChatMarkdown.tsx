@@ -1307,7 +1307,9 @@ function ChatMarkdown({
     threadRef?.environmentId ?? null,
   );
   const hostLocalDesktopBridge =
-    threadEnvironment && isHostFilesystemConnectionTarget(threadEnvironment.entry.target)
+    typeof window !== "undefined" &&
+    threadEnvironment &&
+    isHostFilesystemConnectionTarget(threadEnvironment.entry.target)
       ? window.desktopBridge
       : undefined;
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));

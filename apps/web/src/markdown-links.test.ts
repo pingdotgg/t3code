@@ -51,6 +51,18 @@ describe("markdown file link destinations", () => {
     ).toEqual(["/tmp/valid.txt"]);
   });
 
+  it("continues after an unmatched opening bracket", () => {
+    expect(extractMarkdownLinkHrefs("output [pending; see [report](/tmp/report.pdf)")).toEqual([
+      "/tmp/report.pdf",
+    ]);
+  });
+
+  it("preserves Windows separators that are not Markdown escapes", () => {
+    expect(extractMarkdownLinkHrefs(String.raw`[report](C:\Users\me\report.pdf)`)).toEqual([
+      String.raw`C:\Users\me\report.pdf`,
+    ]);
+  });
+
   it("matches file URI source and rewritten render keys without double-decoding", () => {
     const source = normalizeMarkdownLinkHrefKey(
       "file:///Users/toviastorres/Downloads/file%2520name.pdf",

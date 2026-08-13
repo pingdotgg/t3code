@@ -9,6 +9,7 @@ const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d
 const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const MARKDOWN_ESCAPABLE_CHARACTER_PATTERN = /^[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]$/;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
 // prefixes like /app/ or /chat/ so SPA routes never read as files.
 const POSIX_FILE_ROOT_PREFIXES = [
@@ -58,6 +59,10 @@ function safeDecode(value: string): string {
 
 function unwrapMarkdownLinkDestination(value: string): string {
   return value.startsWith("<") && value.endsWith(">") ? value.slice(1, -1) : value;
+}
+
+function isMarkdownEscapableCharacter(character: string | undefined): boolean {
+  return character !== undefined && MARKDOWN_ESCAPABLE_CHARACTER_PATTERN.test(character);
 }
 
 export function normalizeMarkdownLinkDestination(value: string): string {
@@ -112,7 +117,7 @@ function findMarkdownLinkLabelEnd(text: string, labelStart: number): number {
   let depth = 0;
   for (let index = labelStart; index < text.length; index += 1) {
     const character = text[index];
-    if (character === "\\") {
+    if (character === "\\" && isMarkdownEscapableCharacter(text[index + 1])) {
       index += 1;
       continue;
     }
@@ -162,7 +167,10 @@ export function extractMarkdownLinkHrefs(text: string): string[] {
     const labelStart = text.indexOf("[", index);
     if (labelStart === -1) break;
     const labelEnd = findMarkdownLinkLabelEnd(text, labelStart);
-    if (labelEnd === -1) break;
+    if (labelEnd === -1) {
+      index = labelStart + 1;
+      continue;
+    }
     if (text[labelEnd + 1] !== "(") {
       index = labelEnd + 1;
       continue;
@@ -177,7 +185,7 @@ export function extractMarkdownLinkHrefs(text: string): string[] {
       let closed = false;
       while (position < text.length) {
         const character = text[position];
-        if (character === "\\" && position + 1 < text.length) {
+        if (character === "\\" && isMarkdownEscapableCharacter(text[position + 1])) {
           destination += text[position + 1];
           position += 2;
           continue;
@@ -199,7 +207,7 @@ export function extractMarkdownLinkHrefs(text: string): string[] {
       let depth = 0;
       while (position < text.length) {
         const character = text[position];
-        if (character === "\\" && position + 1 < text.length) {
+        if (character === "\\" && isMarkdownEscapableCharacter(text[position + 1])) {
           destination += text[position + 1];
           position += 2;
           continue;
