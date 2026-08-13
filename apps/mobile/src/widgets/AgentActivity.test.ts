@@ -340,8 +340,29 @@ describe("AgentActivity widget layout", () => {
     const accessoryJson = JSON.stringify(accessory);
     expect(accessory).not.toHaveProperty("banner");
     expect(accessoryJson).toContain('"containerBackground":{"color":"clear","container":"widget"}');
+    expect(accessoryJson).toContain('"widgetURL":"t3code://threads/env-1/thread-1"');
     expect(accessoryJson).toContain('"all":10');
     expect(accessoryJson).not.toContain('"all":14');
+  });
+
+  it("deep links lock-screen accessory widgets", () => {
+    const accessory = AgentActivity(
+      {
+        ...props,
+        activeCount: 2,
+        activities: [
+          makeRow({}),
+          makeRow({
+            threadId: "thread-2",
+            phase: "waiting_for_approval",
+            status: "Approval",
+            deepLink: "/threads/env-1/thread-2",
+          }),
+        ],
+      },
+      widgetEnvironment("accessoryCircular"),
+    );
+    expect(JSON.stringify(accessory)).toContain('"widgetURL":"t3code://threads/env-1/thread-2"');
   });
 
   it("does not apply containerBackground to the Live Activity layout", () => {

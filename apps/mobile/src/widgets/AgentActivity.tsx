@@ -261,6 +261,7 @@ export function AgentActivity(
       spacing={5}
       modifiers={[
         padding({ all: 10 }),
+        ...(deepLink ? [widgetURL(deepLink)] : []),
         ...(widgetFamily ? [containerBackground("clear", "widget")] : []),
       ]}
     >
