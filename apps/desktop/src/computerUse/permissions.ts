@@ -149,12 +149,24 @@ function nativeHostRegistered(root: string): boolean {
   }
 }
 
+/** Windows registers the host via the registry + a support-dir manifest. */
+function nativeHostRegisteredWindows(): boolean {
+  const local = process.env.LOCALAPPDATA;
+  if (!local) return false;
+  const hostPath = NodePath.join(local, "t3-desktop-mcp", "com.t3tools.t3code.desktop.json");
+  try {
+    return NodeFS.statSync(hostPath).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function resolveChromeExtensionStatus(): {
   status: DesktopChromeExtensionStatus;
   detail: string;
 } {
   let sawChrome = false;
-  let hostRegistered = false;
+  let hostRegistered = process.platform === "win32" && nativeHostRegisteredWindows();
 
   for (const root of chromeProfileRoots()) {
     try {

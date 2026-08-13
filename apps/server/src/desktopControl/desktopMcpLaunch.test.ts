@@ -7,7 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveEnabledDesktopMcp } from "./resolveEnabledDesktopMcp.ts";
+import { resolveEnabledDesktopMcp } from "./desktopMcpLaunch.ts";
 
 describe("resolveEnabledDesktopMcp", () => {
   it.effect("omits the MCP when Computer Use is disabled", () =>
