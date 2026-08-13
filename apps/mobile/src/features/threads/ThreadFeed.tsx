@@ -530,6 +530,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
 
     const createMarkdownRenderers = (
       bodyTextColor: string,
+      headingTextColor: string,
       inlineTextColor: string,
       inlineCodeTextColor: string,
       blockBackgroundColor: string,
@@ -548,7 +549,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
               marginBottom: preserveSoftBreaks ? 0 : 10,
             },
             heading: (level) => ({
-              color: bodyTextColor,
+              color: headingTextColor,
               fontFamily: boldFontFamily,
               fontSize:
                 level === 1
@@ -745,6 +746,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         styles: userStyles,
         renderers: createMarkdownRenderers(
           markdownUserBodyColor,
+          markdownUserBodyColor,
           markdownUserCodeText,
           markdownUserInlineCodeText,
           markdownUserFenceBg,
@@ -779,6 +781,7 @@ function useMarkdownStyles(onLinkPress: (href: string) => void): MarkdownStyleSe
         styles: assistantStyles,
         renderers: createMarkdownRenderers(
           markdownBodyColor,
+          markdownStrongColor,
           markdownCodeText,
           markdownInlineCodeText,
           markdownCodeBg,
