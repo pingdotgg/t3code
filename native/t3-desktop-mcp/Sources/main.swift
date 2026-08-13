@@ -13,9 +13,27 @@ import ScreenCaptureKit
 //    refuses to prompt for; AX needs only Accessibility.
 //  * Ships as a bare executable so it runs as a child of the host app and inherits
 //    the host's TCC grants. A separate .app bundle would get its own TCC identity
-//    and require its own permissions.
+//    and require its own permissions. The agent-cursor overlay is the exception:
+//    it is a minimal LSUIElement .app (no Accessibility needed) launched via
+//    NSWorkspace — a bare Process child never gets a real window.
 
 // MARK: - AX helpers
+
+/// Host settings pass `T3_DESKTOP_AGENT_CURSOR=0` / `T3_DESKTOP_BROWSER=0` when
+/// the matching Computer Use toggle is off. Missing or empty means enabled.
+func envFlagDisabled(_ name: String) -> Bool {
+    guard let raw = ProcessInfo.processInfo.environment[name]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased(),
+        !raw.isEmpty
+    else {
+        return false
+    }
+    return raw == "0" || raw == "false" || raw == "off" || raw == "no"
+}
+
+var agentCursorEnabled: Bool { !envFlagDisabled("T3_DESKTOP_AGENT_CURSOR") }
+var browserControlEnabled: Bool { !envFlagDisabled("T3_DESKTOP_BROWSER") }
 
 func axCopy(_ el: AXUIElement, _ attr: String) -> AnyObject? {
     var value: AnyObject?
@@ -758,6 +776,22 @@ func toolClick(_ args: [String: Any]) -> String {
         // Web content is the exception: Blink reports AXPress as supported and
         // returns success, but does not act on it — a link "pressed" this way
         // never navigates. Inside a web area, go straight to a real click.
+        // Show the pointer before acting, not after: AXPress returns early, so
+        // placing this later meant the overlay never appeared for the common
+        // case of pressing a button.
+        let elementCenter = visibleCenter(of: el)
+        // Point the overlay at the element's own frame, not its visible rect:
+        // visibleCenter is nil whenever the window is occluded, which is the
+        // normal case for background control and meant the pointer never showed.
+        if let origin = axPoint(el, kAXPositionAttribute as String),
+            let size = axSize(el, kAXSizeAttribute as String), size.width > 0, size.height > 0
+        {
+            AgentCursor.shared.press(
+                at: CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+            )
+        } else if let elementCenter {
+            AgentCursor.shared.press(at: elementCenter)
+        }
         if axActions(el).contains(kAXPressAction as String), clickCount == 1, !isInWebContent(el) {
             if AXUIElementPerformAction(el, kAXPressAction as CFString) == .success {
                 let label = axString(el, kAXTitleAttribute as String) ?? axString(el, kAXDescriptionAttribute as String) ?? id
@@ -765,8 +799,7 @@ func toolClick(_ args: [String: Any]) -> String {
             }
         }
         // Coordinate fallback: see MOUSE_TARGETING.
-        guard let center = visibleCenter(of: el) else { return "error: \(id) has no screen position and AXPress failed" }
-        AgentCursor.shared.show(at: center)
+        guard let center = elementCenter else { return "error: \(id) has no screen position and AXPress failed" }
         if let target = windowTarget(for: el), backgroundClick(target, at: center, clickCount: clickCount) {
             return "clicked \(id) at (\(Int(center.x)), \(Int(center.y))) in background"
         }
@@ -776,7 +809,7 @@ func toolClick(_ args: [String: Any]) -> String {
 
     if let x = args["x"] as? Double, let y = args["y"] as? Double {
         let point = CGPoint(x: x, y: y)
-        AgentCursor.shared.show(at: point)
+        AgentCursor.shared.press(at: point)
         // Prefer the app the caller named, then whatever window actually sits
         // under the point. Without the second lookup a caller who omits `app`
         // falls through to the shared cursor, which is exactly what desktop
@@ -1427,8 +1460,21 @@ func toolBrowserClick(_ args: [String: Any]) -> String {
     } else {
         return "error: provide either index (from browser_snapshot), or both x and y"
     }
-    return bridgeText(BrowserBridge.shared.call("click", params)) { _ in
-        "clicked in tab \(tabId)"
+    // The Chrome extension paints the same agent pointer into the page. Keep
+    // that as the source of truth for tab clicks — background tabs are not
+    // composited, so a desktop overlay at guessed screen coords would lie.
+    return bridgeText(BrowserBridge.shared.call("click", params)) { payload in
+        var line = "clicked in tab \(tabId)"
+        if let cursor = payload["cursor"] as? [String: Any] {
+            if cursor["ok"] as? Bool == true {
+                let glow = cursor["hasGlow"] as? Bool == true ? "glow" : "no-glow"
+                let fill = cursor["darkFill"] as? Bool == true ? "dark-fill" : "fill"
+                line += " (pointer \(glow), \(fill))"
+            } else if let reason = cursor["reason"] as? String {
+                line += " (pointer missing: \(reason))"
+            }
+        }
+        return line
     }
 }
 
@@ -1721,7 +1767,18 @@ let toolDefs: [[String: Any]] = [
     ],
 ]
 
+func advertisedToolDefs() -> [[String: Any]] {
+    if browserControlEnabled { return toolDefs }
+    return toolDefs.filter { tool in
+        guard let name = tool["name"] as? String else { return true }
+        return !name.hasPrefix("browser_")
+    }
+}
+
 func dispatch(_ name: String, _ args: [String: Any]) -> String {
+    if name.hasPrefix("browser_"), !browserControlEnabled {
+        return "error: browser control is disabled in Computer Use settings"
+    }
     switch name {
     case "list_apps": return toolListApps()
     case "get_app_state": return toolGetAppState(args)
@@ -1751,291 +1808,18 @@ func dispatch(_ name: String, _ args: [String: Any]) -> String {
 
 // MARK: - Agent cursor overlay
 //
-// A second cursor, so the user can see where the agent is working. It is a
-// borderless non-activating panel that ignores mouse events, so it floats above
-// everything without stealing clicks or focus, and it never appears in the
-// per-window screenshots the agent takes of other apps.
-//
-// The look is deliberately a soft translucent bubble rather than a pointer: the
-// agent's cursor should never be mistaken for the user's own. It moves on a
-// spring, squashes along its direction of travel, and pops on click.
+// The drawing lives in the T3AgentCursor.app child (see AgentCursor.swift).
+// This facade keeps the older call sites (`CursorOverlay.shared.press`) pointed
+// at the bundle that actually puts a window up.
 
 final class CursorOverlay {
     static let shared = CursorOverlay()
 
-    /// Generous panel so the glow, squash and click ripple all have room.
-    private let side: CGFloat = 96
-    /// Distance from the panel's top-left corner to the cursor's hot point.
-    fileprivate static let hotspot: CGFloat = 48
-
-    private var panel: NSPanel?
-    private var view: BubbleView?
-    private var animation: Timer?
-    private var hideWork: DispatchWorkItem?
-
-    /// Spring state, in Quartz screen coordinates.
-    private var current: CGPoint?
-    private var target: CGPoint = .zero
-    private var velocity: CGVector = .zero
-
-    private let enabled = ProcessInfo.processInfo.environment["T3_DESKTOP_MCP_OVERLAY"] != "0"
-
-    // MARK: Drawing
-
-    private final class BubbleView: NSView {
-        /// 0…1 while a click ripple plays, nil otherwise.
-        var ripple: CGFloat?
-        /// 0…1 while the bubble pops on click, nil otherwise.
-        var pop: CGFloat?
-        /// Slow idle breathing so a resting cursor still reads as alive.
-        var phase: CGFloat = 0
-        /// Current travel, used for squash-and-stretch.
-        var velocity: CGVector = .zero
-        /// Lean, in radians. Banks into the direction of travel and eases back
-        /// to upright when the cursor settles.
-        var tilt: CGFloat = 0
-        /// Jelly wobble: amplitude builds with speed and decays after the
-        /// bubble stops, so it keeps jiggling for a moment on arrival.
-        var wobble: CGFloat = 0
-        var wobblePhase: CGFloat = 0
-
-        private var accent: NSColor { NSColor.controlAccentColor }
-
-        override func draw(_ dirtyRect: NSRect) {
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-            let tip = CGPoint(x: CursorOverlay.hotspot, y: bounds.maxY - CursorOverlay.hotspot)
-
-            // Ripple on click, drawn under everything else.
-            if let ripple {
-                let eased = 1 - pow(1 - ripple, 3)
-                let r = 13 + eased * 20
-                ctx.setStrokeColor(NSColor.white.withAlphaComponent((1 - eased) * 0.4).cgColor)
-                ctx.setLineWidth(2.5 * (1 - eased) + 0.5)
-                ctx.strokeEllipse(in: CGRect(x: tip.x - r, y: tip.y - r, width: r * 2, height: r * 2))
-            }
-
-            // Wide, very diffuse lavender wash. No hard edge anywhere: the glow
-            // should fade out rather than read as a disc behind the arrow.
-            let lavender = NSColor(calibratedRed: 0.74, green: 0.73, blue: 0.93, alpha: 1)
-            let breathe = 1 + 0.03 * sin(phase)
-            let glowR: CGFloat = 34 * breathe
-            if let wash = CGGradient(
-                colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                colors: [lavender.withAlphaComponent(0.55).cgColor,
-                         lavender.withAlphaComponent(0.34).cgColor,
-                         lavender.withAlphaComponent(0.12).cgColor,
-                         lavender.withAlphaComponent(0).cgColor] as CFArray,
-                locations: [0, 0.35, 0.68, 1]) {
-                ctx.drawRadialGradient(wash, startCenter: tip, startRadius: 0,
-                                       endCenter: tip, endRadius: glowR, options: [])
-            }
-
-            ctx.saveGState()
-            ctx.translateBy(x: tip.x, y: tip.y)
-            let travelX = abs(velocity.dx), travelY = abs(velocity.dy)
-            let wobbleAmount = 0.15 * wobble * sin(wobblePhase)
-            var popScale: CGFloat = 1
-            if let pop { popScale = 1 + 0.22 * sin(pop * .pi * 2) * (1 - pop) }
-            ctx.rotate(by: tilt)
-            ctx.scaleBy(x: (1 + travelX / 260 - travelY / 520 + wobbleAmount) * popScale,
-                        y: (1 + travelY / 260 - travelX / 520 - wobbleAmount) * popScale)
-
-            // Four points — tip, right shoulder, an inward notch, then the
-            // tail — with each corner replaced by a tangent arc. Relying on the
-            // stroke's round join alone leaves the outer silhouette pointy;
-            // rounding the path itself is what gives the soft pebble shape.
-            let corners = [
-                NSPoint(x: 0, y: 0),
-                NSPoint(x: 22.5, y: -10.5),
-                NSPoint(x: 13.5, y: -16),
-                NSPoint(x: 6.5, y: -26),
-            ]
-            let radius: CGFloat = 2.1
-            let arrow = NSBezierPath()
-            func midpoint(_ a: NSPoint, _ b: NSPoint) -> NSPoint {
-                NSPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-            }
-            arrow.move(to: midpoint(corners[corners.count - 1], corners[0]))
-            for i in 0..<corners.count {
-                arrow.appendArc(from: corners[i], to: corners[(i + 1) % corners.count],
-                                radius: radius)
-            }
-            arrow.close()
-            arrow.lineJoinStyle = .round
-            arrow.lineCapStyle = .round
-
-            // Gradient interior: deeper slate at the tail, lighter toward the
-            // shoulder, so the shape has depth instead of reading as a hole.
-            ctx.saveGState()
-            arrow.addClip()
-            let deep = NSColor(calibratedRed: 0.40, green: 0.40, blue: 0.56, alpha: 0.92)
-            let light = NSColor(calibratedRed: 0.60, green: 0.60, blue: 0.75, alpha: 0.92)
-            if let fill = NSGradient(starting: deep, ending: light) {
-                fill.draw(in: arrow.bounds, angle: 35)
-            }
-            ctx.restoreGState()
-
-            // Thick near-white rim with a soft bloom behind it.
-            ctx.saveGState()
-            ctx.setShadow(offset: .zero, blur: 7,
-                          color: NSColor.white.withAlphaComponent(0.55).cgColor)
-            arrow.lineWidth = 3.1
-            NSColor(calibratedWhite: 0.97, alpha: 1).setStroke()
-            arrow.stroke()
-            ctx.restoreGState()
-
-            ctx.restoreGState()
-        }
-    }
-
-    // MARK: API
-
     /// Move the agent cursor to a Quartz screen point.
-    func show(at point: CGPoint) { schedule(point, popping: false) }
+    func show(at point: CGPoint) { AgentCursor.shared.show(at: point) }
 
     /// Move and play the click pop + ripple.
-    func press(at point: CGPoint) { schedule(point, popping: true) }
-
-    private func schedule(_ point: CGPoint, popping: Bool) {
-        guard enabled else { return }
-        DispatchQueue.main.async { self.begin(point, popping: popping) }
-    }
-
-    private func begin(_ point: CGPoint, popping: Bool) {
-        let panel = ensurePanel()
-        target = point
-        // A first appearance should not fly in from a stale position.
-        if current == nil || !panel.isVisible {
-            current = point
-            velocity = .zero
-        }
-        place(current ?? point)
-
-        if !panel.isVisible {
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.14
-                panel.animator().alphaValue = 1
-            }
-        }
-        if popping {
-            view?.ripple = 0
-            view?.pop = 0
-            view?.wobble = max(view?.wobble ?? 0, 0.9)
-        }
-
-        hideWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.fadeOut() }
-        hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.9, execute: work)
-        startAnimating()
-    }
-
-    private func startAnimating() {
-        guard animation == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.tick() }
-        RunLoop.main.add(timer, forMode: .common)
-        animation = timer
-    }
-
-    private func tick() {
-        guard let view else { return }
-        var busy = false
-
-        if var cur = current {
-            // Spring toward the target: stiffness pulls, damping keeps the
-            // overshoot to a gentle bounce rather than a wobble.
-            let dx = target.x - cur.x, dy = target.y - cur.y
-            velocity.dx = (velocity.dx + dx * 0.34) * 0.62
-            velocity.dy = (velocity.dy + dy * 0.34) * 0.62
-            if abs(dx) < 0.3, abs(dy) < 0.3, abs(velocity.dx) < 0.3, abs(velocity.dy) < 0.3 {
-                cur = target
-                velocity = .zero
-            } else {
-                cur.x += velocity.dx
-                cur.y += velocity.dy
-                busy = true
-            }
-            current = cur
-            view.velocity = velocity
-            let speed = sqrt(velocity.dx * velocity.dx + velocity.dy * velocity.dy)
-            view.wobble = max(view.wobble * 0.88, min(speed / 26, 1.15))
-            view.wobblePhase += 0.78
-
-            // Bank into the travel: leaning is driven mostly by horizontal
-            // speed, with a little from vertical, and it eases back to upright
-            // once the cursor stops rather than snapping.
-            let targetTilt = max(-0.42, min(0.42, -velocity.dx * 0.011 + velocity.dy * 0.004))
-            view.tilt += (targetTilt - view.tilt) * 0.16
-            if abs(view.tilt) > 0.004 { busy = true } else { view.tilt = 0 }
-
-            place(cur)
-        }
-
-        if let r = view.ripple {
-            let next = r + (1.0 / 60.0) / 0.5
-            view.ripple = next >= 1 ? nil : next
-            busy = true
-        }
-        if let p = view.pop {
-            let next = p + (1.0 / 60.0) / 0.36
-            view.pop = next >= 1 ? nil : next
-            busy = true
-        }
-
-        if view.wobble > 0.01 { busy = true } else { view.wobble = 0 }
-        view.phase += 0.08
-        view.needsDisplay = true
-
-        if !busy, panel?.isVisible != true {
-            animation?.invalidate()
-            animation = nil
-        }
-    }
-
-    private func place(_ point: CGPoint) {
-        guard let panel, let mainScreen = NSScreen.screens.first else { return }
-        // Quartz measures y downward from the top of the main display; AppKit
-        // measures it upward from the bottom.
-        let flippedY = mainScreen.frame.maxY - point.y
-        panel.setFrameOrigin(NSPoint(x: point.x - CursorOverlay.hotspot,
-                                     y: flippedY - side + CursorOverlay.hotspot))
-    }
-
-    private func fadeOut() {
-        guard let panel, panel.isVisible else { return }
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.25
-            panel.animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            guard let self else { return }
-            if panel.alphaValue < 0.05 {
-                panel.orderOut(nil)
-                self.animation?.invalidate()
-                self.animation = nil
-            }
-        })
-    }
-
-    private func ensurePanel() -> NSPanel {
-        if let panel { return panel }
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: side, height: side),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: false)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.level = .screenSaver
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        let view = BubbleView(frame: NSRect(x: 0, y: 0, width: side, height: side))
-        panel.contentView = view
-        self.panel = panel
-        self.view = view
-        return panel
-    }
+    func press(at point: CGPoint) { AgentCursor.shared.press(at: point) }
 }
 
 // MARK: - JSON-RPC over stdio
@@ -2062,7 +1846,16 @@ func textResult(_ s: String, isError: Bool = false) -> [String: Any] {
 // Chrome launches this same binary as its native messaging host; in that mode
 // it is a relay, not an MCP server.
 if CommandLine.arguments.contains("native-host") { NativeHost.run() }
-if CommandLine.arguments.contains("cursor-overlay") { AgentCursorOverlay.run() }
+// The agent pointer is a separate LSUIElement .app (see AgentCursor.swift)
+// launched via NSWorkspace with `--socket <path>` for move/hide commands.
+if CommandLine.arguments.contains("cursor-overlay") {
+    let args = CommandLine.arguments
+    if let flag = args.firstIndex(of: "--socket"), args.index(after: flag) < args.endIndex {
+        AgentCursorOverlay.run(socketPath: args[args.index(after: flag)])
+    }
+    fputs("t3-desktop-mcp: cursor-overlay requires --socket <path>\n", stderr)
+    exit(2)
+}
 
 BrowserBridge.shared.start()
 
@@ -2096,7 +1889,7 @@ while let line = readLine(strippingNewline: true) {
         ])
 
     case "tools/list":
-        respond(id: id ?? NSNull(), result: ["tools": toolDefs])
+        respond(id: id ?? NSNull(), result: ["tools": advertisedToolDefs()])
 
     case "tools/call":
         guard let id else { continue }

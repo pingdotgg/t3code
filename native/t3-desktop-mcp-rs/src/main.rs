@@ -196,6 +196,12 @@ fn call_tool(
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
     if let Some(rest) = name.strip_prefix("browser_") {
+        if !tools::browser_control_enabled() {
+            return text_result(
+                "error: browser control is disabled in Computer Use settings",
+                true,
+            );
+        }
         return match browser.call(rest, &args) {
             Ok(text) => text_result(text, false),
             Err(error) => text_result(format!("error: {error}"), true),
