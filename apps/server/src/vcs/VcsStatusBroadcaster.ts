@@ -20,6 +20,7 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
+import { GitManagerError } from "@t3tools/contracts";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -201,21 +202,18 @@ export const make = Effect.gen(function* () {
   const broadcasterScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
-  const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
+  const cacheRef = yield* SynchronizedRef.make(new Map<string, CachedVcsStatus>());
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
   ) {
-    return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
+    return yield* SynchronizedRef.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
   });
 
-  const cachedResult = (cached: CachedVcsStatus | null) =>
-    cached?.local
-      ? mergeGitStatusParts(
-          cached.local.value,
-          cached.remote?.generation === cached.generation ? cached.remote.value : null,
-        )
+  const cachedCompleteResult = (cached: CachedVcsStatus | null) =>
+    cached?.local && cached.remote?.generation === cached.generation
+      ? mergeGitStatusParts(cached.local.value, cached.remote.value)
       : null;
 
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
@@ -224,7 +222,7 @@ export const make = Effect.gen(function* () {
         fingerprint: fingerprintStatusPart(local),
         value: local,
       } satisfies CachedValue<VcsStatusLocalResult>;
-      const update = yield* Ref.modify(cacheRef, (cache) => {
+      const update = yield* SynchronizedRef.modifyEffect(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { generation: 0, local: null, remote: null };
         const refChanged =
           previous.local !== null &&
@@ -237,26 +235,24 @@ export const make = Effect.gen(function* () {
           local: nextLocal,
           remote: refChanged ? null : previous.remote,
         });
-        return [
-          {
-            generation,
-            refChanged,
-            shouldPublish: previous.local?.fingerprint !== nextLocal.fingerprint,
-          },
-          nextCache,
-        ] as const;
+        const result = {
+          generation,
+          refChanged,
+          shouldPublish: previous.local?.fingerprint !== nextLocal.fingerprint,
+        };
+        const publish =
+          options?.publish && result.shouldPublish
+            ? PubSub.publish(changesPubSub, {
+                cwd,
+                event: {
+                  _tag: "localUpdated" as const,
+                  generation,
+                  local,
+                },
+              })
+            : Effect.void;
+        return publish.pipe(Effect.as([result, nextCache] as const));
       });
-
-      if (options?.publish && update.shouldPublish) {
-        yield* PubSub.publish(changesPubSub, {
-          cwd,
-          event: {
-            _tag: "localUpdated",
-            generation: update.generation,
-            local,
-          },
-        });
-      }
 
       if (update.refChanged) {
         yield* workflow.invalidateRemoteStatus(cwd);
@@ -278,37 +274,35 @@ export const make = Effect.gen(function* () {
         fingerprint: fingerprintStatusPart(remote),
         value: remote,
       } satisfies CachedRemoteStatus;
-      const update = yield* Ref.modify(cacheRef, (cache) => {
+      const update = yield* SynchronizedRef.modifyEffect(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { generation: 0, local: null, remote: null };
         if (previous.local === null || previous.generation !== generation) {
-          return [{ accepted: false, shouldPublish: false }, cache] as const;
+          return Effect.succeed([{ accepted: false, shouldPublish: false }, cache] as const);
         }
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
           remote: nextRemote,
         });
-        return [
-          {
-            accepted: true,
-            shouldPublish:
-              previous.remote?.generation !== generation ||
-              previous.remote.fingerprint !== nextRemote.fingerprint,
-          },
-          nextCache,
-        ] as const;
+        const result = {
+          accepted: true,
+          shouldPublish:
+            previous.remote?.generation !== generation ||
+            previous.remote.fingerprint !== nextRemote.fingerprint,
+        };
+        const publish =
+          options?.publish && result.shouldPublish
+            ? PubSub.publish(changesPubSub, {
+                cwd,
+                event: {
+                  _tag: "remoteUpdated" as const,
+                  generation,
+                  remote,
+                },
+              })
+            : Effect.void;
+        return publish.pipe(Effect.as([result, nextCache] as const));
       });
-
-      if (options?.publish && update.shouldPublish) {
-        yield* PubSub.publish(changesPubSub, {
-          cwd,
-          event: {
-            _tag: "remoteUpdated",
-            generation,
-            remote,
-          },
-        });
-      }
 
       return update.accepted;
     },
@@ -324,13 +318,13 @@ export const make = Effect.gen(function* () {
       fingerprint: fingerprintStatusPart(local),
       value: local,
     } satisfies CachedValue<VcsStatusLocalResult>;
-    const update = yield* Ref.modify(cacheRef, (cache) => {
+    const update = yield* SynchronizedRef.modifyEffect(cacheRef, (cache) => {
       const existing = cache.get(cwd) ?? null;
       if (options && "expected" in options && existing !== options.expected) {
-        return [
+        return Effect.succeed([
           { accepted: false, generation: existing?.generation ?? 0, shouldPublish: false },
           cache,
-        ] as const;
+        ] as const);
       }
       const previous = existing ?? { generation: 0, local: null, remote: null };
       const refChanged =
@@ -348,30 +342,28 @@ export const make = Effect.gen(function* () {
         local: nextLocal,
         remote: nextRemote,
       });
-      return [
-        {
-          accepted: true,
-          generation,
-          shouldPublish:
-            previous.local?.fingerprint !== nextLocal.fingerprint ||
-            previous.remote?.generation !== generation ||
-            previous.remote.fingerprint !== nextRemote.fingerprint,
-        },
-        nextCache,
-      ] as const;
+      const result = {
+        accepted: true,
+        generation,
+        shouldPublish:
+          previous.local?.fingerprint !== nextLocal.fingerprint ||
+          previous.remote?.generation !== generation ||
+          previous.remote.fingerprint !== nextRemote.fingerprint,
+      };
+      const publish =
+        options?.publish && result.shouldPublish
+          ? PubSub.publish(changesPubSub, {
+              cwd,
+              event: {
+                _tag: "snapshot" as const,
+                generation,
+                local,
+                remote,
+              },
+            })
+          : Effect.void;
+      return publish.pipe(Effect.as([result, nextCache] as const));
     });
-
-    if (options?.publish && update.accepted && update.shouldPublish) {
-      yield* PubSub.publish(changesPubSub, {
-        cwd,
-        event: {
-          _tag: "snapshot",
-          generation: update.generation,
-          local,
-          remote,
-        },
-      });
-    }
 
     return update.accepted ? mergeGitStatusParts(local, remote) : null;
   });
@@ -395,6 +387,35 @@ export const make = Effect.gen(function* () {
 
   const withFileSystem = Effect.provideService(FileSystem.FileSystem, fs);
 
+  const readCoherentStatus = Effect.fn("VcsStatusBroadcaster.readCoherentStatus")(function* (
+    cwd: string,
+  ) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const local = yield* workflow.localStatus({ cwd });
+      const remote = yield* workflow.remoteStatus({ cwd });
+      yield* workflow.invalidateLocalStatus(cwd);
+      const confirmedLocal = yield* workflow.localStatus({ cwd });
+      if (localStatusIdentity(local) === localStatusIdentity(confirmedLocal)) {
+        return { local: confirmedLocal, remote };
+      }
+      yield* workflow.invalidateRemoteStatus(cwd);
+    }
+    return yield* Effect.fail(
+      new GitManagerError({
+        operation: "VcsStatusBroadcaster.readCoherentStatus",
+        cwd,
+        detail: "The current ref changed repeatedly while reading VCS status",
+      }),
+    );
+  });
+
+  const staleRefreshError = (cwd: string) =>
+    new GitManagerError({
+      operation: "VcsStatusBroadcaster.refreshStatus",
+      cwd,
+      detail: "A newer local ref replaced this refresh before remote status completed",
+    });
+
   const getStatus: VcsStatusBroadcaster["Service"]["getStatus"] = Effect.fn(
     "VcsStatusBroadcaster.getStatus",
   )(function* (input) {
@@ -403,19 +424,13 @@ export const make = Effect.gen(function* () {
     if (cached?.local && cached.remote?.generation === cached.generation) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
-    const [local, remote] = yield* Effect.all(
-      [
-        cached?.local ? Effect.succeed(cached.local.value) : workflow.localStatus({ cwd }),
-        cached?.remote ? Effect.succeed(cached.remote.value) : workflow.remoteStatus({ cwd }),
-      ],
-      { concurrency: "unbounded" },
-    );
+    const { local, remote } = yield* readCoherentStatus(cwd);
     const updated = yield* updateCachedStatus(cwd, local, remote, { expected: cached });
     if (updated !== null) {
       return updated;
     }
-    const current = cachedResult(yield* getCachedStatus(cwd));
-    return current ?? mergeGitStatusParts(local, null);
+    const current = cachedCompleteResult(yield* getCachedStatus(cwd));
+    return current ?? (yield* Effect.fail(staleRefreshError(cwd)));
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
@@ -455,10 +470,7 @@ export const make = Effect.gen(function* () {
     // invalidateStatus (not the two partial invalidations) so an explicit
     // refresh also bypasses GitManager's slow PR-lookup cache.
     yield* workflow.invalidateStatus(cwd);
-    const [local, remote] = yield* Effect.all(
-      [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
-      { concurrency: "unbounded" },
-    );
+    const { local, remote } = yield* readCoherentStatus(cwd);
     const updated = yield* updateCachedStatus(cwd, local, remote, {
       publish: true,
       expected,
@@ -466,8 +478,8 @@ export const make = Effect.gen(function* () {
     if (updated !== null) {
       return updated;
     }
-    const current = cachedResult(yield* getCachedStatus(cwd));
-    return current ?? mergeGitStatusParts(local, null);
+    const current = cachedCompleteResult(yield* getCachedStatus(cwd));
+    return current ?? (yield* Effect.fail(staleRefreshError(cwd)));
   });
 
   const makeRemoteRefreshLoop = (

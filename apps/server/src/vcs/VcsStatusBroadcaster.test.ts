@@ -161,9 +161,9 @@ describe("VcsStatusBroadcaster", () => {
 
       assert.deepStrictEqual(first, baseStatus);
       assert.deepStrictEqual(second, baseStatus);
-      assert.equal(state.localStatusCalls, 1);
+      assert.equal(state.localStatusCalls, 2);
       assert.equal(state.remoteStatusCalls, 1);
-      assert.equal(state.localInvalidationCalls, 0);
+      assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteInvalidationCalls, 0);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
@@ -202,9 +202,9 @@ describe("VcsStatusBroadcaster", () => {
         ...state.currentLocalStatus,
         ...state.currentRemoteStatus,
       });
-      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.localStatusCalls, 4);
       assert.equal(state.remoteStatusCalls, 2);
-      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.localInvalidationCalls, 3);
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
@@ -310,9 +310,9 @@ describe("VcsStatusBroadcaster", () => {
         ...state.currentLocalStatus,
         ...baseRemoteStatus,
       });
-      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.localStatusCalls, 5);
       assert.equal(state.remoteStatusCalls, 2);
-      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.localInvalidationCalls, 3);
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
@@ -467,10 +467,47 @@ describe("VcsStatusBroadcaster", () => {
       currentLocal = { ...baseLocalStatus, refName: "feature/new-ref" };
       yield* broadcaster.refreshLocalStatus("/repo");
       yield* Deferred.succeed(delayedRemote, baseRemoteStatus);
-      const refreshResult = yield* Fiber.join(staleRefresh);
+      const refreshExit = yield* Fiber.await(staleRefresh);
 
-      assert.equal(refreshResult.refName, "feature/new-ref");
-      assert.equal(refreshResult.aheadCount, 0);
+      assert.isTrue(Exit.isFailure(refreshExit));
+    }).pipe(Effect.provide(testLayer));
+  });
+
+  it.effect("retries a full read when the ref changes between local and remote status", () => {
+    let localCall = 0;
+    let remoteCall = 0;
+    const localB = { ...baseLocalStatus, refName: "feature/new-ref" };
+    const remoteB = { ...baseRemoteStatus, aheadCount: 2 };
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () =>
+            Effect.sync(() => {
+              localCall += 1;
+              return localCall === 1 ? baseLocalStatus : localB;
+            }),
+          remoteStatus: () =>
+            Effect.sync(() => {
+              remoteCall += 1;
+              return remoteCall === 1 ? baseRemoteStatus : remoteB;
+            }),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const status = yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      assert.equal(status.refName, "feature/new-ref");
+      assert.equal(status.aheadCount, 2);
+      assert.equal(localCall, 4);
+      assert.equal(remoteCall, 2);
     }).pipe(Effect.provide(testLayer));
   });
 
@@ -613,8 +650,8 @@ describe("VcsStatusBroadcaster", () => {
       yield* broadcaster.getStatus({ cwd: linkDir });
       yield* broadcaster.getStatus({ cwd: realDir });
 
-      assert.deepStrictEqual(seenCwds, [realPath, realPath]);
-      assert.equal(state.localStatusCalls, 1);
+      assert.deepStrictEqual(seenCwds, [realPath, realPath, realPath]);
+      assert.equal(state.localStatusCalls, 2);
       assert.equal(state.remoteStatusCalls, 1);
     }).pipe(Effect.provide(testLayer));
   });
