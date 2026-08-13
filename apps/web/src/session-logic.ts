@@ -1394,6 +1394,20 @@ function isCommandToolDetail(payload: Record<string, unknown> | null, heading: s
   );
 }
 
+function summarizeRawOutputForDetail(
+  payload: Record<string, unknown> | null,
+  normalizedHeading: string | null,
+): string | null {
+  const rawOutputSummary = summarizeToolRawOutput(payload);
+  if (rawOutputSummary) {
+    const normalizedRawOutputSummary = normalizePreviewForComparison(rawOutputSummary);
+    if (normalizedRawOutputSummary !== normalizedHeading) {
+      return rawOutputSummary;
+    }
+  }
+  return null;
+}
+
 function extractToolDetail(
   payload: Record<string, unknown> | null,
   heading: string,
@@ -1404,22 +1418,22 @@ function extractToolDetail(
   const normalizedDetail = normalizePreviewForComparison(detail);
 
   if (detail && normalizedHeading !== normalizedDetail) {
-    return detail;
+    const isCommandTool = isCommandToolDetail(payload, heading);
+    const command = isCommandTool ? extractToolCommand(payload).command : null;
+    const normalizedCommand = normalizePreviewForComparison(command);
+    if (normalizedCommand === null || normalizedDetail !== normalizedCommand) {
+      return detail;
+    }
+    // The provider mirrored the command into `detail` (ACP/Grok, Claude):
+    // the row already shows the command, so surface the actual output.
+    return summarizeRawOutputForDetail(payload, normalizedHeading);
   }
 
   if (isCommandToolDetail(payload, heading)) {
     return null;
   }
 
-  const rawOutputSummary = summarizeToolRawOutput(payload);
-  if (rawOutputSummary) {
-    const normalizedRawOutputSummary = normalizePreviewForComparison(rawOutputSummary);
-    if (normalizedRawOutputSummary !== normalizedHeading) {
-      return rawOutputSummary;
-    }
-  }
-
-  return null;
+  return summarizeRawOutputForDetail(payload, normalizedHeading);
 }
 
 function stripTrailingExitCode(value: string): {

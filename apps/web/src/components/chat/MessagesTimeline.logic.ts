@@ -238,6 +238,28 @@ export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
+/**
+ * The blocks a tool row's expanded body renders, deduplicated. Providers mirror
+ * the command into more than one field: ACP/Grok and OpenCode set `detail`
+ * equal to the command (or fill both `command` and `detail` with the same
+ * output), and Codex repeats the raw wrapped command in both `rawCommand` and
+ * `detail`. Joining the blocks verbatim therefore rendered the same text
+ * twice. Dropping an exact duplicate keeps genuine command-plus-output rows
+ * (e.g. Codex with a distinct JSON result detail) intact.
+ */
+export function dedupeToolCallExpandedBodyBlocks(blocks: ReadonlyArray<string>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const block of blocks) {
+    const trimmed = block.trim();
+    if (trimmed.length > 0 && !seen.has(trimmed)) {
+      seen.add(trimmed);
+      result.push(trimmed);
+    }
+  }
+  return result;
+}
+
 export function resolveAssistantMessageCopyState({
   text,
   showCopyButton,

@@ -1329,6 +1329,92 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBeUndefined();
   });
 
+  it("surfaces the output summary when Grok mirrors the command into the detail", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "grok-command-complete",
+        createdAt: "2026-08-13T10:00:00.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "git status",
+          data: {
+            toolCallId: "call-3c5a98f2",
+            kind: "execute",
+            command: "git status",
+            rawOutput: {
+              exitCode: 0,
+              stdout: "On branch applib/foo\nnothing to commit, working tree clean\n",
+              stderr: "",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "git status",
+      detail: "On branch applib/foo",
+      itemType: "command_execution",
+    });
+  });
+
+  it("keeps the command as the row content when an ACP command has no output summary", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "grok-command-no-output",
+        createdAt: "2026-08-13T10:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          detail: "ls -la",
+          data: {
+            toolCallId: "call-3c5a98f3",
+            kind: "execute",
+            command: "ls -la",
+            rawInput: { command: "ls -la" },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "ls -la",
+      itemType: "command_execution",
+    });
+    expect(entry?.detail).toBeUndefined();
+  });
+
+  it("does not duplicate OpenCode output across command and detail", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "opencode-command-complete",
+        createdAt: "2026-08-13T10:00:02.000Z",
+        kind: "tool.completed",
+        summary: "bash",
+        payload: {
+          itemType: "command_execution",
+          status: "completed",
+          title: "bash",
+          detail: "bun test\n1 passed, 1 total\n",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      command: "bun test\n1 passed, 1 total",
+      itemType: "command_execution",
+    });
+    expect(entry?.detail).toBeUndefined();
+  });
+
   it("collapses legacy completed tool rows that are missing tool metadata", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

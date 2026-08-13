@@ -274,6 +274,63 @@ describe("buildThreadFeed", () => {
     );
   });
 
+  it("surfaces the output summary when Grok mirrors the command into the detail", () => {
+    const turnId = TurnId.make("turn-grok");
+    const thread = makeThread({
+      id: ThreadId.make("thread-grok"),
+      projectId: ProjectId.make("project-1"),
+      title: "Grok command output",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-08-13T00:00:00.000Z",
+        startedAt: "2026-08-13T00:00:01.000Z",
+        completedAt: "2026-08-13T00:00:03.000Z",
+        assistantMessageId: null,
+      },
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Ran command",
+          createdAt: "2026-08-13T00:00:02.000Z",
+          turnId,
+          payload: {
+            title: "Ran command",
+            itemType: "command_execution",
+            detail: "git status",
+            data: {
+              toolCallId: "call-3c5a98f2",
+              kind: "execute",
+              command: "git status",
+              rawOutput: {
+                exitCode: 0,
+                stdout: "On branch applib/foo\nnothing to commit, working tree clean\n",
+                stderr: "",
+              },
+            },
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const group = feed[0];
+    if (!group || group.type !== "activity-group") {
+      throw new Error("expected an activity group");
+    }
+    expect(group.activities[0]).toMatchObject({
+      summary: "Ran command",
+      detail: "git status",
+      canExpand: true,
+      icon: "command",
+      toolLike: true,
+      status: "success",
+    });
+    expect(group.activities[0]?.getFullDetail()).toBe("git status\n\nOn branch applib/foo");
+  });
+
   it("keeps MCP inputs available to expanded mobile work rows", () => {
     const turnId = TurnId.make("turn-mcp");
     const thread = makeThread({

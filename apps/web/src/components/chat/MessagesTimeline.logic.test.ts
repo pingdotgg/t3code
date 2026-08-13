@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
+  dedupeToolCallExpandedBodyBlocks,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -1169,5 +1170,35 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+});
+
+describe("dedupeToolCallExpandedBodyBlocks", () => {
+  it("drops a block that repeats the command block (Grok mirrors detail into the command)", () => {
+    expect(dedupeToolCallExpandedBodyBlocks(["git status", "git status"])).toEqual(["git status"]);
+  });
+
+  it("drops the command block when it repeats the raw command (Codex repeats the wrapped command)", () => {
+    expect(
+      dedupeToolCallExpandedBodyBlocks(["/bin/zsh -lc 'git status'", "/bin/zsh -lc 'git status'"]),
+    ).toEqual(["/bin/zsh -lc 'git status'"]);
+  });
+
+  it("keeps distinct command and output blocks", () => {
+    expect(
+      dedupeToolCallExpandedBodyBlocks(["bun run dev", '{ "dev": "vite dev --port 3000" }']),
+    ).toEqual(["bun run dev", '{ "dev": "vite dev --port 3000" }']);
+  });
+
+  it("trims blocks and drops non-consecutive duplicates", () => {
+    expect(dedupeToolCallExpandedBodyBlocks(["a", " b ", "a", " c\n", "b"])).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("returns an empty array when every block is blank", () => {
+    expect(dedupeToolCallExpandedBodyBlocks(["  ", "\n"])).toEqual([]);
   });
 });

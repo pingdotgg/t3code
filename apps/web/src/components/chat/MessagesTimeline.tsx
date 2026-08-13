@@ -73,6 +73,7 @@ import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
+  dedupeToolCallExpandedBodyBlocks,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -2054,7 +2055,8 @@ function buildToolCallExpandedBody(
         .join("\n"),
     );
   }
-  return blocks.length > 0 ? blocks.join("\n\n") : null;
+  const deduped = dedupeToolCallExpandedBodyBlocks(blocks);
+  return deduped.length > 0 ? deduped.join("\n\n") : null;
 }
 
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {

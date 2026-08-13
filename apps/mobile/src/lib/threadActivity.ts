@@ -399,7 +399,20 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   ) {
     const detail = stripTrailingExitCode(payload.detail).output;
     if (detail) {
-      entry.detail = detail;
+      // Mirrors web's session-logic: ACP/Grok and Claude mirror the command
+      // into `detail`, and the row already shows the command — surface the
+      // actual output summary instead.
+      const isCommandTool = itemType === "command_execution";
+      const detailIsJustTheCommand =
+        isCommandTool && commandPreview.command !== null && detail === commandPreview.command;
+      if (detailIsJustTheCommand) {
+        const outputSummary = summarizeToolRawOutput(payload);
+        if (outputSummary) {
+          entry.detail = outputSummary;
+        }
+      } else {
+        entry.detail = detail;
+      }
     }
   }
   if (commandPreview.command) {
@@ -950,6 +963,53 @@ function stripTrailingExitCode(value: string): {
     output: normalizedOutput.length > 0 ? normalizedOutput : null,
     ...(Number.isInteger(exitCode) ? { exitCode } : {}),
   };
+}
+
+function summarizeToolTextOutput(value: string): string | null {
+  const lines: Array<string> = [];
+  for (const rawLine of value.split(/\r?\n/u)) {
+    const line = rawLine.replace(/\s+/g, " ").trim();
+    if (line.length > 0) {
+      lines.push(line);
+    }
+  }
+  const firstLine = lines.find((line) => line !== "```");
+  if (firstLine) {
+    return firstLine.length <= 84 ? firstLine : `${firstLine.slice(0, 83).trimEnd()}…`;
+  }
+  if (lines.length > 1) {
+    return `${lines.length.toLocaleString()} lines`;
+  }
+  return null;
+}
+
+function summarizeToolRawOutput(payload: Record<string, unknown> | null): string | null {
+  const data = asRecord(payload?.data);
+  const rawOutput = asRecord(data?.rawOutput);
+  if (!rawOutput) {
+    return null;
+  }
+
+  const totalFiles =
+    typeof rawOutput.totalFiles === "number" && Number.isFinite(rawOutput.totalFiles)
+      ? rawOutput.totalFiles
+      : null;
+  if (totalFiles !== null) {
+    const suffix = rawOutput.truncated === true ? "+" : "";
+    return `${totalFiles.toLocaleString()} file${totalFiles === 1 ? "" : "s"}${suffix}`;
+  }
+
+  const content = asTrimmedString(rawOutput.content);
+  if (content) {
+    return summarizeToolTextOutput(content);
+  }
+
+  const stdout = asTrimmedString(rawOutput.stdout);
+  if (stdout) {
+    return summarizeToolTextOutput(stdout);
+  }
+
+  return null;
 }
 
 function extractWorkLogItemType(
