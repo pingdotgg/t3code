@@ -1,4 +1,4 @@
-import type { EnvironmentId, PullRequestListEntry } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, PullRequestListEntry } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -708,6 +708,20 @@ describe("merging the environments' own listings", () => {
     expect(pullRequestEntryKey({ ...row, environmentId: ENV_1 })).not.toBe(
       pullRequestEntryKey({ ...row, environmentId: ENV_2 }),
     );
+  });
+
+  it("keeps project errors scoped to the environment that reported them", () => {
+    const error = {
+      projectId: "project-1" as ProjectId,
+      projectTitle: "Web",
+      message: "Not signed in",
+    } as const;
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ errors: [error] })],
+      [ENV_2, answer()],
+    ]);
+
+    expect(merged?.errors).toEqual([{ ...error, environmentId: ENV_1 }]);
   });
 
   it("folds a host reached from two environments into one switcher row", () => {
