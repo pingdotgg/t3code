@@ -208,3 +208,12 @@ If the preset needs different Claude files, give it a different `CLAUDE_CONFIG_D
 different API keys, base URLs, or router settings, use Environment variables.
 
 Do not put environment variable assignments in `Launch arguments`.
+
+## Thinking Summaries
+
+When Claude provides a summarized thinking block, T3 Code shows it live in the thread as
+**Thinking**, then keeps it as a collapsible **Thought** after the block finishes. These are
+Claude-authored summaries; T3 Code does not expose Claude's hidden chain of thought.
+
+T3 Code requests summarized thinking by default. You can override Claude Code's display behavior
+for a provider with `--thinking-display` in that provider's `Launch arguments`.

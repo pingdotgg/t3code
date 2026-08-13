@@ -151,6 +151,41 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("renders Claude reasoning as a non-tool thought activity", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-reasoning"),
+      projectId: ProjectId.make("project-1"),
+      title: "Reasoning thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("reasoning:thread-reasoning:item-1"),
+          kind: "reasoning",
+          summary: "Thought",
+          tone: "info",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId: TurnId.make("turn-1"),
+          payload: { detail: "Inspecting the source", streaming: false },
+        }),
+      ],
+    });
+
+    const group = buildThreadFeed(thread)[0];
+    expect(group).toMatchObject({
+      type: "activity-group",
+      activities: [
+        {
+          id: "reasoning:thread-reasoning:item-1",
+          summary: "Thought",
+          detail: "Inspecting the source",
+          icon: "agent",
+          toolLike: false,
+          status: null,
+          reasoning: true,
+        },
+      ],
+    });
+  });
+
   it("keeps historic work entries attributed to their turns", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-1"),

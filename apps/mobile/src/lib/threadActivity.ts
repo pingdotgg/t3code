@@ -54,6 +54,7 @@ export interface ThreadFeedActivity {
     | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
+  readonly reasoning?: boolean;
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -75,6 +76,7 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  reasoning?: boolean;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -382,7 +384,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     ...(taskId ? { taskId } : {}),
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || activity.kind === "reasoning"
         ? "thinking"
         : activity.tone === "approval"
           ? "info"
@@ -401,6 +403,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     if (detail) {
       entry.detail = detail;
     }
+  }
+  if (activity.kind === "reasoning") {
+    entry.reasoning = true;
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
@@ -548,6 +553,9 @@ function normalizeCompactToolLabel(value: string): string {
 }
 
 function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
+  if (entry.reasoning === true) {
+    return false;
+  }
   if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") {
     return true;
   }
@@ -622,6 +630,7 @@ function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
 }
 
 function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
+  if (entry.activityKind === "reasoning") return "agent";
   if (
     entry.activityKind === "user-input.requested" ||
     entry.activityKind === "user-input.resolved"
@@ -1566,6 +1575,7 @@ export function buildThreadFeed(
               icon: workEntryIcon(entry),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
+              ...(entry.reasoning === true ? { reasoning: true } : {}),
             },
           };
         }),

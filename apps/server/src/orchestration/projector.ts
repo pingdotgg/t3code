@@ -1,5 +1,6 @@
 import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
 import {
+  mergeOrchestrationThreadActivity,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
@@ -783,9 +784,13 @@ export function projectEvent(
             return nextBase;
           }
 
+          const previousActivity = thread.activities.find(
+            (entry) => entry.id === payload.activity.id,
+          );
+          const nextActivity = mergeOrchestrationThreadActivity(previousActivity, payload.activity);
           const activities = [
             ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-            payload.activity,
+            nextActivity,
           ]
             .toSorted(compareThreadActivities)
             .slice(-500);

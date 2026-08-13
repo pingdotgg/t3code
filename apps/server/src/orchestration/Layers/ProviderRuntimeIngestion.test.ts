@@ -1025,6 +1025,75 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("merges streamed reasoning into one persisted activity and settles it", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta-1"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: "Checking",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-reasoning-delta-2"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning"),
+      payload: {
+        streamKind: "reasoning_text",
+        delta: " the source",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-reasoning-completed"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-reasoning"),
+      itemId: asItemId("item-reasoning"),
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        title: "Thought",
+        detail: "Checking the source.",
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "reasoning:thread-1:item-reasoning" &&
+          (activity.payload as { streaming?: boolean }).streaming === false,
+      ),
+    );
+    const reasoning = thread.activities.filter(
+      (activity: ProviderRuntimeTestActivity) => activity.kind === "reasoning",
+    );
+
+    expect(reasoning).toHaveLength(1);
+    expect(reasoning[0]).toMatchObject({
+      id: "reasoning:thread-1:item-reasoning",
+      kind: "reasoning",
+      summary: "Thought",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {
+        detail: "Checking the source.",
+        streaming: false,
+      },
+    });
+  });
+
   it("uses assistant item completion detail when no assistant deltas were streamed", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

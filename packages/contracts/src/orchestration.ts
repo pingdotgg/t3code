@@ -336,6 +336,53 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
+/**
+ * Reasoning is streamed as deltas but projected as one stable transcript row.
+ * Materialize the delta here so the event-store projector, live client reducer,
+ * and SQLite projection cannot drift on append-vs-replace semantics.
+ */
+export function mergeOrchestrationThreadActivity(
+  previous: OrchestrationThreadActivity | undefined,
+  next: OrchestrationThreadActivity,
+): OrchestrationThreadActivity {
+  if (next.kind !== "reasoning") {
+    return next;
+  }
+
+  const previousPayload =
+    previous?.kind === "reasoning" &&
+    previous.payload !== null &&
+    typeof previous.payload === "object" &&
+    !Array.isArray(previous.payload)
+      ? (previous.payload as Record<string, unknown>)
+      : {};
+  const nextPayload =
+    next.payload !== null && typeof next.payload === "object" && !Array.isArray(next.payload)
+      ? (next.payload as Record<string, unknown>)
+      : {};
+  const previousDetail = typeof previousPayload.detail === "string" ? previousPayload.detail : "";
+  const settledDetail = typeof nextPayload.detail === "string" ? nextPayload.detail : undefined;
+  const delta = typeof nextPayload.delta === "string" ? nextPayload.delta : "";
+  const detail = settledDetail ?? `${previousDetail}${delta}`;
+  const { delta: _delta, ...nextPayloadWithoutDelta } = nextPayload;
+
+  return {
+    ...(previous?.kind === "reasoning" ? previous : next),
+    ...next,
+    createdAt: previous?.kind === "reasoning" ? previous.createdAt : next.createdAt,
+    ...(previous?.kind === "reasoning" && previous.sequence !== undefined
+      ? { sequence: previous.sequence }
+      : next.sequence !== undefined
+        ? { sequence: next.sequence }
+        : {}),
+    payload: {
+      ...previousPayload,
+      ...nextPayloadWithoutDelta,
+      ...(detail.length > 0 ? { detail } : {}),
+    },
+  };
+}
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",

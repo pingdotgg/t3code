@@ -1355,6 +1355,9 @@ const WorkGroupSection = memo(function WorkGroupSection({
     [groupedEntries],
   );
   const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
+  const containsReasoning = nonEmptyEntries.some(
+    (entry) => entry.sourceActivityKind === "reasoning",
+  );
   const groupLabel = onlyToolEntries
     ? nonEmptyEntries.length === 1
       ? "1 tool call"
@@ -1365,7 +1368,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
 
   return (
     <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
-      {!onlyToolEntries && (
+      {!onlyToolEntries && !containsReasoning && (
         <p className="px-0.5 pb-0.5 font-medium text-secondary-label text-[11px]">{groupLabel}</p>
       )}
       <div className="space-y-px">
@@ -2216,11 +2219,70 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  if (workEntry.sourceActivityKind === "reasoning") {
+    return <ReasoningWorkEntryRow workEntry={workEntry} />;
+  }
   // Before any hooks: spawn CTA rows render their own component.
   if (workEntry.agentSpawn) {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
   }
   return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
+});
+
+const REASONING_COLLAPSED_CHARS = 560;
+
+const ReasoningWorkEntryRow = memo(function ReasoningWorkEntryRow(props: {
+  workEntry: TimelineWorkEntry;
+}) {
+  const { workEntry } = props;
+  const ctx = use(TimelineRowCtx);
+  const [expanded, setExpanded] = useState(true);
+  const text = workEntry.detail?.trim() ?? "";
+  const streaming = workEntry.reasoning?.streaming === true;
+  const clipped = !streaming && text.length > REASONING_COLLAPSED_CHARS;
+  const shown =
+    expanded || !clipped ? text : `${text.slice(0, REASONING_COLLAPSED_CHARS).trimEnd()}…`;
+  const canExpand = !streaming && clipped;
+
+  return (
+    <div className="rounded-md px-0.5 py-1 text-secondary-label">
+      <div className="flex items-center gap-1.5 text-[11px] leading-5">
+        <span className="flex size-5 shrink-0 items-center justify-center text-icon-muted">
+          <BotIcon className="size-3.5 stroke-[1.8]" aria-hidden />
+        </span>
+        <span className="font-medium uppercase tracking-[0.08em]">
+          {streaming ? "Thinking" : "Thought"}
+        </span>
+        {streaming ? <span aria-label="Thinking in progress">…</span> : null}
+        {canExpand ? (
+          <button
+            type="button"
+            className="ms-auto flex items-center gap-1 rounded px-1 text-[11px] normal-case tracking-normal transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "Hide" : "Show reasoning"}
+            <ChevronDownIcon
+              className={cn("size-3 transition-transform", expanded && "rotate-180")}
+              aria-hidden
+            />
+          </button>
+        ) : null}
+      </div>
+      {shown.length > 0 ? (
+        <div className="ms-7 border-s border-border/45 ps-3 text-[12px] leading-relaxed">
+          <ChatMarkdown
+            text={shown}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={streaming}
+            skills={ctx.skills}
+            className="text-secondary-label"
+          />
+        </div>
+      ) : null}
+    </div>
+  );
 });
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {

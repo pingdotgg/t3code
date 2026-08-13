@@ -109,11 +109,12 @@ export function collapsedWorkLogHeight(
     return 0;
   }
   const onlyToolRows = rows.every((row) => row.toolLike);
+  const containsReasoning = rows.some((row) => row.reasoning === true);
   const headerHeight =
     scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.caption, baseFontSize) + WORK_LOG_HEADER_PADDING;
   return (
     WORK_LOG_BOTTOM_MARGIN +
-    (onlyToolRows ? 0 : headerHeight) +
+    (onlyToolRows || containsReasoning ? 0 : headerHeight) +
     rows.length * WORK_ROW_HEIGHT +
     (rows.length - 1) * WORK_ROW_GAP
   );
@@ -139,10 +140,11 @@ export function ThreadWorkLog(props: {
   }
 
   const onlyToolRows = rows.every((row) => row.toolLike);
+  const containsReasoning = rows.some((row) => row.reasoning === true);
 
   return (
     <View className="-mx-1 mb-1 px-1 py-0">
-      {!onlyToolRows ? (
+      {!onlyToolRows && !containsReasoning ? (
         <Text className="px-0.5 pb-0.5 font-t3-medium text-2xs text-foreground-muted opacity-60">
           work log
         </Text>

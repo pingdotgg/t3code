@@ -361,6 +361,48 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("requests summarized thinking blocks by default", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.extraArgs?.["thinking-display"],
+        "summarized",
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("lets configured Claude launch args override thinking display", () => {
+    const harness = makeHarness({
+      claudeConfig: { launchArgs: "--thinking-display omitted" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.extraArgs?.["thinking-display"],
+        "omitted",
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("derives auto permission mode from auto runtime policy without skip flag", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -1119,7 +1161,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 11).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 12).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1148,6 +1190,28 @@ describe("ClaudeAdapterLive", () => {
             type: "thinking_delta",
             thinking: "Let",
           },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-tool-streams",
+        uuid: "stream-thinking-stop",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_stop",
+          index: 0,
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-tool-streams",
+        uuid: "assistant-thinking-snapshot",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-thinking-snapshot",
+          content: [{ type: "thinking", thinking: "Let", signature: "" }],
         },
       } as unknown as SDKMessage);
 
@@ -1230,6 +1294,7 @@ describe("ClaudeAdapterLive", () => {
           "turn.started",
           "thread.started",
           "content.delta",
+          "item.completed",
           "item.started",
           "item.updated",
           "item.updated",
@@ -1245,6 +1310,18 @@ describe("ClaudeAdapterLive", () => {
       if (reasoningDelta?.type === "content.delta") {
         assert.equal(reasoningDelta.payload.delta, "Let");
         assert.equal(String(reasoningDelta.turnId), String(turn.turnId));
+      }
+
+      const reasoningCompleted = runtimeEvents.find(
+        (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+      );
+      assert.equal(reasoningCompleted?.type, "item.completed");
+      if (
+        reasoningDelta?.type === "content.delta" &&
+        reasoningCompleted?.type === "item.completed"
+      ) {
+        assert.equal(reasoningCompleted.payload.detail, "Let");
+        assert.equal(String(reasoningCompleted.itemId), String(reasoningDelta.itemId));
       }
 
       const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
@@ -1287,6 +1364,89 @@ describe("ClaudeAdapterLive", () => {
           "src/example.ts:1:foo",
         );
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("creates a fresh reasoning item when Claude reuses a thinking block index", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 10).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      for (const [suffix, thinking] of [
+        ["1", "First thought"],
+        ["2", "Second thought"],
+      ] as const) {
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-reused-thinking-index",
+          uuid: `stream-thinking-start-${suffix}`,
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "", signature: "" },
+          },
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-reused-thinking-index",
+          uuid: `stream-thinking-delta-${suffix}`,
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "thinking_delta", thinking },
+          },
+        } as unknown as SDKMessage);
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-reused-thinking-index",
+          uuid: `stream-thinking-stop-${suffix}`,
+          parent_tool_use_id: null,
+          event: { type: "content_block_stop", index: 0 },
+        } as unknown as SDKMessage);
+      }
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-reused-thinking-index",
+        uuid: "result-reused-thinking-index",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const deltas = runtimeEvents.filter(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+      );
+      const completed = runtimeEvents.filter(
+        (event) => event.type === "item.completed" && event.payload.itemType === "reasoning",
+      );
+      assert.equal(deltas.length, 2);
+      assert.equal(completed.length, 2);
+      assert.notEqual(String(deltas[0]?.itemId), String(deltas[1]?.itemId));
+      assert.deepEqual(
+        completed.map((event) => (event.type === "item.completed" ? event.payload.detail : null)),
+        ["First thought", "Second thought"],
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

@@ -4,6 +4,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ThreadId,
+  mergeOrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -1079,21 +1080,37 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadActivitiesProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
-        case "thread.activity-appended":
-          yield* projectionThreadActivityRepository.upsert({
+        case "thread.activity-appended": {
+          const existingActivity = yield* projectionThreadActivityRepository.getByActivityId({
             activityId: event.payload.activity.id,
+          });
+          const previousActivity = Option.map(existingActivity, (row) => ({
+            id: row.activityId,
+            tone: row.tone,
+            kind: row.kind,
+            summary: row.summary,
+            payload: row.payload,
+            turnId: row.turnId,
+            ...(row.sequence !== undefined ? { sequence: row.sequence } : {}),
+            createdAt: row.createdAt,
+          })).pipe(Option.getOrUndefined);
+          const activity = mergeOrchestrationThreadActivity(
+            previousActivity,
+            event.payload.activity,
+          );
+          yield* projectionThreadActivityRepository.upsert({
+            activityId: activity.id,
             threadId: event.payload.threadId,
-            turnId: event.payload.activity.turnId,
-            tone: event.payload.activity.tone,
-            kind: event.payload.activity.kind,
-            summary: event.payload.activity.summary,
-            payload: event.payload.activity.payload,
-            ...(event.payload.activity.sequence !== undefined
-              ? { sequence: event.payload.activity.sequence }
-              : {}),
-            createdAt: event.payload.activity.createdAt,
+            turnId: activity.turnId,
+            tone: activity.tone,
+            kind: activity.kind,
+            summary: activity.summary,
+            payload: activity.payload,
+            ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+            createdAt: activity.createdAt,
           });
           return;
+        }
 
         case "thread.reverted": {
           const existingRows = yield* projectionThreadActivityRepository.listByThreadId({

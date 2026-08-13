@@ -140,8 +140,19 @@ interface ClaudeTurnState {
   readonly items: Array<unknown>;
   readonly assistantTextBlocks: Map<number, AssistantTextBlockState>;
   readonly assistantTextBlockOrder: Array<AssistantTextBlockState>;
+  readonly reasoningBlocks: Map<number, ReasoningBlockState>;
+  readonly reasoningBlockOrder: Array<ReasoningBlockState>;
   readonly capturedProposedPlanKeys: Set<string>;
   nextSyntheticAssistantBlockIndex: number;
+}
+
+interface ReasoningBlockState {
+  readonly itemId: string;
+  readonly blockIndex: number;
+  text: string;
+  streamClosed: boolean;
+  completionEmitted: boolean;
+  snapshotSeen: boolean;
 }
 
 interface AssistantTextBlockState {
@@ -1884,6 +1895,104 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     });
   });
 
+  const ensureReasoningBlock = Effect.fn("ensureReasoningBlock")(function* (
+    context: ClaudeSessionContext,
+    blockIndex: number,
+    options?: { readonly fallbackText?: string; readonly streamClosed?: boolean },
+  ) {
+    const turnState = context.turnState;
+    if (!turnState) {
+      return undefined;
+    }
+
+    const existing = turnState.reasoningBlocks.get(blockIndex);
+    if (existing && !existing.completionEmitted) {
+      if (existing.text.length === 0 && options?.fallbackText) {
+        existing.text = options.fallbackText;
+      }
+      if (options?.streamClosed) {
+        existing.streamClosed = true;
+      }
+      return existing;
+    }
+
+    const previousAtIndex = turnState.reasoningBlockOrder.findLast(
+      (block) => block.blockIndex === blockIndex,
+    );
+    if (previousAtIndex?.completionEmitted) {
+      previousAtIndex.snapshotSeen = true;
+    }
+
+    const block: ReasoningBlockState = {
+      itemId: yield* randomUUIDv4,
+      blockIndex,
+      text: options?.fallbackText ?? "",
+      streamClosed: options?.streamClosed ?? false,
+      completionEmitted: false,
+      snapshotSeen: false,
+    };
+    turnState.reasoningBlocks.set(blockIndex, block);
+    turnState.reasoningBlockOrder.push(block);
+    return block;
+  });
+
+  const completeReasoningBlock = Effect.fn("completeReasoningBlock")(function* (
+    context: ClaudeSessionContext,
+    block: ReasoningBlockState,
+    options?: {
+      readonly force?: boolean;
+      readonly rawMethod?: string;
+      readonly rawPayload?: unknown;
+    },
+  ) {
+    const turnState = context.turnState;
+    if (!turnState || block.completionEmitted) {
+      return;
+    }
+    if (!options?.force && !block.streamClosed) {
+      return;
+    }
+
+    if (block.text.length === 0 && !options?.force) {
+      return;
+    }
+
+    block.completionEmitted = true;
+    if (turnState.reasoningBlocks.get(block.blockIndex) === block) {
+      turnState.reasoningBlocks.delete(block.blockIndex);
+    }
+    if (block.text.length === 0) {
+      return;
+    }
+
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "item.completed",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      itemId: asRuntimeItemId(block.itemId),
+      threadId: context.session.threadId,
+      turnId: turnState.turnId,
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        title: "Thought",
+        detail: block.text,
+      },
+      providerRefs: nativeProviderRefs(context, { providerItemId: block.itemId }),
+      ...(options?.rawMethod || options?.rawPayload
+        ? {
+            raw: {
+              source: "claude.sdk.message" as const,
+              ...(options.rawMethod ? { method: options.rawMethod } : {}),
+              payload: options?.rawPayload,
+            },
+          }
+        : {}),
+    });
+  });
+
   const backfillAssistantTextBlocksFromSnapshot = Effect.fn(
     "backfillAssistantTextBlocksFromSnapshot",
   )(function* (context: ClaudeSessionContext, message: SDKMessage) {
@@ -1931,6 +2040,50 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
     }
   });
+
+  const backfillReasoningBlocksFromSnapshot = Effect.fn("backfillReasoningBlocksFromSnapshot")(
+    function* (context: ClaudeSessionContext, message: SDKMessage) {
+      const turnState = context.turnState;
+      if (!turnState || message.type !== "assistant") {
+        return;
+      }
+      const content = (message.message as { content?: unknown } | undefined)?.content;
+      if (!Array.isArray(content)) {
+        return;
+      }
+
+      for (const [index, rawBlock] of content.entries()) {
+        if (!rawBlock || typeof rawBlock !== "object") {
+          continue;
+        }
+        const candidate = rawBlock as { type?: unknown; thinking?: unknown };
+        if (candidate.type !== "thinking") {
+          continue;
+        }
+        const existing = turnState.reasoningBlockOrder.find(
+          (block) => block.blockIndex === index && !block.snapshotSeen,
+        );
+        const block =
+          existing ??
+          (yield* ensureReasoningBlock(context, index, {
+            fallbackText: typeof candidate.thinking === "string" ? candidate.thinking : "",
+            streamClosed: true,
+          }));
+        if (!block) {
+          continue;
+        }
+        block.snapshotSeen = true;
+        if (block.text.length === 0 && typeof candidate.thinking === "string") {
+          block.text = candidate.thinking;
+        }
+        block.streamClosed = true;
+        yield* completeReasoningBlock(context, block, {
+          rawMethod: "claude/assistant",
+          rawPayload: message,
+        });
+      }
+    },
+  );
 
   const ensureThreadId = Effect.fn("ensureThreadId")(function* (
     context: ClaudeSessionContext,
@@ -2311,6 +2464,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         rawPayload: result ?? { status },
       });
     }
+    for (const block of turnState.reasoningBlockOrder) {
+      yield* completeReasoningBlock(context, block, {
+        force: true,
+        rawMethod: "claude/result",
+        rawPayload: result ?? { status },
+      });
+    }
 
     context.turns.push({
       id: turnState.turnId,
@@ -2426,16 +2586,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const assistantBlockEntry =
           event.delta.type === "text_delta"
             ? yield* ensureAssistantTextBlock(context, event.index)
-            : context.turnState.assistantTextBlocks.get(event.index)
-              ? {
-                  blockIndex: event.index,
-                  block: context.turnState.assistantTextBlocks.get(
-                    event.index,
-                  ) as AssistantTextBlockState,
-                }
-              : undefined;
+            : undefined;
+        const reasoningBlock =
+          event.delta.type === "thinking_delta"
+            ? yield* ensureReasoningBlock(context, event.index)
+            : undefined;
         if (assistantBlockEntry?.block && event.delta.type === "text_delta") {
           assistantBlockEntry.block.emittedTextDelta = true;
+        }
+        if (reasoningBlock && event.delta.type === "thinking_delta") {
+          reasoningBlock.text += deltaText;
         }
         const stamp = yield* makeEventStamp();
         yield* offerRuntimeEvent({
@@ -2445,9 +2605,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           createdAt: stamp.createdAt,
           threadId: context.session.threadId,
           turnId: context.turnState.turnId,
-          ...(assistantBlockEntry?.block
+          ...(assistantBlockEntry?.block || reasoningBlock
             ? {
-                itemId: asRuntimeItemId(assistantBlockEntry.block.itemId),
+                itemId: asRuntimeItemId(
+                  assistantBlockEntry?.block.itemId ?? reasoningBlock!.itemId,
+                ),
               }
             : {}),
           payload: {
@@ -2570,6 +2732,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       }
+      if (block.type === "thinking") {
+        yield* ensureReasoningBlock(context, index, {
+          fallbackText:
+            typeof (block as { thinking?: unknown }).thinking === "string"
+              ? (block as { thinking: string }).thinking
+              : "",
+        });
+        return;
+      }
       if (
         block.type !== "tool_use" &&
         block.type !== "server_tool_use" &&
@@ -2650,6 +2821,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       if (assistantBlock) {
         assistantBlock.streamClosed = true;
         yield* completeAssistantTextBlock(context, assistantBlock, {
+          rawMethod: "claude/stream_event/content_block_stop",
+          rawPayload: message,
+        });
+        return;
+      }
+      const reasoningBlock = context.turnState?.reasoningBlocks.get(index);
+      if (reasoningBlock) {
+        reasoningBlock.streamClosed = true;
+        yield* completeReasoningBlock(context, reasoningBlock, {
           rawMethod: "claude/stream_event/content_block_stop",
           rawPayload: message,
         });
@@ -2865,6 +3045,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         items: [],
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
+        reasoningBlocks: new Map(),
+        reasoningBlockOrder: [],
         capturedProposedPlanKeys: new Set(),
         nextSyntheticAssistantBlockIndex: -1,
       };
@@ -2926,6 +3108,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     if (context.turnState) {
       context.turnState.items.push(message.message);
+      yield* backfillReasoningBlocksFromSnapshot(context, message);
       yield* backfillAssistantTextBlocksFromSnapshot(context, message);
     }
 
@@ -4055,7 +4238,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
 
       const claudeBinaryPath = claudeSdkExecutablePath;
-      const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
+      const configuredExtraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
+      // Claude 5 defaults thinking display to omitted, which leaves otherwise
+      // valid thinking_delta frames empty. Summaries are provider-authored
+      // reasoning text (not raw chain of thought) and remain user-overridable.
+      const extraArgs = {
+        "thinking-display": "summarized",
+        ...configuredExtraArgs,
+      };
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
@@ -4364,6 +4554,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         items: [],
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
+        reasoningBlocks: new Map(),
+        reasoningBlockOrder: [],
         capturedProposedPlanKeys: new Set(),
         nextSyntheticAssistantBlockIndex: -1,
       };
