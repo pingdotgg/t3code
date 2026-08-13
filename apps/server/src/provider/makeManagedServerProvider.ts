@@ -145,9 +145,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
-    yield* input.beforeRefresh ?? Effect.void;
-    const nextSettings = yield* input.getSettings;
-    return yield* applySnapshot(nextSettings, { forceRefresh: true });
+    return yield* refreshSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        yield* input.beforeRefresh ?? Effect.void;
+        const nextSettings = yield* input.getSettings;
+        return yield* applySnapshotBase(nextSettings, { forceRefresh: true });
+      }),
+    );
   });
 
   const hasProviderStatusDemand = Effect.gen(function* () {

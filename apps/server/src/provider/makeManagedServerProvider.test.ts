@@ -226,6 +226,66 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
+  it.effect("serializes refresh hooks with the provider check", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const beforeRefreshCalls = yield* Ref.make(0);
+        const checkCalls = yield* Ref.make(0);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const firstRefreshCheckStarted = yield* Deferred.make<void>();
+        const releaseFirstRefresh = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.gen(function* () {
+            const call = yield* Ref.updateAndGet(checkCalls, (count) => count + 1);
+            yield* Ref.update(events, (previous) => [...previous, `check:${call}`]);
+            if (call === 1) {
+              yield* Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore);
+            } else if (call === 2) {
+              yield* Deferred.succeed(firstRefreshCheckStarted, undefined).pipe(Effect.ignore);
+              yield* Deferred.await(releaseFirstRefresh);
+            }
+            return call === 2 ? refreshedSnapshot : refreshedSnapshotSecond;
+          }),
+          beforeRefresh: Effect.gen(function* () {
+            const call = yield* Ref.updateAndGet(beforeRefreshCalls, (count) => count + 1);
+            yield* Ref.update(events, (previous) => [...previous, `before:${call}`]);
+          }),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        yield* Ref.set(events, []);
+
+        const firstRefresh = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(firstRefreshCheckStarted);
+
+        const secondRefresh = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        assert.strictEqual(yield* Ref.get(beforeRefreshCalls), 1);
+        assert.deepStrictEqual(yield* Ref.get(events), ["before:1", "check:2"]);
+
+        yield* Deferred.succeed(releaseFirstRefresh, undefined);
+        yield* Fiber.join(firstRefresh);
+        yield* Fiber.join(secondRefresh);
+
+        assert.strictEqual(yield* Ref.get(beforeRefreshCalls), 2);
+        assert.deepStrictEqual(yield* Ref.get(events), [
+          "before:1",
+          "check:2",
+          "before:2",
+          "check:3",
+        ]);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
     Effect.scoped(
       Effect.gen(function* () {
