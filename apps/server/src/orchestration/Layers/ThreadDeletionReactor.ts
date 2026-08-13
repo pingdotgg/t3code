@@ -591,9 +591,108 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // Associations are written when a PR is opened/linked and otherwise only
+  // refreshed on archive cleanup. Without a background pass, sidebar chrome
+  // keeps the original "open" colour after merge/close.
+  const refreshOpenPullRequestAssociations = Effect.fn("refreshOpenPullRequestAssociations")(
+    function* () {
+      const readModel = yield* orchestrationEngine.getReadModel();
+      const projectsById = new Map(
+        readModel.projects
+          .filter((project) => project.deletedAt === null)
+          .map((project) => [project.id, project] as const),
+      );
+
+      const candidates = readModel.threads.filter((thread) => {
+        if (thread.deletedAt !== null || thread.archivedAt !== null) {
+          return false;
+        }
+        const pullRequest = thread.pullRequest;
+        if (!pullRequest) {
+          return false;
+        }
+        // Merged PRs cannot transition back; closed PRs can be reopened.
+        return pullRequest.state !== "merged";
+      });
+
+      yield* Effect.forEach(
+        candidates,
+        (thread) =>
+          Effect.gen(function* () {
+            const pullRequest = thread.pullRequest;
+            if (!pullRequest) {
+              return;
+            }
+            const project = projectsById.get(thread.projectId);
+            if (!project) {
+              return;
+            }
+            const cwd = thread.worktreePath ?? project.workspaceRoot;
+            const resolved = yield* gitManager
+              .resolvePullRequest({
+                cwd,
+                reference: String(pullRequest.number),
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logDebug("pull request association refresh skipped", {
+                    threadId: thread.id,
+                    pullRequestNumber: pullRequest.number,
+                    error: error instanceof Error ? error.message : String(error),
+                  }).pipe(Effect.as(null)),
+                ),
+              );
+            if (resolved === null) {
+              return;
+            }
+            if (
+              resolved.pullRequest.state === pullRequest.state &&
+              resolved.pullRequest.title === pullRequest.title &&
+              resolved.pullRequest.url === pullRequest.url &&
+              resolved.pullRequest.baseBranch === pullRequest.baseBranch &&
+              resolved.pullRequest.headBranch === pullRequest.headBranch
+            ) {
+              return;
+            }
+            yield* orchestrationEngine
+              .dispatch({
+                type: "thread.meta.update",
+                commandId: CommandId.make(crypto.randomUUID()),
+                threadId: thread.id,
+                pullRequest: {
+                  number: resolved.pullRequest.number,
+                  title: resolved.pullRequest.title,
+                  url: resolved.pullRequest.url,
+                  baseBranch: resolved.pullRequest.baseBranch,
+                  headBranch: resolved.pullRequest.headBranch,
+                  state: resolved.pullRequest.state,
+                },
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logDebug("failed to persist refreshed pull request association", {
+                    threadId: thread.id,
+                    pullRequestNumber: pullRequest.number,
+                    error: error instanceof Error ? error.message : String(error),
+                  }),
+                ),
+              );
+          }),
+        { concurrency: 2, discard: true },
+      );
+    },
+  );
+
   const start: ThreadDeletionReactorShape["start"] = Effect.fn("start")(function* () {
     yield* Effect.forkScoped(
       enqueuePendingWorktreeCleanups.pipe(Effect.repeat(Schedule.spaced("60 seconds"))),
+    );
+    yield* Effect.forkScoped(
+      refreshOpenPullRequestAssociations().pipe(
+        // First pass soon after boot so sidebar colours catch up without waiting
+        // for archive; then keep associations warm without hammering gh.
+        Effect.repeat(Schedule.spaced("5 minutes")),
+      ),
     );
     yield* Effect.forkScoped(
       orchestrationEngine.getReadModel().pipe(

@@ -111,6 +111,13 @@ describe("prStatusIndicator", () => {
     });
   });
 
+  it("normalizes casing so merged PRs stay purple", () => {
+    expect(prStatusIndicator({ ...samplePr, state: "MERGED" as "merged" })).toMatchObject({
+      label: "PR merged",
+      colorClass: "text-violet-600 dark:text-violet-300/90",
+    });
+  });
+
   it("only surfaces explicitly associated pull requests", () => {
     const associated = thread("thread-with-pr", {
       branch: "feat/shared",

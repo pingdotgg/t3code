@@ -415,6 +415,67 @@ export default function GitActionsControl({
   const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
   const gitStatusForActions = gitStatus;
 
+  // Durable associations are snapshotted at link time. When live git status
+  // reports a newer state for the same PR number, write it through so sidebar
+  // chrome (open green / merged purple) does not lag behind GitHub.
+  useEffect(() => {
+    if (!activeThreadRef || !activeServerThread) {
+      return;
+    }
+    const associated = activeServerThread.pullRequest;
+    const live = gitStatus?.pr;
+    if (!associated || !live || live.number !== associated.number) {
+      return;
+    }
+    if (
+      live.state === associated.state &&
+      live.title === associated.title &&
+      live.url === associated.url &&
+      live.baseBranch === associated.baseBranch &&
+      live.headBranch === associated.headBranch
+    ) {
+      return;
+    }
+
+    const pullRequest = {
+      number: live.number,
+      title: live.title,
+      url: live.url,
+      baseBranch: live.baseBranch,
+      headBranch: live.headBranch,
+      state: live.state,
+    };
+    const api = readEnvironmentApi(activeThreadRef.environmentId);
+    if (!api) {
+      return;
+    }
+
+    let cancelled = false;
+    void api.orchestration
+      .dispatchCommand({
+        type: "thread.meta.update",
+        commandId: newCommandId(),
+        threadId: activeThreadRef.threadId,
+        pullRequest,
+      })
+      .then(() => {
+        if (cancelled) {
+          return;
+        }
+        setThreadBranch(
+          activeThreadRef,
+          activeServerThread.branch,
+          activeServerThread.worktreePath,
+          pullRequest,
+        );
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeServerThread, activeThreadRef, gitStatus?.pr, setThreadBranch]);
+
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;

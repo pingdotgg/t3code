@@ -90,10 +90,35 @@ export function browserStatusIndicator(isOpen: boolean): BrowserStatusIndicator 
 
 export type ThreadPr = GitPullRequestAssociation | null | undefined;
 
+function normalizePullRequestState(
+  state: GitPullRequestAssociation["state"] | string | null | undefined,
+): GitPullRequestAssociation["state"] {
+  if (state == null) {
+    return null;
+  }
+  switch (String(state).trim().toLowerCase()) {
+    case "open":
+      return "open";
+    case "closed":
+      return "closed";
+    case "merged":
+      return "merged";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Presentational PR chrome for sidebar/palette rows. Colors follow GitHub
+ * conventions (open=green, merged=purple, closed=muted). Callers should pass the
+ * durable association; live git-status overlays belong one layer up.
+ */
 export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (!pr) return null;
 
-  if (pr.state === "open") {
+  const state = normalizePullRequestState(pr.state);
+
+  if (state === "open") {
     return {
       label: "PR open",
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
@@ -102,7 +127,7 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
       number: pr.number,
     };
   }
-  if (pr.state === "closed") {
+  if (state === "closed") {
     return {
       label: "PR closed",
       colorClass: "text-zinc-500 dark:text-zinc-400/80",
@@ -111,7 +136,7 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
       number: pr.number,
     };
   }
-  if (pr.state === "merged") {
+  if (state === "merged") {
     return {
       label: "PR merged",
       colorClass: "text-violet-600 dark:text-violet-300/90",
