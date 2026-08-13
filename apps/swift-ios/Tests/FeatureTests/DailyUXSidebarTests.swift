@@ -143,17 +143,27 @@ struct DailyUXSidebarTests {
         )
 
         #expect(
-            HomeThreadSettleUndoRestoration.capture(from: pinnedAndSnoozed)
+            HomeThreadSettleUndoRestoration.capture(from: pinnedAndSnoozed, now: now)
                 == HomeThreadSettleUndoRestoration(
                     restoresPin: true,
                     restoresSnoozeUntil: snoozeUntil
                 )
         )
         #expect(
-            HomeThreadSettleUndoRestoration.capture(from: snoozedOnly)
+            HomeThreadSettleUndoRestoration.capture(from: snoozedOnly, now: now)
                 == HomeThreadSettleUndoRestoration(
                     restoresPin: false,
                     restoresSnoozeUntil: snoozeUntil
+                )
+        )
+
+        var invalidatedSnooze = snoozedOnly
+        invalidatedSnooze.latestTurnCompletedAt = now
+        #expect(
+            HomeThreadSettleUndoRestoration.capture(from: invalidatedSnooze, now: now)
+                == HomeThreadSettleUndoRestoration(
+                    restoresPin: false,
+                    restoresSnoozeUntil: nil
                 )
         )
     }
@@ -334,6 +344,26 @@ struct DailyUXSidebarTests {
         #expect(state.notice?.id == noticeID)
         state.finishUndo(id: noticeID)
         #expect(state.notice == nil)
+    }
+
+    @Test
+    func failedSettleUndoKeepsTheNoticeRetryable() {
+        let noticeID = UUID()
+        var state = HomeThreadSettleUndoState()
+        let requestID = state.beginSettleRequest(threadID: "thread")
+        state.present(
+            requestID: requestID,
+            threadID: "thread",
+            title: "Thread",
+            restoresPin: false,
+            restoresSnoozeUntil: nil,
+            id: noticeID
+        )
+
+        #expect(state.beginUndo(id: noticeID) != nil)
+        state.failUndo(id: noticeID)
+        #expect(state.notice?.id == noticeID)
+        #expect(state.beginUndo(id: noticeID) != nil)
     }
 
     @Test

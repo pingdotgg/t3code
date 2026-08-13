@@ -30,11 +30,13 @@ struct HomeThreadSettleUndoRestoration: Equatable, Sendable {
     let restoresPin: Bool
     let restoresSnoozeUntil: Date?
 
-    static func capture(from thread: FeatureThread) -> Self {
+    static func capture(from thread: FeatureThread, now: Date) -> Self {
         let restoresPin = thread.pinnedAt != nil
         return Self(
             restoresPin: restoresPin,
-            restoresSnoozeUntil: thread.snoozedUntil
+            restoresSnoozeUntil: thread.isEffectivelySnoozed(at: now)
+                ? thread.snoozedUntil
+                : nil
         )
     }
 }
@@ -103,6 +105,11 @@ struct HomeThreadSettleUndoState: Equatable, Sendable {
         guard undoInProgressID == id else { return }
         undoInProgressID = nil
         if notice?.id == id { notice = nil }
+    }
+
+    mutating func failUndo(id: UUID) {
+        guard undoInProgressID == id else { return }
+        undoInProgressID = nil
     }
 
     func isUndoInProgress(threadID: String) -> Bool {
@@ -462,7 +469,10 @@ public struct WorkspaceView: View {
                         ifSettling: settled,
                         threadID: thread.id
                     )
-                    let restoration = HomeThreadSettleUndoRestoration.capture(from: thread)
+                    let restoration = HomeThreadSettleUndoRestoration.capture(
+                        from: thread,
+                        now: .now
+                    )
                     Task {
                         let didSucceed = await model.setSettled(thread.id, settled: settled)
                         let updatedThread = model.snapshot.threads.first {
@@ -568,19 +578,26 @@ public struct WorkspaceView: View {
         return Button {
             guard let undo = settleUndo.beginUndo(id: notice.id) else { return }
             Task {
-                defer {
-                    withAnimation(accessibilityReduceMotion ? nil : .easeIn(duration: 0.16)) {
-                        settleUndo.finishUndo(id: undo.id)
-                    }
-                }
                 let didReopen = await model.setSettled(undo.threadID, settled: false)
                 let reopened = model.snapshot.threads.first { $0.id == undo.threadID }
-                guard didReopen, reopened?.isSettled == false else { return }
+                guard didReopen, reopened?.isSettled == false else {
+                    settleUndo.failUndo(id: undo.id)
+                    return
+                }
                 if undo.restoresPin {
-                    guard await model.setPinned(undo.threadID, pinned: true) else { return }
+                    guard await model.setPinned(undo.threadID, pinned: true) else {
+                        settleUndo.failUndo(id: undo.id)
+                        return
+                    }
                 }
                 if let snoozeUntil = undo.restoresSnoozeUntil {
-                    guard await model.setSnoozed(undo.threadID, until: snoozeUntil) else { return }
+                    guard await model.setSnoozed(undo.threadID, until: snoozeUntil) else {
+                        settleUndo.failUndo(id: undo.id)
+                        return
+                    }
+                }
+                withAnimation(accessibilityReduceMotion ? nil : .easeIn(duration: 0.16)) {
+                    settleUndo.finishUndo(id: undo.id)
                 }
             }
         } label: {
