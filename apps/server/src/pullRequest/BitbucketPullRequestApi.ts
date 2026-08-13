@@ -222,9 +222,23 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly mergeMethod?: PullRequestMergeMethod;
     }) => Effect.Effect<void, BitbucketPullRequestApiError>;
 
+    readonly updateChangeRequest: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly title?: string | undefined;
+      readonly body?: string | undefined;
+    }) => Effect.Effect<void, BitbucketPullRequestApiError>;
+
     readonly comment: (input: {
       readonly repository: string;
       readonly number: number;
+      readonly body: string;
+    }) => Effect.Effect<void, BitbucketPullRequestApiError>;
+
+    readonly updateComment: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly commentId: string;
       readonly body: string;
     }) => Effect.Effect<void, BitbucketPullRequestApiError>;
 
@@ -701,6 +715,24 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.asVoid);
       }),
 
+    updateChangeRequest: (input) =>
+      withRepository(input.repository, (path) =>
+        // Only the words this call rewrites travel in the body: as `setReviewerRequest` above
+        // relies on, Bitbucket's PUT is a partial update, so any field left out is left as it
+        // was — sending `reviewers` back here would overwrite a change another user made to it
+        // between this call being issued and the request landing.
+        bitbucket
+          .request({
+            method: "PUT",
+            url: `${path}/pullrequests/${input.number}`,
+            body: JSON.stringify({
+              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.body === undefined ? {} : { description: input.body }),
+            }),
+          })
+          .pipe(Effect.asVoid),
+      ),
+
     comment: (input) =>
       withRepository(input.repository, (path) =>
         bitbucket
@@ -708,6 +740,21 @@ export const make = Effect.gen(function* () {
             method: "POST",
             url: `${path}/pullrequests/${input.number}/comments`,
             // A JSON document rather than a form field, so the body stays text whatever it says.
+            body: JSON.stringify({ content: { raw: input.body } }),
+          })
+          .pipe(Effect.asVoid),
+      ),
+
+    updateComment: (input) =>
+      withRepository(input.repository, (path) =>
+        bitbucket
+          .request({
+            // Bitbucket keeps a pull request's remarks and its line comments in the one
+            // collection, so this endpoint rewrites either kind.
+            method: "PUT",
+            url: `${path}/pullrequests/${input.number}/comments/${encodeURIComponent(
+              input.commentId,
+            )}`,
             body: JSON.stringify({ content: { raw: input.body } }),
           })
           .pipe(Effect.asVoid),
