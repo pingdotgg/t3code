@@ -90,6 +90,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { Textarea } from "../ui/textarea";
+import { DesktopPortForwardsSettings } from "./DesktopPortForwardsSettings";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "../../pairingUrl";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
@@ -3475,6 +3476,8 @@ export function ConnectionsSettings() {
           <CloudLinkRow canManageRelay={canManageRelay} />
         </SettingsSection>
       )}
+
+      <DesktopPortForwardsSettings />
 
       <SettingsSection
         {...searchableSetting("remote-environments")}
