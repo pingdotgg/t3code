@@ -71,6 +71,11 @@ export interface GitRunStackedActionOptions {
   readonly progressReporter?: GitActionProgressReporter;
 }
 
+export interface GitLocalStatusIdentity {
+  readonly coherenceToken: string;
+  readonly remoteAssociationToken: string;
+}
+
 interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly style: SourceControlWritingStyleSettings;
@@ -85,6 +90,9 @@ export class GitManager extends Context.Service<
     readonly localStatus: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
+    readonly localStatusIdentity: (
+      input: VcsStatusInput,
+    ) => Effect.Effect<GitLocalStatusIdentity, GitManagerServiceError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
       options?: GitVcsDriver.GitRemoteStatusOptions,
@@ -863,6 +871,34 @@ export const make = Effect.gen(function* () {
     behindCount: 0,
     aheadOfDefaultCount: 0,
   } satisfies GitVcsDriver.GitStatusDetails;
+  const makeLocalStatusIdentity = (
+    details: Pick<GitVcsDriver.GitStatusDetails, "isRepo" | "headOid" | "branch" | "upstreamRef">,
+    primaryRemoteUrlKey: string | null,
+  ): GitLocalStatusIdentity => {
+    const remoteAssociationToken = NodeCrypto.createHash("sha256")
+      .update(
+        JSON.stringify({
+          isRepo: details.isRepo,
+          refName: details.branch,
+          upstreamRef: details.upstreamRef,
+          primaryRemoteUrlKey,
+        }),
+      )
+      .digest("hex");
+    const coherenceToken = NodeCrypto.createHash("sha256")
+      .update(JSON.stringify({ remoteAssociationToken, headOid: details.headOid }))
+      .digest("hex");
+    return { coherenceToken, remoteAssociationToken };
+  };
+  const readPrimaryRemoteUrlKey = Effect.fn("readPrimaryRemoteUrlKey")(function* (cwd: string) {
+    const url = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
+    return url === null ? null : normalizeGitRemoteUrl(url);
+  });
+  const readLocalStatusIdentity = Effect.fn("readLocalStatusIdentity")(function* (cwd: string) {
+    const details = yield* gitCore.statusIdentityDetails(cwd);
+    const primaryRemoteUrlKey = details.isRepo ? yield* readPrimaryRemoteUrlKey(cwd) : null;
+    return makeLocalStatusIdentity(details, primaryRemoteUrlKey);
+  });
   const readLocalStatus = Effect.fn("readLocalStatus")(function* (cwd: string) {
     const details = yield* gitCore
       .statusDetailsLocal(cwd)
@@ -872,23 +908,8 @@ export const make = Effect.gen(function* () {
     const hostingProvider = details.isRepo
       ? yield* resolveHostingProvider(cwd, details.branch)
       : null;
-    const primaryRemoteUrlKey = details.isRepo
-      ? yield* gitCore.readConfigValue(cwd, "remote.origin.url").pipe(
-          Effect.map((url) => (url === null ? null : normalizeGitRemoteUrl(url))),
-          Effect.orElseSucceed(() => null),
-        )
-      : null;
-    const coherenceToken = NodeCrypto.createHash("sha256")
-      .update(
-        JSON.stringify({
-          isRepo: details.isRepo,
-          headOid: details.headOid,
-          refName: details.branch,
-          upstreamRef: details.upstreamRef,
-          primaryRemoteUrlKey,
-        }),
-      )
-      .digest("hex");
+    const primaryRemoteUrlKey = details.isRepo ? yield* readPrimaryRemoteUrlKey(cwd) : null;
+    const identity = makeLocalStatusIdentity(details, primaryRemoteUrlKey);
 
     return {
       isRepo: details.isRepo,
@@ -896,7 +917,7 @@ export const make = Effect.gen(function* () {
       hasPrimaryRemote: details.hasOriginRemote,
       isDefaultRef: details.isDefaultBranch,
       refName: details.branch,
-      coherenceToken,
+      ...(details.isRepo ? identity : {}),
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
       workingTree: details.workingTree,
     } satisfies VcsStatusLocalResult;
@@ -1770,6 +1791,12 @@ export const make = Effect.gen(function* () {
       return yield* Cache.get(localStatusResultCache, cacheKey);
     },
   );
+  const localStatusIdentity: GitManager["Service"]["localStatusIdentity"] = Effect.fn(
+    "localStatusIdentity",
+  )(function* (input) {
+    const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
+    return yield* readLocalStatusIdentity(cacheKey);
+  });
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input, options) {
       const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
@@ -2236,6 +2263,7 @@ export const make = Effect.gen(function* () {
 
   return GitManager.of({
     localStatus,
+    localStatusIdentity,
     remoteStatus,
     status,
     invalidateLocalStatus,

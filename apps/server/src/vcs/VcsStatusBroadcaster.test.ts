@@ -68,6 +68,30 @@ const baseStatus: VcsStatusResult = {
   ...baseRemoteStatus,
 };
 
+function testLocalIdentity(local: VcsStatusLocalResult) {
+  const fallback = JSON.stringify({
+    isRepo: local.isRepo,
+    refName: local.refName,
+    hasPrimaryRemote: local.hasPrimaryRemote,
+  });
+  return {
+    coherenceToken: local.coherenceToken ?? fallback,
+    remoteAssociationToken: local.remoteAssociationToken ?? local.coherenceToken ?? fallback,
+  };
+}
+
+function makeWorkflowLayer(
+  service: Partial<GitWorkflowService.GitWorkflowService["Service"]> &
+    Pick<GitWorkflowService.GitWorkflowService["Service"], "localStatus">,
+) {
+  return Layer.mock(GitWorkflowService.GitWorkflowService)({
+    ...service,
+    localStatusIdentity:
+      service.localStatusIdentity ??
+      ((input) => service.localStatus(input).pipe(Effect.map(testLocalIdentity))),
+  });
+}
+
 function makeTestLayer(state: {
   currentLocalStatus: VcsStatusLocalResult;
   currentRemoteStatus: VcsStatusRemoteResult | null;
@@ -81,12 +105,13 @@ function makeTestLayer(state: {
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(makeBackgroundPolicyLayer(() => true)),
     Layer.provide(
-      Layer.mock(GitWorkflowService.GitWorkflowService)({
+      makeWorkflowLayer({
         localStatus: () =>
           Effect.sync(() => {
             state.localStatusCalls += 1;
             return state.currentLocalStatus;
           }),
+        localStatusIdentity: () => Effect.sync(() => testLocalIdentity(state.currentLocalStatus)),
         remoteStatus: (_input, options) =>
           Effect.sync(() => {
             state.remoteStatusCalls += 1;
@@ -161,9 +186,9 @@ describe("VcsStatusBroadcaster", () => {
 
       assert.deepStrictEqual(first, baseStatus);
       assert.deepStrictEqual(second, baseStatus);
-      assert.equal(state.localStatusCalls, 2);
+      assert.equal(state.localStatusCalls, 1);
       assert.equal(state.remoteStatusCalls, 1);
-      assert.equal(state.localInvalidationCalls, 1);
+      assert.equal(state.localInvalidationCalls, 0);
       assert.equal(state.remoteInvalidationCalls, 0);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
@@ -202,9 +227,9 @@ describe("VcsStatusBroadcaster", () => {
         ...state.currentLocalStatus,
         ...state.currentRemoteStatus,
       });
-      assert.equal(state.localStatusCalls, 4);
+      assert.equal(state.localStatusCalls, 2);
       assert.equal(state.remoteStatusCalls, 2);
-      assert.equal(state.localInvalidationCalls, 3);
+      assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
@@ -223,7 +248,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;
@@ -310,9 +335,9 @@ describe("VcsStatusBroadcaster", () => {
         ...state.currentLocalStatus,
         ...baseRemoteStatus,
       });
-      assert.equal(state.localStatusCalls, 4);
+      assert.equal(state.localStatusCalls, 3);
       assert.equal(state.remoteStatusCalls, 2);
-      assert.equal(state.localInvalidationCalls, 2);
+      assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
@@ -397,7 +422,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;
@@ -457,60 +482,59 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(testLayer));
   });
 
-  it.effect("does not let a stale full refresh overwrite a newer local generation", () => {
-    let currentLocal = baseLocalStatus;
-    let delayRemote = false;
-    let delayedRemote: Deferred.Deferred<VcsStatusRemoteResult | null> | null = null;
-    let staleLocalRead: Deferred.Deferred<void> | null = null;
-    const testLayer = VcsStatusBroadcaster.layer.pipe(
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(makeBackgroundPolicyLayer(() => true)),
-      Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
-          localStatus: () =>
-            Effect.sync(() => currentLocal).pipe(
-              Effect.tap(() =>
-                delayRemote && staleLocalRead
-                  ? Deferred.succeed(staleLocalRead, undefined).pipe(Effect.ignore)
-                  : Effect.void,
+  it.effect(
+    "returns a coherent refresh result when a newer local generation wins the cache race",
+    () => {
+      let currentLocal = baseLocalStatus;
+      let delayRemote = false;
+      let delayedRemote: Deferred.Deferred<VcsStatusRemoteResult | null> | null = null;
+      let staleLocalRead: Deferred.Deferred<void> | null = null;
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(makeBackgroundPolicyLayer(() => true)),
+        Layer.provide(
+          makeWorkflowLayer({
+            localStatus: () =>
+              Effect.sync(() => currentLocal).pipe(
+                Effect.tap(() =>
+                  delayRemote && staleLocalRead
+                    ? Deferred.succeed(staleLocalRead, undefined).pipe(Effect.ignore)
+                    : Effect.void,
+                ),
               ),
-            ),
-          remoteStatus: () =>
-            Effect.suspend(() => {
-              if (!delayRemote) return Effect.succeed(baseRemoteStatus);
-              return delayedRemote
-                ? Deferred.await(delayedRemote)
-                : Effect.die("delayed remote is not initialized");
-            }),
-          invalidateLocalStatus: () => Effect.void,
-          invalidateRemoteStatus: () => Effect.void,
-          invalidateStatus: () => Effect.void,
-        }),
-      ),
-    );
+            remoteStatus: () =>
+              Effect.suspend(() => {
+                if (!delayRemote) return Effect.succeed(baseRemoteStatus);
+                return delayedRemote
+                  ? Deferred.await(delayedRemote)
+                  : Effect.die("delayed remote is not initialized");
+              }),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+          }),
+        ),
+      );
 
-    return Effect.gen(function* () {
-      delayedRemote = yield* Deferred.make<VcsStatusRemoteResult | null>();
-      staleLocalRead = yield* Deferred.make<void>();
-      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      yield* broadcaster.getStatus({ cwd: "/repo" });
-      delayRemote = true;
-      const staleRefresh = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
-      yield* Deferred.await(staleLocalRead);
+      return Effect.gen(function* () {
+        delayedRemote = yield* Deferred.make<VcsStatusRemoteResult | null>();
+        staleLocalRead = yield* Deferred.make<void>();
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: "/repo" });
+        delayRemote = true;
+        const staleRefresh = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+        yield* Deferred.await(staleLocalRead);
 
-      currentLocal = { ...baseLocalStatus, refName: "feature/new-ref" };
-      yield* broadcaster.refreshLocalStatus("/repo");
-      yield* Deferred.succeed(delayedRemote, baseRemoteStatus);
-      const refreshExit = yield* Fiber.await(staleRefresh);
+        currentLocal = { ...baseLocalStatus, refName: "feature/new-ref" };
+        yield* broadcaster.refreshLocalStatus("/repo");
+        yield* Deferred.succeed(delayedRemote, baseRemoteStatus);
+        const refreshed = yield* Fiber.join(staleRefresh);
 
-      assert.isTrue(Exit.isFailure(refreshExit));
-      if (Exit.isFailure(refreshExit)) {
-        const failure = Cause.squash(refreshExit.cause);
-        assert.instanceOf(failure, GitManagerError);
-        assert.equal((failure as GitManagerError).operation, "VcsStatusBroadcaster.refreshStatus");
-      }
-    }).pipe(Effect.provide(testLayer));
-  });
+        assert.equal(refreshed.refName, "feature/new-ref");
+        assert.equal(refreshed.hasUpstream, true);
+      }).pipe(Effect.provide(testLayer));
+    },
+  );
 
   it.effect("returns its coherent read when a local-only writer wins the cache race", () => {
     let currentLocal = baseLocalStatus;
@@ -520,7 +544,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () => Effect.sync(() => currentLocal),
           remoteStatus: () =>
             Effect.gen(function* () {
@@ -559,7 +583,7 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.succeed(releaseRemote, baseRemoteStatus);
       const status = yield* Fiber.join(read);
 
-      assert.equal(status.workingTree.files[0]?.path, "changed.ts");
+      assert.deepStrictEqual(status.workingTree.files, []);
       assert.equal(status.hasUpstream, true);
     }).pipe(Effect.provide(testLayer));
   });
@@ -573,7 +597,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () =>
             Effect.sync(() => {
               localCall += 1;
@@ -617,7 +641,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(makeBackgroundPolicyLayer(() => true)),
         Layer.provide(
-          Layer.mock(GitWorkflowService.GitWorkflowService)({
+          makeWorkflowLayer({
             localStatus: () =>
               Effect.sync(() => {
                 localCall += 1;
@@ -653,7 +677,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () =>
             Effect.sync(() => ({
               ...baseLocalStatus,
@@ -723,6 +747,49 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("publishes a generation bump committed by getStatus", () => {
+    const state = {
+      currentLocalStatus: { ...baseLocalStatus, coherenceToken: "head-a" },
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    const published: VcsStatusStreamEvent[] = [];
+    const testLayer = VcsStatusBroadcaster.layerWithOptions({
+      beforePublish: (change) => Effect.sync(() => published.push(change.event)),
+    }).pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        makeWorkflowLayer({
+          localStatus: () => Effect.succeed(state.currentLocalStatus),
+          localStatusIdentity: () => Effect.succeed(testLocalIdentity(state.currentLocalStatus)),
+          remoteStatus: () => Effect.succeed(state.currentRemoteStatus),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.refreshLocalStatus("/repo");
+      state.currentLocalStatus = { ...baseLocalStatus, coherenceToken: "head-b" };
+
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+
+      assert.deepStrictEqual(published.at(-1), {
+        _tag: "snapshot",
+        generation: 1,
+        local: state.currentLocalStatus,
+        remote: baseRemoteStatus,
+      } satisfies VcsStatusStreamEvent);
+    }).pipe(Effect.provide(testLayer));
+  });
+
   it.effect("publishes a new local generation before awaiting remote invalidation", () => {
     let currentLocal = baseLocalStatus;
     let invalidationGate: Deferred.Deferred<void> | null = null;
@@ -731,7 +798,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () => Effect.succeed(currentLocal),
           remoteStatus: () => Effect.succeed(baseRemoteStatus),
           invalidateLocalStatus: () => Effect.void,
@@ -816,7 +883,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () => Effect.sync(() => currentLocal),
           remoteStatus: () => Effect.succeed(baseRemoteStatus),
           invalidateLocalStatus: () => Effect.void,
@@ -884,7 +951,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: (input) =>
             Effect.sync(() => {
               seenCwds.push(input.cwd);
@@ -1036,7 +1103,11 @@ describe("VcsStatusBroadcaster", () => {
     "refetches remote immediately after a coherence change with periodic refresh disabled",
     () => {
       const state = {
-        currentLocalStatus: { ...baseLocalStatus, coherenceToken: "head-a" },
+        currentLocalStatus: {
+          ...baseLocalStatus,
+          coherenceToken: "head-a",
+          remoteAssociationToken: "stable-branch-upstream-origin",
+        },
         currentRemoteStatus: remoteStatusWithPr,
         localStatusCalls: 0,
         remoteStatusCalls: 0,
@@ -1049,7 +1120,7 @@ describe("VcsStatusBroadcaster", () => {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
         const scope = yield* Scope.make();
         const initialRemoteSeen = yield* Deferred.make<void>();
-        const nextLocalSeen = yield* Deferred.make<void>();
+        const nextLocalSeen = yield* Deferred.make<VcsStatusStreamEvent>();
         const nextRemoteSeen = yield* Deferred.make<VcsStatusStreamEvent>();
         yield* Stream.runForEach(
           broadcaster.streamStatus(
@@ -1057,8 +1128,8 @@ describe("VcsStatusBroadcaster", () => {
             { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
           ),
           (event) => {
-            if (event._tag === "localUpdated" && event.generation === 1) {
-              return Deferred.succeed(nextLocalSeen, undefined).pipe(Effect.ignore);
+            if (event._tag === "snapshot" && event.generation === 1) {
+              return Deferred.succeed(nextLocalSeen, event).pipe(Effect.ignore);
             }
             if (event._tag === "remoteUpdated") {
               if (event.generation === 0) {
@@ -1076,11 +1147,19 @@ describe("VcsStatusBroadcaster", () => {
         state.currentLocalStatus = {
           ...baseLocalStatus,
           coherenceToken: "head-b",
+          remoteAssociationToken: "stable-branch-upstream-origin",
         };
         state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 5 };
         yield* broadcaster.refreshLocalStatus("/repo");
-        yield* Deferred.await(nextLocalSeen);
+        const headTransition = yield* Deferred.await(nextLocalSeen);
         const nextRemote = yield* Deferred.await(nextRemoteSeen);
+
+        assert.deepStrictEqual(headTransition, {
+          _tag: "snapshot",
+          generation: 1,
+          local: state.currentLocalStatus,
+          remote: remoteStatusWithPr,
+        } satisfies VcsStatusStreamEvent);
 
         assert.deepStrictEqual(nextRemote, {
           _tag: "remoteUpdated",
@@ -1116,7 +1195,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;
@@ -1317,7 +1396,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => false)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;
@@ -1370,7 +1449,7 @@ describe("VcsStatusBroadcaster", () => {
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(makeBackgroundPolicyLayer(() => true)),
       Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
+        makeWorkflowLayer({
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;

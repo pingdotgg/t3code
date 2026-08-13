@@ -82,6 +82,13 @@ export interface GitRemoteStatusDetails {
   aheadOfDefaultCount: number;
 }
 
+export interface GitStatusIdentityDetails {
+  isRepo: boolean;
+  headOid: string | null;
+  branch: string | null;
+  upstreamRef: string | null;
+}
+
 export interface GitPreparedCommitContext {
   stagedSummary: string;
   stagedPatch: string;
@@ -203,6 +210,9 @@ export class GitVcsDriver extends Context.Service<
     readonly status: (input: VcsStatusInput) => Effect.Effect<VcsStatusResult, GitCommandError>;
     readonly statusDetails: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
     readonly statusDetailsLocal: (cwd: string) => Effect.Effect<GitStatusDetails, GitCommandError>;
+    readonly statusIdentityDetails: (
+      cwd: string,
+    ) => Effect.Effect<GitStatusIdentityDetails, GitCommandError>;
     readonly statusDetailsRemote: (
       cwd: string,
       options?: GitRemoteStatusOptions,

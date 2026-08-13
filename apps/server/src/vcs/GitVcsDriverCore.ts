@@ -2622,6 +2622,55 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       timeToLive: (exit) => (Exit.isSuccess(exit) ? LIST_REFS_SNAPSHOT_CACHE_TTL : Duration.zero),
     },
   );
+
+  const statusIdentityDetails: GitVcsDriver.GitVcsDriver["Service"]["statusIdentityDetails"] =
+    Effect.fn("statusIdentityDetails")(function* (cwd) {
+      const result = yield* executeGitWithStableDiagnostics(
+        "GitVcsDriver.statusIdentityDetails",
+        cwd,
+        ["status", "--porcelain=2", "--branch", "--untracked-files=no"],
+        { allowNonZeroExit: true },
+      ).pipe(
+        Effect.catchTags({
+          GitCommandError: (error) =>
+            isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+        }),
+      );
+
+      if (result === null || isNonRepositoryGitStderr(result.stderr)) {
+        return { isRepo: false, headOid: null, branch: null, upstreamRef: null };
+      }
+      if (result.exitCode !== 0) {
+        return yield* new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.statusIdentityDetails",
+            cwd,
+            args: ["status", "--porcelain=2", "--branch", "--untracked-files=no"],
+          }),
+          detail: "Git status identity lookup failed.",
+          exitCode: result.exitCode,
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        });
+      }
+
+      let headOid: string | null = null;
+      let branch: string | null = null;
+      let upstreamRef: string | null = null;
+      for (const line of result.stdout.split(/\r?\n/g)) {
+        if (line.startsWith("# branch.oid ")) {
+          const value = line.slice("# branch.oid ".length).trim();
+          headOid = value === "(initial)" ? null : value;
+        } else if (line.startsWith("# branch.head ")) {
+          const value = line.slice("# branch.head ".length).trim();
+          branch = value.startsWith("(") ? null : value;
+        } else if (line.startsWith("# branch.upstream ")) {
+          const value = line.slice("# branch.upstream ".length).trim();
+          upstreamRef = value.length > 0 ? value : null;
+        }
+      }
+      return { isRepo: true, headOid, branch, upstreamRef };
+    });
   const listRefsRefreshSnapshotCache = yield* Cache.makeWith(
     (cacheKey: GitRefsRefreshCacheKey) =>
       Effect.suspend(() => {
@@ -3064,6 +3113,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     status,
     statusDetails,
     statusDetailsLocal,
+    statusIdentityDetails,
     statusDetailsRemote,
     prepareCommitContext,
     commit: (cwd, subject, body, options) =>

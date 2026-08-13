@@ -206,6 +206,7 @@ const VcsStatusLocalShape = {
   isDefaultRef: Schema.Boolean,
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   coherenceToken: Schema.optional(TrimmedNonEmptyStringSchema),
+  remoteAssociationToken: Schema.optional(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
     files: Schema.Array(

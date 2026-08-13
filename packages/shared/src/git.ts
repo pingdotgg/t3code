@@ -252,6 +252,10 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
     hasPrimaryRemote: status.hasPrimaryRemote,
     isDefaultRef: status.isDefaultRef,
     refName: status.refName,
+    ...(status.coherenceToken === undefined ? {} : { coherenceToken: status.coherenceToken }),
+    ...(status.remoteAssociationToken === undefined
+      ? {}
+      : { remoteAssociationToken: status.remoteAssociationToken }),
     hasWorkingTreeChanges: status.hasWorkingTreeChanges,
     workingTree: status.workingTree,
   };

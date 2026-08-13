@@ -64,9 +64,10 @@ struct FeatureToolStateTests {
             .snapshot(generation: 2, local: vcsLocal(refName: "feature/b"), remote: nil)
         )
 
-        let status = try #require(
-            accumulator.consume(.remoteUpdated(generation: 2, remote: vcsRemote(aheadCount: 2)))
+        let consumed = accumulator.consume(
+            .remoteUpdated(generation: 2, remote: vcsRemote(aheadCount: 2))
         )
+        let status = try #require(consumed)
 
         #expect(status.branch == "feature/b")
         #expect(status.aheadCount == 2)

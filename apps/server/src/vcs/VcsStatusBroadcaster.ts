@@ -195,6 +195,10 @@ function localStatusIdentity(status: VcsStatusLocalResult): string {
   );
 }
 
+function remoteAssociationIdentity(status: VcsStatusLocalResult): string {
+  return status.remoteAssociationToken ?? localStatusIdentity(status);
+}
+
 const normalizeCwd = (cwd: string) =>
   Effect.service(FileSystem.FileSystem).pipe(
     Effect.flatMap((fs) => fs.realPath(cwd)),
@@ -263,11 +267,6 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
       yield* PubSub.publish(changesPubSub, change);
     });
 
-  const cachedCompleteResult = (cached: CachedVcsStatus | null) =>
-    cached?.local && cached.remote?.generation === cached.generation
-      ? mergeGitStatusParts(cached.local.value, cached.remote.value)
-      : null;
-
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
       const nextLocal = {
@@ -287,18 +286,32 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
               const refChanged =
                 previous.local !== null &&
                 localStatusIdentity(previous.local.value) !== localStatusIdentity(local);
+              const remoteAssociationChanged =
+                refChanged &&
+                previous.local !== null &&
+                remoteAssociationIdentity(previous.local.value) !==
+                  remoteAssociationIdentity(local);
               const generation = previous.generation + (refChanged ? 1 : 0);
+              // A HEAD-only move cannot change which PR belongs to this branch.
+              // Carry the last known remote snapshot into the new generation so
+              // clients do not invent zero counts or lose the PR while the
+              // forced remote refresh below replaces those last-known counts.
+              const retainedRemote =
+                refChanged && !remoteAssociationChanged && previous.remote !== null
+                  ? { ...previous.remote, generation }
+                  : null;
               const nextCache = new Map(cache);
               nextCache.set(cwd, {
                 ...previous,
                 generation,
                 local: nextLocal,
-                remote: refChanged ? null : previous.remote,
+                remote: refChanged ? retainedRemote : previous.remote,
               });
               return [
                 {
                   generation,
                   refChanged,
+                  retainedRemote,
                   shouldPublish: previous.local?.fingerprint !== nextLocal.fingerprint,
                 },
                 nextCache,
@@ -307,7 +320,14 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
             if (options?.publish && committed.shouldPublish) {
               yield* publishChange({
                 cwd,
-                event: { _tag: "localUpdated", generation: committed.generation, local },
+                event: committed.retainedRemote
+                  ? {
+                      _tag: "snapshot",
+                      generation: committed.generation,
+                      local,
+                      remote: committed.retainedRemote.value,
+                    }
+                  : { _tag: "localUpdated", generation: committed.generation, local },
               });
             }
             return committed;
@@ -483,23 +503,15 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
 
   const readCoherentStatus = Effect.fn("VcsStatusBroadcaster.readCoherentStatus")(function* (
     cwd: string,
-    cachedLocal?: VcsStatusLocalResult,
   ) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const local = yield* workflow.localStatus({ cwd });
       const remote = yield* workflow.remoteStatus({ cwd });
-      if (
-        attempt === 0 &&
-        cachedLocal !== undefined &&
-        localStatusIdentity(local) === localStatusIdentity(cachedLocal)
-      ) {
+      const confirmedIdentity = yield* workflow.localStatusIdentity({ cwd });
+      if (localStatusIdentity(local) === confirmedIdentity.coherenceToken) {
         return { local, remote };
       }
       yield* workflow.invalidateLocalStatus(cwd);
-      const confirmedLocal = yield* workflow.localStatus({ cwd });
-      if (localStatusIdentity(local) === localStatusIdentity(confirmedLocal)) {
-        return { local: confirmedLocal, remote };
-      }
       yield* workflow.invalidateRemoteStatus(cwd);
     }
     return yield* Effect.fail(
@@ -511,13 +523,6 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
     );
   });
 
-  const staleRefreshError = (operation: string, cwd: string) =>
-    new GitManagerError({
-      operation,
-      cwd,
-      detail: "A newer local ref replaced this refresh before remote status completed",
-    });
-
   const getStatus: VcsStatusBroadcaster["Service"]["getStatus"] = Effect.fn(
     "VcsStatusBroadcaster.getStatus",
   )(function* (input) {
@@ -526,8 +531,11 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
     if (cached?.local && cached.remote?.generation === cached.generation) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
-    const { local, remote } = yield* readCoherentStatus(cwd, cached?.local?.value);
-    const updated = yield* updateCachedStatus(cwd, local, remote, { expected: cached });
+    const { local, remote } = yield* readCoherentStatus(cwd);
+    const updated = yield* updateCachedStatus(cwd, local, remote, {
+      publish: true,
+      expected: cached,
+    });
     if (updated !== null) {
       return updated;
     }
@@ -578,10 +586,7 @@ export const makeWithOptions = Effect.fn("VcsStatusBroadcaster.make")(function* 
     if (updated !== null) {
       return updated;
     }
-    const current = cachedCompleteResult(yield* getCachedStatus(cwd));
-    return (
-      current ?? (yield* Effect.fail(staleRefreshError("VcsStatusBroadcaster.refreshStatus", cwd)))
-    );
+    return mergeGitStatusParts(local, remote);
   });
 
   const makeRemoteRefreshLoop = (

@@ -961,14 +961,22 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const initial = yield* manager.localStatus({ cwd: repoDir });
       expect(initial.coherenceToken).toBeTruthy();
+      expect(initial.remoteAssociationToken).toBeTruthy();
 
       const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(NodePath.join(repoDir, "WORKTREE-ONLY.md"), "uncommitted\n");
+      yield* manager.invalidateLocalStatus(repoDir);
+      const afterWorkingTreeEdit = yield* manager.localStatus({ cwd: repoDir });
+      expect(afterWorkingTreeEdit.coherenceToken).toBe(initial.coherenceToken);
+      expect(afterWorkingTreeEdit.remoteAssociationToken).toBe(initial.remoteAssociationToken);
+
       yield* fs.writeFileString(NodePath.join(repoDir, "HEAD-MOVE.md"), "next\n");
-      yield* runGit(repoDir, ["add", "HEAD-MOVE.md"]);
+      yield* runGit(repoDir, ["add", "HEAD-MOVE.md", "WORKTREE-ONLY.md"]);
       yield* runGit(repoDir, ["commit", "-m", "Move head"]);
       yield* manager.invalidateLocalStatus(repoDir);
       const afterHeadMove = yield* manager.localStatus({ cwd: repoDir });
       expect(afterHeadMove.coherenceToken).not.toBe(initial.coherenceToken);
+      expect(afterHeadMove.remoteAssociationToken).toBe(initial.remoteAssociationToken);
 
       yield* runGit(repoDir, ["remote", "remove", "origin"]);
       yield* manager.invalidateLocalStatus(repoDir);
