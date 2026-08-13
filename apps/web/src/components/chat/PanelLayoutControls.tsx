@@ -1,6 +1,7 @@
 import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
 import { memo } from "react";
 
+import { cn } from "../../lib/utils";
 import { ButtonGroup } from "../ui/group";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -66,7 +67,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         <TooltipTrigger
           render={
             <Toggle
-              className="shrink-0 text-foreground [--control-icon-color:currentColor] [-webkit-app-region:no-drag] disabled:opacity-40"
+              className="shrink-0 text-foreground [--control-icon-color:currentColor] [-webkit-app-region:no-drag] disabled:opacity-100"
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
               aria-label={
@@ -78,7 +79,12 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               size="sm"
               disabled={!rightPanelAvailable}
             >
-              <PanelRightIcon className="size-4" />
+              <PanelRightIcon
+                className={cn(
+                  "size-3.5",
+                  !rightPanelAvailable && "text-muted-foreground opacity-100",
+                )}
+              />
               {liveAgentCount > 0 ? (
                 <span
                   aria-hidden

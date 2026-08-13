@@ -765,7 +765,13 @@ describe("MessagesTimeline", () => {
       /class="[^"]*text-secondary-label[^"]*"[^>]*>git status --short<\/span>/,
     );
     expect(markup).toContain("apps/web/src/index.css");
+    expect(markup).toMatch(
+      /class="[^"]*text-secondary-label[^"]*"[^>]*>apps\/web\/src\/index\.css<\/span>/,
+    );
     expect(markup).toContain("apps/web/src/components/chat/MessagesTimeline.tsx");
+    expect(markup).toMatch(
+      /class="[^"]*text-secondary-label[^"]*"[^>]*>apps\/web\/src\/components\/chat\/MessagesTimeline\.tsx<\/span>/,
+    );
     expect(markup).not.toContain("Ran command");
     expect(markup).not.toContain("Read file");
     expect(markup).not.toContain("Changed files");
@@ -794,5 +800,61 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Ran 2 commands");
     expect(markup).not.toContain("lucide-chevron-down");
     expect(markup).not.toContain("lucide-check");
+  });
+
+  it("keeps Thinking stationary while a composited focus sweep moves through the text", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        timelineEntries={[]}
+      />,
+    );
+
+    expect(markup).toContain("Thinking");
+    expect(markup).toContain("live-activity-focus");
+    expect(markup).toContain("live-activity-focus-counter");
+    expect(markup).toContain("live-activity-focus-aligned");
+    expect(markup).not.toContain("thinking-marker");
+    expect(markup).not.toContain("live-tool-pulse");
+    expect(markup).not.toContain("transform-gpu");
+  });
+
+  it("keeps the latest live tool row stationary while its label carries the focus sweep", () => {
+    const turnId = TurnId.make("turn-live");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        runningTurnId={turnId}
+        timelineEntries={[
+          {
+            id: "entry-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-live",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId,
+              label: "Ran command",
+              tone: "tool",
+              requestKind: "command",
+              command: "git status --short",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("live-activity-focus");
+    expect(markup).toContain("live-activity-focus-counter");
+    expect(markup).toContain("Running git");
+    expect(markup).toMatch(/live-activity-focus[\s\S]*text-foreground[\s\S]*Running git/);
+    expect(markup).not.toContain("live-tool-pulse");
+    expect(markup).not.toContain("transform-gpu");
+    expect(markup).not.toContain("active-tool-content-scan");
   });
 });

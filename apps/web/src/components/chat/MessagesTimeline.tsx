@@ -918,19 +918,32 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const isExpandedToolGroupEntry = row.kind === "work" && row.isExpandedToolGroupEntry;
+  const isLastExpandedToolGroupEntry = row.kind === "work" && row.isLastExpandedToolGroupEntry;
+  const isExpandedToolGroupHeader =
+    row.kind === "work-toggle" && row.onlyToolEntries && row.expanded;
+
   return (
     <div
       className={cn(
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
-        (row.kind === "message" && row.message.role === "assistant" && !row.showAssistantMeta) ||
-          row.kind === "work" ||
-          row.kind === "work-live" ||
-          row.kind === "work-toggle" ||
-          row.kind === "turn-fold" ||
-          row.kind === "turn-plan"
-          ? "pb-2"
-          : "pb-4",
+        isExpandedToolGroupEntry
+          ? isLastExpandedToolGroupEntry
+            ? "pb-1"
+            : "pb-0"
+          : isExpandedToolGroupHeader
+            ? "pb-0"
+            : (row.kind === "message" &&
+                  row.message.role === "assistant" &&
+                  !row.showAssistantMeta) ||
+                row.kind === "work" ||
+                row.kind === "work-live" ||
+                row.kind === "work-toggle" ||
+                row.kind === "turn-fold" ||
+                row.kind === "turn-plan"
+              ? "pb-2"
+              : "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
       data-timeline-row-id={row.id}
@@ -938,7 +951,12 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
-      {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
+      {row.kind === "work" ? (
+        <WorkGroupSection
+          groupedEntries={row.groupedEntries}
+          isExpandedToolGroupEntry={row.isExpandedToolGroupEntry}
+        />
+      ) : null}
       {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
@@ -1093,7 +1111,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
         aria-expanded={row.expanded}
         data-scroll-anchor-ignore
         onClick={() => ctx.onToggleTurnFold(row.turnId)}
-        className="flex min-h-6 cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span>{row.label}</span>
         <Icon className="size-3.5" />
@@ -1179,8 +1197,9 @@ function ProposedPlanTimelineRow({
 }
 
 /**
- * Inline plan row: one compact activity-style row per turn. It expands in
- * place to the full step list without introducing a separate visual language.
+ * Inline folded plan chip: one row per turn that produced plan/todo steps.
+ * Collapsed by default — a segment bar plus the in-progress step label —
+ * and expands in place to the full step list. Replaces the old plan sidebar.
  */
 const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
   row,
@@ -1198,78 +1217,73 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
     steps.find((step) => step.status === "pending")?.step ??
     steps.at(-1)?.step ??
     "Plan";
+  const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
 
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 px-1 py-0.5">
       <button
         type="button"
-        className="flex min-h-6 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-0.5 py-0.5 text-left text-[12px] leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
+        <Chevron className="size-3.5 shrink-0 text-muted-foreground/65" />
+        {steps.length > 1 ? (
+          <span aria-hidden className="flex shrink-0 items-center gap-0.5">
+            {steps.map((step) => (
+              <span
+                key={step.step}
+                className={cn(
+                  "h-[3px] w-2.5 rounded-full",
+                  step.status === "completed"
+                    ? "bg-success"
+                    : step.status === "inProgress"
+                      ? "bg-primary"
+                      : "bg-muted-foreground/25",
+                )}
+              />
+            ))}
+          </span>
+        ) : null}
         <span
           className={cn(
-            "flex h-4 shrink-0 items-center gap-0.5",
-            steps.length === 1 ? "w-3" : "w-12",
-          )}
-          aria-label={`${completedCount} of ${steps.length} steps completed`}
-        >
-          {steps.map((step) => (
-            <span
-              key={step.step}
-              className={cn(
-                "h-1 min-w-0 flex-1 rounded-full",
-                step.status === "completed"
-                  ? "bg-info"
-                  : step.status === "inProgress"
-                    ? "bg-info/65"
-                    : "bg-muted-foreground/20",
-              )}
-              aria-hidden
-            />
-          ))}
-        </span>
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate",
-            allDone ? "text-secondary-label/65" : "text-foreground/85",
+            "min-w-0 truncate",
+            allDone ? "text-muted-foreground/65" : "font-medium text-foreground/85",
           )}
         >
           {label}
         </span>
         {steps.length > 1 ? (
-          <span className="shrink-0 text-info-foreground/80 tabular-nums">
+          <span className="shrink-0 text-muted-foreground/50 tabular-nums">
             {completedCount}/{steps.length}
           </span>
         ) : null}
       </button>
       {expanded ? (
-        <div className="mt-1 ms-5 space-y-px border-s border-border/45 ps-3">
+        <div className="mt-0.5 space-y-px pl-6">
           {steps.map((step) => (
-            <div
-              key={step.step}
-              className="flex min-h-6 items-center gap-1.5 text-sm leading-relaxed"
-            >
-              <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
-                {step.status === "completed" ? (
-                  <CheckIcon className="size-3.5 text-success" />
-                ) : (
-                  <span
-                    className={cn(
-                      "size-1.5 rounded-full",
-                      step.status === "inProgress" ? "bg-info" : "bg-muted-foreground/30",
-                    )}
-                  />
+            <div key={step.step} className="flex items-baseline gap-2 text-[12px] leading-5">
+              <span
+                className={cn(
+                  "w-3 shrink-0 text-center font-mono text-[10px]",
+                  step.status === "completed"
+                    ? "text-success"
+                    : step.status === "inProgress"
+                      ? "text-primary"
+                      : "text-muted-foreground/40",
                 )}
+                aria-hidden
+              >
+                {step.status === "completed" ? "✓" : step.status === "inProgress" ? "●" : "○"}
               </span>
               <span
                 className={cn(
-                  "min-w-0 flex-1",
+                  "min-w-0",
                   step.status === "completed"
-                    ? "text-secondary-label/55"
+                    ? "text-muted-foreground/55"
                     : step.status === "inProgress"
-                      ? "text-foreground/85"
-                      : "text-secondary-label/65",
+                      ? "text-foreground/90"
+                      : "text-muted-foreground/70",
                 )}
               >
                 {step.step}
@@ -1298,7 +1312,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
       </div>
       {row.showThinking ? (
         <div className="mt-2">
-          <ActiveScanGroup items={[{ id: "thinking", label: "Thinking" }]} />
+          <ThinkingActivityRow />
         </div>
       ) : null}
     </div>
@@ -1341,8 +1355,10 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
 /** Renders one or more already-derived work log rows. Overflow expansion is modeled as LegendList data. */
 const WorkGroupSection = memo(function WorkGroupSection({
   groupedEntries,
+  isExpandedToolGroupEntry,
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
+  isExpandedToolGroupEntry: boolean;
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
@@ -1359,7 +1375,10 @@ const WorkGroupSection = memo(function WorkGroupSection({
   if (nonEmptyEntries.length === 0) return null;
 
   return (
-    <section className="-mx-1 space-y-0.5 px-1 py-0.5" aria-label={groupLabel}>
+    <section
+      className={cn("-mx-1 px-1", isExpandedToolGroupEntry ? "py-0" : "space-y-0.5 py-0.5")}
+      aria-label={groupLabel}
+    >
       {!onlyToolEntries && (
         <p className="px-0.5 pb-0.5 font-medium text-secondary-label text-[11px]">{groupLabel}</p>
       )}
@@ -1369,6 +1388,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
             key={workEntry.id}
             workEntry={workEntry}
             workspaceRoot={workspaceRoot}
+            isExpandedToolGroupEntry={isExpandedToolGroupEntry}
           />
         ))}
       </div>
@@ -1376,74 +1396,65 @@ const WorkGroupSection = memo(function WorkGroupSection({
   );
 });
 
-interface ActiveScanItem {
-  id: string;
-  label: string;
-  iconName?: WorkEntryIconName;
+function LiveActivityRow({ label, iconName }: { label: string; iconName?: WorkEntryIconName }) {
+  return (
+    <div className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed">
+      <LiveActivityContent label={label} iconName={iconName} />
+      <div aria-hidden className="live-activity-focus pointer-events-none absolute inset-0">
+        <div className="live-activity-focus-counter">
+          <div className="live-activity-focus-aligned">
+            <LiveActivityContent label={label} iconName={iconName} highlighted />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function ActiveScanLineContent({
-  item,
-  highlighted,
+function ThinkingActivityRow() {
+  return <LiveActivityRow label="Thinking" />;
+}
+
+function LiveActivityContent({
+  label,
+  iconName,
+  highlighted = false,
 }: {
-  item: ActiveScanItem;
-  highlighted: boolean;
+  label: string;
+  iconName: WorkEntryIconName | undefined;
+  highlighted?: boolean;
 }) {
   return (
-    <div className="flex min-h-6 min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-sm leading-relaxed">
-      {item.iconName ? (
+    <div
+      className={cn(
+        "flex min-h-6 min-w-0 items-center gap-1.5 px-1 py-0.5",
+        highlighted ? "text-foreground" : "text-secondary-label",
+      )}
+    >
+      {iconName ? (
         <span
           className={cn(
             "flex size-6 shrink-0 items-center justify-center",
             highlighted ? "text-foreground" : "text-icon-muted",
           )}
         >
-          <WorkEntryIconSvg
-            name={item.iconName}
-            className={cn(
-              "block size-4 shrink-0 stroke-[1.8]",
-              highlighted ? "opacity-100" : "opacity-70",
-            )}
-          />
+          <WorkEntryIconSvg name={iconName} className="block size-4 shrink-0 stroke-[1.8]" />
         </span>
       ) : null}
-      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-    </div>
-  );
-}
-
-function ActiveScanGroup({ items }: { items: ActiveScanItem[] }) {
-  const scanKey = items.map((item) => item.id).join(":");
-
-  return (
-    <div className="relative min-w-0">
-      <div className="space-y-1 text-secondary-label">
-        {items.map((item) => (
-          <ActiveScanLineContent key={item.id} item={item} highlighted={false} />
-        ))}
-      </div>
-      <div
-        key={scanKey}
-        aria-hidden
-        className="active-tool-content-scan pointer-events-none absolute inset-0 space-y-1 text-foreground"
-      >
-        {items.map((item) => (
-          <ActiveScanLineContent key={item.id} item={item} highlighted />
-        ))}
-      </div>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
     </div>
   );
 }
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const { workspaceRoot } = use(TimelineRowCtx);
-  const item = {
-    id: row.entry.id,
-    label: liveWorkEntryLabel(row.entry, workspaceRoot),
-    iconName: workEntryIconName(row.entry),
-  };
 
-  return <ActiveScanGroup items={[item]} />;
+  return (
+    <LiveActivityRow
+      label={liveWorkEntryLabel(row.entry, workspaceRoot)}
+      iconName={workEntryIconName(row.entry)}
+    />
+  );
 }
 
 function toolGroupSummaryIconName(
@@ -2173,29 +2184,16 @@ function liveWorkEntryLabel(
   return workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
 }
 
-function workEntryRawCommand(
-  workEntry: Pick<TimelineWorkEntry, "command" | "rawCommand">,
-): string | null {
-  const rawCommand = workEntry.rawCommand?.trim();
-  if (!rawCommand || !workEntry.command) {
-    return null;
-  }
-  return rawCommand === workEntry.command.trim() ? null : rawCommand;
-}
-
 function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
 ): string | null {
+  const command = workEntry.rawCommand?.trim() || workEntry.command?.trim();
+  if (command) return command;
+
   const blocks: string[] = [];
   if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
     blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
-  }
-  const raw = workEntryRawCommand(workEntry);
-  if (raw?.trim()) {
-    blocks.push(raw.trim());
-  } else if (workEntry.command?.trim()) {
-    blocks.push(workEntry.command.trim());
   }
   if (workEntry.detail?.trim()) {
     blocks.push(workEntry.detail.trim());
@@ -2372,20 +2370,28 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
+  isExpandedToolGroupEntry: boolean;
 }) {
-  const { workEntry, workspaceRoot } = props;
+  const { workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
   // Before any hooks: spawn CTA rows render their own component.
   if (workEntry.agentSpawn) {
     return <AgentSpawnCtaRow workEntry={workEntry} />;
   }
-  return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
+  return (
+    <PlainWorkEntryRow
+      workEntry={workEntry}
+      workspaceRoot={workspaceRoot}
+      isExpandedToolGroupEntry={isExpandedToolGroupEntry}
+    />
+  );
 });
 
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
+  isExpandedToolGroupEntry: boolean;
 }) {
-  const { workEntry, workspaceRoot } = props;
+  const { workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -2416,9 +2422,10 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : isCommandEntry
+      : workLogEntryIsToolLike(workEntry)
         ? "text-secondary-label"
         : "text-foreground/80";
+  const showEntryIcon = !isExpandedToolGroupEntry || showWarningIndicator || showFailedIndicator;
   const rowToggleProps = canExpand
     ? {
         role: "button" as const,
@@ -2437,25 +2444,33 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   return (
     <div
       className={cn(
-        "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
+        "flex flex-col rounded-md px-0.5 transition-colors",
+        isExpandedToolGroupEntry ? "py-0" : "py-0.5",
         canExpand &&
-          "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
       {...rowToggleProps}
     >
       <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
-        <span
-          className={iconWrapperClass}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
-        >
-          <WorkEntryIconSvg
-            name={entryIconName}
-            className="block size-4 shrink-0 stroke-[1.8] opacity-70"
-          />
-        </span>
+        {showEntryIcon ? (
+          <span
+            className={iconWrapperClass}
+            aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          >
+            <WorkEntryIconSvg
+              name={entryIconName}
+              className="block size-4 shrink-0 stroke-[1.8] opacity-70"
+            />
+          </span>
+        ) : null}
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <div className="min-w-0 flex-1 overflow-hidden">
-            <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
+            <p
+              className={cn(
+                "flex min-w-0 w-full items-baseline gap-1.5 leading-relaxed",
+                isExpandedToolGroupEntry ? "text-[12px] leading-5" : "text-sm",
+              )}
+            >
               <span className={cn("min-w-0 flex-1 truncate", headingClass)}>{displayText}</span>
             </p>
           </div>
@@ -2463,11 +2478,16 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       </div>
       {expanded && canExpand && expandedBody ? (
         <div
-          className="mt-1 ms-[1.875rem] cursor-default border-s border-border/45 ps-3 pt-0.5"
+          className="mt-1 ms-[1.875rem] cursor-default pt-0.5"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[11px] leading-relaxed select-text">
+          <pre
+            className={cn(
+              "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[11px] leading-relaxed",
+              isCommandEntry ? "select-all" : "select-text",
+            )}
+          >
             {expandedBody}
           </pre>
         </div>

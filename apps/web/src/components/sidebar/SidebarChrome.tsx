@@ -195,25 +195,34 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
   return (
     <SidebarMenu className="flex-row items-center">
-      <SidebarUtilityItem
-        icon={currentFooterPage === "settings" ? <ArrowLeftIcon /> : <SettingsIcon />}
-        label={currentFooterPage === "settings" ? "Back" : "Settings"}
-        onClick={currentFooterPage === "settings" ? handleBackClick : handleSettingsClick}
-      />
-      {pullRequestsSupported ? (
-        <SidebarUtilityItem
-          icon={currentFooterPage === "pull-requests" ? <ArrowLeftIcon /> : <GitPullRequestIcon />}
-          label={currentFooterPage === "pull-requests" ? "Back" : "Pull Requests"}
-          onClick={
-            currentFooterPage === "pull-requests" ? handleBackClick : handlePullRequestsClick
-          }
-        />
-      ) : null}
-      <SidebarUtilityItem
-        icon={currentFooterPage === "usage" ? <ArrowLeftIcon /> : <ChartNoAxesColumnIcon />}
-        label={currentFooterPage === "usage" ? "Back" : "Usage"}
-        onClick={currentFooterPage === "usage" ? handleBackClick : handleUsageClick}
-      />
+      {currentFooterPage ? (
+        <SidebarMenuItem className="min-w-0 flex-1">
+          <SidebarMenuButton onClick={handleBackClick}>
+            <ArrowLeftIcon />
+            <span>Back</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      ) : (
+        <>
+          <SidebarUtilityItem
+            icon={<SettingsIcon />}
+            label="Settings"
+            onClick={handleSettingsClick}
+          />
+          {pullRequestsSupported ? (
+            <SidebarUtilityItem
+              icon={<GitPullRequestIcon />}
+              label="Pull Requests"
+              onClick={handlePullRequestsClick}
+            />
+          ) : null}
+          <SidebarUtilityItem
+            icon={<ChartNoAxesColumnIcon />}
+            label="Usage"
+            onClick={handleUsageClick}
+          />
+        </>
+      )}
       <SidebarUpdatePill />
     </SidebarMenu>
   );

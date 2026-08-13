@@ -1,6 +1,8 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildDayColumns, niceScale } from "./UsageProviderChart";
+import { buildDayColumns, niceScale, UsageProviderChart } from "./UsageProviderChart";
 
 describe("niceScale", () => {
   it("never puts the peak above the top of the scale", () => {
@@ -77,7 +79,7 @@ describe("buildDayColumns", () => {
     ]);
   });
 
-  it("keeps absolute provider values in the stable stack order", () => {
+  it("keeps band values absolute rather than cumulative", () => {
     const [first] = buildDayColumns(days, byDay, "cost");
 
     expect(first?.bands).toEqual([
@@ -91,6 +93,24 @@ describe("buildDayColumns", () => {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
+  });
+
+  it("renders provider trends as paths instead of bars", () => {
+    const markup = renderToStaticMarkup(
+      createElement(UsageProviderChart, {
+        days,
+        daily: [...byDay.values()],
+        hours: [],
+        hourly: [],
+        metric: "cost",
+        referenceTime: undefined,
+        resolution: "day",
+        timeZone: "UTC",
+      }),
+    );
+
+    expect(markup).toContain("<path");
+    expect(markup).not.toContain("<rect");
   });
 });
 

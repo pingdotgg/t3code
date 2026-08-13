@@ -28,8 +28,11 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
-import { WorkspacePageContainer, WorkspacePageHeader } from "../WorkspacePageContainer";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
+import {
+  WorkspacePageContainer,
+  WorkspacePageHeader,
+  WorkspacePageHeaderEdgeControl,
+} from "../WorkspacePageContainer";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_COLOR, PROVIDER_LABEL, PROVIDER_MARK, PROVIDER_ORDER } from "./usageProviders";
 
@@ -129,9 +132,11 @@ export function UsagePage() {
             </SegmentedTab>
           ))}
         </SegmentedTabList>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
-          <RefreshCwIcon className="size-3.5" />
-        </Button>
+        <WorkspacePageHeaderEdgeControl>
+          <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
+            <RefreshCwIcon className="size-3.5" />
+          </Button>
+        </WorkspacePageHeaderEdgeControl>
       </div>
     </div>
   );
@@ -139,12 +144,7 @@ export function UsagePage() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        <WorkspacePageHeader
-          electron={isElectron}
-          className={COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS}
-        >
-          {topbarContent}
-        </WorkspacePageHeader>
+        <WorkspacePageHeader electron={isElectron}>{topbarContent}</WorkspacePageHeader>
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
@@ -161,59 +161,67 @@ export function UsagePage() {
                   staleEnvironments={merged.staleEnvironments}
                 />
 
-                <section className="flex flex-col gap-4">
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
-                      <span className="text-2xl leading-none font-semibold text-foreground tabular-nums">
+                <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+                  <div className="flex min-w-0 flex-col gap-5">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-4xl font-semibold text-foreground tabular-nums">
                         {metric === "cost"
                           ? formatUsd(merged.costUsd)
                           : formatTokens(merged.totalTokens)}
                       </span>
-                      <div className="flex flex-wrap items-baseline gap-4">
-                        {PROVIDER_ORDER.map((provider) => {
-                          const totals = merged.providers.find(
-                            (entry) => entry.provider === provider,
-                          );
-                          const formattedTotal =
-                            metric === "cost"
-                              ? formatUsd(totals?.costUsd ?? 0)
-                              : formatTokens(totals?.totalTokens ?? 0);
-                          return (
-                            <div
-                              key={provider}
-                              className="flex items-center gap-2 text-sm leading-none"
-                              aria-label={`${PROVIDER_LABEL[provider]}: ${formattedTotal}`}
-                              title={PROVIDER_LABEL[provider]}
-                            >
-                              <ProviderMark provider={provider} className="size-4" />
-                              <span
-                                className="font-medium tabular-nums"
-                                style={{ color: PROVIDER_COLOR[provider] }}
-                              >
-                                {formattedTotal}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {metric === "cost"
+                          ? `${formatCount(merged.sessions)} sessions · API estimate`
+                          : `${formatCount(merged.sessions)} sessions`}
+                      </span>
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      {metric === "cost"
-                        ? `${formatCount(merged.sessions)} sessions · API estimate`
-                        : `${formatCount(merged.sessions)} sessions`}
-                    </span>
+
+                    {PROVIDER_ORDER.map((provider) => {
+                      const totals = merged.providers.find((entry) => entry.provider === provider);
+                      const share =
+                        metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
+                      return (
+                        <div key={provider} className="flex flex-col gap-1">
+                          <div className="flex items-baseline justify-between gap-4">
+                            <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
+                              <ProviderMark provider={provider} className="size-4" />
+                              <span className="truncate">{PROVIDER_LABEL[provider]}</span>
+                            </span>
+                            <span
+                              className="shrink-0 text-sm font-medium tabular-nums"
+                              style={{ color: PROVIDER_COLOR[provider] }}
+                            >
+                              {metric === "cost"
+                                ? formatUsd(totals?.costUsd ?? 0)
+                                : formatTokens(totals?.totalTokens ?? 0)}
+                            </span>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {metric === "cost"
+                              ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
+                              : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  <UsageProviderChart
-                    days={days}
-                    daily={merged.daily}
-                    hours={hours}
-                    hourly={merged.hourly}
-                    metric={metric}
-                    referenceTime={window.untilTime}
-                    resolution={isPast24Hours ? "hour" : "day"}
-                    timeZone={window.timeZone}
-                  />
+                  <div className="flex min-w-0 flex-col gap-3">
+                    <h2 className="text-sm font-medium text-foreground">
+                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
+                      {metric === "tokens" ? "processed tokens" : "cost"}
+                    </h2>
+                    <UsageProviderChart
+                      days={days}
+                      daily={merged.daily}
+                      hours={hours}
+                      hourly={merged.hourly}
+                      metric={metric}
+                      referenceTime={window.untilTime}
+                      resolution={isPast24Hours ? "hour" : "day"}
+                      timeZone={window.timeZone}
+                    />
+                  </div>
                 </section>
 
                 <section className="flex flex-col gap-2">
@@ -479,9 +487,6 @@ function UsageDeviceStrip({
   );
 }
 
-/** Deterministic bar heights (each unique: they double as keys). */
-const SKELETON_BAR_HEIGHTS = [34, 58, 41, 72, 22, 12, 49, 63, 80, 38, 55, 26, 44, 67];
-
 /**
  * Static stand-in with the loaded page's shape. No shimmer; blocks fill in
  * exactly once when the last device answers.
@@ -489,32 +494,29 @@ const SKELETON_BAR_HEIGHTS = [34, 58, 41, 72, 22, 12, 49, 63, 80, 38, 55, 26, 44
 function UsageSkeleton() {
   return (
     <>
-      <section className="flex flex-col gap-4">
-        <div className="flex items-start justify-between gap-4">
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
+        <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
-            <div className="my-0.5 h-6 w-28 rounded-sm bg-muted" />
-            <div className="h-3 w-36 rounded-sm bg-muted" />
+            <div className="h-8 w-36 rounded-sm bg-muted" />
+            <div className="h-3 w-32 rounded-sm bg-muted" />
           </div>
-          <div className="flex items-center gap-5">
-            {PROVIDER_ORDER.map((provider) => (
-              <div key={provider} className="flex items-center gap-2">
-                <ProviderMark provider={provider} className="size-4" />
-                <div className="h-3.5 w-16 rounded-sm bg-muted" />
+          {PROVIDER_ORDER.map((provider) => (
+            <div key={provider} className="flex flex-col gap-1">
+              <div className="flex items-center justify-between gap-4">
+                <span className="flex items-center gap-2">
+                  <ProviderMark provider={provider} className="size-4" />
+                  <div className="h-3.5 w-20 rounded-sm bg-muted" />
+                </span>
+                <div className="h-3.5 w-14 rounded-sm bg-muted" />
               </div>
-            ))}
-          </div>
+              <div className="h-3 w-36 rounded-sm bg-muted" />
+            </div>
+          ))}
         </div>
 
-        {/* Mirrors the chart's h-56 body and w-14 axis gutter to avoid a
-            relayout when the real chart swaps in. */}
-        <div className="flex h-56 items-end gap-1 pl-16">
-          {SKELETON_BAR_HEIGHTS.map((height) => (
-            <div
-              key={height}
-              className="flex-1 rounded-sm bg-muted"
-              style={{ height: `${height}%` }}
-            />
-          ))}
+        <div className="flex flex-col gap-3">
+          <div className="h-4 w-24 rounded-sm bg-muted" />
+          <div className="h-56 rounded-sm bg-muted/35" />
         </div>
       </section>
 

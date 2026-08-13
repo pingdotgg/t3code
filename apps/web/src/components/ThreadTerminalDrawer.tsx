@@ -5,9 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { type TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
 import {
-  EllipsisIcon,
   PanelBottomCloseIcon,
-  PencilIcon,
   Plus,
   SquareSplitHorizontal,
   SquareSplitVertical,
@@ -251,6 +249,10 @@ export function shouldHandleTerminalSelectionMouseUp(
   button: number,
 ): boolean {
   return selectionGestureActive && button === 0;
+}
+
+export function shouldShowTerminalSidebar(terminalCount: number): boolean {
+  return terminalCount > 1;
 }
 
 export function terminalSelectionLineRange(position: {
@@ -1095,6 +1097,7 @@ export default function ThreadTerminalDrawer({
     (normalizedTerminalIds.length > 0 ? [resolvedActiveTerminalId] : []);
   const splitDirection =
     resolvedTerminalGroups[resolvedActiveGroupIndex]?.splitDirection ?? "horizontal";
+  const hasTerminalSidebar = shouldShowTerminalSidebar(normalizedTerminalIds.length);
   const isSplitView = visibleTerminalIds.length > 1;
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
   const automaticTerminalLabelById = useMemo(() => {
@@ -1131,6 +1134,19 @@ export default function ThreadTerminalDrawer({
   const newTerminalActionLabel = newShortcutLabel
     ? `New Terminal (${newShortcutLabel})`
     : "New Terminal";
+  const splitTerminalActionLabel = hasReachedSplitLimit
+    ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
+    : splitShortcutLabel
+      ? `Split Terminal Horizontally (${splitShortcutLabel})`
+      : "Split Terminal Horizontally";
+  const splitTerminalVerticalActionLabel = hasReachedSplitLimit
+    ? `Split Terminal Vertically (max ${MAX_TERMINALS_PER_GROUP} per group)`
+    : splitVerticalShortcutLabel
+      ? `Split Terminal Vertically (${splitVerticalShortcutLabel})`
+      : "Split Terminal Vertically";
+  const closeTerminalActionLabel = closeShortcutLabel
+    ? `Close Terminal (${closeShortcutLabel})`
+    : "Close Terminal";
   const onSplitTerminalAction = useCallback(() => {
     if (hasReachedSplitLimit) return;
     onSplitTerminal();
@@ -1303,7 +1319,72 @@ export default function ThreadTerminalDrawer({
   }
 
   const activeTerminalLaunchLocation = resolveTerminalLaunchLocation(resolvedActiveTerminalId);
-
+  const compactTerminalToolbar = (
+    <>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        className="rounded-md"
+        disabled={hasReachedSplitLimit}
+        onClick={onSplitTerminalAction}
+        aria-label={splitTerminalActionLabel}
+        title={splitTerminalActionLabel}
+      >
+        <SquareSplitHorizontal className="size-3.5" />
+      </Button>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        className="rounded-md"
+        disabled={hasReachedSplitLimit}
+        onClick={onSplitTerminalVerticalAction}
+        aria-label={splitTerminalVerticalActionLabel}
+        title={splitTerminalVerticalActionLabel}
+      >
+        <SquareSplitVertical className="size-3.5" />
+      </Button>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        className="rounded-md"
+        onClick={onNewTerminal}
+        aria-label={newTerminalActionLabel}
+        title={newTerminalActionLabel}
+      >
+        <Plus className="size-3.5" />
+      </Button>
+      <Button
+        type="button"
+        size="icon-xs"
+        variant="ghost"
+        className="rounded-md"
+        onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+        aria-label={closeTerminalActionLabel}
+        title={closeTerminalActionLabel}
+      >
+        <XIcon className="size-3.5" />
+      </Button>
+      {!isPanel && onHide ? (
+        <>
+          <span aria-hidden className="mx-0.5 h-4 w-px bg-border/70" />
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            className="rounded-md"
+            onClick={onHide}
+            aria-label="Hide terminal drawer"
+            title="Hide terminal drawer"
+          >
+            <PanelBottomCloseIcon className="size-3.5" />
+          </Button>
+        </>
+      ) : null}
+    </>
+  );
   return (
     <aside
       data-terminal-owner={isPanel ? "right-panel" : "drawer"}
@@ -1321,6 +1402,14 @@ export default function ThreadTerminalDrawer({
           onPointerUp={handleResizePointerEnd}
           onPointerCancel={handleResizePointerEnd}
         />
+      ) : null}
+
+      {!hasTerminalSidebar ? (
+        <div className="pointer-events-none absolute top-2 right-2 z-20">
+          <div className="pointer-events-auto flex h-8 items-center rounded-lg border border-border/70 bg-background p-0.5 shadow-xs">
+            {compactTerminalToolbar}
+          </div>
+        </div>
       ) : null}
 
       <div className="flex min-h-0 w-full flex-1">
@@ -1411,169 +1500,121 @@ export default function ThreadTerminalDrawer({
         </div>
 
         <aside
-          className="relative flex shrink-0 flex-col border-l border-border/70 bg-muted/10"
+          className={cn(
+            "relative flex shrink-0 flex-col border-l border-border/70 bg-muted/10",
+            !hasTerminalSidebar && "hidden",
+          )}
           style={{ width: `${terminalSidebarWidth}px` }}
         >
           <RightPanelResizeHandle handlers={terminalSidebarResizeHandlers} />
-          <div className="flex h-9 shrink-0 items-center justify-end border-b border-border/70 px-2">
-            {!isPanel && onHide ? (
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                className="rounded-md"
-                onClick={onHide}
-                aria-label="Hide terminal"
-                title="Hide terminal"
-              >
-                <PanelBottomCloseIcon className="size-3.5" />
-              </Button>
-            ) : null}
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              className="rounded-md"
-              onClick={onNewTerminal}
-              aria-label={newTerminalActionLabel}
-              title={newTerminalActionLabel}
-            >
-              <Plus className="size-3.5" />
-            </Button>
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="rounded-md"
-                    aria-label="Terminal actions"
-                  />
-                }
-              >
-                <EllipsisIcon className="size-3.5" />
-              </MenuTrigger>
-              <MenuPopup align="end" className="min-w-48">
-                <MenuItem disabled={hasReachedSplitLimit} onClick={onSplitTerminalAction}>
-                  <SquareSplitHorizontal />
-                  Split right
-                  {splitShortcutLabel ? <MenuShortcut>{splitShortcutLabel}</MenuShortcut> : null}
-                </MenuItem>
-                <MenuItem disabled={hasReachedSplitLimit} onClick={onSplitTerminalVerticalAction}>
-                  <SquareSplitVertical />
-                  Split down
-                  {splitVerticalShortcutLabel ? (
-                    <MenuShortcut>{splitVerticalShortcutLabel}</MenuShortcut>
-                  ) : null}
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem onClick={() => startTerminalRename(resolvedActiveTerminalId)}>
-                  <PencilIcon />
-                  Rename terminal
-                </MenuItem>
-                <MenuItem
-                  variant="destructive"
-                  onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
-                >
-                  <XIcon />
-                  Close terminal
-                  {closeShortcutLabel ? <MenuShortcut>{closeShortcutLabel}</MenuShortcut> : null}
-                </MenuItem>
-              </MenuPopup>
-            </Menu>
+          <div className="flex h-9 shrink-0 items-center justify-center border-b border-border/70 px-2">
+            {hasTerminalSidebar ? compactTerminalToolbar : null}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-1">
-            {resolvedTerminalGroups.map((terminalGroup, groupIndex) => (
-              <div
-                key={terminalGroup.id}
-                className={cn(groupIndex > 0 && "mt-1 border-t border-border/50 pt-1")}
-              >
+            {resolvedTerminalGroups.map((terminalGroup, groupIndex) => {
+              const isSplitGroup = terminalGroup.terminalIds.length > 1;
+              const splitVertically = terminalGroup.splitDirection === "vertical";
+              const SplitIcon = splitVertically ? SquareSplitVertical : SquareSplitHorizontal;
+              return (
                 <div
+                  key={terminalGroup.id}
                   className={cn(
-                    terminalGroup.terminalIds.length > 1 && "ml-1 border-l border-border/60 pl-1",
+                    groupIndex > 0 && "mt-1",
+                    isSplitGroup && "rounded-lg border border-border/80 bg-muted/20 p-1",
                   )}
                 >
-                  {terminalGroup.terminalIds.map((terminalId) => {
-                    const isActive = terminalId === resolvedActiveTerminalId;
-                    const automaticLabel = automaticTerminalLabelById.get(terminalId) ?? "Terminal";
-                    const customLabel = terminalCustomLabels[terminalId]?.trim() ?? "";
-                    const displayLabel = terminalLabelById.get(terminalId) ?? automaticLabel;
-                    const isRenaming = renamingTerminalId === terminalId;
-                    return (
-                      <div
-                        key={terminalId}
-                        className={cn(
-                          "group/tab flex h-6 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
-                          isActive
-                            ? "bg-accent text-foreground"
-                            : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                        )}
-                      >
-                        <button
-                          type="button"
-                          className="group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                          aria-label={`Close ${displayLabel}`}
-                          onClick={() => onCloseTerminal(terminalId)}
+                  {isSplitGroup ? (
+                    <div className="flex h-5 items-center gap-1 px-1 text-[10px] font-medium text-muted-foreground">
+                      <SplitIcon className="size-3" />
+                      <span>{splitVertically ? "Split down" : "Split right"}</span>
+                    </div>
+                  ) : null}
+                  <div className={cn(isSplitGroup && "space-y-0.5")}>
+                    {terminalGroup.terminalIds.map((terminalId) => {
+                      const isActive = terminalId === resolvedActiveTerminalId;
+                      const automaticLabel =
+                        automaticTerminalLabelById.get(terminalId) ?? "Terminal";
+                      const customLabel = terminalCustomLabels[terminalId]?.trim() ?? "";
+                      const displayLabel = terminalLabelById.get(terminalId) ?? automaticLabel;
+                      const isRenaming = renamingTerminalId === terminalId;
+                      return (
+                        <div
+                          key={terminalId}
+                          className={cn(
+                            "group/tab flex h-6 items-center gap-0.5 rounded-md pr-2 text-xs",
+                            isSplitGroup ? "pl-0.5" : "pl-1.5",
+                            isActive
+                              ? "bg-accent text-foreground"
+                              : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                          )}
                         >
-                          <TerminalSquare className="size-3 shrink-0 group-hover/tab:hidden group-focus-visible/close:hidden" />
-                          <XIcon className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
-                        </button>
-                        {isRenaming ? (
-                          <input
-                            autoFocus
-                            value={terminalRenameDraft}
-                            aria-label="Rename terminal"
-                            className="h-6 min-w-0 flex-1 rounded border border-input bg-background px-1.5 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
-                            onFocus={(event) => event.currentTarget.select()}
-                            onChange={(event) => setTerminalRenameDraft(event.currentTarget.value)}
-                            onBlur={() => {
-                              if (cancelTerminalRenameRef.current) {
-                                cancelTerminalRenameRef.current = false;
-                                return;
-                              }
-                              finishTerminalRename();
-                            }}
-                            onKeyDown={(event) => {
-                              event.stopPropagation();
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                finishTerminalRename();
-                              } else if (event.key === "Escape") {
-                                event.preventDefault();
-                                cancelTerminalRename();
-                              }
-                            }}
-                          />
-                        ) : (
                           <button
                             type="button"
-                            className="flex min-w-0 flex-1 items-center text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            title={`${displayLabel}${customLabel && customLabel !== automaticLabel ? ` · ${automaticLabel}` : ""} — ${resolveTerminalLaunchLocation(terminalId).cwd}`}
-                            onClick={() => onActiveTerminalChange(terminalId)}
-                            onDoubleClick={(event) => {
-                              event.preventDefault();
-                              onActiveTerminalChange(terminalId);
-                              startTerminalRename(terminalId);
-                            }}
+                            className="group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+                            aria-label={`Close ${displayLabel}`}
+                            onClick={() => onCloseTerminal(terminalId)}
                           >
-                            <span className="min-w-0 flex-1 truncate">
-                              {displayLabel}
-                              {customLabel && customLabel !== automaticLabel ? (
-                                <span className="font-normal text-muted-foreground/80">
-                                  {` · ${automaticLabel}`}
-                                </span>
-                              ) : null}
-                            </span>
+                            <TerminalSquare className="size-3 shrink-0 group-hover/tab:hidden group-focus-visible/close:hidden" />
+                            <XIcon className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
                           </button>
-                        )}
-                      </div>
-                    );
-                  })}
+                          {isRenaming ? (
+                            <input
+                              autoFocus
+                              value={terminalRenameDraft}
+                              aria-label="Rename terminal"
+                              className="h-6 min-w-0 flex-1 rounded border border-input bg-background px-1.5 text-xs text-foreground outline-none focus:ring-2 focus:ring-ring"
+                              onFocus={(event) => event.currentTarget.select()}
+                              onChange={(event) =>
+                                setTerminalRenameDraft(event.currentTarget.value)
+                              }
+                              onBlur={() => {
+                                if (cancelTerminalRenameRef.current) {
+                                  cancelTerminalRenameRef.current = false;
+                                  return;
+                                }
+                                finishTerminalRename();
+                              }}
+                              onKeyDown={(event) => {
+                                event.stopPropagation();
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  finishTerminalRename();
+                                } else if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelTerminalRename();
+                                }
+                              }}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 items-center text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              title={`${displayLabel}${customLabel && customLabel !== automaticLabel ? ` · ${automaticLabel}` : ""} — ${resolveTerminalLaunchLocation(terminalId).cwd}`}
+                              onClick={() => onActiveTerminalChange(terminalId)}
+                              onDoubleClick={(event) => {
+                                event.preventDefault();
+                                onActiveTerminalChange(terminalId);
+                                startTerminalRename(terminalId);
+                              }}
+                            >
+                              <span className="min-w-0 flex-1 truncate">
+                                {displayLabel}
+                                {customLabel && customLabel !== automaticLabel ? (
+                                  <span className="font-normal text-muted-foreground/80">
+                                    {` · ${automaticLabel}`}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </aside>
       </div>

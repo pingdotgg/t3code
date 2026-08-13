@@ -763,6 +763,7 @@ export function deriveWorkLogEntries(
     if (activity.kind === "turn.plan.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
+    if (isCodexTerminalInteractionActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
@@ -782,6 +783,28 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
       ? (activity.payload as Record<string, unknown>)
       : null;
   return typeof payload?.detail === "string" && payload.detail.startsWith("ExitPlanMode:");
+}
+
+/**
+ * Codex terminal interactions report bytes written to an already-running PTY.
+ * Some thread histories contain them as generic tool.updated rows, so filter
+ * their exact wire shape from the presentation model. This repairs existing
+ * history without deleting or rewriting persisted activities.
+ */
+function isCodexTerminalInteractionActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "tool.updated") {
+    return false;
+  }
+  const payload = asRecord(activity.payload);
+  const data = asRecord(payload?.data);
+  return (
+    payload?.itemType === "command_execution" &&
+    typeof data?.itemId === "string" &&
+    typeof data.processId === "string" &&
+    typeof data.stdin === "string" &&
+    typeof data.threadId === "string" &&
+    typeof data.turnId === "string"
+  );
 }
 
 function extractWorkLogToolLifecycleStatus(

@@ -51,7 +51,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   return (
     <div
-      className="@container/changed-files mt-4 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
+      className="mt-4 rounded-xl border border-border/70 bg-secondary p-1.5 dark:border-transparent dark:bg-input/32"
       data-changed-files-state={
         expanded ? "expanded" : compactPreviewVisible ? "preview" : "collapsed"
       }
@@ -59,7 +59,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
       <div
         data-changed-files-header=""
         className={cn(
-          "flex items-center justify-between gap-2 rounded-xl px-1",
+          "flex items-center justify-between gap-2 rounded-lg px-1",
           expanded &&
             "sticky top-2 z-10 mb-2 bg-secondary dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]",
         )}
@@ -68,7 +68,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           type="button"
           aria-expanded={expanded}
           data-scroll-anchor-ignore
-          className="group flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-1 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => onExpandedChange(!expanded)}
         >
           <ChevronRightIcon
@@ -90,9 +90,6 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 layout="inline"
               />
             )}
-          </span>
-          <span className="ml-1 hidden min-w-0 flex-1 truncate text-[11px] text-muted-foreground group-hover:text-foreground/80 @[24rem]/changed-files:inline">
-            {expanded ? "Hide files" : "Show files"}
           </span>
         </button>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -137,7 +134,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               }
             >
               <FileDiffIcon className="size-3" />
-              <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
+              <span className="hidden sm:inline">Open diff</span>
             </TooltipTrigger>
             <TooltipPopup side="top">Open the full diff</TooltipPopup>
           </Tooltip>
@@ -153,14 +150,15 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           onOpenTurnDiff={onOpenTurnDiff}
         />
       ) : compactPreviewVisible ? (
-        <div className="px-2 pb-1.5 pt-0.5">
-          <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+        <div className="px-1.5 pb-1 pt-0.5" data-changed-file-preview="">
+          <div className="flex min-w-0 items-center gap-x-3 overflow-hidden">
             {previewFiles.map((file) => (
               <button
                 key={file.path}
                 type="button"
                 title={file.path}
-                className="group flex min-h-7 min-w-0 flex-1 basis-0 items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-accent/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                data-changed-file-preview-item=""
+                className="group flex min-h-6 min-w-0 max-w-72 shrink items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-accent/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => onOpenTurnDiff(turnId, file.path)}
               >
                 <PierreEntryIcon
@@ -169,7 +167,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   theme={resolvedTheme}
                   className="size-3.5 shrink-0 text-muted-foreground/70"
                 />
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/75 group-hover:text-foreground">
+                <span className="min-w-0 truncate font-mono text-xs text-foreground/75 group-hover:text-foreground">
                   {changedFileName(file.path)}
                 </span>
                 {hasNonZeroStat(file) ? (
@@ -182,15 +180,6 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 ) : null}
               </button>
             ))}
-            {files.length > previewFiles.length ? (
-              <button
-                type="button"
-                className="flex min-h-7 shrink-0 items-center rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => onExpandedChange(true)}
-              >
-                +{files.length - previewFiles.length} more
-              </button>
-            ) : null}
           </div>
         </div>
       ) : null}
@@ -266,11 +255,11 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             ) : (
               <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
             )}
-            <span className="truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
+            <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
               {node.name}
             </span>
             {hasNonZeroStat(node.stat) && (
-              <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+              <span className="ml-1 shrink-0 font-mono text-[10px] tabular-nums">
                 <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
               </span>
             )}
@@ -301,11 +290,11 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
+        <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
           {node.name}
         </span>
         {node.stat && (
-          <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
+          <span className="ml-1 shrink-0 font-mono text-[10px] tabular-nums">
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         )}

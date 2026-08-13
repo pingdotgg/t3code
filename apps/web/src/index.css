@@ -241,6 +241,22 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       opacity: 1;
     }
   }
+  @keyframes live-activity-focus {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes live-activity-focus-counter {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-100%);
+    }
+  }
   @keyframes status-ping {
     /* Burst first (immediate feedback for click ripples), then hold
        invisible for the rest of the cycle. Mirrors animate-ping's
@@ -431,42 +447,60 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-@keyframes tool-content-scan {
-  0% {
-    mask-position: -4.5rem 0;
-    opacity: 0;
-  }
-  15%,
-  85% {
-    opacity: 1;
-  }
-  100% {
-    mask-position: calc(100% + 4.5rem) 0;
-    opacity: 0;
-  }
-}
+@utility live-activity-focus {
+  --live-activity-focus-width: 4.5rem;
 
-/* A newly active tool gets one short inline sweep without introducing a
-   separate surface or an always-repainting animation. */
-@utility active-tool-content-scan {
+  right: auto;
+  left: calc(-1 * var(--live-activity-focus-width));
+  width: calc(100% + var(--live-activity-focus-width) + var(--live-activity-focus-width));
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 12%) 0.675rem,
+    rgb(0 0 0 / 55%) 1.575rem,
+    black 2.25rem,
+    rgb(0 0 0 / 55%) 2.925rem,
+    rgb(0 0 0 / 12%) 3.825rem,
+    transparent var(--live-activity-focus-width),
+    transparent 100%
+  );
+  -webkit-mask-repeat: no-repeat;
   mask-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgb(0 0 0 / 12%) 18%,
-    rgb(0 0 0 / 72%) 40%,
-    black 50%,
-    rgb(0 0 0 / 72%) 60%,
-    rgb(0 0 0 / 12%) 82%,
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 12%) 0.675rem,
+    rgb(0 0 0 / 55%) 1.575rem,
+    black 2.25rem,
+    rgb(0 0 0 / 55%) 2.925rem,
+    rgb(0 0 0 / 12%) 3.825rem,
+    transparent var(--live-activity-focus-width),
     transparent 100%
   );
   mask-repeat: no-repeat;
-  mask-size: 4.5rem 100%;
-  animation: tool-content-scan 800ms ease-out both;
+  animation: live-activity-focus 2.2s linear infinite;
+  will-change: transform;
 
   @media (prefers-reduced-motion: reduce) {
-    display: none;
     animation: none;
+    opacity: 0;
+    will-change: auto;
   }
+}
+
+@utility live-activity-focus-counter {
+  width: 100%;
+  animation: live-activity-focus-counter 2.2s linear infinite;
+  will-change: transform;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    will-change: auto;
+  }
+}
+
+@utility live-activity-focus-aligned {
+  width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
+  margin-left: var(--live-activity-focus-width);
 }
 
 @layer base {

@@ -74,7 +74,12 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../components/WorkspaceBreadcrumb";
-import { WorkspacePageContainer, WorkspacePageHeader } from "../components/WorkspacePageContainer";
+import {
+  WorkspacePageContainer,
+  WorkspacePageHeader,
+  WorkspacePageHeaderEdgeControl,
+} from "../components/WorkspacePageContainer";
+import { isElectron } from "../env";
 import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
 import { Button } from "../components/ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../components/ui/menu";
@@ -100,7 +105,6 @@ import {
 import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 export interface PullRequestsSearch {
   readonly involvement: PullRequestInvolvement;
@@ -1838,18 +1842,10 @@ function PullRequestsColumn({
     // Painted flat like the chat column: the inset underneath carries the chrome grain, and a
     // content surface that lets it show reads as a different background than every thread.
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-      <WorkspacePageHeader
-        className={cn(
-          "drag-region pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.5rem)]",
-          // A closed right panel leaves this column full-width, so its header runs
-          // underneath the native window controls on Windows; reserve the inset the
-          // way Settings and the chat view do. While the panel is open the column
-          // ends at the panel's left edge and the absolute controls strip (already
-          // WCO-aware) owns the top-right corner.
-          !rightPanelOpen && "wco:pr-[calc(var(--workspace-native-controls-inset)+1px)]",
-          COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-        )}
-      >
+      {/* A closed right panel leaves this column full-width, so the shared header
+          reserves native window controls. While the panel is open, the column ends
+          at the panel and the absolute controls strip owns the top-right corner. */}
+      <WorkspacePageHeader electron={isElectron} reserveNativeControls={!rightPanelOpen}>
         {condensed ? (
           <WorkspaceBreadcrumb ariaLabel="Pull request scope">
             {/* The page name remains the foreground anchor in both states; the live filters are
@@ -1905,7 +1901,9 @@ function PullRequestsColumn({
             <PullRequestRefreshControl compact refreshing={refreshing} onRefresh={onRefresh} />
           </div>
         ) : null}
-        {rightPanelControl}
+        {rightPanelControl ? (
+          <WorkspacePageHeaderEdgeControl>{rightPanelControl}</WorkspacePageHeaderEdgeControl>
+        ) : null}
       </WorkspacePageHeader>
 
       <div

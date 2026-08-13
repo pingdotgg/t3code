@@ -23,13 +23,10 @@ describe("ChangedFilesCard", () => {
     expect(markup).toContain('data-changed-files-state="expanded"');
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain("whitespace-nowrap");
-    expect(markup).toContain(
-      'class="group flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden',
-    );
+    expect(markup).toContain('class="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-1');
     expect(markup).toContain('class="flex shrink-0 items-center gap-1 whitespace-nowrap');
-    expect(markup).toContain('class="ml-1 hidden min-w-0 flex-1 truncate');
-    expect(markup).toContain("@[24rem]/changed-files:inline");
-    expect(markup).not.toContain("sm:inline");
+    expect(markup).toContain('class="hidden sm:inline">Open diff</span>');
+    expect(markup).not.toContain("@[24rem]/changed-files:inline");
     expect(markup).toContain('class="flex shrink-0 items-center gap-1.5"');
     expect(markup).toContain("!size-[22px]");
     expect(markup).toContain("size-3");
@@ -38,6 +35,8 @@ describe("ChangedFilesCard", () => {
     expect(markup).toContain('role="group" aria-label="2 additions, 1 deletions"');
     expect(markup).toContain("1 changed file");
     expect(markup).not.toContain("1 changed files");
+    expect(markup).not.toContain("Hide files");
+    expect(markup).not.toContain("ml-auto");
   });
 
   it("renders a clean representative-file preview for a large latest change", () => {
@@ -72,7 +71,11 @@ describe("ChangedFilesCard", () => {
     expect(markup).toContain("App.tsx");
     expect(markup).toContain("git.ts");
     expect(markup).toContain("README.md");
-    expect(markup).toContain("+1 more");
+    expect(markup).toContain('data-changed-file-preview=""');
+    expect(markup).toContain('data-changed-file-preview-item=""');
+    expect(markup).not.toContain("basis-0");
+    expect(markup).not.toContain("+1 more");
+    expect(markup).not.toContain("Show files");
     expect(markup).toContain('aria-label="120 additions, 20 deletions"');
     expect(markup).not.toContain("App.test.tsx");
   });

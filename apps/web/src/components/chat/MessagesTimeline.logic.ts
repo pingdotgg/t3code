@@ -167,6 +167,8 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       groupedEntries: WorkLogEntry[];
+      isExpandedToolGroupEntry: boolean;
+      isLastExpandedToolGroupEntry: boolean;
     }
   | {
       kind: "work-live";
@@ -401,6 +403,12 @@ function deriveUnsettledTurnId(
   return isSettled ? null : latestTurn.turnId;
 }
 
+function lastUserMessageIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
+  return timelineEntries.findLastIndex(
+    (entry) => entry.kind === "message" && entry.message.role === "user",
+  );
+}
+
 function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   if (entry.kind === "message") {
     return entry.message.role === "assistant" ? (entry.message.turnId ?? null) : null;
@@ -442,7 +450,12 @@ function deriveTurnFolds(input: {
       pendingUserBoundary = entry.message.createdAt;
       continue;
     }
-    const turnId = timelineEntryTurnId(entry);
+    const turnId =
+      entry.kind === "message" && entry.message.role === "assistant"
+        ? (entry.message.turnId ?? null)
+        : entry.kind === "work"
+          ? (entry.entry.turnId ?? null)
+          : null;
     if (!turnId) {
       continue;
     }
@@ -459,11 +472,6 @@ function deriveTurnFolds(input: {
       };
       pendingUserBoundary = null;
       groupsByTurnId.set(turnId, group);
-    } else if (pendingUserBoundary !== null) {
-      // The provider can keep the same turn id after a steering message. The
-      // fold stays anchored where that turn originally began so the user
-      // message keeps its chronological position in the timeline.
-      pendingUserBoundary = null;
     }
     group.entries.push(entry);
     if (entry.kind === "message") {
@@ -580,30 +588,23 @@ export function deriveMessagesTimelineRows(input: {
 
   let activeTurnHeaderIndex = input.timelineEntries.length;
   if (input.isWorking) {
-    const firstOwnedEntryIndex =
+    const latestUserMessageIndex = lastUserMessageIndex(input.timelineEntries);
+    const firstOwnedAfterUser =
       unsettledTurnId === null
         ? -1
         : input.timelineEntries.findIndex(
-            (entry) => timelineEntryTurnId(entry) === unsettledTurnId,
+            (entry, index) =>
+              index > latestUserMessageIndex && timelineEntryTurnId(entry) === unsettledTurnId,
           );
-    if (firstOwnedEntryIndex >= 0) {
-      activeTurnHeaderIndex = firstOwnedEntryIndex;
-    } else {
-      const lastUserMessageIndex = input.timelineEntries.findLastIndex(
-        (entry) => entry.kind === "message" && entry.message.role === "user",
-      );
-      activeTurnHeaderIndex = lastUserMessageIndex + 1;
-    }
+    activeTurnHeaderIndex =
+      firstOwnedAfterUser >= 0 ? firstOwnedAfterUser : latestUserMessageIndex + 1;
   }
   const entryBelongsToActiveTurn = (entry: TimelineEntry, index: number) =>
     input.isWorking &&
-    (unsettledTurnId !== null
-      ? timelineEntryTurnId(entry) === unsettledTurnId
-      : index >= activeTurnHeaderIndex);
+    index >= activeTurnHeaderIndex &&
+    (unsettledTurnId === null || timelineEntryTurnId(entry) === unsettledTurnId);
   const activeEntries = input.isWorking
-    ? unsettledTurnId !== null
-      ? input.timelineEntries.filter((entry) => timelineEntryTurnId(entry) === unsettledTurnId)
-      : input.timelineEntries.slice(activeTurnHeaderIndex)
+    ? input.timelineEntries.filter((entry, index) => entryBelongsToActiveTurn(entry, index))
     : [];
   const activeTurnHasVisibleContent =
     activeEntries.some((entry) => {
@@ -622,15 +623,6 @@ export function deriveMessagesTimelineRows(input: {
       .slice(activeTurnHeaderIndex)
       .some((entry) => entry.kind === "proposed-plan" || entry.kind === "turn-plan");
 
-  const activeAssistantEntryIds = new Set(
-    input.timelineEntries.flatMap((entry, index) =>
-      entryBelongsToActiveTurn(entry, index) &&
-      entry.kind === "message" &&
-      entry.message.role === "assistant"
-        ? [entry.id]
-        : [],
-    ),
-  );
   const activeWorkEntryIds = new Set<string>();
   const activeWorkRowsByAnchorId = new Map<
     string,
@@ -736,23 +728,6 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    if (activeAssistantEntryIds.has(timelineEntry.id) && timelineEntry.kind === "message") {
-      nextRows.push({
-        kind: "message",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        message: timelineEntry.message,
-        durationStart:
-          durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
-        showAssistantMeta: false,
-        showAssistantCopyButton: false,
-        assistantCopyStreaming: true,
-        assistantTurnDiffSummary: undefined,
-        revertTurnCount: undefined,
-      });
-      continue;
-    }
-
     if (activeWorkEntryIds.has(timelineEntry.id)) {
       const activeWorkRow = activeWorkRowsByAnchorId.get(timelineEntry.id);
       if (activeWorkRow) {
@@ -788,6 +763,7 @@ export function deriveMessagesTimelineRows(input: {
         if (onlyToolEntries) {
           const groupId = `work-group:${timelineEntry.id}`;
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -797,16 +773,18 @@ export function deriveMessagesTimelineRows(input: {
             expanded,
             onlyToolEntries: true,
             summary: summarizeToolGroup(visibleGroupedEntries),
-            summaryKind: toolGroupSummaryKind(visibleGroupedEntries),
+            summaryKind,
             hasFailure: visibleGroupedEntries.some((entry) => workEntryIndicatesToolFailure(entry)),
           });
           if (expanded) {
-            for (const workEntry of visibleGroupedEntries) {
+            for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
               nextRows.push({
                 kind: "work",
                 id: workEntry.id,
                 createdAt: workEntry.createdAt,
                 groupedEntries: [workEntry],
+                isExpandedToolGroupEntry: true,
+                isLastExpandedToolGroupEntry: entryIndex === visibleGroupedEntries.length - 1,
               });
             }
           }
@@ -816,6 +794,8 @@ export function deriveMessagesTimelineRows(input: {
             id: timelineEntry.id,
             createdAt: timelineEntry.createdAt,
             groupedEntries: visibleGroupedEntries,
+            isExpandedToolGroupEntry: false,
+            isLastExpandedToolGroupEntry: false,
           });
         } else {
           const groupId = `work-group:${timelineEntry.id}`;
@@ -842,6 +822,8 @@ export function deriveMessagesTimelineRows(input: {
               id: workEntry.id,
               createdAt: workEntry.createdAt,
               groupedEntries: [workEntry],
+              isExpandedToolGroupEntry: false,
+              isLastExpandedToolGroupEntry: false,
             });
           }
 
@@ -980,8 +962,14 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === bp.createdAt && a.turnPlan.plan === bp.turnPlan.plan;
     }
 
-    case "work":
-      return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
+    case "work": {
+      const bw = b as typeof a;
+      return (
+        a.isExpandedToolGroupEntry === bw.isExpandedToolGroupEntry &&
+        a.isLastExpandedToolGroupEntry === bw.isLastExpandedToolGroupEntry &&
+        Equal.equals(a.groupedEntries, bw.groupedEntries)
+      );
+    }
 
     case "work-live":
       return Equal.equals(a.entry, (b as typeof a).entry);
