@@ -42,6 +42,9 @@ describe("desktopMcpBinary", () => {
       ] as const) {
         const binaryPath = `${baseDir}/${name}`;
         yield* fileSystem.writeFileString(binaryPath, "binary");
+        if (platform !== "win32") {
+          yield* fileSystem.chmod(binaryPath, 0o755);
+        }
 
         const resolved = yield* resolveDesktopMcpPath().pipe(
           Effect.provideService(HostProcessPlatform, platform),

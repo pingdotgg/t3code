@@ -1,6 +1,7 @@
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 export const DESKTOP_MCP_EXECUTABLE_NAME = "t3-desktop-mcp";
@@ -75,9 +76,20 @@ export const resolveDesktopMcpPath = Effect.fn("desktopControl.resolveDesktopMcp
 
     for (const candidate of candidates) {
       const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
-      if (exists) {
-        return candidate;
+      if (!exists) {
+        continue;
       }
+      const stat = yield* fileSystem.stat(candidate).pipe(Effect.option);
+      if (Option.isNone(stat) || stat.value.type !== "File") {
+        continue;
+      }
+      // Windows does not use POSIX execute bits the same way; existence of a
+      // regular file is enough. On POSIX, skip non-executable paths so a bad
+      // override does not block a valid packaged binary.
+      if (platform !== "win32" && (stat.value.mode & 0o111) === 0) {
+        continue;
+      }
+      return candidate;
     }
     return undefined;
   },
