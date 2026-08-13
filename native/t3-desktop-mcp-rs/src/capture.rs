@@ -84,8 +84,53 @@ fn encode_png(image: RgbaImage, max_width: u32) -> Result<Vec<u8>> {
     Ok(buffer)
 }
 
+/// Whether the session is Wayland, matching how `xcap` decides.
+fn on_wayland() -> bool {
+    cfg!(target_os = "linux")
+        && (std::env::var("XDG_SESSION_TYPE").is_ok_and(|value| value == "wayland")
+            || std::env::var("WAYLAND_DISPLAY").is_ok_and(|value| value.contains("wayland")))
+}
+
+/// Capture through `grim`, the reference wlr-screencopy client.
+///
+/// `xcap`'s Wayland path fails to connect on wlroots compositors where the
+/// protocol demonstrably works — `grim` captures the same session fine — so this
+/// is the fallback rather than reporting a capture we cannot do. Absent on
+/// GNOME and KDE, which do not implement wlr-screencopy at all; there the error
+/// stands and the accessibility tools remain the answer.
+fn grim_capture(output: Option<&str>) -> Result<Vec<u8>> {
+    let mut command = std::process::Command::new("grim");
+    if let Some(name) = output {
+        command.arg("-o").arg(name);
+    }
+    // `-` writes the PNG to stdout, so nothing touches the filesystem.
+    let result = command
+        .arg("-")
+        .output()
+        .map_err(|error| DesktopError::new(format!("grim is not available: {error}")))?;
+    if !result.status.success() {
+        return Err(DesktopError::new(format!(
+            "grim could not capture this session: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        )));
+    }
+    Ok(result.stdout)
+}
+
 pub fn list_displays() -> Result<String> {
-    guarded("display enumeration", list_displays_inner)
+    match guarded("display enumeration", list_displays_inner) {
+        Ok(text) => Ok(text),
+        Err(error) if on_wayland() => {
+            // Confirm the fallback actually works before advertising a display
+            // the model would then fail to capture.
+            if grim_capture(None).is_ok() {
+                Ok("[0] wayland output (via wlr-screencopy)".to_string())
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn list_displays_inner() -> Result<String> {
@@ -112,7 +157,17 @@ fn list_displays_inner() -> Result<String> {
 }
 
 pub fn capture_display(index: usize, max_width: u32) -> Result<Vec<u8>> {
-    guarded("display capture", || capture_display_inner(index, max_width))
+    match guarded("display capture", || capture_display_inner(index, max_width)) {
+        Ok(png) => Ok(png),
+        Err(error) if on_wayland() => {
+            let png = grim_capture(None).map_err(|_| error)?;
+            // Re-encode so max_width applies to this path too.
+            let image = image::load_from_memory(&png)
+                .map_err(|error| DesktopError::new(format!("grim returned an unreadable PNG: {error}")))?;
+            encode_png(image.to_rgba8(), max_width)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn capture_display_inner(index: usize, max_width: u32) -> Result<Vec<u8>> {
