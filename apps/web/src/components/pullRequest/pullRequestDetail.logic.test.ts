@@ -23,6 +23,7 @@ import {
   pullRequestHandoffLabels,
   readableFailure,
   resolveBaseFreshness,
+  resolvePullRequestManagementMenuLayout,
   buildPullRequestTimeline,
   describePullRequestState,
 } from "./pullRequestDetail.logic";
@@ -81,6 +82,27 @@ describe("pull request handoff labels", () => {
       resolve: "Resolve in a new thread",
       resolveConflicts: "Resolve conflicts in a thread",
     });
+  });
+});
+
+describe("pull request management menu layout", () => {
+  it("handles every combination without drawing a separator around an empty subsection", () => {
+    for (const showDraftAction of [false, true]) {
+      for (const showAutoMergeAction of [false, true]) {
+        for (const showMergeMethods of [false, true]) {
+          expect(
+            resolvePullRequestManagementMenuLayout({
+              showDraftAction,
+              showAutoMergeAction,
+              showMergeMethods,
+            }),
+          ).toEqual({
+            showGroup: showDraftAction || showAutoMergeAction || showMergeMethods,
+            showMergeMethodsSeparator: showMergeMethods && (showDraftAction || showAutoMergeAction),
+          });
+        }
+      }
+    }
   });
 });
 

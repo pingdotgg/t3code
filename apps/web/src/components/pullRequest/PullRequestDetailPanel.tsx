@@ -107,6 +107,7 @@ import {
   pullRequestHandoffLabels,
   readableFailure,
   resolveBaseFreshness,
+  resolvePullRequestManagementMenuLayout,
   type PullRequestFinding,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
@@ -1033,6 +1034,30 @@ export function PullRequestDetailPanel({
             : allowedMergeMethods.length > 0
               ? "merge"
               : null;
+  const showDraftMenuAction =
+    detail?.state === "open" &&
+    can(detail.isDraft ? "ready" : "draft") &&
+    !(detail.isDraft && primaryAction === "ready");
+  const showDisableAutoMergeMenuAction =
+    detail?.state === "open" && autoMergeArmed && can("disable-auto-merge");
+  const showEnableAutoMergeMenuAction =
+    detail?.state === "open" &&
+    !autoMergeArmed &&
+    !detail.isDraft &&
+    !conflicting &&
+    can("enable-auto-merge") &&
+    allowedMergeMethods.length > 0;
+  const showMergeMethodsMenu =
+    detail?.state === "open" &&
+    can("merge") &&
+    !detail.isDraft &&
+    !conflicting &&
+    allowedMergeMethods.length > 1;
+  const managementMenuLayout = resolvePullRequestManagementMenuLayout({
+    showDraftAction: showDraftMenuAction,
+    showAutoMergeAction: showDisableAutoMergeMenuAction || showEnableAutoMergeMenuAction,
+    showMergeMethods: showMergeMethodsMenu,
+  });
   // The pull request number carries this state in the overview and the right-panel tab mirrors
   // it. Conflicts keep their own row below: an open pull request remains green there.
   const statePresentation = detail
@@ -1179,14 +1204,13 @@ export function PullRequestDetailPanel({
                       disabled={handoff !== null}
                     />
                   ) : null}
-                  <MenuSeparator />
-                  {detail.state === "open" ? (
+                  {managementMenuLayout.showGroup ? (
                     <>
+                      <MenuSeparator />
                       {/* Only where the button row could not take it: "Ready for review" on a
                           draft is the primary header button, so offering it here as well would
                           show the same action twice. */}
-                      {can(detail.isDraft ? "ready" : "draft") &&
-                      !(detail.isDraft && primaryAction === "ready") ? (
+                      {showDraftMenuAction ? (
                         <MenuItem
                           disabled={actionPending}
                           onClick={() => void perform(detail.isDraft ? "ready" : "draft")}
@@ -1204,7 +1228,7 @@ export function PullRequestDetailPanel({
                           of it, because the reader who can wait and the reader who cannot are
                           the same person on different days — and a conflicting branch is neither,
                           since nothing the host waits for will clear it. */}
-                      {autoMergeArmed && can("disable-auto-merge") ? (
+                      {showDisableAutoMergeMenuAction ? (
                         <MenuItem
                           disabled={actionPending}
                           onClick={() => void perform("disable-auto-merge")}
@@ -1212,11 +1236,7 @@ export function PullRequestDetailPanel({
                           <GitMergeIcon className="size-3.5" />
                           Disable auto-merge
                         </MenuItem>
-                      ) : !autoMergeArmed &&
-                        !detail.isDraft &&
-                        !conflicting &&
-                        can("enable-auto-merge") &&
-                        allowedMergeMethods.length > 0 ? (
+                      ) : showEnableAutoMergeMenuAction ? (
                         <MenuItem
                           disabled={actionPending}
                           onClick={() => setConfirmAction("enable-auto-merge")}
@@ -1230,12 +1250,11 @@ export function PullRequestDetailPanel({
                           Hidden while conflicting: every method would fail. */}
                       {/* Only where merging is on offer at all: a strategy to merge with is not
                           a choice for someone who may not merge. */}
-                      {can("merge") &&
-                      !detail.isDraft &&
-                      !conflicting &&
-                      allowedMergeMethods.length > 1 ? (
+                      {showMergeMethodsMenu ? (
                         <>
-                          <MenuSeparator />
+                          {managementMenuLayout.showMergeMethodsSeparator ? (
+                            <MenuSeparator />
+                          ) : null}
                           <MenuRadioGroup
                             value={selectedMergeMethod}
                             onValueChange={(method) =>

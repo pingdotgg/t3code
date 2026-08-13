@@ -57,6 +57,19 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
       };
 }
 
+/** Keeps optional menu sections from leaving separators behind when every item is hidden. */
+export function resolvePullRequestManagementMenuLayout(input: {
+  readonly showDraftAction: boolean;
+  readonly showAutoMergeAction: boolean;
+  readonly showMergeMethods: boolean;
+}) {
+  const showActions = input.showDraftAction || input.showAutoMergeAction;
+  return {
+    showGroup: showActions || input.showMergeMethods,
+    showMergeMethodsSeparator: showActions && input.showMergeMethods,
+  };
+}
+
 /** Plain-language state, shown beside the author. Conflicts are a merge signal, not a state. */
 export function describePullRequestState(state: PullRequestState, isDraft: boolean): string {
   if (state === "merged") return "Merged";
