@@ -59,16 +59,6 @@ describe("requestLatencyState", () => {
     expect(getSlowRpcAckRequests()).toEqual([]);
   });
 
-  it.each([WS_METHODS.gitResolvePullRequest, WS_METHODS.gitPreparePullRequestThread])(
-    "ignores pull request action %s",
-    (method) => {
-      trackRpcRequestSent("1", method);
-      vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
-
-      expect(getSlowRpcAckRequests()).toEqual([]);
-    },
-  );
-
   it.each(Object.values(WS_METHODS).filter((method) => method.startsWith("pullRequests.")))(
     "ignores pull request workspace request %s",
     (method) => {

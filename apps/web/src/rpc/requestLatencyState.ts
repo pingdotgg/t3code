@@ -28,11 +28,7 @@ interface PendingRpcAckRequest {
 }
 
 const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
-const untrackedRpcAckMethods = new Set<string>([
-  WS_METHODS.gitPreparePullRequestThread,
-  WS_METHODS.gitResolvePullRequest,
-  WS_METHODS.previewAutomationConnect,
-]);
+const untrackedRpcAckMethods = new Set<string>([WS_METHODS.previewAutomationConnect]);
 const longRunningRpcAckMethods = new Set<string>([
   WS_METHODS.serverUpdateProvider,
   WS_METHODS.serverRefreshProviders,
