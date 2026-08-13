@@ -916,6 +916,47 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it.effect("declares the Apple Events usage description on macOS builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      const mac = config.mac as Record<string, unknown>;
+      const extendInfo = mac.extendInfo as Record<string, unknown>;
+      // Without this key macOS denies Apple Events with errAEEventNotPermitted
+      // (-1743) and never prompts, so desktop automation fails silently.
+      assert.isString(extendInfo.NSAppleEventsUsageDescription);
+      assert.isNotEmpty(extendInfo.NSAppleEventsUsageDescription as string);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("keeps the Apple Events usage description off non-macOS builds", () =>
+    Effect.gen(function* () {
+      for (const [platform, target] of [
+        ["win", "nsis"],
+        ["linux", "AppImage"],
+      ] as const) {
+        const config = yield* createBuildConfig(
+          platform,
+          target,
+          "1.2.3",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+        assert.notProperty(config, "mac");
+      }
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it.effect("keeps executable resource editing enabled for unsigned Windows builds", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig(
