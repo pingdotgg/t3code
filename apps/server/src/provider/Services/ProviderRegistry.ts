@@ -52,7 +52,8 @@ export interface ProviderRegistryShape {
    * Resolve the maintenance capabilities owned by one live provider instance.
    * Falls back to manual-only capabilities when the instance is not live.
    */
-  readonly getProviderMaintenanceCapabilitiesForInstance: (
+  /** Resolve ownership again from the active executable immediately before update. */
+  readonly resolveProviderMaintenanceCapabilitiesForInstance: (
     instanceId: ProviderInstanceId,
     provider: ProviderDriverKind,
   ) => Effect.Effect<ProviderMaintenanceCapabilities>;

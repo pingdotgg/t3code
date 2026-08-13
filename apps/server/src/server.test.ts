@@ -654,7 +654,7 @@ const buildAppUnderTest = (options?: {
             getProviders: Effect.succeed([]),
             refresh: () => Effect.succeed([]),
             refreshInstance: () => Effect.succeed([]),
-            getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+            resolveProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
               Effect.succeed(
                 makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
               ),
