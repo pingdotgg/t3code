@@ -187,6 +187,17 @@ describe("ServerSettings worktree defaults", () => {
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
   });
+
+  it("defaults the branch prefix to the built-in namespace for legacy configs", () => {
+    expect(decodeServerSettings({}).worktreeBranchPrefix).toBe("t3code/");
+  });
+
+  it("accepts a custom branch prefix, including an empty one", () => {
+    expect(decodeServerSettingsPatch({ worktreeBranchPrefix: "feat/" }).worktreeBranchPrefix).toBe(
+      "feat/",
+    );
+    expect(decodeServerSettingsPatch({ worktreeBranchPrefix: "" }).worktreeBranchPrefix).toBe("");
+  });
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {

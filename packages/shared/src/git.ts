@@ -108,6 +108,37 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
   return TEMP_WORKTREE_BRANCH_PATTERN.test(refName.trim().toLowerCase());
 }
 
+export function sanitizeBranchPrefix(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9/_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/\/+/g, "/")
+    .replace(/^\/+/, "")
+    .slice(0, 64);
+}
+
+function stripLeadingNamespace(value: string, namespace: string): string {
+  return namespace.length > 0 && value.startsWith(namespace)
+    ? value.slice(namespace.length)
+    : value;
+}
+
+export function buildGeneratedWorktreeBranchName(prefix: string, raw: string): string {
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^refs\/heads\//, "")
+    .replace(/['"`]/g, "");
+  const safePrefix = sanitizeBranchPrefix(prefix);
+  const withoutEcho = stripLeadingNamespace(
+    stripLeadingNamespace(normalized, `${WORKTREE_BRANCH_PREFIX}/`),
+    safePrefix,
+  );
+  return `${safePrefix}${sanitizeBranchFragment(withoutEcho)}`;
+}
+
 /**
  * Normalize a git remote URL into a stable comparison key.
  */

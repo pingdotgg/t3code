@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyGitStatusStreamEvent,
+  buildGeneratedWorktreeBranchName,
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
@@ -107,6 +108,55 @@ describe("isTemporaryWorktreeBranch", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
+  });
+});
+
+describe("buildGeneratedWorktreeBranchName", () => {
+  it("applies the default prefix", () => {
+    expect(buildGeneratedWorktreeBranchName("t3code/", "Multiselect Toggle")).toBe(
+      "t3code/multiselect-toggle",
+    );
+  });
+
+  it("applies a custom prefix verbatim", () => {
+    expect(buildGeneratedWorktreeBranchName("feat/", "Multiselect Toggle")).toBe(
+      "feat/multiselect-toggle",
+    );
+    expect(buildGeneratedWorktreeBranchName("wip-", "Multiselect Toggle")).toBe(
+      "wip-multiselect-toggle",
+    );
+  });
+
+  it("produces a bare name for an empty prefix", () => {
+    expect(buildGeneratedWorktreeBranchName("", "Multiselect Toggle")).toBe("multiselect-toggle");
+  });
+
+  it("strips a temporary-branch namespace the model echoed back", () => {
+    expect(buildGeneratedWorktreeBranchName("feat/", "t3code/multiselect-toggle")).toBe(
+      "feat/multiselect-toggle",
+    );
+  });
+
+  it("strips the configured prefix the model echoed back", () => {
+    expect(buildGeneratedWorktreeBranchName("feat/", "feat/multiselect-toggle")).toBe(
+      "feat/multiselect-toggle",
+    );
+    expect(buildGeneratedWorktreeBranchName("feat/", "refs/heads/feat/multiselect-toggle")).toBe(
+      "feat/multiselect-toggle",
+    );
+  });
+
+  it("filters characters git rejects in a prefix", () => {
+    expect(buildGeneratedWorktreeBranchName("feat branch/", "multiselect toggle")).toBe(
+      "feat-branch/multiselect-toggle",
+    );
+    expect(buildGeneratedWorktreeBranchName("//feat//", "multiselect toggle")).toBe(
+      "feat/multiselect-toggle",
+    );
+  });
+
+  it("falls back to update when the generated name sanitizes to nothing", () => {
+    expect(buildGeneratedWorktreeBranchName("feat/", "!!!")).toBe("feat/update");
   });
 });
 
