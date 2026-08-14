@@ -101,6 +101,12 @@ it.effect("parses keybinding rules", () =>
       command: "thread.previous",
     });
     assert.strictEqual(parsedThreadPrevious.command, "thread.previous");
+
+    const parsedThreadTogglePin = yield* decode(KeybindingRule, {
+      key: "mod+alt+shift+p",
+      command: "thread.togglePin",
+    });
+    assert.strictEqual(parsedThreadTogglePin.command, "thread.togglePin");
   }),
 );
 

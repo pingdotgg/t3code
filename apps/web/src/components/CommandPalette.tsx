@@ -1425,6 +1425,7 @@ function OpenCommandPaletteDialog(props: {
         ? ["unpin thread", "unpin current thread"]
         : ["pin thread", "pin current thread"],
       title: isPinned ? "Unpin current thread" : "Pin current thread",
+      shortcutCommand: "thread.togglePin",
       icon: isPinned ? (
         <PinOffIcon className={ITEM_ICON_CLASS} />
       ) : (
