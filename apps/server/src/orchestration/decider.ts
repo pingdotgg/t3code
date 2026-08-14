@@ -179,12 +179,135 @@ function withEventBase(
 // parent's activity list on the wire.
 const PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS = 4_000;
 
+// The parent's spawn activity and a no-turn spawn failure share this id so a
+// bootstrap failure (ws.ts) or an immediate provider-connect failure (below)
+// correct the same row in place instead of leaving it orphaned.
+function parallelAgentSpawnActivityId(childThreadId: string): string {
+  return `parallel-agent:started:${childThreadId}`;
+}
+
+function parallelAgentFinishedActivityId(childThreadId: string, turnId: string): string {
+  return `parallel-agent:finished:${childThreadId}:${turnId}`;
+}
+
+// Truncates on Unicode code points, not UTF-16 code units, so the cut never
+// lands inside a surrogate pair.
+function truncateParallelAgentResultPreview(text: string): string {
+  const codePoints = Array.from(text);
+  if (codePoints.length <= PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS) {
+    return text;
+  }
+  return `${codePoints.slice(0, PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS).join("")}…`;
+}
+
+function parallelAgentActivityOutcome(settledState: "completed" | "interrupted" | "error"): {
+  readonly kind: string;
+  readonly tone: "info" | "error";
+  readonly verb: string;
+} {
+  switch (settledState) {
+    case "error":
+      return { kind: "parallel-agent.failed", tone: "error", verb: "failed" };
+    case "interrupted":
+      return { kind: "parallel-agent.interrupted", tone: "info", verb: "was interrupted" };
+    case "completed":
+      return { kind: "parallel-agent.completed", tone: "info", verb: "finished" };
+  }
+}
+
 /**
- * The parent-thread activity for a parallel agent whose running turn this
- * session write settles, or null when the write is not a parallel-agent turn
- * end. The turn-settling condition mirrors the projector's: the child's
- * latest turn is still "running" and the new session status maps to a settled
- * state, so the activity fires exactly once per child turn.
+ * Best-effort assistant text for `turnId` on `thread`, read from whatever the
+ * read model already has. Buffered assistant delivery does not flush its
+ * text until after the turn-settling session write, so this is frequently
+ * null at settle time; parallelAgentResultBackfillEvent corrects the activity
+ * once the flush lands.
+ */
+function findParallelAgentResultText(thread: OrchestrationThread, turnId: string): string | null {
+  for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
+    const message = thread.messages[index];
+    if (
+      message !== undefined &&
+      message.role === "assistant" &&
+      message.turnId === turnId &&
+      message.text.trim().length > 0
+    ) {
+      return message.text;
+    }
+  }
+  return null;
+}
+
+// A parallel agent's spawn turn is the only one whose outcome is newsworthy
+// to the parent — continuing to chat with the child thread afterward must not
+// keep reporting back. The read model has no turn history, so this is
+// approximated from whether any assistant message from a DIFFERENT turn
+// already exists: if so, `turnId` cannot be the child's first turn.
+function isChildThreadFirstTurn(thread: OrchestrationThread, turnId: string): boolean {
+  return !thread.messages.some(
+    (message) =>
+      message.role === "assistant" && message.turnId !== null && message.turnId !== turnId,
+  );
+}
+
+function buildParallelAgentActivityEvent(input: {
+  readonly parentThreadId: OrchestrationThread["id"];
+  readonly childThread: OrchestrationThread;
+  readonly activityId: string;
+  readonly settledState: "completed" | "interrupted" | "error";
+  readonly turnId: string | null;
+  readonly resultText: string | null;
+  readonly occurredAt: string;
+  readonly commandId: OrchestrationCommand["commandId"];
+}): Effect.Effect<
+  Omit<OrchestrationEvent, "sequence">,
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  return Effect.gen(function* () {
+    const outcome = parallelAgentActivityOutcome(input.settledState);
+    return {
+      ...(yield* withEventBase({
+        aggregateKind: "thread",
+        aggregateId: input.parentThreadId,
+        occurredAt: input.occurredAt,
+        commandId: input.commandId,
+      })),
+      type: "thread.activity-appended",
+      payload: {
+        threadId: input.parentThreadId,
+        activity: {
+          id: EventId.make(input.activityId),
+          tone: outcome.tone,
+          kind: outcome.kind,
+          summary: `Parallel agent ${outcome.verb}: ${input.childThread.title}`,
+          payload: {
+            childThreadId: input.childThread.id,
+            childTitle: input.childThread.title,
+            turnId: input.turnId,
+            state: input.settledState,
+            ...(input.resultText === null
+              ? {}
+              : { detail: truncateParallelAgentResultPreview(input.resultText) }),
+          },
+          turnId: null,
+          createdAt: input.occurredAt,
+        },
+      },
+    };
+  });
+}
+
+/**
+ * The parent-thread activity for a parallel agent whose spawn turn this
+ * session write settles, or null when the write is not a parallel-agent
+ * spawn-turn end. Two shapes fire:
+ *  - the spawn turn was "running" and just settled (the common case), keyed
+ *    so a later backfill (parallelAgentResultBackfillEvent) or a bootstrap
+ *    failure (ws.ts) can correct the same row; or
+ *  - the child's session never reached "running" at all (e.g. the provider
+ *    failed to connect) and settles straight to "error" on its very first
+ *    write, which otherwise leaves the "started" activity permanently
+ *    unresolved.
  */
 function parallelAgentFinishedActivityEvent(input: {
   readonly readModel: OrchestrationReadModel;
@@ -205,67 +328,95 @@ function parallelAgentFinishedActivityEvent(input: {
     if (settledState === null) {
       return null;
     }
+    const parentThread = findThreadById(readModel, parentThreadId);
+    if (parentThread === undefined || parentThread.deletedAt !== null) {
+      return null;
+    }
     const finishedTurn = thread.latestTurn;
-    if (finishedTurn === null || finishedTurn.state !== "running") {
+    if (finishedTurn === null) {
+      // No turn ever reached "running": only a spawn that never got going at
+      // all is worth correcting the "started" row for.
+      if (settledState !== "error" || thread.messages.length > 0) {
+        return null;
+      }
+      return yield* buildParallelAgentActivityEvent({
+        parentThreadId: parentThread.id,
+        childThread: thread,
+        activityId: parallelAgentSpawnActivityId(thread.id),
+        settledState,
+        turnId: null,
+        resultText: null,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+      });
+    }
+    if (finishedTurn.state !== "running" || !isChildThreadFirstTurn(thread, finishedTurn.turnId)) {
+      return null;
+    }
+    return yield* buildParallelAgentActivityEvent({
+      parentThreadId: parentThread.id,
+      childThread: thread,
+      activityId: parallelAgentFinishedActivityId(thread.id, finishedTurn.turnId),
+      settledState,
+      turnId: finishedTurn.turnId,
+      resultText: findParallelAgentResultText(thread, finishedTurn.turnId),
+      occurredAt: command.createdAt,
+      commandId: command.commandId,
+    });
+  });
+}
+
+/**
+ * Corrects a parallel agent's parent-thread activity once the child's final
+ * assistant text actually lands. Buffered assistant delivery flushes its
+ * text via a `thread.message.assistant.delta` dispatched AFTER the
+ * turn-settling `thread.session.set` (ProviderRuntimeIngestion.finalizeAssistantMessage),
+ * so parallelAgentFinishedActivityEvent frequently fires with no detail —
+ * this replaces that same activity id once the flush carries the real text.
+ */
+function parallelAgentResultBackfillEvent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: Extract<OrchestrationCommand, { type: "thread.message.assistant.delta" }>;
+  readonly thread: OrchestrationThread;
+}): Effect.Effect<
+  Omit<OrchestrationEvent, "sequence"> | null,
+  PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  return Effect.gen(function* () {
+    const { readModel, command, thread } = input;
+    const parentThreadId = thread.parentThreadId ?? null;
+    if (parentThreadId === null || command.turnId === undefined) {
+      return null;
+    }
+    const finishedTurn = thread.latestTurn;
+    if (
+      finishedTurn === null ||
+      finishedTurn.turnId !== command.turnId ||
+      finishedTurn.state === "running" ||
+      !isChildThreadFirstTurn(thread, finishedTurn.turnId)
+    ) {
+      return null;
+    }
+    const existingMessage = thread.messages.find((message) => message.id === command.messageId);
+    const resultText = `${existingMessage?.text ?? ""}${command.delta}`;
+    if (resultText.trim().length === 0) {
       return null;
     }
     const parentThread = findThreadById(readModel, parentThreadId);
     if (parentThread === undefined || parentThread.deletedAt !== null) {
       return null;
     }
-    let resultText: string | null = null;
-    for (let index = thread.messages.length - 1; index >= 0; index -= 1) {
-      const message = thread.messages[index];
-      if (
-        message !== undefined &&
-        message.role === "assistant" &&
-        message.turnId === finishedTurn.turnId &&
-        message.text.trim().length > 0
-      ) {
-        resultText = message.text;
-        break;
-      }
-    }
-    const outcome =
-      settledState === "error"
-        ? ({ kind: "parallel-agent.failed", tone: "error", verb: "failed" } as const)
-        : settledState === "interrupted"
-          ? ({ kind: "parallel-agent.interrupted", tone: "info", verb: "was interrupted" } as const)
-          : ({ kind: "parallel-agent.completed", tone: "info", verb: "finished" } as const);
-    return {
-      ...(yield* withEventBase({
-        aggregateKind: "thread",
-        aggregateId: parentThread.id,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
-      })),
-      type: "thread.activity-appended",
-      payload: {
-        threadId: parentThread.id,
-        activity: {
-          id: EventId.make(`parallel-agent:finished:${thread.id}:${finishedTurn.turnId}`),
-          tone: outcome.tone,
-          kind: outcome.kind,
-          summary: `Parallel agent ${outcome.verb}: ${thread.title}`,
-          payload: {
-            childThreadId: thread.id,
-            childTitle: thread.title,
-            turnId: finishedTurn.turnId,
-            state: settledState,
-            ...(resultText === null
-              ? {}
-              : {
-                  detail:
-                    resultText.length > PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS
-                      ? `${resultText.slice(0, PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS)}…`
-                      : resultText,
-                }),
-          },
-          turnId: null,
-          createdAt: command.createdAt,
-        },
-      },
-    };
+    return yield* buildParallelAgentActivityEvent({
+      parentThreadId: parentThread.id,
+      childThread: thread,
+      activityId: parallelAgentFinishedActivityId(thread.id, finishedTurn.turnId),
+      settledState: finishedTurn.state,
+      turnId: finishedTurn.turnId,
+      resultText,
+      occurredAt: command.createdAt,
+      commandId: command.commandId,
+    });
   });
 }
 
@@ -1382,12 +1533,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.delta": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const messageSentEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1406,6 +1557,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+      const backfillEvent = yield* parallelAgentResultBackfillEvent({ readModel, command, thread });
+      return backfillEvent === null ? messageSentEvent : [backfillEvent, messageSentEvent];
     }
 
     case "thread.message.assistant.complete": {

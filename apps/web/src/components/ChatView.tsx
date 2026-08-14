@@ -4887,6 +4887,24 @@ function ChatViewContent(props: ChatViewProps) {
     if (!sendCtx?.providerAvailable) {
       return false;
     }
+    // In worktree mode, require an explicit base branch so a null branch
+    // never silently falls back to running the child in the parent's own
+    // checkout (see onSend's matching shouldCreateWorktree guard). Reconcile
+    // against the local checkout too, the same way onSend does, so a base
+    // branch that's moved under the user doesn't get baked into the spawn.
+    const reconciledBranch = localCheckoutBranchMismatch
+      ? localCheckoutBranchMismatch.currentBranch
+      : activeThreadBranch;
+    if (isGitRepo && !reconciledBranch) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Select a base branch first",
+          description: "/parallel needs a base branch to create the agent's worktree from.",
+        }),
+      );
+      return false;
+    }
     const createdAt = new Date().toISOString();
     const childThreadId = newThreadId();
     const childTitle = truncate(subtaskPrompt);
@@ -4900,7 +4918,7 @@ function ChatViewContent(props: ChatViewProps) {
     // Parallel agents get their own worktree off the parent's branch so
     // simultaneous edits don't fight over one checkout. Without git there is
     // no isolation to offer: the child shares the parent's workspace.
-    const worktreeBaseBranch = isGitRepo ? activeThreadBranch : null;
+    const worktreeBaseBranch = isGitRepo ? reconciledBranch : null;
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: worktreeBaseBranch !== null });
     const startResult = await startThreadTurn({
@@ -4924,7 +4942,7 @@ function ChatViewContent(props: ChatViewProps) {
             modelSelection: sendCtx.selectedModelSelection,
             runtimeMode,
             interactionMode: "default",
-            branch: activeThreadBranch,
+            branch: reconciledBranch,
             worktreePath: worktreeBaseBranch !== null ? null : activeThread.worktreePath,
             parentThreadId: activeThread.id,
             createdAt,
@@ -4965,7 +4983,10 @@ function ChatViewContent(props: ChatViewProps) {
       stackedThreadToast({
         type: "success",
         title: "Parallel agent started",
-        description: childTitle,
+        description:
+          runtimeMode === "approval-required"
+            ? `${childTitle} — uses Supervised mode; open the thread if it needs your approval.`
+            : childTitle,
       }),
     );
     return true;
@@ -5069,6 +5090,50 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
+    // `/parallel <prompt>` runs the prompt on a parallel agent in a linked
+    // sibling thread instead of this one. Checked before the plan follow-up
+    // branch below so a proposed plan awaiting a response can't swallow it
+    // as plain follow-up text. Text-only: attachments and contexts stay in
+    // the composer so nothing is silently dropped, so this checks the full
+    // (not just sendable/non-expired) context lists.
+    const parallelAgentPrompt = directAnnotation
+      ? null
+      : parseParallelAgentComposerCommand(trimmed);
+    if (parallelAgentPrompt !== null) {
+      const hasNonTextContent =
+        composerImages.length > 0 ||
+        composerTerminalContexts.length > 0 ||
+        composerElementContexts.length > 0 ||
+        composerPreviewAnnotations.length > 0 ||
+        composerReviewComments.length > 0;
+      if (hasNonTextContent) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "/parallel is text-only",
+            description: "Remove attachments and contexts before spawning a parallel agent.",
+          }),
+        );
+        return;
+      }
+      if (!isServerThread) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Start this thread first",
+            description: "/parallel spawns agents from an existing thread they can report back to.",
+          }),
+        );
+        return;
+      }
+      const spawned = await spawnParallelAgent(parallelAgentPrompt);
+      if (spawned) {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
+      return;
+    }
     if (!directAnnotation && showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -5099,47 +5164,6 @@ function ChatViewContent(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
-      return;
-    }
-    // `/parallel <prompt>` runs the prompt on a parallel agent in a linked
-    // sibling thread instead of this one. Text-only: attachments and contexts
-    // stay in the composer so nothing is silently dropped.
-    const parallelAgentPrompt = directAnnotation
-      ? null
-      : parseParallelAgentComposerCommand(trimmed);
-    if (parallelAgentPrompt !== null) {
-      const hasNonTextContent =
-        composerImages.length > 0 ||
-        sendableComposerTerminalContexts.length > 0 ||
-        composerElementContexts.length > 0 ||
-        composerPreviewAnnotations.length > 0 ||
-        composerReviewComments.length > 0;
-      if (hasNonTextContent) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "/parallel is text-only",
-            description: "Remove attachments and contexts before spawning a parallel agent.",
-          }),
-        );
-        return;
-      }
-      if (!isServerThread) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Start this thread first",
-            description: "/parallel spawns agents from an existing thread they can report back to.",
-          }),
-        );
-        return;
-      }
-      const spawned = await spawnParallelAgent(parallelAgentPrompt);
-      if (spawned) {
-        promptRef.current = "";
-        clearComposerDraftContent(composerDraftTarget);
-        composerRef.current?.resetCursorState();
-      }
       return;
     }
     if (!hasSendableContent) {

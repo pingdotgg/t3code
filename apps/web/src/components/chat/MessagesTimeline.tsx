@@ -2223,6 +2223,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
+  const ctx = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -2367,9 +2368,24 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[11px] leading-relaxed select-text">
-            {expandedBody}
-          </pre>
+          {workEntry.sourceActivityKind?.startsWith("parallel-agent.") ? (
+            // A parallel agent's result is the child's assistant prose, not
+            // tool/command output — render it as markdown instead of the
+            // raw monospace preview below, which would show it unrendered.
+            <div className="max-h-64 cursor-text overflow-auto text-[13px] leading-relaxed select-text">
+              <ChatMarkdown
+                text={expandedBody}
+                cwd={ctx.markdownCwd}
+                threadRef={ctx.threadRef ?? undefined}
+                className="text-message-foreground"
+                lineBreaks
+              />
+            </div>
+          ) : (
+            <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[11px] leading-relaxed select-text">
+              {expandedBody}
+            </pre>
+          )}
         </div>
       ) : null}
     </div>

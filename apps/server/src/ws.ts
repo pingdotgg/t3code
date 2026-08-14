@@ -763,6 +763,46 @@ const makeWsRpcLayer = (
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
           let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
 
+          // The parent's "parallel agent started" activity is recorded
+          // atomically with the child's thread.create, before worktree prep,
+          // setup, and the final turn start have a chance to fail. On
+          // cleanup, correct that same activity row (same deterministic id)
+          // to "failed to start" instead of leaving it permanently stuck on
+          // "started" with a child thread that no longer exists.
+          const recordParallelAgentSpawnFailure = () => {
+            const parentThreadId = bootstrap?.createThread?.parentThreadId;
+            const childTitle = bootstrap?.createThread?.title;
+            if (!parentThreadId || !childTitle) {
+              return Effect.void;
+            }
+            return Effect.all({
+              commandId: serverCommandId("bootstrap-parallel-agent-spawn-failed"),
+              failedAt: nowIso,
+            }).pipe(
+              Effect.flatMap(({ commandId, failedAt }) =>
+                orchestrationEngine.dispatch({
+                  type: "thread.activity.append",
+                  commandId,
+                  threadId: parentThreadId,
+                  activity: {
+                    id: EventId.make(`parallel-agent:started:${command.threadId}`),
+                    tone: "error",
+                    kind: "parallel-agent.failed",
+                    summary: `Parallel agent failed to start: ${childTitle}`,
+                    payload: {
+                      childThreadId: command.threadId,
+                      childTitle,
+                    },
+                    turnId: null,
+                    createdAt: failedAt,
+                  },
+                  createdAt: failedAt,
+                }),
+              ),
+              Effect.ignoreCause({ log: true }),
+            );
+          };
+
           const cleanupCreatedThread = () =>
             createdThread
               ? serverCommandId("bootstrap-thread-delete").pipe(
@@ -774,6 +814,7 @@ const makeWsRpcLayer = (
                     }),
                   ),
                   Effect.ignoreCause({ log: true }),
+                  Effect.flatMap(() => recordParallelAgentSpawnFailure()),
                 )
               : Effect.void;
 

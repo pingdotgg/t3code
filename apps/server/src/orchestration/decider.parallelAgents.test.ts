@@ -315,4 +315,284 @@ it.layer(NodeServices.layer)("parallel agent decider", (it) => {
       expect(orphanEvents.map((event) => event.type)).toEqual(["thread.session-set"]);
     }),
   );
+
+  it.effect("backfills the parent activity once the buffered assistant text flushes", () =>
+    Effect.gen(function* () {
+      // Buffered delivery settles the session before the assistant text is
+      // flushed, so the turn-end activity has no detail yet.
+      const settlingChild = makeThread({
+        id: CHILD_THREAD_ID,
+        title: "Fix the flaky tests",
+        parentThreadId: PARENT_THREAD_ID,
+        latestTurn: {
+          turnId: TURN_ID,
+          state: "running",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      });
+      const settleDecision = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set"),
+          threadId: CHILD_THREAD_ID,
+          session: makeChildSession("idle"),
+          createdAt: NOW,
+        },
+        readModel: makeReadModel([makeThread(), settlingChild]),
+      });
+      const settleEvents = Array.isArray(settleDecision) ? settleDecision : [settleDecision];
+      const [initialActivityEvent] = settleEvents;
+      if (initialActivityEvent?.type !== "thread.activity-appended") {
+        throw new Error("expected a parent activity on settle");
+      }
+      expect(initialActivityEvent.payload.activity.payload).not.toHaveProperty("detail");
+      const activityId = initialActivityEvent.payload.activity.id;
+
+      // The settled child thread, as the read model looks once session.set
+      // above has committed: turn is no longer "running".
+      const settledChild = makeThread({
+        id: CHILD_THREAD_ID,
+        title: "Fix the flaky tests",
+        parentThreadId: PARENT_THREAD_ID,
+        latestTurn: {
+          turnId: TURN_ID,
+          state: "completed",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: NOW,
+          assistantMessageId: null,
+        },
+      });
+      const backfillDecision = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("cmd-assistant-delta-flush"),
+          threadId: CHILD_THREAD_ID,
+          messageId: MessageId.make("message-1"),
+          delta: "All tests pass now.",
+          turnId: TURN_ID,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel([makeThread(), settledChild]),
+      });
+      const backfillEvents = Array.isArray(backfillDecision)
+        ? backfillDecision
+        : [backfillDecision];
+      expect(backfillEvents.map((event) => event.type)).toEqual([
+        "thread.activity-appended",
+        "thread.message-sent",
+      ]);
+      const [backfillActivityEvent] = backfillEvents;
+      if (backfillActivityEvent?.type !== "thread.activity-appended") {
+        throw new Error("expected a backfilled parent activity");
+      }
+      // Same id as the original: the projector replaces it in place.
+      expect(backfillActivityEvent.payload.activity.id).toBe(activityId);
+      expect(backfillActivityEvent.payload.activity.payload).toMatchObject({
+        detail: "All tests pass now.",
+      });
+    }),
+  );
+
+  it.effect("does not backfill a mid-turn delta or a later, unrelated turn", () =>
+    Effect.gen(function* () {
+      // Mid-turn delta: the turn is still "running", not the late flush.
+      const runningChild = makeThread({
+        id: CHILD_THREAD_ID,
+        parentThreadId: PARENT_THREAD_ID,
+        latestTurn: {
+          turnId: TURN_ID,
+          state: "running",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      });
+      const midTurnDecision = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("cmd-mid-turn-delta"),
+          threadId: CHILD_THREAD_ID,
+          messageId: MessageId.make("message-1"),
+          delta: "still working",
+          turnId: TURN_ID,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel([makeThread(), runningChild]),
+      });
+      const midTurnEvents = Array.isArray(midTurnDecision) ? midTurnDecision : [midTurnDecision];
+      expect(midTurnEvents.map((event) => event.type)).toEqual(["thread.message-sent"]);
+
+      // A later, second turn settling must not re-notify the parent.
+      const secondTurnId = TurnId.make("turn-2");
+      const secondTurnChild = makeThread({
+        id: CHILD_THREAD_ID,
+        parentThreadId: PARENT_THREAD_ID,
+        latestTurn: {
+          turnId: secondTurnId,
+          state: "completed",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: NOW,
+          assistantMessageId: null,
+        },
+        messages: [
+          {
+            id: MessageId.make("message-1"),
+            role: "assistant",
+            text: "First result.",
+            turnId: TURN_ID,
+            streaming: false,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+        ],
+      });
+      const secondTurnDecision = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("cmd-second-turn-delta"),
+          threadId: CHILD_THREAD_ID,
+          messageId: MessageId.make("message-2"),
+          delta: "Unrelated follow-up answer.",
+          turnId: secondTurnId,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel([makeThread(), secondTurnChild]),
+      });
+      const secondTurnEvents = Array.isArray(secondTurnDecision)
+        ? secondTurnDecision
+        : [secondTurnDecision];
+      expect(secondTurnEvents.map((event) => event.type)).toEqual(["thread.message-sent"]);
+    }),
+  );
+
+  it.effect(
+    "surfaces a failed-to-start activity when the child never reaches 'running', and never a second turn",
+    () =>
+      Effect.gen(function* () {
+        // The provider failed to connect at all: no turn was ever running.
+        const neverStartedChild = makeThread({
+          id: CHILD_THREAD_ID,
+          title: "Fix the flaky tests",
+          parentThreadId: PARENT_THREAD_ID,
+          latestTurn: null,
+          messages: [],
+        });
+        const decision = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-session-set-never-started"),
+            threadId: CHILD_THREAD_ID,
+            session: makeChildSession("error"),
+            createdAt: NOW,
+          },
+          readModel: makeReadModel([makeThread(), neverStartedChild]),
+        });
+        const events = Array.isArray(decision) ? decision : [decision];
+        expect(events.map((event) => event.type)).toEqual([
+          "thread.activity-appended",
+          "thread.session-set",
+        ]);
+        const [activityEvent] = events;
+        if (activityEvent?.type !== "thread.activity-appended") {
+          throw new Error("expected a failed-to-start activity");
+        }
+        // Same id as the spawn activity, so it corrects that row in place.
+        expect(activityEvent.payload.activity.id).toBe(`parallel-agent:started:${CHILD_THREAD_ID}`);
+        expect(activityEvent.payload.activity.kind).toBe("parallel-agent.failed");
+
+        // A second, later immediate-failure write for the same never-started
+        // thread must not fire twice: once messages/turns exist the guard no
+        // longer treats it as "never got going".
+        const alreadyReportedChild = makeThread({
+          id: CHILD_THREAD_ID,
+          parentThreadId: PARENT_THREAD_ID,
+          latestTurn: null,
+          messages: [
+            {
+              id: MessageId.make("message-1"),
+              role: "user",
+              text: "retry",
+              turnId: null,
+              streaming: false,
+              createdAt: NOW,
+              updatedAt: NOW,
+            },
+          ],
+        });
+        const secondDecision = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-session-set-never-started-2"),
+            threadId: CHILD_THREAD_ID,
+            session: makeChildSession("error"),
+            createdAt: NOW,
+          },
+          readModel: makeReadModel([makeThread(), alreadyReportedChild]),
+        });
+        const secondEvents = Array.isArray(secondDecision) ? secondDecision : [secondDecision];
+        expect(secondEvents.map((event) => event.type)).toEqual(["thread.session-set"]);
+      }),
+  );
+
+  it.effect("truncates the result preview without splitting a surrogate pair", () =>
+    Effect.gen(function* () {
+      const settlingChild = makeThread({
+        id: CHILD_THREAD_ID,
+        parentThreadId: PARENT_THREAD_ID,
+        latestTurn: {
+          turnId: TURN_ID,
+          state: "running",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: NOW,
+          assistantMessageId: null,
+        },
+      });
+      // An emoji (surrogate pair) straddling the 4,000-char cut point.
+      const longText = `${"a".repeat(3_999)}😀${"b".repeat(10)}`;
+      const decision = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-long-text"),
+          threadId: CHILD_THREAD_ID,
+          session: makeChildSession("idle"),
+          createdAt: NOW,
+        },
+        readModel: makeReadModel([
+          makeThread(),
+          {
+            ...settlingChild,
+            messages: [
+              {
+                id: MessageId.make("message-1"),
+                role: "assistant",
+                text: longText,
+                turnId: TURN_ID,
+                streaming: false,
+                createdAt: NOW,
+                updatedAt: NOW,
+              },
+            ],
+          },
+        ]),
+      });
+      const events = Array.isArray(decision) ? decision : [decision];
+      const [activityEvent] = events;
+      if (activityEvent?.type !== "thread.activity-appended") {
+        throw new Error("expected a parent activity");
+      }
+      const detail = (activityEvent.payload.activity.payload as { detail?: string }).detail;
+      expect(detail).toBeDefined();
+      // No lone surrogate at the end: the string round-trips through
+      // Array.from without losing a paired code point.
+      expect(Array.from(detail!).length).not.toBe(0);
+      expect(detail!.endsWith("😀…")).toBe(true);
+    }),
+  );
 });
