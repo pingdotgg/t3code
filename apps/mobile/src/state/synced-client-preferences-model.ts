@@ -91,6 +91,30 @@ export function createPlanModePreferenceWrite(input: {
   };
 }
 
+export function createPlanModePreferenceWriteController() {
+  let latestRequestedUpdatedAt: string | undefined;
+
+  return {
+    create(input: Parameters<typeof createPlanModePreferenceWrite>[0]) {
+      const write = createPlanModePreferenceWrite({
+        ...input,
+        currentUpdatedAts: [latestRequestedUpdatedAt, ...input.currentUpdatedAts],
+      });
+      latestRequestedUpdatedAt = write.localPatch.syncedClientPreferencesUpdatedAt;
+      return write;
+    },
+    settle<E>(input: {
+      readonly target: PlanModePreferencePatchTarget;
+      readonly result: AtomCommandResult<SyncedClientPreferences, E>;
+    }): Partial<Preferences> | null {
+      if (input.target.input.updatedAt !== latestRequestedUpdatedAt) return null;
+      return input.result._tag === "Success"
+        ? canonicalPlanModePreferencePatch(input.result.value)
+        : null;
+    },
+  };
+}
+
 export function reconcilePlanModePreferences(input: {
   readonly localPlanModeEnabled: boolean | undefined;
   readonly localUpdatedAt: string | undefined;
@@ -104,22 +128,21 @@ export function reconcilePlanModePreferences(input: {
     return { localPatch: null, environmentPatches: [] };
   }
 
-  const environmentCandidates = input.environments
-    .flatMap((environment) =>
-      environment.preferences?.planModeEnabled === undefined
-        ? []
-        : [
-            {
-              source: environment.environmentId,
-              value: environment.preferences.planModeEnabled,
-              updatedAt: environment.preferences.updatedAt,
-            },
-          ],
-    )
-    .toSorted(
-      (left, right) =>
-        left.updatedAt.localeCompare(right.updatedAt) || left.source.localeCompare(right.source),
-    );
+  const environmentCandidates = input.environments.flatMap((environment) =>
+    environment.preferences?.planModeEnabled === undefined
+      ? []
+      : [
+          {
+            source: environment.environmentId,
+            value: environment.preferences.planModeEnabled,
+            updatedAt: environment.preferences.updatedAt,
+          },
+        ],
+  );
+  environmentCandidates.sort(
+    (left, right) =>
+      left.updatedAt.localeCompare(right.updatedAt) || left.source.localeCompare(right.source),
+  );
   const latestEnvironment = environmentCandidates.at(-1);
   const latestObservedEnvironmentUpdatedAt = input.environments.reduce<string | undefined>(
     (latest, environment) => {

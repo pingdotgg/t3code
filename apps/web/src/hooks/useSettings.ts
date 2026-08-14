@@ -269,16 +269,20 @@ export function nextSyncedClientPreferencesUpdatedAt(
 export function createSyncedPlanModeWrite(input: {
   readonly value: boolean;
   readonly serverPreferences: SyncedClientPreferences | undefined;
+  readonly pendingUpdatedAt?: string;
   readonly now: string;
 }) {
+  const serverUpdatedAt = input.serverPreferences?.updatedAt;
+  const currentUpdatedAt =
+    input.pendingUpdatedAt !== undefined &&
+    (serverUpdatedAt === undefined || input.pendingUpdatedAt > serverUpdatedAt)
+      ? input.pendingUpdatedAt
+      : serverUpdatedAt;
   return {
     clientPatch: { planModeEnabled: input.value },
     request: {
       patch: { planModeEnabled: input.value },
-      updatedAt: nextSyncedClientPreferencesUpdatedAt(
-        input.serverPreferences?.updatedAt,
-        input.now,
-      ),
+      updatedAt: nextSyncedClientPreferencesUpdatedAt(currentUpdatedAt, input.now),
     },
   } as const;
 }
@@ -345,7 +349,18 @@ export function resolveSyncedPlanModeHydrationAction(input: {
   };
 }
 
-export function createSyncedPlanModeHydrationController() {
+const SYNCED_PLAN_MODE_RETRY_DELAY_MS = 1_000;
+
+type SyncedPlanModeRetryScheduler = (retry: () => void) => () => void;
+
+const scheduleSyncedPlanModeRetry: SyncedPlanModeRetryScheduler = (retry) => {
+  const timer = setTimeout(retry, SYNCED_PLAN_MODE_RETRY_DELAY_MS);
+  return () => clearTimeout(timer);
+};
+
+export function createSyncedPlanModeHydrationController(
+  scheduleRetry: SyncedPlanModeRetryScheduler = scheduleSyncedPlanModeRetry,
+) {
   const adoptedUpdatedAtByEnvironment = new Map<EnvironmentId, string>();
   const seedPendingByEnvironment = new Map<EnvironmentId, string>();
   const writePendingByEnvironment = new Map<
@@ -353,6 +368,22 @@ export function createSyncedPlanModeHydrationController() {
     { readonly value: boolean; readonly updatedAt: string }
   >();
   const writeInFlightByEnvironment = new Map<EnvironmentId, string>();
+  const synchronizeAgainByEnvironment = new Map<EnvironmentId, () => void>();
+  const cancelRetryByEnvironment = new Map<EnvironmentId, () => void>();
+  const cancelRetry = (environmentId: EnvironmentId) => {
+    cancelRetryByEnvironment.get(environmentId)?.();
+    cancelRetryByEnvironment.delete(environmentId);
+  };
+  const requestRetry = (environmentId: EnvironmentId) => {
+    if (cancelRetryByEnvironment.has(environmentId)) return;
+    cancelRetryByEnvironment.set(
+      environmentId,
+      scheduleRetry(() => {
+        cancelRetryByEnvironment.delete(environmentId);
+        synchronizeAgainByEnvironment.get(environmentId)?.();
+      }),
+    );
+  };
   const markAdopted = (environmentId: EnvironmentId, updatedAt: string) => {
     const current = adoptedUpdatedAtByEnvironment.get(environmentId);
     if (current === undefined || updatedAt > current) {
@@ -373,6 +404,7 @@ export function createSyncedPlanModeHydrationController() {
       if (seedPendingByEnvironment.get(input.environmentId) === input.requestedUpdatedAt) {
         seedPendingByEnvironment.delete(input.environmentId);
       }
+      requestRetry(input.environmentId);
       return;
     }
 
@@ -382,6 +414,7 @@ export function createSyncedPlanModeHydrationController() {
       seedPendingByEnvironment.get(input.environmentId) === input.requestedUpdatedAt;
     if (!matchingWrite && !matchingSeed) return;
 
+    cancelRetry(input.environmentId);
     if (matchingWrite) writePendingByEnvironment.delete(input.environmentId);
     if (matchingSeed) seedPendingByEnvironment.delete(input.environmentId);
     markAdopted(input.environmentId, input.result.value.updatedAt);
@@ -405,9 +438,13 @@ export function createSyncedPlanModeHydrationController() {
 
   const synchronize = <E>(input: SyncedPlanModeHydrationInput<E>) => {
     const environmentId = input.environmentId;
-    if (environmentId === null || environmentId !== input.primaryEnvironmentId || !input.live) {
+    if (environmentId === null) return;
+    if (environmentId !== input.primaryEnvironmentId || !input.live) {
+      synchronizeAgainByEnvironment.delete(environmentId);
+      cancelRetry(environmentId);
       return;
     }
+    synchronizeAgainByEnvironment.set(environmentId, () => synchronize(input));
     if (input.serverPreferences?.planModeEnabled !== undefined) {
       seedPendingByEnvironment.delete(environmentId);
     }
@@ -419,6 +456,7 @@ export function createSyncedPlanModeHydrationController() {
     ) {
       writePendingByEnvironment.delete(environmentId);
       writeInFlightByEnvironment.delete(environmentId);
+      cancelRetry(environmentId);
     }
     const activePendingWrite = writePendingByEnvironment.get(environmentId);
     if (
@@ -481,17 +519,31 @@ export function createSyncedPlanModeHydrationController() {
     readonly patch: SyncedPlanModePatch<E>;
     readonly persist: (value: boolean) => void;
   }) => {
-    if (input.environmentId === null || !input.canPatch) return;
+    if (input.environmentId === null) return;
     const environmentId = input.environmentId;
+    const controllerUpdatedAt = [
+      adoptedUpdatedAtByEnvironment.get(environmentId),
+      seedPendingByEnvironment.get(environmentId),
+      writePendingByEnvironment.get(environmentId)?.updatedAt,
+      writeInFlightByEnvironment.get(environmentId),
+    ].reduce<string | undefined>(
+      (latest, candidate) =>
+        candidate !== undefined && (latest === undefined || candidate > latest)
+          ? candidate
+          : latest,
+      undefined,
+    );
     const next = createSyncedPlanModeWrite({
       value: input.value,
       serverPreferences: input.serverPreferences,
+      ...(controllerUpdatedAt === undefined ? {} : { pendingUpdatedAt: controllerUpdatedAt }),
       now: input.now,
     });
     writePendingByEnvironment.set(environmentId, {
       value: input.value,
       updatedAt: next.request.updatedAt,
     });
+    if (!input.canPatch) return;
     dispatchPatch<E>({
       target: { environmentId, input: next.request },
       patch: input.patch,
@@ -503,10 +555,13 @@ export function createSyncedPlanModeHydrationController() {
     synchronize,
     write,
     reset() {
+      for (const cancel of cancelRetryByEnvironment.values()) cancel();
       adoptedUpdatedAtByEnvironment.clear();
       seedPendingByEnvironment.clear();
       writePendingByEnvironment.clear();
       writeInFlightByEnvironment.clear();
+      synchronizeAgainByEnvironment.clear();
+      cancelRetryByEnvironment.clear();
     },
   };
 }
@@ -683,7 +738,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     serverEnvironment.updateSettings,
     "server settings update",
   );
-  const syncedEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  const syncedEnvironmentId = environmentId;
   const synced = useEnvironmentSyncedClientPreferences(syncedEnvironmentId);
   const canPatchSyncedPreferences = useCanPatchSyncedClientPreferences(syncedEnvironmentId);
   const patchSyncedClientPreferences = useAtomCommand(

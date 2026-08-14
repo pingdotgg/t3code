@@ -7,6 +7,7 @@ import {
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
+import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { act, createElement, Fragment } from "react";
 import { createRoot } from "react-dom/client";
@@ -333,6 +334,172 @@ describe("synced plan mode", () => {
     });
 
     expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("uploads an offline write when patch access becomes available", async () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const controller = createSyncedPlanModeHydrationController();
+    const previous = {
+      planModeEnabled: false,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    const patch = vi.fn(async (target) =>
+      AsyncResult.success({
+        planModeEnabled: target.input.patch.planModeEnabled,
+        updatedAt: target.input.updatedAt,
+      }),
+    );
+
+    controller.write({
+      environmentId: primaryEnvironmentId,
+      value: true,
+      serverPreferences: previous,
+      canPatch: false,
+      now: "2026-08-14T12:01:00.000Z",
+      patch,
+      persist: vi.fn(),
+    });
+    controller.synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: true,
+      live: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: "2026-08-14T12:02:00.000Z",
+      patch,
+      persist: vi.fn(),
+    });
+    await Promise.resolve();
+
+    expect(patch).toHaveBeenCalledWith({
+      environmentId: primaryEnvironmentId,
+      input: {
+        patch: { planModeEnabled: true },
+        updatedAt: "2026-08-14T12:01:00.000Z",
+      },
+    });
+  });
+
+  it.each(["write", "seed"] as const)("retries a failed %s patch", async (kind) => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const scheduledRetries: Array<() => void> = [];
+    const controller = createSyncedPlanModeHydrationController((retry) => {
+      scheduledRetries.push(retry);
+      return vi.fn();
+    });
+    const previous = {
+      planModeEnabled: false,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    const patch = vi
+      .fn()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
+      .mockImplementation(async (target) =>
+        AsyncResult.success({
+          planModeEnabled: target.input.patch.planModeEnabled,
+          updatedAt: target.input.updatedAt,
+        }),
+      );
+    const hydrationInput = {
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: true,
+      live: true,
+      serverPreferences: kind === "seed" ? undefined : previous,
+      canPatch: true,
+      now: "2026-08-14T12:01:00.000Z",
+      patch,
+      persist: vi.fn(),
+    } satisfies SyncedPlanModeHydrationInput<string>;
+
+    controller.synchronize(hydrationInput);
+    if (kind === "write") {
+      controller.write({
+        environmentId: primaryEnvironmentId,
+        value: true,
+        serverPreferences: previous,
+        canPatch: true,
+        now: "2026-08-14T12:01:00.000Z",
+        patch,
+        persist: hydrationInput.persist,
+      });
+    }
+    await Promise.resolve();
+
+    expect(scheduledRetries).toHaveLength(1);
+    scheduledRetries[0]?.();
+    await Promise.resolve();
+    expect(patch).toHaveBeenCalledTimes(2);
+    controller.reset();
+  });
+
+  it("keeps the latest rapid toggle when responses settle out of order", async () => {
+    const primaryEnvironmentId = EnvironmentId.make("primary");
+    const controller = createSyncedPlanModeHydrationController();
+    const previous = {
+      planModeEnabled: false,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+    } as const;
+    const targets: Array<Parameters<SyncedPlanModeHydrationInput<never>["patch"]>[0]> = [];
+    const resolvePatches: Array<
+      (result: Awaited<ReturnType<SyncedPlanModeHydrationInput<never>["patch"]>>) => void
+    > = [];
+    const patch: SyncedPlanModeHydrationInput<never>["patch"] = (target) =>
+      new Promise((resolve) => {
+        targets.push(target);
+        resolvePatches.push(resolve);
+      });
+    const persisted: boolean[] = [];
+    const persist = (value: boolean) => persisted.push(value);
+
+    controller.synchronize({
+      environmentId: primaryEnvironmentId,
+      primaryEnvironmentId,
+      clientHydrated: true,
+      clientValue: false,
+      live: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: previous.updatedAt,
+      patch,
+      persist,
+    });
+    controller.write({
+      environmentId: primaryEnvironmentId,
+      value: true,
+      serverPreferences: previous,
+      canPatch: true,
+      now: previous.updatedAt,
+      patch,
+      persist,
+    });
+    controller.write({
+      environmentId: primaryEnvironmentId,
+      value: false,
+      serverPreferences: previous,
+      canPatch: true,
+      now: previous.updatedAt,
+      patch,
+      persist,
+    });
+
+    expect(targets.map((target) => target.input.updatedAt)).toEqual([
+      "2026-08-14T12:00:00.001Z",
+      "2026-08-14T12:00:00.002Z",
+    ]);
+    resolvePatches[1]?.(
+      AsyncResult.success({ planModeEnabled: false, updatedAt: targets[1]!.input.updatedAt }),
+    );
+    await Promise.resolve();
+    resolvePatches[0]?.(
+      AsyncResult.success({ planModeEnabled: true, updatedAt: targets[0]!.input.updatedAt }),
+    );
+    await Promise.resolve();
+
+    expect(persisted).toEqual([false]);
   });
 
   it("keeps the synced preference atom stable across thread-only shell updates", () => {

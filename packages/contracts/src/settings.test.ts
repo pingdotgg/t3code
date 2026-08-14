@@ -52,12 +52,14 @@ describe("SyncedClientPreferences", () => {
   });
 
   it("rejects non-canonical LWW stamps", () => {
-    expect(() =>
-      decodeSyncedClientPreferences({
-        planModeEnabled: true,
-        updatedAt: "not-a-date",
-      }),
-    ).toThrow();
+    for (const updatedAt of ["not-a-date", "2026-02-30T00:00:00.000Z"]) {
+      expect(() =>
+        decodeSyncedClientPreferences({
+          planModeEnabled: true,
+          updatedAt,
+        }),
+      ).toThrow();
+    }
   });
 
   it("rejects empty and unknown-only patches at the RPC boundary", () => {

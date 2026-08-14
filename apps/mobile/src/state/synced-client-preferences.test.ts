@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   createPlanModePreferenceWrite,
+  createPlanModePreferenceWriteController,
   fanOutPlanModePreferencePatches,
   reconcilePlanModePreferences,
   settlePendingPlanModePreferencePatch,
@@ -67,6 +68,43 @@ describe("synced client preferences", () => {
     ]);
   });
 
+  it("ignores a stale toggle ack after a newer same-millisecond write", () => {
+    const controller = createPlanModePreferenceWriteController();
+    const environment = environmentId("environment-1");
+    const first = controller.create({
+      value: true,
+      connectedEnvironmentIds: [environment],
+      currentUpdatedAts: [],
+      now: "2026-08-14T12:00:00.000Z",
+    });
+    const second = controller.create({
+      value: false,
+      connectedEnvironmentIds: [environment],
+      currentUpdatedAts: [],
+      now: "2026-08-14T12:00:00.000Z",
+    });
+
+    expect(second.localPatch.syncedClientPreferencesUpdatedAt).toBe("2026-08-14T12:00:00.001Z");
+    expect(
+      controller.settle({
+        target: second.environmentPatches[0]!,
+        result: AsyncResult.success({
+          planModeEnabled: false,
+          updatedAt: second.environmentPatches[0]!.input.updatedAt,
+        }),
+      }),
+    ).toEqual(second.localPatch);
+    expect(
+      controller.settle({
+        target: first.environmentPatches[0]!,
+        result: AsyncResult.success({
+          planModeEnabled: true,
+          updatedAt: first.environmentPatches[0]!.input.updatedAt,
+        }),
+      }),
+    ).toBeNull();
+  });
+
   it("keeps offline toggles device-local", () => {
     expect(
       createPlanModePreferenceWrite({
@@ -113,6 +151,49 @@ describe("synced client preferences", () => {
       environmentId("environment-1"),
     );
     expect(reconciliation.environmentPatches[0]?.input.patch.planModeEnabled).toBe(true);
+  });
+
+  it("reconciles when ES2023 change-by-copy array methods are unavailable", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
+    // oxlint-disable-next-line no-extend-native -- Simulate Hermes, which omits this method.
+    Object.defineProperty(Array.prototype, "toSorted", {
+      configurable: true,
+      value: undefined,
+    });
+
+    try {
+      const reconciliation = reconcilePlanModePreferences({
+        localPlanModeEnabled: false,
+        localUpdatedAt: "2026-08-14T10:00:00.000Z",
+        environments: [
+          {
+            environmentId: environmentId("older"),
+            preferences: {
+              planModeEnabled: false,
+              updatedAt: "2026-08-14T11:00:00.000Z",
+            },
+          },
+          {
+            environmentId: environmentId("newer"),
+            preferences: {
+              planModeEnabled: true,
+              updatedAt: "2026-08-14T12:00:00.000Z",
+            },
+          },
+        ],
+        now: "2026-08-14T12:01:00.000Z",
+      });
+
+      expect(reconciliation.localPatch?.planModeEnabled).toBe(true);
+    } finally {
+      if (descriptor === undefined) {
+        // oxlint-disable-next-line no-extend-native -- Restore the pre-test Hermes-like shape.
+        Reflect.deleteProperty(Array.prototype, "toSorted");
+      } else {
+        // oxlint-disable-next-line no-extend-native -- Restore the pre-test implementation.
+        Object.defineProperty(Array.prototype, "toSorted", descriptor);
+      }
+    }
   });
 
   it("reuses the winning stamp across pre-ack reconciliation passes", () => {

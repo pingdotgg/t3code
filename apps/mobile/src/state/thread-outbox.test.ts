@@ -154,20 +154,16 @@ describe("thread outbox", () => {
       runtimeMode: "approval-required",
       interactionMode: "plan",
     } as const;
-    const queuedSettings = resolveQueuedThreadSettings(message, thread, planModeEnabled);
-
-    planModeEnabled = false;
     const sendDecision = resolveQueuedThreadSendDecision(message, thread, () => {
       preferenceReads += 1;
       return planModeEnabled;
     });
 
-    expect(queuedSettings.interactionMode).toBe("plan");
+    expect(sendDecision.settings.interactionMode).toBe("plan");
     expect(preferenceReads).toBe(1);
-    expect(sendDecision).toMatchObject({
-      planModeEnabled: false,
-      settings: { interactionMode: "default" },
-    });
+    planModeEnabled = false;
+    expect(sendDecision.readStartTurnInteractionMode()).toBe("default");
+    expect(preferenceReads).toBe(2);
   });
 
   it("compares model options as part of the queued settings change", () => {

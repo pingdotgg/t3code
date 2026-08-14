@@ -181,7 +181,7 @@ export function useThreadOutboxDrain(): void {
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const { planModeEnabled, settings } = resolveQueuedThreadSendDecision(
+      const { settings, readStartTurnInteractionMode } = resolveQueuedThreadSendDecision(
         queuedMessage,
         thread,
         readPlanModeEnabled,
@@ -248,10 +248,7 @@ export function useThreadOutboxDrain(): void {
           },
           modelSelection: settings.modelSelection,
           runtimeMode: settings.runtimeMode,
-          interactionMode: resolveComposerInteractionMode({
-            interactionMode: settings.interactionMode,
-            planModeEnabled,
-          }),
+          interactionMode: readStartTurnInteractionMode(),
           createdAt: queuedMessage.createdAt,
         },
       });

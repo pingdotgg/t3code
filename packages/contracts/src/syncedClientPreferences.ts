@@ -1,3 +1,5 @@
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime } from "./baseSchemas.ts";
@@ -9,7 +11,8 @@ const SyncedClientPreferencesUpdatedAtPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:
 export const SyncedClientPreferencesUpdatedAt = IsoDateTime.check(
   Schema.makeFilter(
     (value) =>
-      (SyncedClientPreferencesUpdatedAtPattern.test(value) && Number.isFinite(Date.parse(value))) ||
+      (SyncedClientPreferencesUpdatedAtPattern.test(value) &&
+        Option.exists(DateTime.make(value), (parsed) => DateTime.formatIso(parsed) === value)) ||
       "Synced client preferences updatedAt must be a canonical UTC timestamp.",
   ),
 );
