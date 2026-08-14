@@ -39,6 +39,8 @@ windows = { version = "0.62.2", features = [
 # AT-SPI is the only general accessibility surface on Linux. It is async-first,
 # so tool handlers block on a tiny executor rather than dragging tokio in.
 atspi = { version = "0.30.0", default-features = false, features = ["connection", "proxies"] }
+# Resolve AT-SPI bus names to Unix PIDs via org.freedesktop.DBus.
+zbus = { version = "5", default-features = false }
 futures-lite = "2.6.1"
 # XTEST for synthetic input. Wayland deliberately refuses this, which
 # `platform::linux` reports as an actionable error rather than a silent no-op.

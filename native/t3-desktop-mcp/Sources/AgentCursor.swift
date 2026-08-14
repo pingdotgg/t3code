@@ -83,6 +83,7 @@ final class AgentCursor {
 
         guard let appURL = OverlayBundle.ensureApp() else {
             fputs("t3-desktop-mcp: agent cursor: could not materialise T3AgentCursor.app\n", stderr)
+            pending.removeAll()
             return
         }
 
@@ -92,6 +93,7 @@ final class AgentCursor {
         let path = "/tmp/t3ac-\(getpid()).sock"
         guard startListening(at: path) else {
             fputs("t3-desktop-mcp: agent cursor: could not listen on \(path)\n", stderr)
+            pending.removeAll()
             return
         }
         socketPath = path
@@ -133,6 +135,18 @@ final class AgentCursor {
             if self.connection == nil, self.process?.isRunning != true, self.socketPath == path {
                 fputs("t3-desktop-mcp: agent cursor: NSWorkspace timed out; falling back to Process\n", stderr)
                 self.launchViaProcess(executable: executable, socketPath: path)
+            }
+        }
+
+        // If nothing connects, tear down the listener so later show/press retries
+        // startup instead of queuing forever into a dead socket.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            defer { self.lock.unlock() }
+            if self.connection == nil, self.socketPath == path {
+                fputs("t3-desktop-mcp: agent cursor: overlay never connected; resetting\n", stderr)
+                self.tearDownLocked()
             }
         }
     }
@@ -339,28 +353,27 @@ private enum OverlayBundle {
         let needsCopy: Bool
         if !fm.fileExists(atPath: dest.path) {
             needsCopy = true
-        } else if
-            let src = try? executable.resourceValues(forKeys: [.contentModificationDateKey])
-            .contentModificationDate,
-            let dst = try? dest.resourceValues(forKeys: [.contentModificationDateKey])
-            .contentModificationDate
-        {
-            needsCopy = src > dst
         } else {
-            needsCopy = true
+            // Compare size + contents — equal mtimes after a rebuild must not
+            // leave a stale overlay binary in place.
+            let srcData = try Data(contentsOf: executable)
+            let dstData = (try? Data(contentsOf: dest)) ?? Data()
+            needsCopy = srcData != dstData
         }
         guard needsCopy else { return }
         try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // Copy to a temp name first so a failed refresh never leaves dest deleted.
+        // Unique temp name so concurrent MCP sessions cannot clobber each other.
         let temp = dest.deletingLastPathComponent()
-            .appendingPathComponent(".\(overlayExecutableName).new")
-        try? fm.removeItem(at: temp)
+            .appendingPathComponent(".\(overlayExecutableName).\(getpid()).\(UUID().uuidString).new")
+        defer { try? fm.removeItem(at: temp) }
         try fm.copyItem(at: executable, to: temp)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: temp.path)
+        // Atomic replace: overwrite dest in place via replaceItem when possible.
         if fm.fileExists(atPath: dest.path) {
-            try fm.removeItem(at: dest)
+            _ = try fm.replaceItemAt(dest, withItemAt: temp)
+        } else {
+            try fm.moveItem(at: temp, to: dest)
         }
-        try fm.moveItem(at: temp, to: dest)
     }
 
     private static func overlayInfoPlist() -> String {
