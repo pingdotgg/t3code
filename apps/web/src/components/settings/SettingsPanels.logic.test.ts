@@ -5,12 +5,14 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationShellSnapshot,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import type { Project, ThreadShell } from "../../types";
 import {
   buildArchivedThreadGroups,
+  buildArchivedThreadGroupsFromSnapshots,
   buildProviderInstanceUpdatePatch,
   filterArchivedThreadGroups,
   runSequentiallySettled,
@@ -122,6 +124,64 @@ describe("buildArchivedThreadGroups", () => {
     archivedAt,
     branch: null,
     worktreePath: null,
+  });
+
+  it("builds groups from archived snapshots when the active shell is empty", () => {
+    const environmentId = EnvironmentId.make("env-a");
+    const project = makeProject("env-a", "project-1", "Archived Project");
+    const thread = makeThread("env-a", "project-1", "thread-archived", "2026-01-03T00:00:00.000Z");
+    const snapshot = {
+      snapshotSequence: 2,
+      projects: [
+        {
+          id: project.id,
+          title: project.name,
+          workspaceRoot: project.cwd,
+          repositoryIdentity: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-03T00:00:00.000Z",
+        },
+      ],
+      threads: [
+        {
+          id: thread.id,
+          projectId: thread.projectId,
+          parentThreadId: null,
+          title: thread.title,
+          modelSelection: thread.modelSelection,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          branch: null,
+          worktreePath: "/tmp/worktrees/thread-archived",
+          latestTurn: null,
+          createdAt: thread.createdAt,
+          updatedAt: "2026-01-03T00:00:00.000Z",
+          archivedAt: thread.archivedAt,
+          session: null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+          hasPendingQueuedTurn: false,
+        },
+      ],
+      updatedAt: "2026-01-03T00:00:00.000Z",
+    } satisfies OrchestrationShellSnapshot;
+
+    const groups = buildArchivedThreadGroupsFromSnapshots({
+      snapshots: [{ environmentId, snapshot }],
+    });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.project).toMatchObject({
+      environmentId,
+      id: project.id,
+      name: project.name,
+    });
+    expect(groups[0]?.threads.map((archivedThread) => archivedThread.id)).toEqual([thread.id]);
+    expect(groups[0]?.threads[0]?.worktreePath).toBe("/tmp/worktrees/thread-archived");
   });
 
   it("scopes archived threads by environment and project", () => {

@@ -1,5 +1,5 @@
 import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
-import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { type ProjectId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useLayoutEffect, useRef } from "react";
 
@@ -21,6 +21,23 @@ import { useTerminalStateStore } from "../terminalStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { useSettings } from "./useSettings";
+import { refreshArchivedThreadsForEnvironment } from "../archivedThreadsState";
+
+interface ArchivedThreadDeleteContext {
+  readonly thread: {
+    readonly id: ThreadId;
+    readonly projectId: ProjectId;
+    readonly title: string;
+    readonly worktreePath: string | null;
+  };
+  readonly project: {
+    readonly id: ProjectId;
+  };
+  readonly threads: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly worktreePath: string | null;
+  }>;
+}
 
 export function useThreadActions() {
   const sidebarThreadSortOrder = useSettings((settings) => settings.sidebarThreadSortOrder);
@@ -81,6 +98,7 @@ export function useThreadActions() {
         commandId: newCommandId(),
         threadId: threadRef.threadId,
       });
+      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
       const currentRouteIsInArchivedSubtree =
@@ -102,6 +120,7 @@ export function useThreadActions() {
       commandId: newCommandId(),
       threadId: target.threadId,
     });
+    refreshArchivedThreadsForEnvironment(target.environmentId);
   }, []);
 
   const settleThread = useCallback(
@@ -186,18 +205,36 @@ export function useThreadActions() {
   );
 
   const deleteThread = useCallback(
-    async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
+    async (
+      target: ScopedThreadRef,
+      opts: {
+        deletedThreadKeys?: ReadonlySet<string>;
+        archivedContext?: ArchivedThreadDeleteContext;
+      } = {},
+    ) => {
       const api = readEnvironmentApi(target.environmentId);
       if (!api) return;
       const resolved = resolveThreadTarget(target);
-      if (!resolved) return;
-      const { thread, threadRef } = resolved;
+      const thread = resolved?.thread ?? opts.archivedContext?.thread;
+      const threadRef = target;
       const state = useStore.getState();
       const threads = selectThreadsForEnvironment(state, threadRef.environmentId);
-      const threadProject = selectProjectByRef(state, {
-        environmentId: threadRef.environmentId,
-        projectId: thread.projectId,
-      });
+      const threadProject =
+        (thread
+          ? selectProjectByRef(state, {
+              environmentId: threadRef.environmentId,
+              projectId: thread.projectId,
+            })
+          : undefined) ?? opts.archivedContext?.project;
+      const threadsForWorktreeCheck = opts.archivedContext
+        ? [
+            ...threads,
+            ...opts.archivedContext.threads.filter(
+              (archivedThread) =>
+                !threads.some((activeThread) => activeThread.id === archivedThread.id),
+            ),
+          ]
+        : threads;
       const deletedIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
@@ -209,12 +246,13 @@ export function useThreadActions() {
           : undefined;
       const survivingThreads =
         deletedIds && deletedIds.size > 0
-          ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
-          : threads;
-      const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        survivingThreads,
-        threadRef.threadId,
-      );
+          ? threadsForWorktreeCheck.filter(
+              (entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id),
+            )
+          : threadsForWorktreeCheck;
+      const orphanedWorktreePath = thread
+        ? getOrphanedWorktreePathForThread(survivingThreads, threadRef.threadId)
+        : null;
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
@@ -250,11 +288,14 @@ export function useThreadActions() {
         threadId: threadRef.threadId,
         cleanupWorktree: shouldDeleteWorktree,
       });
+      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       clearComposerDraftForThread(threadRef);
-      clearProjectDraftThreadById(
-        scopeProjectRef(threadRef.environmentId, thread.projectId),
-        threadRef,
-      );
+      if (thread) {
+        clearProjectDraftThreadById(
+          scopeProjectRef(threadRef.environmentId, thread.projectId),
+          threadRef,
+        );
+      }
       clearTerminalState(threadRef);
 
       if (shouldNavigateToFallback) {
@@ -291,18 +332,22 @@ export function useThreadActions() {
   );
 
   const confirmAndDeleteThread = useCallback(
-    async (target: ScopedThreadRef) => {
+    async (
+      target: ScopedThreadRef,
+      options?: {
+        readonly archivedContext?: ArchivedThreadDeleteContext;
+      },
+    ) => {
       const api = readEnvironmentApi(target.environmentId);
       if (!api) return;
       const localApi = readLocalApi();
       const resolved = resolveThreadTarget(target);
-      if (!resolved) return;
-      const { thread } = resolved;
+      const thread = resolved?.thread ?? options?.archivedContext?.thread;
 
       if (confirmThreadDelete && localApi) {
         const confirmed = await localApi.dialogs.confirm(
           [
-            `Delete thread "${thread.title}"?`,
+            thread ? `Delete thread "${thread.title}"?` : "Delete this thread?",
             "This permanently clears conversation history for this thread.",
           ].join("\n"),
         );
@@ -311,7 +356,7 @@ export function useThreadActions() {
         }
       }
 
-      await deleteThread(target);
+      await deleteThread(target, options);
     },
     [confirmThreadDelete, deleteThread, resolveThreadTarget],
   );

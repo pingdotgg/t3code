@@ -1,6 +1,7 @@
 import {
   ArchiveIcon,
   ArchiveX,
+  CircleAlertIcon,
   FolderOpenIcon,
   LoaderIcon,
   PlusIcon,
@@ -20,12 +21,12 @@ import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
   type DesktopLocalRebuildState,
+  type EnvironmentId,
   type ModelSelection,
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ReviewChangesScope,
-  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
 import {
@@ -57,6 +58,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
+import { useArchivedThreadSnapshots } from "../../archivedThreadsState";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -85,13 +87,10 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { useShallow } from "zustand/react/shallow";
-import {
-  selectProjectsAcrossEnvironments,
-  selectThreadShellsAcrossEnvironments,
-  useStore,
-} from "../../store";
+import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Checkbox } from "../ui/checkbox";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { DraftInput } from "../ui/draft-input";
@@ -105,7 +104,7 @@ import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { getDriverOption } from "./providerDriverMeta";
 import {
-  buildArchivedThreadGroups,
+  buildArchivedThreadGroupsFromSnapshots,
   buildProviderInstanceUpdatePatch,
   filterArchivedThreadGroups,
   runSequentiallySettled,
@@ -3001,8 +3000,10 @@ export function AgentWorkflowsSettingsPanel() {
 }
 
 export function ArchivedThreadsPanel() {
-  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
+  const environmentIds = useStore(
+    useShallow((state) => Object.keys(state.environmentStateById) as EnvironmentId[]),
+  );
+  const { error, isLoading, refresh, snapshots } = useArchivedThreadSnapshots(environmentIds);
   const confirmThreadDelete = useSettings((settings) => settings.confirmThreadDelete);
   const { unarchiveThread, deleteThread, confirmAndDeleteThread } = useThreadActions();
   const [searchQuery, setSearchQuery] = useState("");
@@ -3010,8 +3011,12 @@ export function ArchivedThreadsPanel() {
     () => new Set(),
   );
   const archivedGroups = useMemo(() => {
-    return buildArchivedThreadGroups({ projects, threads });
-  }, [projects, threads]);
+    return buildArchivedThreadGroupsFromSnapshots({ snapshots });
+  }, [snapshots]);
+  const archivedThreads = useMemo(
+    () => archivedGroups.flatMap((group) => group.threads),
+    [archivedGroups],
+  );
   const filteredArchivedGroups = useMemo(
     () => filterArchivedThreadGroups(archivedGroups, searchQuery),
     [archivedGroups, searchQuery],
@@ -3098,11 +3103,11 @@ export function ArchivedThreadsPanel() {
   const deleteSelectedThreads = useCallback(async () => {
     const api = readLocalApi();
     if (!api) return;
-    const selectedThreads = archivedGroups.flatMap(({ threads: projectThreads }) =>
+    const selectedThreads = archivedGroups.flatMap(({ project, threads: projectThreads }) =>
       projectThreads.flatMap((thread) => {
         const threadRef = scopeThreadRef(thread.environmentId, thread.id);
         return selectedThreadKeys.has(scopedThreadKey(threadRef))
-          ? [{ key: scopedThreadKey(threadRef), threadRef }]
+          ? [{ key: scopedThreadKey(threadRef), project, thread, threadRef }]
           : [];
       }),
     );
@@ -3118,8 +3123,19 @@ export function ArchivedThreadsPanel() {
     }
 
     const deletedThreadKeys = new Set(selectedThreadKeys);
-    const results = await runSequentiallySettled(selectedThreads, ({ threadRef }) =>
-      deleteThread(threadRef, { deletedThreadKeys }),
+    const results = await runSequentiallySettled(
+      selectedThreads,
+      ({ project, thread, threadRef }) =>
+        deleteThread(threadRef, {
+          deletedThreadKeys,
+          archivedContext: {
+            project,
+            thread,
+            threads: archivedThreads.filter(
+              (archivedThread) => archivedThread.environmentId === thread.environmentId,
+            ),
+          },
+        }),
     );
     const failedThreadKeys = new Set(
       selectedThreads.flatMap(({ key }, index) =>
@@ -3136,12 +3152,17 @@ export function ArchivedThreadsPanel() {
       );
     }
     setSelectedThreadKeys(failedThreadKeys);
-  }, [archivedGroups, confirmThreadDelete, deleteThread, selectedThreadKeys]);
+  }, [archivedGroups, archivedThreads, confirmThreadDelete, deleteThread, selectedThreadKeys]);
 
   const handleArchivedThreadContextMenu = useCallback(
-    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    async (
+      project: (typeof archivedGroups)[number]["project"],
+      thread: (typeof archivedGroups)[number]["threads"][number],
+      position: { x: number; y: number },
+    ) => {
       const api = readLocalApi();
       if (!api) return;
+      const threadRef = scopeThreadRef(thread.environmentId, thread.id);
       const clicked = await api.contextMenu.show(
         [
           { id: "unarchive", label: "Unarchive" },
@@ -3166,15 +3187,50 @@ export function ArchivedThreadsPanel() {
       }
 
       if (clicked === "delete") {
-        await confirmAndDeleteThread(threadRef);
+        await confirmAndDeleteThread(threadRef, {
+          archivedContext: {
+            project,
+            thread,
+            threads: archivedThreads.filter(
+              (archivedThread) => archivedThread.environmentId === thread.environmentId,
+            ),
+          },
+        });
       }
     },
-    [confirmAndDeleteThread, unarchiveThread],
+    [archivedThreads, confirmAndDeleteThread, unarchiveThread],
   );
 
   return (
     <SettingsPageContainer>
-      {archivedGroups.length === 0 ? (
+      {isLoading && archivedGroups.length === 0 ? (
+        <SettingsSection title="Archived threads">
+          <Empty className="min-h-88">
+            <EmptyMedia variant="icon">
+              <LoaderIcon className="animate-spin" />
+            </EmptyMedia>
+            <EmptyHeader>
+              <EmptyTitle>Loading archived threads</EmptyTitle>
+            </EmptyHeader>
+          </Empty>
+        </SettingsSection>
+      ) : error && archivedGroups.length === 0 ? (
+        <SettingsSection title="Archived threads">
+          <Empty className="min-h-88">
+            <EmptyMedia variant="icon">
+              <ArchiveIcon />
+            </EmptyMedia>
+            <EmptyHeader>
+              <EmptyTitle>Could not load archived threads</EmptyTitle>
+              <EmptyDescription>{error}</EmptyDescription>
+            </EmptyHeader>
+            <Button variant="outline" size="sm" onClick={refresh}>
+              <RefreshCwIcon className="size-3.5" />
+              Retry
+            </Button>
+          </Empty>
+        </SettingsSection>
+      ) : archivedGroups.length === 0 ? (
         <SettingsSection title="Archived threads">
           <Empty className="min-h-88">
             <EmptyMedia variant="icon">
@@ -3189,6 +3245,21 @@ export function ArchivedThreadsPanel() {
       ) : (
         <>
           <SettingsSection title="Archived threads">
+            {error ? (
+              <div className="border-b border-border p-4 sm:px-5">
+                <Alert variant="error">
+                  <CircleAlertIcon />
+                  <AlertTitle>Could not refresh archived threads</AlertTitle>
+                  <AlertDescription>{error}</AlertDescription>
+                  <AlertAction>
+                    <Button variant="outline" size="xs" onClick={refresh}>
+                      <RefreshCwIcon className="size-3.5" />
+                      Retry
+                    </Button>
+                  </AlertAction>
+                </Alert>
+              </div>
+            ) : null}
             <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:px-5">
               <div className="relative flex-1">
                 <SearchIcon
@@ -3260,7 +3331,7 @@ export function ArchivedThreadsPanel() {
                       className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
                       onContextMenu={(event) => {
                         event.preventDefault();
-                        void handleArchivedThreadContextMenu(threadRef, {
+                        void handleArchivedThreadContextMenu(project, thread, {
                           x: event.clientX,
                           y: event.clientY,
                         });

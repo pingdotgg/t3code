@@ -83,6 +83,23 @@ describe("getOrphanedWorktreePathForThread", () => {
     const result = getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"));
     expect(result).toBe("/tmp/repo/worktrees/feature-a");
   });
+
+  it("works with archived shell ownership records", () => {
+    const threads = [
+      {
+        id: ThreadId.make("thread-1"),
+        worktreePath: "/tmp/repo/worktrees/feature-a",
+      },
+      {
+        id: ThreadId.make("thread-2"),
+        worktreePath: "/tmp/repo/worktrees/feature-b",
+      },
+    ];
+
+    expect(getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"))).toBe(
+      "/tmp/repo/worktrees/feature-a",
+    );
+  });
 });
 
 describe("formatWorktreePathForDisplay", () => {

@@ -1,4 +1,6 @@
 import type {
+  EnvironmentId,
+  OrchestrationShellSnapshot,
   ProviderDriverKind,
   ProviderInstanceConfig,
   ProviderInstanceId,
@@ -44,13 +46,47 @@ export function buildProviderInstanceUpdatePatch(input: {
 }
 
 export interface ArchivedThreadGroup {
-  readonly project: Project;
-  readonly threads: readonly ThreadShell[];
+  readonly project: Pick<Project, "id" | "environmentId" | "name" | "cwd">;
+  readonly threads: ReadonlyArray<
+    Pick<
+      ThreadShell,
+      "id" | "environmentId" | "projectId" | "title" | "archivedAt" | "createdAt" | "worktreePath"
+    >
+  >;
+}
+
+export function buildArchivedThreadGroupsFromSnapshots(input: {
+  readonly snapshots: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly snapshot: OrchestrationShellSnapshot;
+  }>;
+}): readonly ArchivedThreadGroup[] {
+  return buildArchivedThreadGroups({
+    projects: input.snapshots.flatMap(({ environmentId, snapshot }) =>
+      snapshot.projects.map((project) => ({
+        id: project.id,
+        environmentId,
+        name: project.title,
+        cwd: project.workspaceRoot,
+      })),
+    ),
+    threads: input.snapshots.flatMap(({ environmentId, snapshot }) =>
+      snapshot.threads.map((thread) => ({
+        id: thread.id,
+        environmentId,
+        projectId: thread.projectId,
+        title: thread.title,
+        createdAt: thread.createdAt,
+        archivedAt: thread.archivedAt,
+        worktreePath: thread.worktreePath,
+      })),
+    ),
+  });
 }
 
 export function buildArchivedThreadGroups(input: {
-  readonly projects: readonly Project[];
-  readonly threads: readonly ThreadShell[];
+  readonly projects: ReadonlyArray<ArchivedThreadGroup["project"]>;
+  readonly threads: ReadonlyArray<ArchivedThreadGroup["threads"][number]>;
 }): readonly ArchivedThreadGroup[] {
   return input.projects
     .map((project) => ({

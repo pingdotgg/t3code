@@ -9,7 +9,7 @@ function normalizeWorktreePath(path: string | null): string | null {
 }
 
 export function getOrphanedWorktreePathForThread(
-  threads: readonly Thread[],
+  threads: ReadonlyArray<Pick<Thread, "id" | "worktreePath">>,
   threadId: Thread["id"],
 ): string | null {
   const targetThread = threads.find((thread) => thread.id === threadId);

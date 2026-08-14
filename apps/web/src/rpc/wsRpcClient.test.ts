@@ -2,6 +2,7 @@ import type {
   GitStatusLocalResult,
   GitStatusRemoteResult,
   GitStatusStreamEvent,
+  OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vitest";
 
@@ -35,6 +36,32 @@ const baseRemoteStatus: GitStatusRemoteResult = {
 };
 
 describe("wsRpcClient", () => {
+  it("requests the dedicated archived shell snapshot", async () => {
+    const snapshot = {
+      snapshotSequence: 1,
+      projects: [],
+      threads: [],
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    } satisfies OrchestrationShellSnapshot;
+    const getArchivedShellSnapshot = vi.fn(() => snapshot);
+    const request = vi.fn(async (connect: (client: Record<string, unknown>) => unknown) =>
+      connect({ "orchestration.getArchivedShellSnapshot": getArchivedShellSnapshot }),
+    );
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => undefined),
+      request,
+      requestStream: vi.fn(),
+      subscribe: vi.fn(() => () => undefined),
+    };
+
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+
+    await expect(client.orchestration.getArchivedShellSnapshot()).resolves.toBe(snapshot);
+    expect(request).toHaveBeenCalledOnce();
+    expect(getArchivedShellSnapshot).toHaveBeenCalledWith({});
+  });
+
   it("reduces git status stream events into flat status snapshots", () => {
     const subscribe = vi.fn(<TValue>(_connect: unknown, listener: (value: TValue) => void) => {
       for (const event of [
