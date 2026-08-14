@@ -2,14 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import type { ComponentType } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  FlatList,
-  ScrollView,
-  Text as NativeText,
-  useColorScheme,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { FlatList, ScrollView, Text as NativeText, useColorScheme, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { LoadingStrip } from "../../components/LoadingStrip";
@@ -27,6 +20,7 @@ import {
   buildNativeSourceTokens,
   NATIVE_SOURCE_CONTENT_WIDTH,
   nativeSourceRowId,
+  shouldUseNativeSourceFileRenderer,
 } from "./nativeSourceFileAdapter";
 import { prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
@@ -158,8 +152,7 @@ function NativeSourceFileSurface(
   },
 ) {
   const { NativeView, onRefresh } = props;
-  const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
-  const { width: viewportWidth } = useWindowDimensions();
+  const { codeSurface, nativeSourceStyle } = useAppearanceCodeSurface();
   const { rowsJson, status, targetIndex, theme, tokens } = useSourceFileModel(props);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
@@ -180,9 +173,6 @@ function NativeSourceFileSurface(
   );
   const themeJson = useMemo(() => JSON.stringify(createNativeReviewDiffTheme(theme)), [theme]);
   const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
-  const contentWidth = codeWordBreak
-    ? Math.max(240, viewportWidth - codeSurface.gutterWidth - 24)
-    : NATIVE_SOURCE_CONTENT_WIDTH;
 
   return (
     <View className="relative flex-1 bg-sheet">
@@ -193,7 +183,7 @@ function NativeSourceFileSurface(
         style={{ flex: 1 }}
         appearanceScheme={theme}
         contentResetKey={props.path}
-        contentWidth={contentWidth}
+        contentWidth={NATIVE_SOURCE_CONTENT_WIDTH}
         initialRowIndex={targetIndex ?? -1}
         rowHeight={nativeSourceStyle.rowHeight ?? codeSurface.rowHeight}
         rowsJson={rowsJson}
@@ -283,9 +273,15 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 
 export function SourceFileSurface(props: SourceFileSurfaceProps) {
   const NativeView = resolveNativeReviewDiffView();
-  return NativeView ? (
-    <NativeSourceFileSurface {...props} NativeView={NativeView} />
-  ) : (
-    <JavaScriptSourceFileSurface {...props} />
-  );
+  const { codeWordBreak } = useAppearanceCodeSurface();
+  if (
+    shouldUseNativeSourceFileRenderer({
+      nativeViewAvailable: NativeView !== null,
+      codeWordBreak,
+    }) &&
+    NativeView
+  ) {
+    return <NativeSourceFileSurface {...props} NativeView={NativeView} />;
+  }
+  return <JavaScriptSourceFileSurface {...props} />;
 }

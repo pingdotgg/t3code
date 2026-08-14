@@ -11,6 +11,14 @@ import type { SourceHighlightTokens } from "./sourceHighlightingState";
 export const NATIVE_SOURCE_ROW_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 export const NATIVE_SOURCE_CONTENT_WIDTH = 32_000;
 
+/** Native canvas drawing cannot wrap; the JS source renderer owns word break. */
+export function shouldUseNativeSourceFileRenderer(options: {
+  readonly nativeViewAvailable: boolean;
+  readonly codeWordBreak: boolean;
+}): boolean {
+  return options.nativeViewAvailable && !options.codeWordBreak;
+}
+
 export const NATIVE_SOURCE_STYLE: NativeReviewDiffStyle = createNativeSourceStyle(
   resolveMobileCodeSurface(MOBILE_CODE_SURFACE.fontSize),
 );

@@ -6,6 +6,7 @@ import {
   NATIVE_SOURCE_ROW_HEIGHT,
   NATIVE_SOURCE_STYLE,
   nativeSourceRowId,
+  shouldUseNativeSourceFileRenderer,
 } from "./nativeSourceFileAdapter";
 import {
   NATIVE_REVIEW_DIFF_ROW_HEIGHT,
@@ -62,5 +63,20 @@ describe("nativeSourceFileAdapter", () => {
 
   it("clears native tokens while highlighting is unavailable", () => {
     expect(buildNativeSourceTokens(null)).toEqual({});
+  });
+
+  it("uses the JS source renderer when word break is enabled", () => {
+    expect(
+      shouldUseNativeSourceFileRenderer({ nativeViewAvailable: true, codeWordBreak: false }),
+    ).toBe(true);
+    expect(
+      shouldUseNativeSourceFileRenderer({ nativeViewAvailable: true, codeWordBreak: true }),
+    ).toBe(false);
+    expect(
+      shouldUseNativeSourceFileRenderer({ nativeViewAvailable: false, codeWordBreak: false }),
+    ).toBe(false);
+    expect(
+      shouldUseNativeSourceFileRenderer({ nativeViewAvailable: false, codeWordBreak: true }),
+    ).toBe(false);
   });
 });
