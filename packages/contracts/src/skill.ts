@@ -30,6 +30,34 @@ export const SkillReadFileFailure = Schema.Literals([
 ]);
 export type SkillReadFileFailure = typeof SkillReadFileFailure.Type;
 
+type SkillReadFileFailureContext = {
+  readonly failure: SkillReadFileFailure;
+  readonly skillName: string;
+  readonly relativePath: string;
+  readonly cause?: unknown;
+};
+
+function skillReadFileErrorMessage({
+  failure,
+  skillName,
+  relativePath,
+}: SkillReadFileFailureContext): string {
+  switch (failure) {
+    case "message_not_found":
+      return `The user message for skill '${skillName}' is no longer available.`;
+    case "skill_not_resolved":
+      return `Skill '${skillName}' is no longer available.`;
+    case "path_outside_skill":
+      return `The requested path '${relativePath}' is outside skill '${skillName}'.`;
+    case "path_not_file":
+      return `The requested path '${relativePath}' is not an available file in skill '${skillName}'.`;
+    case "unsupported_file":
+      return `The requested file '${relativePath}' in skill '${skillName}' cannot be shown as text.`;
+    case "operation_failed":
+      return `T3 Code could not read '${relativePath}' from skill '${skillName}'.`;
+  }
+}
+
 export class SkillReadFileError extends Schema.TaggedErrorClass<SkillReadFileError>()(
   "SkillReadFileError",
   {
@@ -37,5 +65,14 @@ export class SkillReadFileError extends Schema.TaggedErrorClass<SkillReadFileErr
     failure: SkillReadFileFailure,
     skillName: TrimmedNonEmptyString,
     relativePath: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: SkillReadFileFailureContext) {
+    super({
+      ...props,
+      message: skillReadFileErrorMessage(props),
+    } as any);
+  }
+}

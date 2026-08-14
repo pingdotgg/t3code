@@ -167,4 +167,8 @@ describe("collectSubmittedSkillNames", () => {
       ),
     ).toEqual(["review", "final"]);
   });
+
+  it("keeps code masking aligned after astral characters", () => {
+    expect(collectSubmittedSkillNames("😀 `$inside` then $outside")).toEqual(["outside"]);
+  });
 });

@@ -1843,19 +1843,20 @@ const makeWsRpcLayer = (
                 messageId: input.messageId,
               }).pipe(
                 Effect.mapError(
-                  () =>
+                  (cause) =>
                     new SkillReadFileError({
-                      ...input,
+                      skillName: input.skillName,
+                      relativePath: input.relativePath,
                       failure: "operation_failed",
-                      message: "T3 Code could not load this thread.",
+                      cause,
                     }),
                 ),
               );
               if (!message) {
                 return yield* new SkillReadFileError({
-                  ...input,
+                  skillName: input.skillName,
+                  relativePath: input.relativePath,
                   failure: "message_not_found",
-                  message: "The user message for this skill call is no longer available.",
                 });
               }
 
@@ -1868,11 +1869,12 @@ const makeWsRpcLayer = (
                   .getThreadShellById(input.threadId)
                   .pipe(
                     Effect.mapError(
-                      () =>
+                      (cause) =>
                         new SkillReadFileError({
-                          ...input,
+                          skillName: input.skillName,
+                          relativePath: input.relativePath,
                           failure: "operation_failed",
-                          message: "T3 Code could not load this thread.",
+                          cause,
                         }),
                     ),
                   );
@@ -1887,9 +1889,9 @@ const makeWsRpcLayer = (
               const skill = recorded ?? legacy;
               if (!skill) {
                 return yield* new SkillReadFileError({
-                  ...input,
+                  skillName: input.skillName,
+                  relativePath: input.relativePath,
                   failure: "skill_not_resolved",
-                  message: "This skill is no longer available.",
                 });
               }
               return yield* readResolvedSkillFile({

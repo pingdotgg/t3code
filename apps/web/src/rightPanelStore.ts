@@ -40,7 +40,7 @@ export type RightPanelSurface =
   | { id: "diff"; kind: "diff" }
   | { id: "files"; kind: "files" }
   | {
-      id: `file:${string}`;
+      id: `file:${string}` | `skill-file:${string}`;
       kind: "file";
       relativePath: string;
       revealLine: number | null;
@@ -74,7 +74,9 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 moves skill-file tabs into their own ID namespace so they cannot collide
+// with a workspace file whose relative path resembles a skill surface ID.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
@@ -170,8 +172,8 @@ export interface SkillFileTarget {
   readonly relativePath: string;
 }
 
-function skillFileSurfaceId(target: SkillFileTarget): `file:${string}` {
-  return `file:skill:${encodeURIComponent(target.messageId)}:${encodeURIComponent(target.name)}:${encodeURIComponent(target.relativePath)}`;
+function skillFileSurfaceId(target: SkillFileTarget): `skill-file:${string}` {
+  return `skill-file:${encodeURIComponent(target.messageId)}:${encodeURIComponent(target.name)}:${encodeURIComponent(target.relativePath)}`;
 }
 
 const terminalSurface = (terminalId: string): RightPanelSurface => ({
@@ -296,7 +298,29 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
+                      const skill = surface.skill;
+                      const hasValidSkill =
+                        skill !== undefined &&
+                        typeof skill.messageId === "string" &&
+                        typeof skill.name === "string" &&
+                        typeof skill.path === "string";
+                      return [
+                        {
+                          ...surface,
+                          ...(hasValidSkill
+                            ? {
+                                id: skillFileSurfaceId({
+                                  messageId: skill.messageId as MessageId,
+                                  name: skill.name,
+                                  path: skill.path,
+                                  relativePath: surface.relativePath,
+                                }),
+                              }
+                            : {}),
+                          revealLine,
+                          revealRequestId,
+                        },
+                      ];
                     }
                     if (surface.kind === "pull-request") {
                       if (
@@ -645,7 +669,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             if (workspaceAvailable) return current;
             const surfaces = current.surfaces.filter(
-              (surface) => surface.kind !== "files" && surface.kind !== "file",
+              (surface) =>
+                surface.kind !== "files" &&
+                (surface.kind !== "file" || surface.skill !== undefined),
             );
             if (surfaces.length === current.surfaces.length) return current;
             const activeStillExists = surfaces.some(

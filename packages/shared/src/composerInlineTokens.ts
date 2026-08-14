@@ -142,7 +142,9 @@ export function collectComposerInlineTokens(
  * skills that actually affected a turn.
  */
 export function collectSubmittedSkillNames(text: string): ReadonlyArray<string> {
-  const searchable = [...text];
+  // String indexing and `line.length` use UTF-16 code units, so this must too.
+  // `Array.from` would instead use code points and drift after astral characters.
+  const searchable = text.split("");
   let fencedMarker: "`" | "~" | null = null;
   let fencedLength = 0;
   let offset = 0;
