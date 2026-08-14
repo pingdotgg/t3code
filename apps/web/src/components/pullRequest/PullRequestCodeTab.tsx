@@ -373,7 +373,7 @@ export function PullRequestCodeTab({
       loadedSlices.map((slice) => {
         // The patch's own hash is part of the key: a refreshed page reuses its cursor, and a
         // key of position alone would keep handing back the parse of the patch it replaced.
-        const cacheKey = `pull-request:${scopeKey}:${resolvedTheme}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
+        const cacheKey = `pull-request:${scopeKey}:${syntaxThemeName}:${slice.cursor ?? "first"}:${fnv1a32(slice.patch)}`;
         const cached = parseCache.current.get(cacheKey);
         if (cached) return cached;
         const parsed = getRenderablePatch(slice.patch, cacheKey, {
@@ -382,7 +382,7 @@ export function PullRequestCodeTab({
         if (parsed) parseCache.current.set(cacheKey, parsed);
         return parsed;
       }),
-    [loadedSlices, resolvedTheme, scopeKey],
+    [loadedSlices, scopeKey, syntaxThemeName],
   );
   // Ordered within a slice rather than across them: ordering the accumulated set would let a late
   // slice push a file the reader is part way through further down the page.
