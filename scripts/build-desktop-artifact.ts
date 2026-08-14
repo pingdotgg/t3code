@@ -46,6 +46,43 @@ const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
+// The deb control file needs "Homepage:", and fpm derives "Maintainer:" from
+// `author` unless it is set explicitly — `author` carries no email address, so
+// the deb target fails without both. AppImage needs neither, which is why
+// nothing surfaced this before.
+export const DESKTOP_HOMEPAGE_URL = "https://github.com/pingdotgg/t3code";
+export const DESKTOP_LINUX_MAINTAINER = "T3 Tools <hello@t3.tools>";
+
+// Electron's shared-library dependencies, declared per packaging format so the
+// package manager pulls them in instead of the app failing to start on a
+// minimal install.
+export const DEB_DEPENDENCIES = [
+  "libgtk-3-0",
+  "libnotify4",
+  "libnss3",
+  "libxss1",
+  "libxtst6",
+  "xdg-utils",
+  "libatspi2.0-0",
+  "libuuid1",
+  "libsecret-1-0",
+  "libasound2t64 | libasound2",
+] as const;
+
+export const RPM_DEPENDENCIES = [
+  "gtk3",
+  "libnotify",
+  "nss",
+  "libXScrnSaver",
+  "(libXtst or libXtst6)",
+  "xdg-utils",
+  "at-spi2-core",
+  "(libuuid or libuuid1)",
+  "alsa-lib",
+  "libsecret",
+  "mesa-libgbm",
+] as const;
+
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 
@@ -670,6 +707,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly packageManager: string;
   readonly description: string;
+  readonly homepage: string;
   readonly author: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
@@ -1855,6 +1893,19 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+/**
+ * Splits a comma-separated Linux target string, for example "AppImage,deb", so
+ * one electron-builder run emits several packages from the same staged app.
+ * artifactName's ${ext} keeps the outputs distinct, so there is no collision
+ * and no second matrix entry to upload under a duplicate artifact name.
+ */
+export function resolveLinuxTargets(target: string): ReadonlyArray<string> {
+  return target
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -1918,11 +1969,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "linux") {
+    const linuxTargets = resolveLinuxTargets(target);
     buildConfig.linux = {
-      target: [target],
+      target: linuxTargets,
       executableName: "t3code",
       icon: "icons",
       category: "Development",
+      // Required by the deb and rpm targets (FpmTarget), which otherwise derive
+      // the maintainer from author and fail because it carries no email.
+      maintainer: DESKTOP_LINUX_MAINTAINER,
+      vendor: "T3 Tools",
+      synopsis: "A desktop GUI for AI coding agents",
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
       // t3code:// OAuth callbacks to the app.
@@ -1938,6 +1995,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       },
     };
+
+    if (linuxTargets.includes("deb")) {
+      buildConfig.deb = { depends: [...DEB_DEPENDENCIES] };
+    }
+
+    if (linuxTargets.includes("rpm")) {
+      buildConfig.rpm = { depends: [...RPM_DEPENDENCIES] };
+    }
   }
 
   if (platform === "win") {
@@ -2315,6 +2380,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     packageManager: rootPackageJson.packageManager,
     description: "T3 Code desktop build",
+    // Required by electron-builder's deb and rpm targets (FpmTarget), which
+    // read it from the staged app's metadata rather than the build config.
+    homepage: DESKTOP_HOMEPAGE_URL,
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(

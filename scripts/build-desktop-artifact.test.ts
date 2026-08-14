@@ -15,9 +15,11 @@ import {
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
+  DEB_DEPENDENCIES,
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
+  DESKTOP_LINUX_MAINTAINER,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
@@ -36,7 +38,9 @@ import {
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
+  resolveLinuxTargets,
   resolveResourceMonitorRustTargets,
+  RPM_DEPENDENCIES,
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
   resolveMockUpdateServerPort,
@@ -362,6 +366,64 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
         assert.deepStrictEqual(config.files, DESKTOP_FILE_EXCLUSIONS);
       }
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it("splits a comma-separated Linux target into one target per package", () => {
+    assert.deepStrictEqual(resolveLinuxTargets("AppImage"), ["AppImage"]);
+    assert.deepStrictEqual(resolveLinuxTargets("AppImage,deb"), ["AppImage", "deb"]);
+    assert.deepStrictEqual(resolveLinuxTargets(" AppImage , deb , rpm "), [
+      "AppImage",
+      "deb",
+      "rpm",
+    ]);
+  });
+
+  it.effect("packages a .deb alongside the AppImage from a single Linux build", () =>
+    Effect.gen(function* () {
+      const appImageOnly = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const both = yield* createBuildConfig(
+        "linux",
+        "AppImage,deb",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const rpmOnly = yield* createBuildConfig(
+        "linux",
+        "rpm",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.deepStrictEqual((both.linux as Record<string, unknown>).target, ["AppImage", "deb"]);
+      // fpm derives the maintainer from `author` otherwise, which carries no
+      // email address and fails the deb and rpm builds.
+      assert.equal((both.linux as Record<string, unknown>).maintainer, DESKTOP_LINUX_MAINTAINER);
+      assert.match(DESKTOP_LINUX_MAINTAINER, /^.+ <[^@\s]+@[^@\s]+>$/u);
+
+      // Package-format sections only appear for the formats actually built.
+      assert.deepStrictEqual((both.deb as Record<string, unknown>).depends, [...DEB_DEPENDENCIES]);
+      assert.notProperty(both, "rpm");
+      assert.deepStrictEqual((rpmOnly.rpm as Record<string, unknown>).depends, [
+        ...RPM_DEPENDENCIES,
+      ]);
+      assert.notProperty(rpmOnly, "deb");
+      assert.notProperty(appImageOnly, "deb");
+      assert.notProperty(appImageOnly, "rpm");
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
