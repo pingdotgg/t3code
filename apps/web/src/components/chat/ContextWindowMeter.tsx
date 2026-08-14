@@ -1,4 +1,4 @@
-import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
@@ -36,13 +36,10 @@ export function ContextWindowMeter(props: {
         delay={150}
         closeDelay={0}
         render={
-          <button
-            type="button"
-            className={cn(
-              "inline-flex size-7 cursor-pointer items-center justify-center rounded-full border border-transparent text-muted-foreground outline-none transition-colors",
-              "hover:bg-accent data-[pressed]:bg-accent",
-              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-            )}
+          <Button
+            size="icon-sm"
+            variant="ghost-muted"
+            className="size-7 rounded-full hover:text-muted-foreground data-pressed:text-muted-foreground"
             aria-label={
               usage.maxTokens !== null && usedPercentage
                 ? `Context window ${usedPercentage} used`
@@ -77,7 +74,7 @@ export function ContextWindowMeter(props: {
                 />
               </svg>
             </span>
-          </button>
+          </Button>
         }
       />
       <PopoverPopup

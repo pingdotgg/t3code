@@ -78,7 +78,7 @@ function FileSearchField(props: {
   value: string;
 }) {
   return (
-    <InputGroup variant="ghost" className="h-7 min-w-0 flex-1 rounded-md">
+    <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
       <InputGroupInput
         type="search"
         name={props.name}
@@ -350,7 +350,10 @@ export default function FileBrowserPanel({
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
-      <div className="surface-subheader gap-1 px-2" data-surface-subheader>
+      <div
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        data-surface-subheader
+      >
         <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={entriesQuery.refresh} />
         <FileSearchField
           name="project-files-search"

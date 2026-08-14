@@ -825,7 +825,7 @@ export default function DiffPanel({
         </div>
       ) : (
         <>
-          <div className="diff-panel-viewport flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
             {isSelectedPatchTruncated && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
                 This diff was truncated because it exceeded the preview limit. The changes shown are
@@ -907,10 +907,11 @@ export default function DiffPanel({
                       <Tooltip>
                         <TooltipTrigger
                           render={
-                            <button
-                              type="button"
+                            <Button
+                              size="icon-micro"
+                              variant="ghost"
                               className={cn(
-                                "-ms-0.5 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                                "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
                                 getDiffCollapseIconClassName(fileDiff),
                               )}
                               aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}

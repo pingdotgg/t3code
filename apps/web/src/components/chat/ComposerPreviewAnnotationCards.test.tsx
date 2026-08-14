@@ -43,4 +43,18 @@ describe("ComposerPreviewAnnotationCards", () => {
     expect(markup).not.toContain("localhost:3000");
     expect(markup).not.toContain("Preview annotation");
   });
+
+  it("uses the shared button contract for removal", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPreviewAnnotationCards
+        annotations={[annotation]}
+        images={[]}
+        onRemove={vi.fn()}
+        onExpandImage={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Remove preview annotation"');
+    expect(markup).toContain('data-slot="button"');
+  });
 });

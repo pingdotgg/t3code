@@ -560,9 +560,9 @@ export function ProviderInstanceCard({
             <TooltipTrigger
               render={
                 <Button
-                  size="icon-xs"
+                  size="icon-micro"
                   variant="ghost"
-                  className="size-5 rounded-sm p-0 text-muted-foreground hover:text-destructive"
+                  className="text-muted-foreground hover:text-destructive"
                   onClick={onDelete}
                   aria-label={`Delete provider instance ${instanceId}`}
                 >
@@ -708,9 +708,8 @@ export function ProviderInstanceCard({
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+              size="compact"
+              variant="ghost-muted"
               onClick={() => onExpandedChange(!isExpanded)}
               aria-label={`Toggle ${displayName} details`}
             >

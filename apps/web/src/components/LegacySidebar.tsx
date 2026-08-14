@@ -2925,11 +2925,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <button
-                    type="button"
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
-                    className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-icon-muted transition-colors hover:bg-accent hover:text-foreground"
+                    className="size-6 [--control-icon-color:currentColor] text-icon-muted"
                     onClick={openAddProject}
                   />
                 }

@@ -141,7 +141,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
     >
       <div
         ref={listRef}
-        className="dropdown-glass relative w-full overflow-hidden rounded-[20px] **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
+        className="dropdown-glass relative w-full overflow-hidden rounded-[20px] shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4 dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]"
       >
         {props.items.length > 0 ? (
           <CommandList className="max-h-72">

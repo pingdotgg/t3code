@@ -486,14 +486,14 @@ function ProcessTreeName({
       style={{ paddingLeft: `${Math.min(process.depth, 7) * 10}px` }}
     >
       {hasChildren ? (
-        <button
-          type="button"
-          className="cursor-pointer inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           onClick={() => onToggle(process)}
           aria-label={collapsed ? `Expand ${name}` : `Collapse ${name}`}
         >
           <ChevronIcon className="size-3.5" />
-        </button>
+        </Button>
       ) : (
         <span className="size-5" aria-hidden />
       )}
@@ -975,9 +975,8 @@ export function ResourceTelemetryDiagnostics() {
               <TooltipTrigger
                 render={
                   <Button
-                    size="icon-xs"
+                    size="icon-micro"
                     variant="ghost"
-                    className="size-5 rounded-sm p-0"
                     disabled={telemetry.isPending}
                     onClick={telemetry.refresh}
                     aria-label="Refresh resource telemetry"
@@ -1227,9 +1226,8 @@ export function ResourceTelemetryDiagnostics() {
           <div className="flex items-center gap-2">
             <HistoryWindowSelector selectedWindowMs={windowMs} onSelect={setWindowMs} />
             <Button
-              size="icon-xs"
+              size="icon-micro"
               variant="ghost"
-              className="size-5 rounded-sm p-0"
               disabled={history.isPending}
               onClick={history.refresh}
               aria-label="Refresh resource history"

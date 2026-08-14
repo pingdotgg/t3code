@@ -79,13 +79,13 @@ function highlightJson(value: string): string {
     const index = match.index ?? 0;
     highlighted += escapeJsonHtml(value.slice(cursor, index));
 
-    let tokenClass = "theme-json-number";
+    let tokenClass = "text-[var(--app-theme-secondary-foreground,var(--color-amber-600))]";
     if (token.startsWith('"')) {
       tokenClass = /^\s*:/.test(value.slice(index + token.length))
-        ? "theme-json-key"
-        : "theme-json-string";
+        ? "text-[var(--app-theme-accent,var(--color-blue-600))]"
+        : "text-[var(--app-theme-message-action,var(--color-emerald-600))]";
     } else if (token === "true" || token === "false" || token === "null") {
-      tokenClass = "theme-json-constant";
+      tokenClass = "text-[var(--app-theme-accent-surface-foreground,var(--color-violet-600))]";
     }
     highlighted += `<span class="${tokenClass}">${escapeJsonHtml(token)}</span>`;
     cursor = index + token.length;
