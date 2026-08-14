@@ -2518,13 +2518,17 @@ function ChatViewContent(props: ChatViewProps) {
               }
               const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
               imageIndex += 1;
-              if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
+              if (
+                !handoffPreviewUrl ||
+                (attachment.previewUrl === handoffPreviewUrl && !attachment.previewError)
+              ) {
                 return attachment;
               }
               changed = true;
               return {
                 ...attachment,
                 previewUrl: handoffPreviewUrl,
+                previewError: false,
               };
             });
 

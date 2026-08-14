@@ -50,4 +50,23 @@ describe("isSafeAssistantImagePreviewUrl", () => {
     expect(markup).toContain("Image unavailable");
     expect(markup).not.toContain("Loading image");
   });
+
+  it("renders downloads as real links so fallback navigation keeps the click gesture", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AssistantMessageImages, {
+        images: [
+          {
+            id: "generated-image-1",
+            name: "generated.png",
+            previewUrl: "/api/assets/signed-token/generated.png",
+          },
+        ],
+        onExpand: () => {},
+      }),
+    );
+
+    expect(markup).toContain('href="/api/assets/signed-token/generated.png"');
+    expect(markup).toContain('download="generated.png"');
+    expect(markup).toContain('target="_blank"');
+  });
 });

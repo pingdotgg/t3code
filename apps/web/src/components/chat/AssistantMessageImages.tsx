@@ -42,21 +42,6 @@ export function isSafeAssistantImagePreviewUrl(
   }
 }
 
-async function downloadImage(url: string, name: string): Promise<void> {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Image download failed with ${response.status}`);
-    const objectUrl = URL.createObjectURL(await response.blob());
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = name;
-    anchor.click();
-    URL.revokeObjectURL(objectUrl);
-  } catch {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-}
-
 const AssistantMessageImageCard = memo(function AssistantMessageImageCard({
   image,
   onExpand,
@@ -130,12 +115,19 @@ const AssistantMessageImageCard = memo(function AssistantMessageImageCard({
         </div>
       ) : null}
       <Button
-        type="button"
+        render={
+          <a
+            href={safePreviewUrl}
+            download={image.name}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(event) => event.stopPropagation()}
+          />
+        }
         size="icon-sm"
         variant="secondary"
         className="absolute bottom-2 right-2 z-10 opacity-100 shadow-sm transition-opacity pointer-fine:opacity-0 pointer-fine:focus-visible:opacity-100 pointer-fine:group-focus-within/image:opacity-100 pointer-fine:group-hover/image:opacity-100"
         aria-label={`Download ${image.name}`}
-        onClick={() => void downloadImage(safePreviewUrl, image.name)}
       >
         <DownloadIcon aria-hidden="true" />
       </Button>
