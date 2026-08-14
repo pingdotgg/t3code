@@ -76,17 +76,22 @@ function makeElectronWindowLayer(destroyAll: Effect.Effect<void> = Effect.void) 
   });
 }
 
-function makeDesktopWindowLayer(flushMainWindowBounds: Effect.Effect<void> = Effect.void) {
+function makeDesktopWindowLayer(
+  input: {
+    readonly activate?: Effect.Effect<void>;
+    readonly flushMainWindowBounds?: Effect.Effect<void>;
+  } = {},
+) {
   return Layer.succeed(DesktopWindow.DesktopWindow, {
     createMain: Effect.die("unexpected window creation"),
     ensureMain: Effect.die("unexpected window creation"),
     revealOrCreateMain: Effect.die("unexpected window creation"),
-    activate: Effect.void,
+    activate: input.activate ?? Effect.void,
     createMainIfBackendReady: Effect.void,
     showConnectingSplash: Effect.void,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
-    flushMainWindowBounds,
+    flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
     dispatchMenuAction: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
@@ -176,7 +181,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(makeElectronAppLayer(appListeners, quit)),
         Layer.provideMerge(electronThemeLayer),
         Layer.provideMerge(makeElectronWindowLayer(destroyAll)),
-        Layer.provideMerge(makeDesktopWindowLayer(flushMainWindowBounds)),
+        Layer.provideMerge(makeDesktopWindowLayer({ flushMainWindowBounds })),
         Layer.provideMerge(environmentLayer),
         Layer.provideMerge(desktopShutdownLayer),
         Layer.provideMerge(DesktopState.layer),
@@ -197,6 +202,42 @@ describe("DesktopLifecycle", () => {
 
           assert.deepEqual(eventsBeforeCleanup, ["flush", "destroy", "request"]);
           assert.deepEqual(events, ["flush", "destroy", "request", "quit"]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("ignores app activation while quitting", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let activationCount = 0;
+      const activate = Effect.sync(() => {
+        activationCount += 1;
+      });
+      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(makeElectronAppLayer(appListeners)),
+        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(makeElectronWindowLayer()),
+        Layer.provideMerge(makeDesktopWindowLayer({ activate })),
+        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          const state = yield* DesktopState.DesktopState;
+          yield* lifecycle.register;
+          yield* Ref.set(state.quitting, true);
+
+          appListeners.get("activate")?.();
+
+          assert.equal(activationCount, 0);
         }),
       ).pipe(Effect.provide(layer));
     }),

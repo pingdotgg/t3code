@@ -223,7 +223,13 @@ export const make = DesktopLifecycle.of({
       );
     });
     yield* electronApp.on("activate", () => {
-      void runEffect(desktopWindow.activate.pipe(Effect.withSpan("desktop.lifecycle.activate")));
+      void runEffect(
+        Effect.gen(function* () {
+          const state = yield* DesktopState.DesktopState;
+          if (yield* Ref.get(state.quitting)) return;
+          yield* desktopWindow.activate;
+        }).pipe(Effect.withSpan("desktop.lifecycle.activate")),
+      );
     });
     yield* electronApp.on("window-all-closed", () => {
       void runEffect(
