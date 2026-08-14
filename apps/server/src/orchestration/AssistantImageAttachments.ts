@@ -3,6 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ChatAttachment,
+  type ProviderDriverKind,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -52,10 +53,19 @@ function safeImageName(value: string | undefined, mimeType: string): string {
   const candidate = basename(value ?? "").slice(0, 255);
   const inferredExtension = inferImageExtension({ mimeType, fileName: candidate });
   const extension = /\.[a-z0-9]{1,8}$/i.exec(candidate)?.[0]?.toLowerCase();
-  if (candidate.length > 0 && extension && SAFE_IMAGE_FILE_EXTENSIONS.has(extension)) {
+  const extensionMatchesMime =
+    extension === inferredExtension ||
+    (inferredExtension === ".jpg" && (extension === ".jpg" || extension === ".jpeg"));
+  if (
+    candidate.length > 0 &&
+    extension &&
+    SAFE_IMAGE_FILE_EXTENSIONS.has(extension) &&
+    (inferredExtension === ".bin" || extensionMatchesMime)
+  ) {
     return candidate;
   }
-  return `generated-image${inferredExtension === ".bin" ? ".png" : inferredExtension}`;
+  const stem = candidate.replace(/\.[a-z0-9]{1,8}$/i, "").trim() || "generated-image";
+  return `${stem}${inferredExtension === ".bin" ? ".png" : inferredExtension}`;
 }
 
 function dataUrlInput(
@@ -102,7 +112,10 @@ function rawBase64Input(
  * filesystem paths are accepted solely from Codex's native imageGeneration
  * item so arbitrary tool output can never become a client-visible file URL.
  */
-export function extractAssistantImageInputs(payload: unknown): ReadonlyArray<AssistantImageInput> {
+export function extractAssistantImageInputs(
+  payload: unknown,
+  context?: { readonly provider?: ProviderDriverKind },
+): ReadonlyArray<AssistantImageInput> {
   const inputs: Array<AssistantImageInput> = [];
   const seenObjects = new WeakSet<object>();
   const seenSources = new Set<string>();
@@ -123,12 +136,12 @@ export function extractAssistantImageInputs(payload: unknown): ReadonlyArray<Ass
     }
   };
 
-  const visit = (value: unknown, depth: number): void => {
+  const visitOutput = (value: unknown, depth: number, nativeCodexItem = false): void => {
     if (depth > MAX_TRAVERSAL_DEPTH || inputs.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       return;
     }
     if (Array.isArray(value)) {
-      for (const entry of value) visit(entry, depth + 1);
+      for (const entry of value) visitOutput(entry, depth + 1);
       return;
     }
     if (!Predicate.isObject(value) || seenObjects.has(value)) {
@@ -144,27 +157,32 @@ export function extractAssistantImageInputs(payload: unknown): ReadonlyArray<Ass
       stringProperty(value, "name");
 
     if (type === "imageGeneration") {
-      const savedPath = stringProperty(value, "savedPath");
-      if (savedPath) {
-        const name = basename(savedPath).slice(0, 255);
-        if (name.length > 0) {
-          add({ _tag: "local-file", path: savedPath, name });
-        }
+      if (!nativeCodexItem) {
         return;
       }
       const result = stringProperty(value, "result");
       if (result) {
-        add(dataUrlInput(result, suggestedName));
+        const savedPath = stringProperty(value, "savedPath");
+        const embedded =
+          dataUrlInput(result, savedPath ?? suggestedName) ??
+          rawBase64Input(result, "image/png", savedPath ?? suggestedName);
+        if (embedded) {
+          add(embedded);
+          return;
+        }
+      }
+      const savedPath = stringProperty(value, "savedPath");
+      if (savedPath) {
+        const name = basename(savedPath).slice(0, 255);
+        if (name.length > 0) add({ _tag: "local-file", path: savedPath, name });
       }
       return;
     }
 
-    const imageUrl = stringProperty(value, "image_url") ?? stringProperty(value, "imageUrl");
-    if (imageUrl) {
-      add(dataUrlInput(imageUrl, suggestedName));
-      if (type === "generated_image" || type === "generatedImage") {
-        return;
-      }
+    if (type === "generated_image" || type === "generatedImage") {
+      const imageUrl = stringProperty(value, "image_url") ?? stringProperty(value, "imageUrl");
+      if (imageUrl) add(dataUrlInput(imageUrl, suggestedName));
+      return;
     }
 
     if (type === "image") {
@@ -186,12 +204,26 @@ export function extractAssistantImageInputs(payload: unknown): ReadonlyArray<Ass
       }
     }
 
-    for (const nested of Object.values(value)) {
-      visit(nested, depth + 1);
+    for (const key of ["content", "result", "output"] as const) {
+      if (key in value) visitOutput(value[key], depth + 1);
     }
   };
 
-  visit(payload, 0);
+  if (!Predicate.isObject(payload)) return inputs;
+  const item = payload["item"];
+  if (Predicate.isObject(item)) {
+    const itemType = stringProperty(item, "type");
+    if (itemType === "imageGeneration") {
+      visitOutput(item, 0, String(context?.provider) === "codex");
+    } else if (itemType === "mcpToolCall") {
+      visitOutput(item["result"], 0);
+    }
+  }
+  if (stringProperty(payload, "type") === "tool_result") {
+    visitOutput(payload["content"], 0);
+  }
+  visitOutput(payload["result"], 0);
+  visitOutput(payload["content"], 0);
   return inputs;
 }
 
@@ -267,6 +299,12 @@ export const persistAssistantImageInputs = Effect.fn("persistAssistantImageInput
         image = bytesFromInput(imageInput);
       }
       if (!image) {
+        return null;
+      }
+      if (
+        image.bytes.byteLength === 0 ||
+        image.bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
+      ) {
         return null;
       }
 

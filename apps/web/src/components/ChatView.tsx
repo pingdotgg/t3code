@@ -344,7 +344,7 @@ import {
   resolveServerSelfUpdateCapability,
   serverUpdateGuidance,
 } from "../versionSkew";
-import { useAssetUrls } from "../assets/assetUrls";
+import { useAssetUrlStates } from "../assets/assetUrls";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -2377,16 +2377,15 @@ function ChatViewContent(props: ChatViewProps) {
       })),
     [serverAttachmentIds],
   );
-  const serverAttachmentUrls = useAssetUrls(environmentId, serverAttachmentResources);
-  const serverAttachmentUrlById = useMemo(
+  const serverAttachmentUrlStates = useAssetUrlStates(environmentId, serverAttachmentResources);
+  const serverAttachmentUrlStateById = useMemo(
     () =>
       new Map(
-        serverAttachmentIds.flatMap((attachmentId, index) => {
-          const url = serverAttachmentUrls[index];
-          return url ? [[attachmentId, url] as const] : [];
-        }),
+        serverAttachmentIds.map(
+          (attachmentId, index) => [attachmentId, serverAttachmentUrlStates[index]] as const,
+        ),
       ),
-    [serverAttachmentIds, serverAttachmentUrls],
+    [serverAttachmentIds, serverAttachmentUrlStates],
   );
   const displayServerMessages = useMemo<ReadonlyArray<ChatMessage>>(() => {
     if (!serverMessages) return [];
@@ -2397,12 +2396,15 @@ function ChatViewContent(props: ChatViewProps) {
       return {
         ...message,
         attachments: message.attachments.map((attachment) => {
-          const previewUrl = serverAttachmentUrlById.get(attachment.id);
-          return previewUrl ? { ...attachment, previewUrl } : attachment;
+          const preview = serverAttachmentUrlStateById.get(attachment.id);
+          if (preview?._tag === "Success") {
+            return { ...attachment, previewUrl: preview.url, previewUrlKind: "asset" as const };
+          }
+          return preview?._tag === "Failure" ? { ...attachment, previewError: true } : attachment;
         }),
       };
     });
-  }, [serverAttachmentUrlById, serverMessages]);
+  }, [serverAttachmentUrlStateById, serverMessages]);
   useEffect(() => {
     if (typeof Image === "undefined" || displayServerMessages.length === 0) {
       return;

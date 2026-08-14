@@ -7,6 +7,8 @@ interface AssistantMessageImage {
   readonly id: string;
   readonly name: string;
   readonly previewUrl?: string;
+  readonly previewUrlKind?: "asset";
+  readonly previewError?: boolean;
 }
 
 interface AssistantMessageImagesProps {
@@ -14,7 +16,10 @@ interface AssistantMessageImagesProps {
   readonly onExpand: (imageId: string) => void;
 }
 
-export function isSafeAssistantImagePreviewUrl(value: string): boolean {
+export function isSafeAssistantImagePreviewUrl(
+  value: string,
+  options?: { readonly trustedAsset?: boolean },
+): boolean {
   const trimmed = value.trim();
   if (/^data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+-]+=[^;,]+)*;base64,/i.test(trimmed)) {
     return true;
@@ -27,9 +32,10 @@ export function isSafeAssistantImagePreviewUrl(value: string): boolean {
     if (url.protocol === "blob:") {
       return true;
     }
-    return (
+    return Boolean(
       (url.protocol === "https:" || url.protocol === "http:") &&
-      url.pathname.startsWith("/api/assets/")
+      url.pathname.startsWith("/api/assets/") &&
+      options?.trustedAsset === true,
     );
   } catch {
     return false;
@@ -61,9 +67,12 @@ const AssistantMessageImageCard = memo(function AssistantMessageImageCard({
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
   const previewUrl = image.previewUrl?.trim();
   const safePreviewUrl =
-    previewUrl && isSafeAssistantImagePreviewUrl(previewUrl) ? previewUrl : undefined;
+    previewUrl &&
+    isSafeAssistantImagePreviewUrl(previewUrl, { trustedAsset: image.previewUrlKind === "asset" })
+      ? previewUrl
+      : undefined;
 
-  if (previewUrl && !safePreviewUrl) {
+  if (image.previewError || (previewUrl && !safePreviewUrl)) {
     return (
       <div
         className="flex min-h-28 w-full max-w-xl items-center justify-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-4 py-8 text-sm text-muted-foreground"
@@ -124,7 +133,7 @@ const AssistantMessageImageCard = memo(function AssistantMessageImageCard({
         type="button"
         size="icon-sm"
         variant="secondary"
-        className="absolute bottom-2 right-2 z-10 opacity-0 shadow-sm transition-opacity focus-visible:opacity-100 group-focus-within/image:opacity-100 group-hover/image:opacity-100"
+        className="absolute bottom-2 right-2 z-10 opacity-100 shadow-sm transition-opacity pointer-fine:opacity-0 pointer-fine:focus-visible:opacity-100 pointer-fine:group-focus-within/image:opacity-100 pointer-fine:group-hover/image:opacity-100"
         aria-label={`Download ${image.name}`}
         onClick={() => void downloadImage(safePreviewUrl, image.name)}
       >

@@ -1744,7 +1744,9 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "item.completed") {
-        const imageInputs = extractAssistantImageInputs(event.payload.data);
+        const imageInputs = extractAssistantImageInputs(event.payload.data, {
+          provider: event.provider,
+        });
         if (imageInputs.length > 0) {
           const imageMessageId = MessageId.make(`assistant-image:${event.itemId ?? event.eventId}`);
           const detailedThread = yield* getLoadedThreadDetail();

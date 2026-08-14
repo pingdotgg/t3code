@@ -33,6 +33,8 @@ export interface ThreadTerminalGroup {
 
 export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
+  readonly previewUrlKind?: "asset";
+  readonly previewError?: boolean;
 }
 
 export type ChatAttachment = ChatImageAttachment;

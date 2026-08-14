@@ -9,11 +9,21 @@ export interface ExpandedImagePreview {
 }
 
 export function buildExpandedImagePreview(
-  images: ReadonlyArray<{ id: string; name: string; previewUrl?: string }>,
+  images: ReadonlyArray<{
+    id: string;
+    name: string;
+    previewUrl?: string;
+    previewUrlKind?: "asset";
+  }>,
   selectedImageId: string,
 ): ExpandedImagePreview | null {
   const previewableImages = images.flatMap((image) =>
-    image.previewUrl ? [{ id: image.id, src: image.previewUrl, name: image.name }] : [],
+    image.previewUrl &&
+    isSafeAssistantImagePreviewUrl(image.previewUrl, {
+      trustedAsset: image.previewUrlKind === "asset",
+    })
+      ? [{ id: image.id, src: image.previewUrl, name: image.name }]
+      : [],
   );
   if (previewableImages.length === 0) {
     return null;
@@ -30,3 +40,4 @@ export function buildExpandedImagePreview(
     index: selectedIndex,
   };
 }
+import { isSafeAssistantImagePreviewUrl } from "./AssistantMessageImages";

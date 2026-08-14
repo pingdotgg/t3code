@@ -1,5 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, ThreadId } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ProviderDriverKind,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -61,6 +65,36 @@ describe("extractAssistantImageInputs", () => {
     ]);
   });
 
+  it("ignores image-looking values outside explicit provider output fields", () => {
+    expect(
+      extractAssistantImageInputs({
+        item: {
+          type: "mcpToolCall",
+          arguments: {
+            type: "generated_image",
+            image_url: "data:image/png;base64,aGVsbG8=",
+          },
+          result: { content: [{ type: "text", text: "done" }] },
+        },
+        rawInput: {
+          type: "image",
+          data: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it("requires a generated-image type before accepting image_url fields", () => {
+    expect(
+      extractAssistantImageInputs({
+        result: {
+          content: [{ image_url: "data:image/png;base64,aGVsbG8=" }],
+        },
+      }),
+    ).toEqual([]);
+  });
+
   it("extracts Claude image blocks with nested base64 sources", () => {
     expect(
       extractAssistantImageInputs({
@@ -112,21 +146,70 @@ describe("extractAssistantImageInputs", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it("extracts only the explicit saved path from native image-generation items", () => {
+  it("prefers native Codex image bytes over its saved path", () => {
     expect(
-      extractAssistantImageInputs({
-        item: {
-          type: "imageGeneration",
-          savedPath: "C:\\temp\\codex-generated.png",
-          result: "completed",
+      extractAssistantImageInputs(
+        {
+          item: {
+            type: "imageGeneration",
+            savedPath: "C:\\temp\\codex-generated.png",
+            result: ONE_PIXEL_PNG_BASE64,
+          },
+          path: "C:\\private\\not-an-image.txt",
         },
-        path: "C:\\private\\not-an-image.txt",
-      }),
+        { provider: ProviderDriverKind.make("codex") },
+      ),
+    ).toEqual([
+      {
+        _tag: "base64",
+        base64: ONE_PIXEL_PNG_BASE64,
+        mimeType: "image/png",
+        name: "codex-generated.png",
+      },
+    ]);
+  });
+
+  it("accepts native saved paths only from Codex lifecycle items", () => {
+    const payload = {
+      item: {
+        type: "imageGeneration",
+        savedPath: "C:\\temp\\codex-generated.png",
+        result: "completed",
+      },
+    };
+
+    expect(
+      extractAssistantImageInputs(payload, { provider: ProviderDriverKind.make("claudeAgent") }),
+    ).toEqual([]);
+    expect(
+      extractAssistantImageInputs(payload, { provider: ProviderDriverKind.make("codex") }),
     ).toEqual([
       {
         _tag: "local-file",
         path: "C:\\temp\\codex-generated.png",
         name: "codex-generated.png",
+      },
+    ]);
+  });
+
+  it("uses an extension matching the actual generated image MIME type", () => {
+    expect(
+      extractAssistantImageInputs({
+        result: {
+          content: [
+            {
+              type: "generated_image",
+              image_url: "data:image/png;base64,aGVsbG8=",
+              output_hint: "concept.jpg",
+            },
+          ],
+        },
+      }),
+    ).toEqual([
+      {
+        _tag: "data-url",
+        dataUrl: "data:image/png;base64,aGVsbG8=",
+        name: "concept.png",
       },
     ]);
   });
@@ -191,5 +274,32 @@ describe("extractAssistantImageInputs", () => {
       expect(result?.storedPath).not.toBe(result?.sourcePath);
       expect(result?.attachment).not.toHaveProperty("path");
     }),
+  );
+
+  it.effect("rechecks local image size after reading the file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourcePath = yield* fs.makeTempFileScoped({ suffix: ".png" });
+      yield* fs.writeFile(sourcePath, Buffer.from(ONE_PIXEL_PNG_BASE64, "base64"));
+      const oversizedBytes = new Uint8Array(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
+      const guardedFs: FileSystem.FileSystem = {
+        ...fs,
+        readFile: (path) =>
+          path === sourcePath ? Effect.succeed(oversizedBytes) : fs.readFile(path),
+      };
+
+      const attachments = yield* persistAssistantImageInputs({
+        threadId: ThreadId.make("thread-raced-image"),
+        inputs: [
+          {
+            _tag: "local-file",
+            path: sourcePath,
+            name: "generated.png",
+          },
+        ],
+      }).pipe(Effect.provideService(FileSystem.FileSystem, guardedFs));
+
+      expect(attachments).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 });
