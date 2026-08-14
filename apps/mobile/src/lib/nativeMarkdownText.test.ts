@@ -126,6 +126,22 @@ describe("nativeMarkdownTextRuns", () => {
     ]);
   });
 
+  it.each([
+    ["&#128512;", "😀"],
+    ["&#x1f680;", "🚀"],
+    ["&#9999999999;", "&#9999999999;"],
+    ["&#x110000;", "&#x110000;"],
+    ["&amp;#9999999999;", "&#9999999999;"],
+    ["&amp;#x110000;", "&#x110000;"],
+  ])("normalizes numeric entity %s without throwing", (content, expected) => {
+    const node: MarkdownNode = {
+      type: "paragraph",
+      children: [{ type: "text", content }],
+    };
+
+    expect(nativeMarkdownTextRuns(node)).toEqual([{ text: expected }]);
+  });
+
   it("reads inline content from nested text nodes", () => {
     const node: MarkdownNode = {
       type: "paragraph",
