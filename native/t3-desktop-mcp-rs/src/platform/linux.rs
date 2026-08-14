@@ -336,15 +336,20 @@ impl LinuxDesktop {
         let shift_code = self
             .keycode_for(0xffe1 /* Shift_L */)?
             .map(|(code, _)| code);
-        if shift && let Some(code) = shift_code {
-            self.key(code, true)?;
+        let shift_held = if shift && let Some(code) = shift_code {
+            match self.key(code, true) {
+                Ok(()) => true,
+                Err(error) => return Err(error),
+            }
+        } else {
+            false
+        };
+        let tapped = self.key(keycode, true).and_then(|()| self.key(keycode, false));
+        // Always release Shift if we pressed it, even when the key tap fails.
+        if shift_held && let Some(code) = shift_code {
+            let _ = self.key(code, false);
         }
-        self.key(keycode, true)?;
-        self.key(keycode, false)?;
-        if shift && let Some(code) = shift_code {
-            self.key(code, false)?;
-        }
-        Ok(())
+        tapped
     }
 
     fn key(&self, keycode: Keycode, press: bool) -> Result<()> {
@@ -397,13 +402,27 @@ impl LinuxDesktop {
         let result = self.tap_keycode(scratch, false);
 
         // Always hand the keycode back, even if the tap failed, or the user's
-        // keyboard keeps our borrowed mapping.
+        // keyboard keeps our borrowed mapping. Surface cleanup failures after
+        // the tap result so a successful type never leaves a remapped key.
         let cleared = vec![0u32; per];
-        let _ = connection
+        let restore = connection
             .change_keyboard_mapping(1, scratch, per as u8, &cleared)
-            .map(|cookie| cookie.check());
-        let _ = connection.flush();
-        result
+            .map_err(|error| DesktopError::new(format!("could not restore keycode: {error}")))
+            .and_then(|cookie| {
+                cookie
+                    .check()
+                    .map_err(|error| DesktopError::new(format!("could not restore keycode: {error}")))
+            })
+            .and_then(|()| {
+                connection
+                    .flush()
+                    .map_err(|error| DesktopError::new(format!("X11 flush failed: {error}")))
+            });
+        match (result, restore) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(tap), _) => Err(tap),
+            (Ok(()), Err(cleanup)) => Err(cleanup),
+        }
     }
 
     fn walk(
@@ -509,12 +528,19 @@ impl LinuxDesktop {
                 continue;
             };
             let name = block_on(proxy.name()).unwrap_or_default();
-            // AT-SPI exposes the owning pid through the application interface;
-            // fall back to zero so a nameless app is still listed.
-            let pid = block_on(proxy.get_application())
-                .ok()
-                .and_then(|_| None::<u32>)
-                .unwrap_or(0);
+            // Resolve the a11y bus name to a Unix PID via D-Bus. Application.id
+            // is a registry-assigned token, not a process id.
+            let pid = block_on(async {
+                let Ok(dbus) = zbus::fdo::DBusProxy::new(connection.connection()).await else {
+                    return 0u32;
+                };
+                let Ok(bus_name) = zbus::names::BusName::try_from(reference.bus.as_str()) else {
+                    return 0;
+                };
+                dbus.get_connection_unix_process_id(bus_name)
+                    .await
+                    .unwrap_or(0)
+            });
             applications.push((reference, name, pid));
         }
         Ok(applications)
@@ -597,6 +623,18 @@ fn named_keysym(key: &str) -> Option<u32> {
         "end" => 0xff57,
         "page_up" | "pageup" => 0xff55,
         "page_down" | "pagedown" => 0xff56,
+        "f1" => 0xffbe,
+        "f2" => 0xffbf,
+        "f3" => 0xffc0,
+        "f4" => 0xffc1,
+        "f5" => 0xffc2,
+        "f6" => 0xffc3,
+        "f7" => 0xffc4,
+        "f8" => 0xffc5,
+        "f9" => 0xffc6,
+        "f10" => 0xffc7,
+        "f11" => 0xffc8,
+        "f12" => 0xffc9,
         _ => return None,
     })
 }
@@ -788,14 +826,21 @@ impl Desktop for LinuxDesktop {
         self.move_pointer(from_x, from_y)?;
         self.button(BUTTON_LEFT, true)?;
         // A single jump can read as a click to apps that track motion, so step.
-        for step in 1..=10 {
-            let progress = f64::from(step) / 10.0;
-            self.move_pointer(
-                from_x + (to_x - from_x) * progress,
-                from_y + (to_y - from_y) * progress,
-            )?;
-        }
-        self.button(BUTTON_LEFT, false)?;
+        // Release the button before propagating any motion error, or the
+        // session is left mid-drag.
+        let motion = (|| -> Result<()> {
+            for step in 1..=10 {
+                let progress = f64::from(step) / 10.0;
+                self.move_pointer(
+                    from_x + (to_x - from_x) * progress,
+                    from_y + (to_y - from_y) * progress,
+                )?;
+            }
+            Ok(())
+        })();
+        let release = self.button(BUTTON_LEFT, false);
+        motion?;
+        release?;
         Ok(format!(
             "dragged ({from_x:.0}, {from_y:.0}) → ({to_x:.0}, {to_y:.0})"
         ))
@@ -937,7 +982,13 @@ impl Desktop for LinuxDesktop {
     fn select_text(&mut self, element: u32, start: usize, length: Option<usize>) -> Result<String> {
         let reference = self.element(element)?;
         let text = self.text_proxy(&reference)?;
-        let total = block_on(text.character_count()).unwrap_or(0).max(0);
+        let total = block_on(text.character_count())
+            .map_err(|error| {
+                DesktopError::new(format!(
+                    "could not read character count for e{element}: {error}"
+                ))
+            })?
+            .max(0);
         let start = i32::try_from(start).unwrap_or(i32::MAX).min(total);
         let end = length
             .and_then(|count| i32::try_from(count).ok())

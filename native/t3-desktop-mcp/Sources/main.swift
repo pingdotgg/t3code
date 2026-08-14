@@ -927,9 +927,9 @@ func toolActivateApp(_ args: [String: Any]) -> String {
 /// wedged capture can never hang the server.
 func captureWindowPNG(pid: pid_t, maxWidth: Int) -> Data? {
     let semaphore = DispatchSemaphore(value: 0)
-    var result: Data?
+    let box = CaptureBox()
 
-    Task.detached {
+    let task = Task.detached {
         defer { semaphore.signal() }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
@@ -950,14 +950,36 @@ func captureWindowPNG(pid: pid_t, maxWidth: Int) -> Data? {
             let image = try await SCScreenshotManager.captureImage(
                 contentFilter: SCContentFilter(desktopIndependentWindow: window),
                 configuration: config)
-            result = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+            let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+            box.set(png)
         } catch {
-            result = nil
+            box.set(nil)
         }
     }
 
-    _ = semaphore.wait(timeout: .now() + 15)
-    return result
+    let waited = semaphore.wait(timeout: .now() + 15)
+    if waited == .timedOut {
+        task.cancel()
+        // Do not read `box` after cancel — the task may still be writing.
+        return nil
+    }
+    return box.get()
+}
+
+/// Synchronizes capture results so a timed-out waiter never races a late write.
+private final class CaptureBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Data?
+    func set(_ data: Data?) {
+        lock.lock()
+        value = data
+        lock.unlock()
+    }
+    func get() -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }
 
 /// Capture a whole display. Window capture covers one app; this is for seeing
@@ -1195,7 +1217,17 @@ enum Chrome {
         set {
             didLoadState = true
             cachedWindowID = newValue
-            cachedChromePid = newValue == nil ? nil : chromePid()
+            if let id = newValue {
+                // Prefer the Chrome process that owns this window, not the first
+                // com.google.Chrome in the process list (multi-instance safe).
+                if let frame = boundsOf(id), let match = axWindow(matching: frame) {
+                    cachedChromePid = match.pid
+                } else {
+                    cachedChromePid = chromePid()
+                }
+            } else {
+                cachedChromePid = nil
+            }
             persistState()
         }
     }
@@ -1206,14 +1238,31 @@ enum Chrome {
         guard let id = cachedWindowID else { return nil }
         // Window ids are only valid within a single Chrome process lifetime.
         // After a restart Chrome can reuse the numeric id for an ordinary user
-        // window; refuse to reclaim unless the pid still matches.
-        guard let expectedPid = cachedChromePid, let livePid = chromePid(), expectedPid == livePid else {
+        // window; refuse to reclaim unless the pid still matches *and* an AX
+        // window under that pid still matches the scripted frame.
+        guard let expectedPid = cachedChromePid else {
             agentWindowID = nil
             return nil
         }
-        if windowExists(id) { return id }
-        agentWindowID = nil
-        return nil
+        let liveChromePids = Set(
+            NSWorkspace.shared.runningApplications
+                .filter { $0.bundleIdentifier == "com.google.Chrome" }
+                .map(\.processIdentifier)
+        )
+        guard liveChromePids.contains(expectedPid) else {
+            agentWindowID = nil
+            return nil
+        }
+        guard windowExists(id), let frame = boundsOf(id) else {
+            agentWindowID = nil
+            return nil
+        }
+        guard let match = axWindow(matching: frame, pid: expectedPid) else {
+            agentWindowID = nil
+            return nil
+        }
+        cachedChromePid = match.pid
+        return id
     }
 
     /// NSAppleScript is not thread-safe and the JSON-RPC loop runs off-main.
@@ -1326,17 +1375,19 @@ enum Chrome {
     /// origin wins, which is unambiguous unless two windows are exactly stacked.
     static func agentAXWindow() -> (element: AXUIElement, pid: pid_t)? {
         guard let frame = agentWindowFrame() else { return nil }
-        return axWindow(matching: frame)
+        loadState()
+        return axWindow(matching: frame, pid: cachedChromePid)
     }
 
     /// Pair a scripting window with its accessibility element by screen frame.
     /// Chrome cascades new windows only ~28px apart, so origin alone is not
     /// enough to tell them apart — size is folded into the distance and the
-    /// tolerance is tight.
-    static func axWindow(matching frame: CGRect) -> (element: AXUIElement, pid: pid_t)? {
+    /// tolerance is tight. When `pid` is set, only that Chrome process is searched.
+    static func axWindow(matching frame: CGRect, pid: pid_t? = nil) -> (element: AXUIElement, pid: pid_t)? {
         var best: (AXUIElement, pid_t, CGFloat)?
         for app in NSWorkspace.shared.runningApplications
         where app.bundleIdentifier == "com.google.Chrome" {
+            if let pid, app.processIdentifier != pid { continue }
             let ax = AXUIElementCreateApplication(app.processIdentifier)
             for window in (axCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement]) ?? [] {
                 guard let origin = axPoint(window, kAXPositionAttribute as String),
@@ -1903,6 +1954,15 @@ func textResult(_ s: String, isError: Bool = false) -> [String: Any] {
 // Chrome launches this same binary as its native messaging host; in that mode
 // it is a relay, not an MCP server.
 if CommandLine.arguments.contains("native-host") { NativeHost.run() }
+// Computer History background recorder (Skysight-style interaction events).
+if CommandLine.arguments.contains("computer-history") {
+    let args = CommandLine.arguments
+    if let flag = args.firstIndex(of: "--root"), args.index(after: flag) < args.endIndex {
+        ComputerHistoryDaemon.run(root: args[args.index(after: flag)])
+    }
+    fputs("t3-desktop-mcp: computer-history requires --root <dir>\n", stderr)
+    exit(2)
+}
 // The agent pointer is a separate LSUIElement .app (see AgentCursor.swift)
 // launched via NSWorkspace with `--socket <path>` for move/hide commands.
 if CommandLine.arguments.contains("cursor-overlay") {
