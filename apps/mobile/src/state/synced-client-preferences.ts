@@ -2,11 +2,20 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   getSyncedClientPreferenceUpdatedAt,
+  SYNCED_CLIENT_PREFERENCE_FIELDS,
+  type SyncedClientPreferenceField,
+  type SyncedClientPreferencesPatch,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import {
+  DEFAULT_MOBILE_APPEARANCE_MODE,
+  DEFAULT_MOBILE_THEME_ID,
+  isMobileThemeId,
+  type MobileAppearanceMode,
+} from "../lib/mobileTheme";
 import { environmentShell } from "./shell";
 import { environmentPresentations } from "./presentation";
 import {
@@ -20,11 +29,11 @@ import { useAtomCommand } from "./use-atom-command";
 import {
   advancePlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationKey,
-  createPlanModePreferenceReconciliationController,
-  createPlanModePreferenceWriteController,
+  createSyncedClientPreferenceReconciliationController,
+  createSyncedClientPreferenceWriteController,
   hasPlanModePreferenceReconciliationAttempted,
   isPlanModePreferenceReconciliationReady,
-  reconcilePlanModePreferences,
+  reconcileSyncedClientPreferences,
 } from "./synced-client-preferences-model";
 
 const connectedEnvironmentPreferenceStatesAtom = Atom.make((get) => {
@@ -94,28 +103,47 @@ export function useSyncedClientPreferences(): void {
     label: "synced client preferences reconciliation",
     reportFailure: false,
   });
-  const reconciliationController = useMemo(
-    () => createPlanModePreferenceReconciliationController(),
+  const reconciliationControllers = useMemo(
+    () =>
+      Object.fromEntries(
+        SYNCED_CLIENT_PREFERENCE_FIELDS.map((field) => [
+          field,
+          createSyncedClientPreferenceReconciliationController(field),
+        ]),
+      ) as Record<
+        SyncedClientPreferenceField,
+        ReturnType<typeof createSyncedClientPreferenceReconciliationController>
+      >,
     [],
   );
 
-  useEffect(() => () => reconciliationController.reset(), [reconciliationController]);
+  useEffect(
+    () => () => {
+      for (const controller of Object.values(reconciliationControllers)) controller.reset();
+    },
+    [reconciliationControllers],
+  );
 
   useEffect(() => {
     const liveStates = states.filter(
       ({ connectionState, shell }) => connectionState === "connected" && shell.status === "live",
     );
-    reconciliationController.setActiveEnvironmentIds(
-      liveStates.filter(({ canPatch }) => canPatch).map(({ environmentId }) => environmentId),
-    );
+    const activeEnvironmentIds = liveStates
+      .filter(({ canPatch }) => canPatch)
+      .map(({ environmentId }) => environmentId);
+    for (const controller of Object.values(reconciliationControllers)) {
+      controller.setActiveEnvironmentIds(activeEnvironmentIds);
+    }
     for (const { environmentId, shell } of liveStates) {
       const preferences =
         shell.snapshot._tag === "Some" ? shell.snapshot.value.syncedClientPreferences : undefined;
-      reconciliationController.observe(
-        environmentId,
-        preferences?.planModeEnabled,
-        getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled"),
-      );
+      for (const field of SYNCED_CLIENT_PREFERENCE_FIELDS) {
+        reconciliationControllers[field].observe(
+          environmentId,
+          preferences?.[field],
+          getSyncedClientPreferenceUpdatedAt(preferences, field),
+        );
+      }
     }
     if (!connectionsLoaded) {
       setReconciledKey(null);
@@ -143,11 +171,19 @@ export function useSyncedClientPreferences(): void {
       setReconciledKey(nextReconciledKey);
       return;
     }
-    const reconciliation = reconcilePlanModePreferences({
-      localPlanModeEnabled: preferencesResult.value.planModeEnabled,
-      localUpdatedAt:
-        preferencesResult.value.syncedClientPreferencesUpdatedAtByField?.planModeEnabled ??
-        preferencesResult.value.syncedClientPreferencesUpdatedAt,
+    const importedThemes = preferencesResult.value.importedThemes ?? [];
+    const normalizeThemeId = (themeId: string) =>
+      isMobileThemeId(themeId, importedThemes) ? themeId : DEFAULT_MOBILE_THEME_ID;
+    const reconciliation = reconcileSyncedClientPreferences({
+      local: {
+        values: {
+          planModeEnabled: preferencesResult.value.planModeEnabled ?? false,
+          appearanceMode: preferencesResult.value.appearanceMode ?? DEFAULT_MOBILE_APPEARANCE_MODE,
+          themeId: preferencesResult.value.themeId ?? DEFAULT_MOBILE_THEME_ID,
+        },
+        updatedAtByField: preferencesResult.value.syncedClientPreferencesUpdatedAtByField,
+        legacyUpdatedAt: preferencesResult.value.syncedClientPreferencesUpdatedAt,
+      },
       environments: liveStates.map(({ environmentId, shell, canPatch }) => ({
         environmentId,
         canPatch,
@@ -156,16 +192,29 @@ export function useSyncedClientPreferences(): void {
       })),
       now: new Date().toISOString(),
     });
-    if (reconciliation.localPatch !== null) savePreferences(reconciliation.localPatch);
+    if (reconciliation.localPatch !== null) {
+      savePreferences({
+        ...reconciliation.localPatch.values,
+        ...(reconciliation.localPatch.values.themeId === undefined
+          ? {}
+          : { themeId: normalizeThemeId(reconciliation.localPatch.values.themeId) }),
+        syncedClientPreferencesUpdatedAtByField: reconciliation.localPatch.updatedAtByField,
+      });
+    }
     for (const target of reconciliation.environmentPatches) {
-      reconciliationController.reconcile({
+      const field = SYNCED_CLIENT_PREFERENCE_FIELDS.find(
+        (candidate) => target.input.patch[candidate] !== undefined,
+      );
+      if (field === undefined) continue;
+      reconciliationControllers[field].reconcile({
         target,
         patch: patchPreferences,
         persist: (patch) =>
           persistReconciledPreferences({
-            expectedUpdatedAtByField: { planModeEnabled: target.input.updatedAt },
+            expectedUpdatedAtByField: { [field]: target.input.updatedAt },
             patch,
           }),
+        normalizeThemeId,
       });
     }
     setReconciledKey(nextReconciledKey);
@@ -176,14 +225,14 @@ export function useSyncedClientPreferences(): void {
     preferencesResult,
     reconciledKey,
     reconciliationKey,
-    reconciliationController,
+    reconciliationControllers,
     savePreferences,
     setReconciledKey,
     states,
   ]);
 }
 
-export function useUpdatePlanModePreference() {
+function useUpdateSyncedClientPreference(field: SyncedClientPreferenceField) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const { connectedEnvironmentIds, states } = useConnectedEnvironmentPreferenceStates();
@@ -191,13 +240,16 @@ export function useUpdatePlanModePreference() {
     label: "synced client preferences update",
     reportFailure: false,
   });
-  const writeController = useMemo(() => createPlanModePreferenceWriteController(), []);
+  const writeController = useMemo(
+    () => createSyncedClientPreferenceWriteController(field),
+    [field],
+  );
 
   return useCallback(
-    (value: boolean) => {
+    (patch: SyncedClientPreferencesPatch) => {
       const current = AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {};
       const write = writeController.create({
-        value,
+        patch,
         connectedEnvironmentIds,
         currentUpdatedAtByField: current.syncedClientPreferencesUpdatedAtByField,
         legacyCurrentUpdatedAt: current.syncedClientPreferencesUpdatedAt,
@@ -206,11 +258,22 @@ export function useUpdatePlanModePreference() {
         ),
         now: new Date().toISOString(),
       });
-      savePreferences(write.localPatch);
+      savePreferences({
+        ...write.localPatch.values,
+        syncedClientPreferencesUpdatedAtByField: write.localPatch.updatedAtByField,
+      });
       void Promise.allSettled(
         write.environmentPatches.map(async (target) => {
           const result = await patchPreferences(target);
-          const localPatch = writeController.settle({ target, result });
+          const importedThemes = current.importedThemes ?? [];
+          const localPatch = writeController.settle({
+            target,
+            result,
+            normalizeThemeId: (themeId) =>
+              themeId === patch.themeId || isMobileThemeId(themeId, importedThemes)
+                ? themeId
+                : DEFAULT_MOBILE_THEME_ID,
+          });
           if (localPatch !== null) savePreferences(localPatch);
         }),
       );
@@ -224,4 +287,25 @@ export function useUpdatePlanModePreference() {
       writeController,
     ],
   );
+}
+
+export function useUpdatePlanModePreference() {
+  const updatePreference = useUpdateSyncedClientPreference("planModeEnabled");
+  return useCallback(
+    (value: boolean) => updatePreference({ planModeEnabled: value }),
+    [updatePreference],
+  );
+}
+
+export function useUpdateAppearanceModePreference() {
+  const updatePreference = useUpdateSyncedClientPreference("appearanceMode");
+  return useCallback(
+    (value: MobileAppearanceMode) => updatePreference({ appearanceMode: value }),
+    [updatePreference],
+  );
+}
+
+export function useUpdateThemePreference() {
+  const updatePreference = useUpdateSyncedClientPreference("themeId");
+  return useCallback((themeId: string) => updatePreference({ themeId }), [updatePreference]);
 }

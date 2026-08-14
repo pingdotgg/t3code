@@ -6,9 +6,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   advancePlanModePreferenceReconciliationKey,
   createPlanModePreferenceReconciliationKey,
-  createPlanModePreferenceReconciliationController,
   createPlanModePreferenceWrite,
-  createPlanModePreferenceWriteController,
+  createSyncedClientPreferenceReconciliationController,
+  createSyncedClientPreferenceWriteController,
   createSyncedClientPreferencesWrite,
   hasPlanModePreferenceReconciliationAttempted,
   isPlanModePreferenceReconciliationReady,
@@ -440,22 +440,20 @@ describe("synced client preferences", () => {
   });
 
   it("ignores a stale toggle ack after a newer same-millisecond write", () => {
-    const controller = createPlanModePreferenceWriteController();
+    const controller = createSyncedClientPreferenceWriteController("planModeEnabled");
     const environment = environmentId("environment-1");
     const first = controller.create({
-      value: true,
+      patch: { planModeEnabled: true },
       connectedEnvironmentIds: [environment],
       now: "2026-08-14T12:00:00.000Z",
     });
     const second = controller.create({
-      value: false,
+      patch: { planModeEnabled: false },
       connectedEnvironmentIds: [environment],
       now: "2026-08-14T12:00:00.000Z",
     });
 
-    expect(second.localPatch.syncedClientPreferencesUpdatedAtByField.planModeEnabled).toBe(
-      "2026-08-14T12:00:00.001Z",
-    );
+    expect(second.localPatch.updatedAtByField.planModeEnabled).toBe("2026-08-14T12:00:00.001Z");
     expect(
       controller.settle({
         target: second.environmentPatches[0]!,
@@ -464,7 +462,10 @@ describe("synced client preferences", () => {
           updatedAt: second.environmentPatches[0]!.input.updatedAt,
         }),
       }),
-    ).toEqual(second.localPatch);
+    ).toEqual({
+      planModeEnabled: false,
+      syncedClientPreferencesUpdatedAtByField: second.localPatch.updatedAtByField,
+    });
     expect(
       controller.settle({
         target: first.environmentPatches[0]!,
@@ -477,30 +478,28 @@ describe("synced client preferences", () => {
   });
 
   it("advances past a local clock reconciled after the previous write", () => {
-    const controller = createPlanModePreferenceWriteController();
+    const controller = createSyncedClientPreferenceWriteController("planModeEnabled");
     const environment = environmentId("environment-1");
     controller.create({
-      value: true,
+      patch: { planModeEnabled: true },
       connectedEnvironmentIds: [environment],
       now: "2026-08-14T12:00:00.000Z",
     });
 
     const write = controller.create({
-      value: false,
+      patch: { planModeEnabled: false },
       connectedEnvironmentIds: [environment],
       currentUpdatedAtByField: { planModeEnabled: "2026-08-14T12:05:00.000Z" },
       now: "2026-08-14T12:01:00.000Z",
     });
 
-    expect(write.localPatch.syncedClientPreferencesUpdatedAtByField.planModeEnabled).toBe(
-      "2026-08-14T12:05:00.001Z",
-    );
+    expect(write.localPatch.updatedAtByField.planModeEnabled).toBe("2026-08-14T12:05:00.001Z");
   });
 
   it("settles a multi-environment toggle from only the first response", () => {
-    const controller = createPlanModePreferenceWriteController();
+    const controller = createSyncedClientPreferenceWriteController("planModeEnabled");
     const write = controller.create({
-      value: true,
+      patch: { planModeEnabled: true },
       connectedEnvironmentIds: [environmentId("environment-1"), environmentId("environment-2")],
       now: "2026-08-14T12:00:00.000Z",
     });
@@ -528,6 +527,35 @@ describe("synced client preferences", () => {
         }),
       }),
     ).toBeNull();
+  });
+
+  it("normalizes a theme acknowledgment without changing other field stamps", () => {
+    const controller = createSyncedClientPreferenceWriteController("themeId");
+    const write = controller.create({
+      patch: { themeId: "custom-theme" },
+      connectedEnvironmentIds: [environmentId("environment-1")],
+      currentUpdatedAtByField: {
+        appearanceMode: "2026-08-14T11:00:00.000Z",
+      },
+      now: "2026-08-14T12:00:00.000Z",
+    });
+
+    expect(
+      controller.settle({
+        target: write.environmentPatches[0]!,
+        result: AsyncResult.success({
+          themeId: "unknown-on-this-device",
+          updatedAtByField: { themeId: "2026-08-14T12:01:00.000Z" },
+          updatedAt: "2026-08-14T12:01:00.000Z",
+        }),
+        normalizeThemeId: () => "t3-code",
+      }),
+    ).toEqual({
+      themeId: "t3-code",
+      syncedClientPreferencesUpdatedAtByField: {
+        themeId: "2026-08-14T12:01:00.000Z",
+      },
+    });
   });
 
   it("keeps offline toggles device-local", () => {
@@ -620,7 +648,7 @@ describe("synced client preferences", () => {
       environments: [{ environmentId: lowerEnvironmentId, preferences: undefined }],
       now: updatedAt,
     });
-    const controller = createPlanModePreferenceReconciliationController();
+    const controller = createSyncedClientPreferenceReconciliationController("planModeEnabled");
     const patch = vi.fn(async (target: (typeof initial.environmentPatches)[number]) =>
       AsyncResult.success({
         planModeEnabled: target.input.patch.planModeEnabled,
@@ -981,7 +1009,7 @@ describe("synced client preferences", () => {
       updatedAt: "2026-08-14T12:00:30.000Z",
     } as const;
 
-    const controller = createPlanModePreferenceReconciliationController();
+    const controller = createSyncedClientPreferenceReconciliationController("planModeEnabled");
     const persist = vi.fn();
     controller.setActiveEnvironmentIds([target.environmentId]);
     controller.reconcile({
@@ -1058,7 +1086,10 @@ describe("synced client preferences", () => {
       },
     } as const;
     const { schedule, scheduled } = makeRetryScheduler();
-    const controller = createPlanModePreferenceReconciliationController(schedule);
+    const controller = createSyncedClientPreferenceReconciliationController(
+      "planModeEnabled",
+      schedule,
+    );
     const patch = vi
       .fn()
       .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
@@ -1100,7 +1131,10 @@ describe("synced client preferences", () => {
       },
     } as const;
     const { schedule, scheduled } = makeRetryScheduler();
-    const controller = createPlanModePreferenceReconciliationController(schedule);
+    const controller = createSyncedClientPreferenceReconciliationController(
+      "planModeEnabled",
+      schedule,
+    );
     const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
 
     controller.setActiveEnvironmentIds([environment]);
@@ -1125,7 +1159,10 @@ describe("synced client preferences", () => {
       },
     } as const;
     const { schedule, scheduled } = makeRetryScheduler();
-    const controller = createPlanModePreferenceReconciliationController(schedule);
+    const controller = createSyncedClientPreferenceReconciliationController(
+      "planModeEnabled",
+      schedule,
+    );
     const patch = vi
       .fn()
       .mockResolvedValueOnce(AsyncResult.failure(Cause.fail("offline")))
@@ -1173,7 +1210,10 @@ describe("synced client preferences", () => {
         },
       } as const;
       const { schedule, scheduled } = makeRetryScheduler();
-      const controller = createPlanModePreferenceReconciliationController(schedule);
+      const controller = createSyncedClientPreferenceReconciliationController(
+        "planModeEnabled",
+        schedule,
+      );
       const patch = vi.fn().mockResolvedValue(AsyncResult.failure(Cause.fail("offline")));
 
       controller.setActiveEnvironmentIds([environment]);

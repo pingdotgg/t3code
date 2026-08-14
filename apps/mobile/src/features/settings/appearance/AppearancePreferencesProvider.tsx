@@ -43,6 +43,10 @@ import {
 } from "../../../lib/mobileThemeFile";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import {
+  useUpdateAppearanceModePreference,
+  useUpdateThemePreference,
+} from "../../../state/synced-client-preferences";
 import { cacheTerminalFontSize } from "../../terminal/terminalUiState";
 
 interface AppearancePreferencesContextValue {
@@ -105,6 +109,8 @@ function applyTextScaleVariables(baseFontSize: number) {
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const updateAppearanceModePreference = useUpdateAppearanceModePreference();
+  const updateThemePreference = useUpdateThemePreference();
   const systemColorScheme = useColorScheme();
   const [hasAppliedInitialPreferences, setHasAppliedInitialPreferences] = useState(false);
   const preferences = useMemo(
@@ -203,26 +209,27 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
 
   const setAppearanceMode = useCallback(
     (value: MobileAppearanceMode) => {
-      updatePreferences({ appearanceMode: value });
+      updateAppearanceModePreference(value);
     },
-    [updatePreferences],
+    [updateAppearanceModePreference],
   );
 
   const setThemeId = useCallback(
     (value: MobileThemeId) => {
       if (!isMobileThemeId(value, importedThemes)) return;
-      updatePreferences({ themeId: value });
+      updateThemePreference(value);
     },
-    [importedThemes, updatePreferences],
+    [importedThemes, updateThemePreference],
   );
 
   const importThemeJson = useCallback(
     (source: string) => {
       const importedTheme = parseMobileThemeFileJson(source);
       const next = addImportedMobileTheme(importedThemes, importedTheme);
-      updatePreferences({ importedThemes: next, themeId: importedTheme.id });
+      updatePreferences({ importedThemes: next });
+      updateThemePreference(importedTheme.id);
     },
-    [importedThemes, updatePreferences],
+    [importedThemes, updatePreferences, updateThemePreference],
   );
 
   const removeImportedTheme = useCallback(
@@ -232,9 +239,11 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
         removedThemeId,
         themePreferences.themeId,
       );
-      if (patch) updatePreferences(patch);
+      if (!patch) return;
+      updatePreferences({ importedThemes: patch.importedThemes });
+      if (patch.themeId !== undefined) updateThemePreference(patch.themeId);
     },
-    [importedThemes, themePreferences.themeId, updatePreferences],
+    [importedThemes, themePreferences.themeId, updatePreferences, updateThemePreference],
   );
 
   const value = useMemo(

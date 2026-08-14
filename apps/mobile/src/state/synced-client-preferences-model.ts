@@ -17,11 +17,14 @@ import * as Schema from "effect/Schema";
 import type { Preferences } from "../persistence/mobile-preferences";
 
 const SYNCED_CLIENT_PREFERENCES_MAX_FUTURE_SKEW_MS = 5 * 60 * 1_000;
-const PLAN_MODE_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS = 3;
+const SYNCED_CLIENT_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS = 3;
 
-type PlanModePreferenceRetryScheduler = (retry: () => void, delayMs: number) => () => void;
+type SyncedClientPreferenceRetryScheduler = (retry: () => void, delayMs: number) => () => void;
 
-const schedulePlanModePreferenceRetry: PlanModePreferenceRetryScheduler = (retry, delayMs) => {
+const scheduleSyncedClientPreferenceRetry: SyncedClientPreferenceRetryScheduler = (
+  retry,
+  delayMs,
+) => {
   const timer = setTimeout(retry, delayMs);
   return () => clearTimeout(timer);
 };
@@ -32,7 +35,7 @@ export interface EnvironmentPreferenceState {
   readonly canPatch?: boolean;
 }
 
-export interface PlanModePreferencePatchTarget {
+export interface SyncedClientPreferencePatchTarget {
   readonly environmentId: EnvironmentId;
   readonly input: PatchSyncedClientPreferencesRequest;
 }
@@ -196,18 +199,20 @@ function localPreferenceUpdatedAt(
   return local.updatedAtByField?.[field] ?? local.legacyUpdatedAt;
 }
 
-export function createPlanModePreferenceReconciliationController(
-  scheduleRetry: PlanModePreferenceRetryScheduler = schedulePlanModePreferenceRetry,
+export function createSyncedClientPreferenceReconciliationController(
+  field: SyncedClientPreferenceField,
+  scheduleRetry: SyncedClientPreferenceRetryScheduler = scheduleSyncedClientPreferenceRetry,
 ) {
-  const reconciliationKey = (value: boolean | undefined, updatedAt: string | undefined) =>
-    value === undefined || updatedAt === undefined
-      ? undefined
-      : `${updatedAt}:${value ? "1" : "0"}`;
-  const targetReconciliationKey = (target: PlanModePreferencePatchTarget) =>
-    reconciliationKey(target.input.patch.planModeEnabled, target.input.updatedAt);
+  const reconciliationKey = (
+    value: SyncedClientPreferencesPatch[SyncedClientPreferenceField] | undefined,
+    updatedAt: string | undefined,
+  ) =>
+    value === undefined || updatedAt === undefined ? undefined : JSON.stringify([updatedAt, value]);
+  const targetReconciliationKey = (target: SyncedClientPreferencePatchTarget) =>
+    reconciliationKey(target.input.patch[field], target.input.updatedAt);
 
   interface Reconciliation {
-    readonly target: PlanModePreferencePatchTarget;
+    readonly target: SyncedClientPreferencePatchTarget;
     readonly key: string | undefined;
     attempt: number;
     patch: () => Promise<SyncedClientPreferences | null>;
@@ -230,7 +235,7 @@ export function createPlanModePreferenceReconciliationController(
     const { environmentId } = reconciliation.target;
     const state = environmentReconciliations.get(environmentId);
     if (state?.reconciliation !== reconciliation) return;
-    if (reconciliation.attempt >= PLAN_MODE_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS) {
+    if (reconciliation.attempt >= SYNCED_CLIENT_PREFERENCE_RECONCILIATION_MAX_ATTEMPTS) {
       state.reconciliation = undefined;
       return;
     }
@@ -255,7 +260,7 @@ export function createPlanModePreferenceReconciliationController(
         }
         state.reconciliation = undefined;
         state.settledKey = reconciliation.key;
-        const localPatch = canonicalPlanModePreferencePatch(preferences);
+        const localPatch = canonicalSyncedClientPreferencesPatch(preferences, [field]);
         if (localPatch !== null) reconciliation.persist(localPatch);
       },
       () => settleFailure(reconciliation),
@@ -278,7 +283,7 @@ export function createPlanModePreferenceReconciliationController(
     },
     observe(
       environmentId: EnvironmentId,
-      value: boolean | undefined,
+      value: SyncedClientPreferencesPatch[SyncedClientPreferenceField] | undefined,
       updatedAt: string | undefined,
     ) {
       const reconciliation = environmentReconciliations.get(environmentId)?.reconciliation;
@@ -286,11 +291,12 @@ export function createPlanModePreferenceReconciliationController(
       if (observedKey !== undefined && reconciliation?.key === observedKey) cancel(environmentId);
     },
     reconcile<E>(input: {
-      readonly target: PlanModePreferencePatchTarget;
+      readonly target: SyncedClientPreferencePatchTarget;
       readonly patch: (
-        target: PlanModePreferencePatchTarget,
+        target: SyncedClientPreferencePatchTarget,
       ) => Promise<AtomCommandResult<SyncedClientPreferences, E>>;
       readonly persist: (patch: Partial<Preferences>) => void;
+      readonly normalizeThemeId?: (themeId: string) => string;
     }) {
       const { environmentId } = input.target;
       const state = environmentReconciliations.get(environmentId);
@@ -304,7 +310,12 @@ export function createPlanModePreferenceReconciliationController(
           const result = await input.patch(input.target);
           return result._tag === "Success" ? result.value : null;
         };
-        current.persist = input.persist;
+        current.persist = (patch) =>
+          input.persist(
+            patch.themeId === undefined
+              ? patch
+              : { ...patch, themeId: input.normalizeThemeId?.(patch.themeId) ?? patch.themeId },
+          );
         return;
       }
       if (current !== undefined) cancel(environmentId);
@@ -317,7 +328,12 @@ export function createPlanModePreferenceReconciliationController(
           const result = await input.patch(input.target);
           return result._tag === "Success" ? result.value : null;
         },
-        persist: input.persist,
+        persist: (patch) =>
+          input.persist(
+            patch.themeId === undefined
+              ? patch
+              : { ...patch, themeId: input.normalizeThemeId?.(patch.themeId) ?? patch.themeId },
+          ),
       };
       state.reconciliation = reconciliation;
       dispatch(reconciliation);
@@ -329,18 +345,22 @@ export function createPlanModePreferenceReconciliationController(
   };
 }
 
-export function canonicalPlanModePreferencePatch(
+export function canonicalSyncedClientPreferencesPatch(
   preferences: SyncedClientPreferences,
+  fields: ReadonlyArray<SyncedClientPreferenceField> = SYNCED_CLIENT_PREFERENCE_FIELDS,
 ): Partial<Preferences> | null {
-  const updatedAt = getSyncedClientPreferenceUpdatedAt(preferences, "planModeEnabled");
-  return preferences.planModeEnabled === undefined || updatedAt === undefined
+  const values: MutableSyncedClientPreferencesPatch = {};
+  const updatedAtByField: MutableSyncedClientPreferencesUpdatedAtByField = {};
+  for (const field of fields) {
+    const value = preferences[field];
+    const updatedAt = getSyncedClientPreferenceUpdatedAt(preferences, field);
+    if (value === undefined || updatedAt === undefined) continue;
+    setPreferenceValue(values, field, value);
+    setPreferenceUpdatedAt(updatedAtByField, field, updatedAt);
+  }
+  return Object.keys(values).length === 0
     ? null
-    : {
-        planModeEnabled: preferences.planModeEnabled,
-        syncedClientPreferencesUpdatedAtByField: {
-          planModeEnabled: updatedAt,
-        },
-      };
+    : { ...values, syncedClientPreferencesUpdatedAtByField: updatedAtByField };
 }
 
 export function nextMobileSyncedPreferencesUpdatedAt(
@@ -417,13 +437,13 @@ export function createPlanModePreferenceWrite(input: {
   };
 }
 
-export function createPlanModePreferenceWriteController() {
+export function createSyncedClientPreferenceWriteController(field: SyncedClientPreferenceField) {
   let latestRequestedUpdatedAt: string | undefined;
   let settledRequestedUpdatedAt: string | undefined;
 
   return {
-    create(input: Parameters<typeof createPlanModePreferenceWrite>[0]) {
-      const persistedUpdatedAt = input.currentUpdatedAtByField?.planModeEnabled;
+    create(input: Parameters<typeof createSyncedClientPreferencesWrite>[0]) {
+      const persistedUpdatedAt = input.currentUpdatedAtByField?.[field];
       const currentUpdatedAt =
         latestRequestedUpdatedAt === undefined ||
         (persistedUpdatedAt !== undefined && persistedUpdatedAt > latestRequestedUpdatedAt)
@@ -433,20 +453,20 @@ export function createPlanModePreferenceWriteController() {
         ...input.currentUpdatedAtByField,
       };
       if (currentUpdatedAt !== undefined) {
-        currentUpdatedAtByField.planModeEnabled = currentUpdatedAt;
+        setPreferenceUpdatedAt(currentUpdatedAtByField, field, currentUpdatedAt);
       }
-      const write = createPlanModePreferenceWrite({
+      const write = createSyncedClientPreferencesWrite({
         ...input,
         currentUpdatedAtByField,
       });
-      latestRequestedUpdatedAt =
-        write.localPatch.syncedClientPreferencesUpdatedAtByField.planModeEnabled;
+      latestRequestedUpdatedAt = write.localPatch.updatedAtByField[field];
       settledRequestedUpdatedAt = undefined;
       return write;
     },
     settle<E>(input: {
-      readonly target: PlanModePreferencePatchTarget;
+      readonly target: SyncedClientPreferencePatchTarget;
       readonly result: AtomCommandResult<SyncedClientPreferences, E>;
+      readonly normalizeThemeId?: (themeId: string) => string;
     }): Partial<Preferences> | null {
       if (
         input.target.input.updatedAt !== latestRequestedUpdatedAt ||
@@ -456,7 +476,10 @@ export function createPlanModePreferenceWriteController() {
         return null;
       }
       settledRequestedUpdatedAt = input.target.input.updatedAt;
-      return canonicalPlanModePreferencePatch(input.result.value);
+      const patch = canonicalSyncedClientPreferencesPatch(input.result.value, [field]);
+      return patch?.themeId === undefined
+        ? patch
+        : { ...patch, themeId: input.normalizeThemeId?.(patch.themeId) ?? patch.themeId };
     },
   };
 }
@@ -475,7 +498,7 @@ export function reconcileSyncedClientPreferences(input: {
   const localUpdatedAtByField: MutableSyncedClientPreferencesUpdatedAtByField = {
     ...input.local.updatedAtByField,
   };
-  const environmentPatches: PlanModePreferencePatchTarget[] = [];
+  const environmentPatches: SyncedClientPreferencePatchTarget[] = [];
   let localChanged = false;
   const hasPatchableEnvironment = input.environments.some(
     (environment) => environment.canPatch !== false,

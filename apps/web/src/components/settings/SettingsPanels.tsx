@@ -59,10 +59,13 @@ import {
   readAppearanceModePreference,
   readThemeHalves,
   readThemePreference,
-  useTheme,
 } from "../../hooks/useTheme";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  usePrimarySettings,
+  useSyncedTheme,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -459,7 +462,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     setThemeHalf,
     clearThemeHalves,
     themeHalves,
-  } = useTheme();
+  } = useSyncedTheme();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
 
@@ -954,7 +957,7 @@ export function AppearanceSettingsPanel() {
     setThemeHalf,
     theme,
     themeHalves,
-  } = useTheme();
+  } = useSyncedTheme();
   const customThemes = useCustomThemes();
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = usePrimarySettings();

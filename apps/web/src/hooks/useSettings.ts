@@ -19,6 +19,7 @@ import {
   ServerSettings,
   type ServerSettingsPatch,
   type SyncedClientPreferences,
+  type SyncedClientPreferencesPatch,
 } from "@t3tools/contracts";
 import {
   type ClientSettingsPatch,
@@ -30,11 +31,16 @@ import {
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { ensureLocalApi } from "~/localApi";
 import {
+  canonicalThemePreference,
+  getThemePreferenceMode,
   getThemeDefinition,
   getThemePreviewSidebarArtwork,
+  isKnownThemePreference,
   resolveThemeHalf,
   subscribeToThemePreview,
   themeAllowsSidebarArtwork,
+  type ThemePreference,
+  type ThemePreferenceMode,
 } from "~/themePalette";
 import * as Struct from "effect/Struct";
 import { Atom } from "effect/unstable/reactivity";
@@ -45,10 +51,10 @@ import { environmentShell } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   SHELL_NOT_LIVE,
+  createSyncedClientPreferenceHydrationController,
   createSyncedClientPreferencesSliceAtom,
-  createSyncedPlanModeHydrationController,
-  useSyncedPlanModeHydrationEffect,
-} from "./synced-plan-mode";
+  useSyncedClientPreferenceHydrationEffect,
+} from "./synced-client-preferences";
 import { useTheme } from "./useTheme";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
@@ -280,7 +286,33 @@ function useMergedSettings<T>(
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
 }
 
-const syncedPlanModeHydrationController = createSyncedPlanModeHydrationController();
+export const DEFAULT_SYNCED_THEME_ID = "t3-code";
+
+export function syncedThemeIdFromPreference(theme: ThemePreference): string {
+  return theme === "system" || theme === "light" || theme === "dark"
+    ? DEFAULT_SYNCED_THEME_ID
+    : canonicalThemePreference(theme);
+}
+
+export function themePreferenceFromSyncedThemeId(themeId: string): ThemePreference {
+  if (
+    themeId === DEFAULT_SYNCED_THEME_ID ||
+    themeId === "system" ||
+    themeId === "light" ||
+    themeId === "dark"
+  ) {
+    return "system";
+  }
+  return isKnownThemePreference(themeId) ? canonicalThemePreference(themeId) : "system";
+}
+
+const syncedPlanModeHydrationController =
+  createSyncedClientPreferenceHydrationController("planModeEnabled");
+const syncedAppearanceModeHydrationController =
+  createSyncedClientPreferenceHydrationController("appearanceMode");
+const syncedThemeIdHydrationController =
+  createSyncedClientPreferenceHydrationController("themeId");
+
 
 function useEnvironmentSyncedClientPreferences(environmentId: EnvironmentId | null) {
   const preferences = useAtomValue(
@@ -306,8 +338,43 @@ function useCanPatchSyncedClientPreferences(environmentId: EnvironmentId | null)
   );
 }
 
-function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
+function useSyncedClientPreferenceState() {
   const clientSettings = useClientSettingsValue();
+  const themeState = useTheme();
+  const persistPlanModeEnabled = useCallback((value: boolean) => {
+    if (getClientSettingsSnapshot().planModeEnabled !== value) {
+      persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
+    }
+  }, []);
+  const persistAppearanceMode = useCallback(
+    (value: ThemePreferenceMode) => {
+      if (themeState.appearanceMode !== value) themeState.setAppearanceMode(value);
+    },
+    [themeState.appearanceMode, themeState.setAppearanceMode],
+  );
+  const persistThemeId = useCallback(
+    (value: string) => {
+      const theme = themePreferenceFromSyncedThemeId(value);
+      if (themeState.theme !== theme) themeState.setTheme(theme);
+    },
+    [themeState.setTheme, themeState.theme],
+  );
+
+  return {
+    appearanceMode: themeState.appearanceMode,
+    persistAppearanceMode,
+    persistPlanModeEnabled,
+    persistThemeId,
+    planModeEnabled: clientSettings.planModeEnabled,
+    themeId: syncedThemeIdFromPreference(themeState.theme),
+    themeState,
+  } as const;
+}
+
+function useSynchronizeSyncedClientPreferences(
+  environmentId: EnvironmentId | null,
+  state: ReturnType<typeof useSyncedClientPreferenceState>,
+) {
   const clientHydrated = useClientSettingsHydrated();
   const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
   const synced = useEnvironmentSyncedClientPreferences(environmentId);
@@ -316,23 +383,31 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
     label: "synced client preferences seed",
     reportFailure: false,
   });
-  const persistSyncedPlanMode = useCallback((value: boolean) => {
-    if (getClientSettingsSnapshot().planModeEnabled !== value) {
-      persistClientSettings({ ...getClientSettingsSnapshot(), planModeEnabled: value });
-    }
-  }, []);
-
-  useSyncedPlanModeHydrationEffect(syncedPlanModeHydrationController, {
+  const common = {
     environmentId,
     primaryEnvironmentId,
     clientHydrated,
-    clientValue: clientSettings.planModeEnabled,
     live: synced.live,
     serverPreferences: synced.preferences,
     canPatch,
     now: new Date().toISOString(),
     patch: patchPreferences,
-    persist: persistSyncedPlanMode,
+  } as const;
+
+  useSyncedClientPreferenceHydrationEffect(syncedPlanModeHydrationController, {
+    ...common,
+    clientValue: state.planModeEnabled,
+    persist: state.persistPlanModeEnabled,
+  });
+  useSyncedClientPreferenceHydrationEffect(syncedAppearanceModeHydrationController, {
+    ...common,
+    clientValue: state.appearanceMode,
+    persist: state.persistAppearanceMode,
+  });
+  useSyncedClientPreferenceHydrationEffect(syncedThemeIdHydrationController, {
+    ...common,
+    clientValue: state.themeId,
+    persist: state.persistThemeId,
   });
 
   return {
@@ -340,6 +415,102 @@ function useSyncedPlanModeHydration(environmentId: EnvironmentId | null) {
     canPatch,
     pendingWrite: syncedPlanModeHydrationController.getPendingWrite(environmentId),
   } as const;
+}
+
+function useSyncedClientPreferencesHydration(environmentId: EnvironmentId | null) {
+  const state = useSyncedClientPreferenceState();
+  return useSynchronizeSyncedClientPreferences(environmentId, state);
+}
+
+function useWriteSyncedClientPreferences(
+  environmentId: EnvironmentId | null,
+  state: ReturnType<typeof useSyncedClientPreferenceState>,
+) {
+  const synced = useEnvironmentSyncedClientPreferences(environmentId);
+  const canPatch = useCanPatchSyncedClientPreferences(environmentId);
+  const patchPreferences = useAtomCommand(serverEnvironment.patchSyncedClientPreferences, {
+    label: "synced client preferences update",
+    reportFailure: false,
+  });
+  return useCallback(
+    (valuePatch: SyncedClientPreferencesPatch) => {
+      const common = {
+        environmentId,
+        serverPreferences: synced.preferences,
+        canPatch,
+        now: new Date().toISOString(),
+        patch: patchPreferences,
+      } as const;
+      if (valuePatch.planModeEnabled !== undefined) {
+        syncedPlanModeHydrationController.write({
+          ...common,
+          value: valuePatch.planModeEnabled,
+          persist: state.persistPlanModeEnabled,
+        });
+      }
+      if (valuePatch.appearanceMode !== undefined) {
+        syncedAppearanceModeHydrationController.write({
+          ...common,
+          value: valuePatch.appearanceMode,
+          persist: state.persistAppearanceMode,
+        });
+      }
+      if (valuePatch.themeId !== undefined) {
+        syncedThemeIdHydrationController.write({
+          ...common,
+          value: valuePatch.themeId,
+          persist: state.persistThemeId,
+        });
+      }
+    },
+    [
+      canPatch,
+      environmentId,
+      patchPreferences,
+      state.persistAppearanceMode,
+      state.persistPlanModeEnabled,
+      state.persistThemeId,
+      synced.preferences,
+    ],
+  );
+}
+
+export function useSyncedTheme() {
+  const state = useSyncedClientPreferenceState();
+  const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  useSynchronizeSyncedClientPreferences(environmentId, state);
+  const write = useWriteSyncedClientPreferences(environmentId, state);
+  const setTheme = useCallback(
+    (theme: ThemePreference): boolean => {
+      if (!state.themeState.setTheme(theme)) return false;
+      write({ themeId: syncedThemeIdFromPreference(theme) });
+      return true;
+    },
+    [state.themeState, write],
+  );
+  const setAppearanceMode = useCallback(
+    (appearanceMode: ThemePreferenceMode): boolean => {
+      if (!state.themeState.setAppearanceMode(appearanceMode)) return false;
+      write({ appearanceMode });
+      return true;
+    },
+    [state.themeState, write],
+  );
+  const setFollowSystem = useCallback(
+    (followSystem: boolean): boolean => {
+      if (!state.themeState.setFollowSystem(followSystem)) return false;
+      const appearanceMode = followSystem
+        ? "system"
+        : state.themeState.appearanceMode === "system"
+          ? (getThemePreferenceMode(state.themeState.theme) ?? "light")
+          : state.themeState.appearanceMode;
+      write({ appearanceMode });
+      return true;
+    },
+    [state.themeState, write],
+  );
+
+  return { ...state.themeState, setAppearanceMode, setFollowSystem, setTheme } as const;
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -404,7 +575,7 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  const synced = useSyncedPlanModeHydration(environmentId);
+  const synced = useSyncedClientPreferencesHydration(environmentId);
   return useMergedSettings(
     serverSettings ?? DEFAULT_SERVER_SETTINGS,
     synced.preferences,
@@ -419,7 +590,7 @@ export function usePrimarySettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const environmentId = usePrimaryEnvironment()?.environmentId ?? null;
-  const synced = useSyncedPlanModeHydration(environmentId);
+  const synced = useSyncedClientPreferencesHydration(environmentId);
   return useMergedSettings(
     useAtomValue(primaryServerSettingsAtom),
     synced.preferences,
@@ -520,6 +691,8 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
   syncedPlanModeHydrationController.reset();
+  syncedAppearanceModeHydrationController.reset();
+  syncedThemeIdHydrationController.reset();
 }
 
 export function __setClientSettingsForTests(settings: ClientSettings): void {
