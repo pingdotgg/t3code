@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Keyboard, View } from "react-native";
-import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
+import {
+  CommonActions,
+  type NavigationState,
+  type PartialState,
+  StackActions,
+  useNavigation,
+} from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { useConnectionController } from "../connection/useConnectionController";
@@ -24,6 +30,8 @@ import { retryShowcaseOperation } from "./showcaseRetry";
 
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const SHOWCASE_THREAD_ID = "remote-command-center";
+
+type ShowcaseResetRoute = PartialState<NavigationState>["routes"][number];
 
 function sceneFromPathname(pathname: string): ShowcaseScene | null {
   const routePath = pathname.split(/[?#]/u, 1)[0] ?? pathname;
@@ -166,17 +174,21 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
       navigation.dispatch(StackActions.popToTop());
       return;
     }
-    const routes: Array<{
-      name: string;
-      params?: Record<string, unknown>;
-      state?: { index: number; routes: Array<{ name: string }> };
-    }> = [{ name: "Home" }];
+    const routes: ShowcaseResetRoute[] = [{ name: "Home" }];
     if (requestedScene === "environments") {
       routes.push({
         name: "SettingsSheet",
         state: {
-          index: 1,
-          routes: [{ name: "Settings" }, { name: "SettingsEnvironments" }],
+          index: 0,
+          routes: [
+            {
+              name: "SettingsContent",
+              state: {
+                index: 1,
+                routes: [{ name: "Settings" }, { name: "SettingsEnvironments" }],
+              },
+            },
+          ],
         },
       });
     } else {
