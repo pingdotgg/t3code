@@ -189,6 +189,16 @@ describe("threadRuntimeErrorDismissalKey", () => {
       }),
     ).toBeNull();
   });
+
+  it("does not invent an occurrence when the runtime has no error timestamp", () => {
+    expect(
+      threadRuntimeErrorDismissalKey({
+        localError: null,
+        runtimeError: "event stream stalled",
+        runtimeErrorAt: null,
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("shouldShowComposerContextStrip", () => {
