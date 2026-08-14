@@ -1305,10 +1305,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       confirmedNavigation = false,
     ) {
       if (wc.isDestroyed()) return;
-      const zoomFactor = yield* attempt(
-        { operation: "syncWebContentsState.getZoomFactor", tabId, webContentsId: wc.id },
-        () => wc.getZoomFactor(),
-      ).pipe(Effect.option);
       const computedNavStatus = computeNavStatus(wc);
       const canGoBack = wc.navigationHistory.canGoBack();
       const canGoForward = wc.navigationHistory.canGoForward();
@@ -1338,7 +1334,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           navStatus,
           canGoBack,
           canGoForward,
-          ...(Option.isSome(zoomFactor) ? { zoomFactor: zoomFactor.value } : {}),
+          // zoomFactor is deliberately not read back from the guest: Chromium
+          // reports the level it inherited from the app window, so mirroring it
+          // would turn an app zoom into the preview's own zoom.
           updatedAt,
         };
         return [
@@ -1716,11 +1714,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     const currentAttachment = attached.get(webContentsId);
     if (tab.webContentsId === webContentsId && currentAttachment?.webContents === wc) {
-      const zoomFactor = yield* attempt(
-        { operation: "registerWebview.getZoomFactor", tabId, webContentsId },
-        () => wc.getZoomFactor(),
+      yield* attempt({ operation: "registerWebview.restoreZoomFactor", tabId, webContentsId }, () =>
+        wc.setZoomFactor(tab.zoomFactor),
       );
-      yield* update(tabId, { zoomFactor });
+      yield* update(tabId, { zoomFactor: tab.zoomFactor });
       yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
         wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
       );
@@ -1749,18 +1746,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) {
       return yield* new PreviewTabNotFoundError({ tabId });
     }
-    const zoomFactor =
-      replacedWebContentsId !== null
-        ? yield* attempt(
-            { operation: "registerWebview.restoreZoomFactor", tabId, webContentsId },
-            () => {
-              wc.setZoomFactor(currentTab.zoomFactor);
-              return currentTab.zoomFactor;
-            },
-          )
-        : yield* attempt({ operation: "registerWebview.getZoomFactor", tabId, webContentsId }, () =>
-            wc.getZoomFactor(),
-          );
+    // Always assert the tab's own zoom rather than reading the guest's: a guest
+    // attaching while the app UI is zoomed starts at the embedder's inherited
+    // zoom level, which is not the preview's zoom.
+    const zoomFactor = yield* attempt(
+      { operation: "registerWebview.restoreZoomFactor", tabId, webContentsId },
+      () => {
+        wc.setZoomFactor(currentTab.zoomFactor);
+        return currentTab.zoomFactor;
+      },
+    );
     yield* attachListeners(tabId, wc);
     const registeredAt = yield* currentIso;
     const registration = yield* SynchronizedRef.modifyEffect(tabsRef, (tabs) =>
@@ -2096,6 +2091,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
         return cancel;
       },
+    );
+  });
+
+  /**
+   * Chromium hands every guest `<webview>` the embedder's zoom level, so zooming
+   * the app UI drags the previewed page along with it. The preview browser owns
+   * its own zoom factor, so re-assert it on each attached guest whenever the main
+   * window's zoom changes (see DesktopWindow.zoomMain).
+   */
+  const reapplyZoom = Effect.fn("PreviewManager.reapplyZoom")(function* () {
+    const tabs = yield* SynchronizedRef.get(tabsRef);
+    yield* Effect.forEach(
+      tabs.values(),
+      (tab) => {
+        if (tab.webContentsId === null) return Effect.void;
+        const wc = webContents.fromId(tab.webContentsId);
+        if (!wc || wc.isDestroyed()) return Effect.void;
+        return attempt({ operation: "reapplyZoom", tabId: tab.tabId, webContentsId: wc.id }, () =>
+          wc.setZoomFactor(tab.zoomFactor),
+        ).pipe(Effect.ignore);
+      },
+      { discard: true },
     );
   });
 
@@ -3476,6 +3493,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     openPictureInPicture,
     openDevTools,
     pickElement,
+    reapplyZoom,
     refresh,
     registerWebview,
     resetZoom: (tabId: string) => applyZoom(tabId, () => DEFAULT_ZOOM_FACTOR),
@@ -3774,6 +3792,9 @@ export class PreviewManager extends Context.Service<
     readonly zoomIn: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly zoomOut: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly resetZoom: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    // Re-applies every attached guest's own zoom factor, undoing the zoom level
+    // Chromium inherits from the embedder when the app UI zooms.
+    readonly reapplyZoom: () => Effect.Effect<void>;
     readonly hardReload: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly setColorScheme: (
       tabId: string,
@@ -3874,6 +3895,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     zoomIn: operations.zoomIn,
     zoomOut: operations.zoomOut,
     resetZoom: operations.resetZoom,
+    reapplyZoom: operations.reapplyZoom,
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
     openDevTools: operations.openDevTools,
