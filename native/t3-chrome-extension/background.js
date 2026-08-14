@@ -240,12 +240,18 @@ async function closeOwnedTabs(ids, expectedGroupId) {
   if (expectedGroupId !== null && groupId === expectedGroupId) {
     try {
       const remaining = await chrome.tabs.query({ groupId: expectedGroupId });
+      // Ungroup stragglers that are not part of the current owned set — a
+      // reconnect may already have placed new agent tabs in this same group.
       const leftover = remaining.filter((t) => !ownedTabs.has(t.id));
       if (leftover.length) await chrome.tabs.ungroup(leftover.map((t) => t.id));
     } catch {
       // The group is already gone.
     }
-    if (groupId === expectedGroupId) groupId = null;
+    // Keep groupId when a newer session still owns tabs in it; only drop the
+    // handle once nothing we track remains there.
+    if (groupId === expectedGroupId && ownedTabs.size === 0) {
+      groupId = null;
+    }
   }
   await persistOwnedState();
   return { closed: ids.length };
