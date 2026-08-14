@@ -50,6 +50,7 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  CursorUsageReadError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -106,6 +107,15 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import { CursorUsageEventsRepository } from "./persistence/Services/CursorUsageEvents.ts";
+import { CursorUsageSyncService } from "./usage/cursor/CursorUsageSyncService.ts";
+import {
+  CURSOR_USAGE_ADMIN_API_KEY_SECRET_NAME,
+  CURSOR_USAGE_SESSION_TOKEN_SECRET_NAME,
+} from "./usage/cursor/CursorUsageClient.ts";
+import { cursorUsageEventsToCsv } from "./usage/cursor/CursorUsageCsv.ts";
+import { resolveCursorUsageWindowRangeMs } from "./usage/cursor/CursorUsageWindow.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
@@ -416,6 +426,30 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const cursorUsageSync = yield* CursorUsageSyncService;
+      const cursorUsageEvents = yield* CursorUsageEventsRepository;
+      const serverSecretStore = yield* ServerSecretStore.ServerSecretStore;
+      const encodeCursorUsageEventsCursor = (
+        cursor: Option.Option<{ readonly occurredAtMs: number; readonly id: string }>,
+      ): string | null =>
+        Option.match(cursor, {
+          onNone: () => null,
+          onSome: (value) => Buffer.from(JSON.stringify(value)).toString("base64url"),
+        });
+      const decodeCursorUsageEventsCursor = (
+        raw: string | undefined,
+      ): Option.Option<{ readonly occurredAtMs: number; readonly id: string }> => {
+        if (raw === undefined) return Option.none();
+        try {
+          const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as {
+            occurredAtMs: number;
+            id: string;
+          };
+          return Option.some(parsed);
+        } catch {
+          return Option.none();
+        }
+      };
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -1567,6 +1601,124 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverGetCursorUsageStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetCursorUsageStatus,
+            cursorUsageSync.getStatus().pipe(
+              Effect.map((status) => ({
+                configured: status.configured,
+                connectionMode: status.connectionMode,
+                lastSuccessfulSyncAt:
+                  status.lastSuccessfulSyncAtMs === null
+                    ? null
+                    : DateTime.formatIso(DateTime.makeUnsafe(status.lastSuccessfulSyncAtMs)),
+                backfillCompleted: status.backfillCompleted,
+              })),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverSyncCursorUsage]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSyncCursorUsage,
+            cursorUsageSync.syncNow().pipe(
+              Effect.map((result) => ({
+                status: result.status,
+                eventsFetched: result.eventsFetched,
+                eventsInserted: result.eventsInserted,
+                eventsDeduplicated: result.eventsDeduplicated,
+                lastSuccessfulSyncAt:
+                  result.lastSuccessfulSyncAtMs === null
+                    ? null
+                    : DateTime.formatIso(DateTime.makeUnsafe(result.lastSuccessfulSyncAtMs)),
+                message: result.message,
+              })),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverGetCursorUsageEvents]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetCursorUsageEvents,
+            Effect.gen(function* () {
+              const range = resolveCursorUsageWindowRangeMs(input);
+              const cursor = decodeCursorUsageEventsCursor(input.cursor);
+              const page = yield* cursorUsageEvents
+                .listEventsPage({
+                  sinceMs: range.sinceMs,
+                  untilMs: range.untilMs,
+                  cursor,
+                  limit: input.limit,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new CursorUsageReadError({
+                        detail: "Cursor usage events could not be read.",
+                        cause,
+                      }),
+                  ),
+                );
+              return {
+                events: page.events,
+                nextCursor: encodeCursorUsageEventsCursor(page.nextCursor),
+              };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverExportCursorUsageCsv]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverExportCursorUsageCsv,
+            Effect.gen(function* () {
+              const range = resolveCursorUsageWindowRangeMs(input);
+              const events = yield* cursorUsageEvents
+                .listEventsInRange({ sinceMs: range.sinceMs, untilMs: range.untilMs })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new CursorUsageReadError({
+                        detail: "Cursor usage events could not be read.",
+                        cause,
+                      }),
+                  ),
+                );
+              const filtered = events.filter(
+                (event) => event.day >= input.sinceDay && event.day <= input.untilDay,
+              );
+              return { csv: cursorUsageEventsToCsv(filtered), rowCount: filtered.length };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverSetCursorUsageAdminApiKey]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSetCursorUsageAdminApiKey,
+            Effect.gen(function* () {
+              if (input.apiKey === null) {
+                yield* serverSecretStore.remove(CURSOR_USAGE_ADMIN_API_KEY_SECRET_NAME);
+                return { configured: false };
+              }
+              yield* serverSecretStore.set(
+                CURSOR_USAGE_ADMIN_API_KEY_SECRET_NAME,
+                new TextEncoder().encode(input.apiKey),
+              );
+              return { configured: true };
+            }).pipe(Effect.orDie),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverSetCursorUsageSessionToken]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSetCursorUsageSessionToken,
+            Effect.gen(function* () {
+              if (input.sessionToken === null) {
+                yield* serverSecretStore.remove(CURSOR_USAGE_SESSION_TOKEN_SECRET_NAME);
+                return { configured: false };
+              }
+              yield* serverSecretStore.set(
+                CURSOR_USAGE_SESSION_TOKEN_SECRET_NAME,
+                new TextEncoder().encode(input.sessionToken),
+              );
+              return { configured: true };
+            }).pipe(Effect.orDie),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRetryResourceTelemetry, resourceTelemetry.retry, {
             "rpc.aggregate": "server",

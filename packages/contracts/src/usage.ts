@@ -23,8 +23,16 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  */
 export const USAGE_CONTRACT_VERSION = 4 as const;
 
-export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
+export const UsageProviderKind = Schema.Literals(["claude", "codex", "cursor"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
+
+/**
+ * Whether a bucket's usage counted against a plan's included allowance or was
+ * billed on demand. Only Cursor reports this distinction today; other
+ * providers omit the field.
+ */
+export const UsageBillingKind = Schema.Literals(["included", "onDemand"]);
+export type UsageBillingKind = typeof UsageBillingKind.Type;
 
 /**
  * A calendar day in the reporting time zone, formatted `YYYY-MM-DD`.
@@ -98,6 +106,16 @@ export const UsageBucket = Schema.Struct({
   unpricedRecords: NonNegativeInt,
   /** Distinct transcript sessions that contributed to this cell. */
   sessions: NonNegativeInt,
+  /**
+   * Included vs on-demand split, when the provider reports it. Absent for
+   * providers (Claude, Codex) that only bill via subscription.
+   */
+  usageType: Schema.optional(UsageBillingKind),
+  /**
+   * What the provider actually charged, distinct from `costUsd`'s raw
+   * API-equivalent rate. Absent when the provider does not report it.
+   */
+  chargedUsd: Schema.optional(Schema.Number),
 });
 export type UsageBucket = typeof UsageBucket.Type;
 

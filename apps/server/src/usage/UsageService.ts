@@ -37,6 +37,10 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { CursorUsageEventsRepository } from "../persistence/Services/CursorUsageEvents.ts";
+import { aggregateCursorUsageBuckets } from "./cursor/CursorUsageAggregation.ts";
+import { CursorUsageSyncService } from "./cursor/CursorUsageSyncService.ts";
+import { resolveCursorUsageWindowRangeMs } from "./cursor/CursorUsageWindow.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -123,6 +127,8 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
+  const cursorUsageEvents = yield* CursorUsageEventsRepository;
+  const cursorUsageSync = yield* CursorUsageSyncService;
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -417,6 +423,74 @@ export const make = Effect.gen(function* () {
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();
 
+    // Cursor has no local transcript; its usage comes from a background sync
+    // (see usage/cursor/) into `CursorUsageEventsRepository` instead of a
+    // file scan. Reading it here, rather than a separate RPC, is what lets it
+    // share the existing summary/merge/UI pipeline with Claude and Codex.
+    const cursorStatus = yield* cursorUsageSync.getStatus();
+    const cursorRange = resolveCursorUsageWindowRangeMs(input);
+    let cursorBuckets: UsageSummary["buckets"] = [];
+    if (!cursorStatus.configured) {
+      sources.push({
+        fingerprint: {
+          hostId,
+          provider: "cursor",
+          resolvedHomePath: "cursor-admin-api",
+          volumeId: "",
+        },
+        status: "missing",
+        scannedFiles: 0,
+        skippedFiles: 0,
+        malformedRecords: 0,
+        distinctSessions: 0,
+        message: "Cursor usage tracking requires a Cursor Admin API key.",
+      });
+    } else {
+      const cursorEventsResult = yield* cursorUsageEvents
+        .listEventsInRange({ sinceMs: cursorRange.sinceMs, untilMs: cursorRange.untilMs })
+        .pipe(Effect.result);
+
+      if (cursorEventsResult._tag === "Failure") {
+        sources.push({
+          fingerprint: {
+            hostId,
+            provider: "cursor",
+            resolvedHomePath: "cursor-admin-api",
+            volumeId: "",
+          },
+          status: "failed",
+          scannedFiles: 0,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 0,
+          message: "Cursor usage data could not be read.",
+        });
+      } else {
+        cursorBuckets = aggregateCursorUsageBuckets({
+          events: cursorEventsResult.success,
+          timeZone: input.timeZone,
+        }).filter((bucket) => bucket.day >= input.sinceDay && bucket.day <= input.untilDay);
+
+        sources.push({
+          fingerprint: {
+            hostId,
+            provider: "cursor",
+            resolvedHomePath: "cursor-admin-api",
+            volumeId: "",
+          },
+          status: cursorStatus.backfillCompleted ? "ok" : "partial",
+          scannedFiles: 0,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 0,
+          message:
+            cursorStatus.lastSuccessfulSyncAtMs === null
+              ? "Cursor usage has not synced yet."
+              : null,
+        });
+      }
+    }
+
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
@@ -427,7 +501,7 @@ export const make = Effect.gen(function* () {
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
-      buckets: aggregated.buckets,
+      buckets: [...aggregated.buckets, ...cursorBuckets],
       sources,
       pricing: {
         status: ratesStatus,

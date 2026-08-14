@@ -25,6 +25,9 @@ import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { layer as CursorUsageEventsRepositoryLayer } from "./persistence/Layers/CursorUsageEvents.ts";
+import { layer as CursorUsageClientLayer } from "./usage/cursor/CursorUsageClient.ts";
+import { CursorUsageSyncServiceLive } from "./usage/cursor/CursorUsageSyncService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
@@ -162,7 +165,22 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
   Layer.provideMerge(ServerSettingsLayerLive),
 );
 
-const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
+const CursorUsageLayerLive = CursorUsageSyncServiceLive.pipe(
+  Layer.provideMerge(CursorUsageEventsRepositoryLayer),
+  Layer.provideMerge(CursorUsageClientLayer),
+  // Self-contained rather than relying on these being ambient elsewhere in
+  // the composition, so this layer's requirements don't leak into every
+  // consumer of `UsageLayerLive` (including CLI paths that never boot the
+  // full server).
+  Layer.provideMerge(SqlitePersistenceLayerLive),
+  Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provideMerge(FetchHttpClient.layer),
+);
+
+const UsageLayerLive = UsageService.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provideMerge(CursorUsageLayerLive),
+);
 
 const ResourceDiagnosticsLayerLive = Layer.mergeAll(
   ResourceTelemetryLayerLive,
