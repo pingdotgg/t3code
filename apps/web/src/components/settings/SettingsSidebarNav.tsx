@@ -191,8 +191,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <>
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup className="gap-2 p-[var(--sidebar-content-inset)]">
-          <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
-            <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+          <div className="ms-px flex h-8 items-center gap-[var(--sidebar-control-gap)] rounded-lg border border-sidebar-border bg-background px-[calc(var(--sidebar-row-content-inset)-1px)] text-sm font-medium text-sidebar-muted-foreground shadow-xs/5 transition-shadow ring-ring/24 not-dark:bg-clip-padding focus-within:border-ring focus-within:ring-[3px] dark:bg-sidebar-foreground/5">
+            <SearchIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)]" />
             <Input
               ref={searchInputRef}
               nativeInput
@@ -215,7 +215,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   ? `settings-search-result-${results[activeResultIndex].id}`
                   : undefined
               }
-              className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground"
+              className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground/80"
             />
             {isSearching ? (
               <Button
@@ -232,7 +232,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <XIcon className="size-3" />
               </Button>
             ) : (
-              <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">/</Kbd>
+              <Kbd className="size-5 justify-center bg-sidebar-foreground/10 px-0 text-sidebar-muted-foreground">
+                /
+              </Kbd>
             )}
           </div>
           {isSearching && results.length === 0 ? (
