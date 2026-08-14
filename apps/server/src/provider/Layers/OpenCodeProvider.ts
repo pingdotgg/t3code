@@ -7,6 +7,7 @@ import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -29,6 +30,11 @@ const OPENCODE_PRESENTATION = {
   showInteractionModeToggle: false,
 } as const;
 const MINIMUM_OPENCODE_VERSION = "1.14.19";
+// Peer providers bound their CLI probes (GrokProvider/CursorProvider); OpenCode
+// probes get the same bounds so a hung `opencode` binary cannot stall the
+// provider snapshot forever.
+const VERSION_PROBE_TIMEOUT_MS = 4_000;
+const INVENTORY_PROBE_TIMEOUT_MS = 15_000;
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause: unknown;
@@ -355,6 +361,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           environment: resolvedEnvironment,
         })
         .pipe(
+          Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
           Effect.mapError(
             (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
           ),
@@ -363,7 +370,10 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     if (versionExit._tag === "Failure") {
       return fallback(Cause.squash(versionExit.cause));
     }
-    version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
+    if (Option.isNone(versionExit.value)) {
+      return fallback(new Error("Timed out while running `opencode --version`."));
+    }
+    version = parseGenericCliVersion(versionExit.value.value.stdout) ?? null;
 
     if (!version) {
       return fallback(
@@ -415,6 +425,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           environment: resolvedEnvironment,
         })
     ).pipe(
+      Effect.timeoutOption(INVENTORY_PROBE_TIMEOUT_MS),
       Effect.mapError(
         (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
       ),
@@ -423,13 +434,17 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   if (inventoryExit._tag === "Failure") {
     return fallback(Cause.squash(inventoryExit.cause), version);
   }
+  if (Option.isNone(inventoryExit.value)) {
+    return fallback(new Error("Timed out while loading the OpenCode model inventory."), version);
+  }
+  const inventory = inventoryExit.value.value;
 
   const models = providerModelsFromSettings(
-    flattenOpenCodeModels(inventoryExit.value),
+    flattenOpenCodeModels(inventory),
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const connectedCount = inventoryExit.value.providerList.connected.length;
+  const connectedCount = inventory.providerList.connected.length;
   return buildServerProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
