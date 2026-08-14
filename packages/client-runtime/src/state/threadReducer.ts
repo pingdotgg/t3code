@@ -36,6 +36,29 @@ const activityOrder = O.combineAll<OrchestrationThreadActivity>([
 ]);
 
 /**
+ * Id index for each activities array, so the streaming append path can check
+ * for a re-delivered id without scanning the whole history per event. Keyed
+ * by array identity: the append path moves the set forward to the array it
+ * produces, and any array reduced without a cached set (an older state, a
+ * snapshot) rebuilds it once.
+ */
+const activityIdIndex = new WeakMap<
+  ReadonlyArray<OrchestrationThreadActivity>,
+  Set<OrchestrationThreadActivity["id"]>
+>();
+
+function activityIds(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): Set<OrchestrationThreadActivity["id"]> {
+  let ids = activityIdIndex.get(activities);
+  if (ids === undefined) {
+    ids = new Set(activities.map((activity) => activity.id));
+    activityIdIndex.set(activities, ids);
+  }
+  return ids;
+}
+
+/**
  * Matches the validity rule in `deriveLatestContextWindowSnapshot` (and the
  * server's snapshot-side `dropStaleContextWindowActivities`): rows without a
  * finite, non-negative `usedTokens` are skipped during the consumer's backward
@@ -589,13 +612,20 @@ export function applyThreadDetailEvent(
       if (
         !supersedesContextWindow &&
         (lastActivity === undefined || activityOrder(lastActivity, activity) <= 0) &&
-        !thread.activities.some((entry) => entry.id === activity.id)
+        !activityIds(thread.activities).has(activity.id)
       ) {
+        const activities = Arr.append(thread.activities, activity);
+        // Move the id set forward instead of copying it: the superseded array
+        // rebuilds its set on the off chance it is reduced against again.
+        const ids = activityIds(thread.activities);
+        activityIdIndex.delete(thread.activities);
+        ids.add(activity.id);
+        activityIdIndex.set(activities, ids);
         return {
           kind: "updated",
           thread: {
             ...thread,
-            activities: Arr.append(thread.activities, activity),
+            activities,
             updatedAt: event.occurredAt,
           },
         };
