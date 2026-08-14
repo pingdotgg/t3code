@@ -125,6 +125,7 @@ interface GrokSessionContext {
   promptsInFlight: number;
   currentModelId: string | undefined;
   currentReasoningEffort: string | undefined;
+  availableModels: ReadonlyArray<EffectAcpSchema.ModelInfo> | undefined;
   contextWindowTokens: number | undefined;
   lastEmittedUsage: { usedTokens: number; maxTokens: number | undefined } | undefined;
   stopped: boolean;
@@ -835,6 +836,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             promptsInFlight: 0,
             currentModelId: boundModelId,
             currentReasoningEffort: boundSelection.reasoningEffort,
+            availableModels: started.sessionSetupResult.models?.availableModels,
             contextWindowTokens: grokContextWindowFromAvailableModels(
               started.sessionSetupResult.models?.availableModels,
               boundModelId,
@@ -1078,6 +1080,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
               const currentModelId = boundSelection.modelId;
+              if (currentModelId !== ctx.currentModelId) {
+                ctx.contextWindowTokens = grokContextWindowFromAvailableModels(
+                  ctx.availableModels,
+                  currentModelId,
+                );
+              }
               ctx.currentModelId = currentModelId;
               ctx.currentReasoningEffort = boundSelection.reasoningEffort;
               const displayModel = currentModelId

@@ -281,7 +281,8 @@ export function grokContextWindowFromAvailableModels(
   const current = resolvedCurrent
     ? models.find((model) => resolveGrokAcpBaseModelId(model.modelId) === resolvedCurrent)
     : undefined;
-  const candidate = current ?? models[0];
+  // A known but unmatched model must not inherit another model's window.
+  const candidate = resolvedCurrent ? current : models[0];
   if (!candidate || !isRecord(candidate._meta)) {
     return undefined;
   }
@@ -327,10 +328,9 @@ export function applyGrokAcpModelSelection<E>(input: {
   );
   const modelChanged =
     input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  // A missing model selection is not a clear. Only treat effort as changed when
-  // the caller actually sent a model or an effort value.
-  const effortSpecified =
-    input.requestedModelId !== undefined || input.requestedReasoningEffort !== undefined;
+  // Repeating the current model is not an effort change. Only an explicit
+  // requestedReasoningEffort counts as specified.
+  const effortSpecified = input.requestedReasoningEffort !== undefined;
   const effortChanged = effortSpecified && requestedReasoningEffort !== currentReasoningEffort;
   const targetModelId = modelChanged ? input.requestedModelId : input.currentModelId;
 

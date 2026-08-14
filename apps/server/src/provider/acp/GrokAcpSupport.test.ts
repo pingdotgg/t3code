@@ -119,6 +119,24 @@ describe("Grok token usage parsers", () => {
         "grok-mock-alt",
       ),
     ).toBe(128000);
+    expect(
+      grokContextWindowFromAvailableModels(
+        [
+          { modelId: "grok-build", name: "Grok Build", _meta: { totalContextTokens: 256000 } },
+          { modelId: "grok-mock-alt", name: "Alt", _meta: { totalContextTokens: 128000 } },
+        ],
+        "grok-unknown",
+      ),
+    ).toBeUndefined();
+    expect(
+      grokContextWindowFromAvailableModels(
+        [
+          { modelId: "grok-build", name: "Grok Build", _meta: { totalContextTokens: 256000 } },
+          { modelId: "grok-mock-alt", name: "Alt", _meta: { totalContextTokens: 128000 } },
+        ],
+        undefined,
+      ),
+    ).toBe(256000);
   });
 });
 
@@ -197,7 +215,7 @@ describe("applyGrokAcpModelSelection", () => {
     }),
   );
 
-  it.effect("omits _meta when clearing effort on the same model", () =>
+  it.effect("does not clear effort when the same model is repeated without effort", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
@@ -208,8 +226,8 @@ describe("applyGrokAcpModelSelection", () => {
         requestedReasoningEffort: undefined,
         mapError: (cause) => cause.message,
       });
-      expect(modelCalls).toEqual([{ modelId: "grok-build" }]);
-      expect(result).toEqual({ modelId: "grok-build", reasoningEffort: undefined });
+      expect(modelCalls).toEqual([]);
+      expect(result).toEqual({ modelId: "grok-build", reasoningEffort: "high" });
     }),
   );
 
