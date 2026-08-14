@@ -41,6 +41,7 @@ interface SelectedElement {
   outline: HTMLDivElement;
   label: HTMLDivElement;
   baselineStyles: Map<string, string>;
+  quiet: boolean;
 }
 
 interface AnnotationSession {
@@ -252,6 +253,10 @@ function updateSelectedVisual(target: SelectedElement): void {
   }
   const rect = target.element.getBoundingClientRect();
   positionBox(target.outline, rectFromDomRect(rect));
+  if (target.quiet) {
+    target.label.style.display = "none";
+    return;
+  }
   target.label.textContent = describeElement(target.element);
   target.label.style.display = "block";
   target.label.style.transform = `translate(${Math.max(4, rect.left)}px, ${Math.max(4, rect.top - 22)}px)`;
@@ -397,7 +402,7 @@ function startAnnotation(): void {
   root.style.cssText = "pointer-events:none";
   const cursorStyle = document.createElement("style");
   cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");
-  cursorStyle.textContent = `html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
+  cursorStyle.textContent = `html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; } textarea[data-needs-text]::placeholder { color:#c45d4a; }`;
   document.documentElement.appendChild(cursorStyle);
   shadowRoot.appendChild(root);
 
@@ -590,7 +595,7 @@ function startAnnotation(): void {
     updateStatus();
   };
 
-  const addSelected = (element: Element): void => {
+  const addSelected = (element: Element, quiet = false): void => {
     if (selected.has(element)) return;
     const target: SelectedElement = {
       id: nextId("element"),
@@ -598,6 +603,7 @@ function startAnnotation(): void {
       outline: createBox(PRIMARY, PRIMARY_FILL),
       label: createLabel(),
       baselineStyles: new Map(),
+      quiet,
     };
     selected.set(element, target);
     root.append(target.outline, target.label);
@@ -915,18 +921,6 @@ function startAnnotation(): void {
     if (editorExpanded) editorPosition = clamped;
   };
 
-  const getAnnotationBounds = (): PreviewAnnotationRect | null =>
-    unionRects(
-      [
-        ...Array.from(selected.values(), (target) =>
-          rectFromDomRect(target.element.getBoundingClientRect()),
-        ),
-        ...regions.map((region) => region.rect),
-        ...strokes.map((stroke) => stroke.bounds),
-      ],
-      0,
-    );
-
   const pinDockEditor = (): void => {
     editor.style.left = "50%";
     editor.style.right = "auto";
@@ -1028,9 +1022,8 @@ function startAnnotation(): void {
         y <= region.rect.y + region.rect.height,
     );
     if (regionIndex >= 0) {
-      const [removed] = regions.splice(regionIndex, 1);
-      root.querySelector(`[data-region-id="${removed?.id}"]`)?.remove();
-      updateStatus();
+      const removed = regions[regionIndex];
+      if (removed) removeRegion(removed.id);
       return true;
     }
     const strokeIndex = strokes.findIndex(
@@ -1049,39 +1042,69 @@ function startAnnotation(): void {
     return false;
   };
 
-  const selectElementsInRect = (rect: PreviewAnnotationRect): number => {
-    const candidates = Array.from(document.querySelectorAll("body *"))
+  const isHarvestControl = (element: Element): boolean =>
+    element instanceof HTMLButtonElement ||
+    element instanceof HTMLAnchorElement ||
+    element.getAttribute("role") === "button";
+
+  const selectElementsInRect = (rect: PreviewAnnotationRect): Element[] => {
+    const measured = Array.from(document.querySelectorAll("body *"))
       .filter((element) => !isAnnotationNode(element))
-      .map((element) => ({ element, rect: element.getBoundingClientRect() }))
-      .filter(({ rect: candidate }) => {
-        if (candidate.width < 2 || candidate.height < 2) return false;
-        return !(
-          candidate.right < rect.x ||
-          candidate.left > rect.x + rect.width ||
-          candidate.bottom < rect.y ||
-          candidate.top > rect.y + rect.height
-        );
-      })
-      .filter(({ element, rect: candidate }) => {
-        const centerX = candidate.left + candidate.width / 2;
-        const centerY = candidate.top + candidate.height / 2;
-        return (
-          centerX >= rect.x &&
-          centerX <= rect.x + rect.width &&
-          centerY >= rect.y &&
-          centerY <= rect.y + rect.height &&
-          (element.children.length === 0 ||
-            element instanceof HTMLButtonElement ||
-            element instanceof HTMLAnchorElement ||
-            element.getAttribute("role") === "button")
-        );
-      })
-      .sort(
-        (left, right) => left.rect.width * left.rect.height - right.rect.width * right.rect.height,
-      )
-      .slice(0, MAX_MARQUEE_ELEMENTS);
-    for (const candidate of candidates) addSelected(candidate.element);
-    return candidates.length;
+      .map((element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          element,
+          left: box.left,
+          top: box.top,
+          width: box.width,
+          height: box.height,
+          childCount: element.children.length,
+          isControl: isHarvestControl(element),
+        };
+      });
+    const harvested = harvestBoxes(measured, rect, MAX_MARQUEE_ELEMENTS);
+    for (const candidate of harvested) addSelected(candidate.element, true);
+    return harvested.map((candidate) => candidate.element);
+  };
+
+  const removeRegion = (id: string): void => {
+    const index = regions.findIndex((region) => region.id === id);
+    if (index < 0) return;
+    regions.splice(index, 1);
+    root.querySelector(`[data-region-id="${id}"]`)?.remove();
+    for (const element of regionHarvest.get(id) ?? []) {
+      const target = selected.get(element);
+      if (target) removeSelected(target);
+    }
+    regionHarvest.delete(id);
+    updateStatus();
+  };
+
+  const addRegion = (rect: PreviewAnnotationRect): void => {
+    const region: PreviewAnnotationRegionTarget = { id: nextId("region"), rect };
+    regions.push(region);
+    const harvested = selectElementsInRect(rect);
+    regionHarvest.set(region.id, harvested);
+    const regionBox = createBox(PRIMARY, "color-mix(in srgb, var(--t3-primary) 6%, transparent)");
+    regionBox.setAttribute("data-region-id", region.id);
+    positionBox(regionBox, rect);
+    const closer = document.createElement("button");
+    closer.type = "button";
+    closer.setAttribute(OVERLAY_ATTRIBUTE, "");
+    closer.setAttribute("aria-label", "Remove this box");
+    closer.className =
+      "absolute top-0 right-0 z-2 inline-flex h-5.5 w-5.5 -translate-y-[42%] translate-x-[42%] cursor-pointer items-center justify-center rounded-full border-0 bg-popover p-0 text-popover-foreground shadow-md";
+    closer.style.pointerEvents = "auto";
+    closer.innerHTML =
+      '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
+    closer.addEventListener("pointerdown", (event) => event.stopPropagation());
+    closer.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeRegion(region.id);
+    });
+    regionBox.appendChild(closer);
+    root.appendChild(regionBox);
   };
 
   const clearHoverOutline = (): void => {
@@ -1162,20 +1185,7 @@ function startAnnotation(): void {
     if (tool === "marquee") {
       const rect = normalizeRect(dragStart.x, dragStart.y, event.clientX, event.clientY);
       marqueeBox.style.display = "none";
-      if (isUsableRect(rect)) {
-        const found = selectElementsInRect(rect);
-        if (found === 0) {
-          const region: PreviewAnnotationRegionTarget = { id: nextId("region"), rect };
-          regions.push(region);
-          const regionBox = createBox(
-            PRIMARY,
-            "color-mix(in srgb, var(--t3-primary) 6%, transparent)",
-          );
-          regionBox.setAttribute("data-region-id", region.id);
-          positionBox(regionBox, rect);
-          root.appendChild(regionBox);
-        }
-      }
+      if (isUsableRect(rect)) addRegion(rect);
     } else if (tool === "draw" && activeStroke) {
       if (activeStroke.target.points.length > 1) strokes.push(activeStroke.target);
       else activeStroke.path.remove();
@@ -1239,6 +1249,8 @@ function startAnnotation(): void {
 
   const onCancel = (): void => teardown(false);
   const onCaptured = (): void => teardown(false);
+  editorClose.addEventListener("click", () => teardown(true));
+  toolbarClose.addEventListener("click", () => teardown(true));
   const onKeyDown = (event: KeyboardEvent): void => {
     if (isAnnotationNode(event.target as Element) && event.key !== "Escape") return;
     if (event.key === "Escape") {
@@ -1303,7 +1315,18 @@ function startAnnotation(): void {
       ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
     });
   };
-  submit.addEventListener("click", () => submitAnnotation("attach"));
+  const requestComment = (): void => {
+    comment.setAttribute("data-needs-text", "");
+    comment.placeholder = "Write what should change first";
+    comment.focus({ preventScroll: true });
+  };
+  submit.addEventListener("click", () => {
+    if (!comment.value.trim()) {
+      requestComment();
+      return;
+    }
+    submitAnnotation("attach");
+  });
   root.addEventListener("keydown", (event) => {
     const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
     // Keep this in the bubble phase so editor inputs receive the event before
@@ -1311,6 +1334,10 @@ function startAnnotation(): void {
     event.stopImmediatePropagation();
     if (!submission) return;
     event.preventDefault();
+    if (!comment.value.trim()) {
+      requestComment();
+      return;
+    }
     submitAnnotation(submission);
   });
 
