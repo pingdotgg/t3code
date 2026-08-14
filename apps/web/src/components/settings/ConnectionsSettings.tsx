@@ -6,7 +6,16 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, memo, useCallback, useId, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -25,6 +34,7 @@ import {
   type DesktopDiscoveredSshHost,
   type DesktopSshEnvironmentTarget,
   type DesktopServerExposureState,
+  type DesktopCloudflaredTunnelState,
   type DesktopWslState,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -41,8 +51,11 @@ import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
+  areCloudflaredSettingsAccepted,
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  refreshCloudflaredTunnel,
+  resolveCloudflaredConfigPath,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 import {
@@ -1793,6 +1806,15 @@ export function ConnectionsSettings() {
   const [desktopAccessManagementMutationError, setDesktopAccessManagementMutationError] = useState<
     string | null
   >(null);
+  const [cloudflaredTunnelState, setCloudflaredTunnelState] =
+    useState<DesktopCloudflaredTunnelState | null>(null);
+  const [cloudflaredConfigPath, setCloudflaredConfigPath] = useState("");
+  const [cloudflaredConfigPathDirty, setCloudflaredConfigPathDirty] = useState(false);
+  const cloudflaredConfigPathRef = useRef("");
+  const cloudflaredConfigPathDirtyRef = useRef(false);
+  const cloudflaredRefreshGenerationRef = useRef(0);
+  const [cloudflaredEnabled, setCloudflaredEnabled] = useState(false);
+  const [isUpdatingCloudflaredTunnel, setIsUpdatingCloudflaredTunnel] = useState(false);
   const [revokingDesktopPairingLinkId, setRevokingDesktopPairingLinkId] = useState<string | null>(
     null,
   );
@@ -1816,6 +1838,46 @@ export function ConnectionsSettings() {
   const [isUpdatingTailscaleServe, setIsUpdatingTailscaleServe] = useState(false);
   const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
   const [desktopWslMutationError, setDesktopWslMutationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    let mounted = true;
+    const refresh = () => {
+      const generation = ++cloudflaredRefreshGenerationRef.current;
+      void refreshCloudflaredTunnel({
+        bridge: desktopBridge,
+        getDraft: () => ({
+          draft: cloudflaredConfigPathRef.current,
+          isDirty: cloudflaredConfigPathDirtyRef.current,
+        }),
+      })
+        .then(({ state, configPath }) => {
+          if (!mounted || generation !== cloudflaredRefreshGenerationRef.current) return;
+          setCloudflaredTunnelState(state);
+          setCloudflaredConfigPath((draft) => {
+            const latestPath = resolveCloudflaredConfigPath({
+              draft,
+              persisted: configPath,
+              isDirty: cloudflaredConfigPathDirtyRef.current,
+            });
+            cloudflaredConfigPathRef.current = latestPath;
+            return latestPath;
+          });
+          setCloudflaredEnabled(state.enabled);
+        })
+        .catch(() => {
+          if (mounted && generation === cloudflaredRefreshGenerationRef.current) {
+            setCloudflaredTunnelState(null);
+          }
+        });
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 2_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, [cloudflaredConfigPathDirty, desktopBridge]);
   // Pending WSL setting change waiting on user confirmation. Set when
   // the user tries a destructive change (disable, switch distro,
   // toggle wsl-only) while the WSL backend has saved-env state on this
@@ -2881,6 +2943,108 @@ export function ConnectionsSettings() {
     );
   };
 
+  const handleCloudflaredTunnelChange = async (enabled: boolean) => {
+    if (!desktopBridge) return;
+    const configPath = cloudflaredConfigPath.trim().length > 0 ? cloudflaredConfigPath : null;
+    if (enabled && configPath === null) {
+      toastManager.add({
+        type: "error",
+        title: "Cloudflare Tunnel needs a config file",
+        description: "Enter the path to a named tunnel config.yml first.",
+      });
+      return;
+    }
+    setIsUpdatingCloudflaredTunnel(true);
+    try {
+      ++cloudflaredRefreshGenerationRef.current;
+      const state = await desktopBridge.setCloudflaredTunnel({ enabled, configPath });
+      setCloudflaredTunnelState(state);
+      const settingsAccepted = areCloudflaredSettingsAccepted({ enabled, configPath }, state);
+      if (settingsAccepted) {
+        cloudflaredConfigPathRef.current = cloudflaredConfigPath;
+        cloudflaredConfigPathDirtyRef.current = false;
+        setCloudflaredConfigPathDirty(false);
+      }
+      setCloudflaredEnabled(state.enabled);
+      toastManager.add({
+        type: state.error !== null ? "error" : "success",
+        title: state.error !== null ? "Cloudflare Tunnel failed" : "Cloudflare Tunnel updated",
+        description:
+          state.error ??
+          (enabled ? "The tunnel will start with T3 Code." : "The tunnel is stopped."),
+      });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not update Cloudflare Tunnel",
+        description:
+          error instanceof Error ? error.message : "The tunnel setting could not be saved.",
+      });
+    } finally {
+      setIsUpdatingCloudflaredTunnel(false);
+    }
+  };
+
+  const renderCloudflaredRow = () => (
+    <SettingsRow
+      title="Cloudflare Tunnel"
+      description={
+        cloudflaredTunnelState?.status === "running"
+          ? `${cloudflaredTunnelState.error ?? "Running"}${cloudflaredTunnelState.pid === null ? "" : ` · process ${cloudflaredTunnelState.pid}`}`
+          : cloudflaredTunnelState?.status === "failed"
+            ? cloudflaredTunnelState.error
+            : "Run your named cloudflared tunnel automatically when T3 Code starts."
+      }
+      status={
+        cloudflaredTunnelState?.error !== null && cloudflaredTunnelState?.error !== undefined
+          ? "Tunnel update failed"
+          : null
+      }
+      control={
+        <Switch
+          checked={cloudflaredEnabled}
+          disabled={isUpdatingCloudflaredTunnel || cloudflaredTunnelState === null}
+          onCheckedChange={(checked) => void handleCloudflaredTunnelChange(checked)}
+          aria-label="Enable Cloudflare Tunnel"
+        />
+      }
+    >
+      <div className="flex flex-col gap-2 pb-3 pl-0 sm:pl-1">
+        <label className="text-xs text-muted-foreground" htmlFor="cloudflared-config-path">
+          cloudflared config file
+        </label>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Input
+            id="cloudflared-config-path"
+            value={cloudflaredConfigPath}
+            onChange={(event) => {
+              cloudflaredConfigPathRef.current = event.target.value;
+              cloudflaredConfigPathDirtyRef.current = true;
+              setCloudflaredConfigPath(event.target.value);
+              setCloudflaredConfigPathDirty(true);
+            }}
+            placeholder="/absolute/path/to/config.yml"
+            spellCheck={false}
+            disabled={isUpdatingCloudflaredTunnel}
+            className="min-w-0 flex-1"
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isUpdatingCloudflaredTunnel}
+            onClick={() => void handleCloudflaredTunnelChange(cloudflaredEnabled)}
+          >
+            {isUpdatingCloudflaredTunnel ? "Saving…" : "Save"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          T3 starts the local process only. Configure the hostname, credentials, DNS, and Access
+          policy in Cloudflare.
+        </p>
+      </div>
+    </SettingsRow>
+  );
+
   const renderTailscaleRow = () => (
     <SettingsRow
       title="Tailscale HTTPS"
@@ -3046,6 +3210,7 @@ export function ConnectionsSettings() {
                 {renderNetworkAccessRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
+                {renderCloudflaredRow()}
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>

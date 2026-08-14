@@ -23,6 +23,7 @@ import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
+import * as DesktopCloudflaredTunnel from "../backend/DesktopCloudflaredTunnel.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -146,6 +147,7 @@ const bootstrap = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const cloudflaredTunnel = yield* DesktopCloudflaredTunnel.DesktopCloudflaredTunnel;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* logBootstrapInfo("bootstrap start");
@@ -210,6 +212,14 @@ const bootstrap = Effect.gen(function* () {
     }
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
+    const tunnelState = yield* cloudflaredTunnel.apply({
+      enabled: settings.cloudflaredEnabled,
+      configPath: settings.cloudflaredConfigPath,
+    });
+    yield* logBootstrapInfo("bootstrap reconciled local cloudflared tunnel", {
+      status: tunnelState.status,
+      ...(tunnelState.pid === null ? {} : { pid: tunnelState.pid }),
+    });
     // Bring up the WSL backend if the user previously enabled it. The
     // primary is already starting; reconcile fires off the WSL register
     // in parallel rather than blocking primary readiness on a possibly

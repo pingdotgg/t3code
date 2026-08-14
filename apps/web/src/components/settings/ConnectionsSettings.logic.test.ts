@@ -1,10 +1,95 @@
 import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  areCloudflaredSettingsAccepted,
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  refreshCloudflaredTunnel,
   selectQrEndpointOption,
+  resolveCloudflaredConfigPath,
 } from "./ConnectionsSettings.logic";
+
+describe("areCloudflaredSettingsAccepted", () => {
+  it("accepts persisted settings even when process startup failed", () => {
+    expect(
+      areCloudflaredSettingsAccepted(
+        { enabled: true, configPath: "/tmp/tunnel.yml" },
+        {
+          status: "failed",
+          enabled: true,
+          configPath: "/tmp/tunnel.yml",
+          pid: null,
+          error: "cloudflared could not be started.",
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects settings when the old tunnel remains active", () => {
+    expect(
+      areCloudflaredSettingsAccepted(
+        { enabled: true, configPath: "/tmp/new.yml" },
+        {
+          status: "running",
+          enabled: true,
+          configPath: "/tmp/old.yml",
+          pid: 42,
+          error: "The previous cloudflared process could not be stopped.",
+        },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("resolveCloudflaredConfigPath", () => {
+  it("does not replace a draft while the user is editing", () => {
+    expect(
+      resolveCloudflaredConfigPath({
+        draft: "/tmp/draft.yml",
+        persisted: "/tmp/old.yml",
+        isDirty: true,
+      }),
+    ).toBe("/tmp/draft.yml");
+  });
+
+  it("refreshes the field when there is no draft", () => {
+    expect(
+      resolveCloudflaredConfigPath({
+        draft: "/tmp/draft.yml",
+        persisted: "/tmp/saved.yml",
+        isDirty: false,
+      }),
+    ).toBe("/tmp/saved.yml");
+  });
+});
+
+describe("refreshCloudflaredTunnel", () => {
+  it("preserves an edited path when the polling refresh resolves", async () => {
+    const state = {
+      status: "running" as const,
+      enabled: true,
+      configPath: "/tmp/saved.yml",
+      pid: 42,
+      error: null,
+    };
+
+    let resolveState: ((value: typeof state) => void) | undefined;
+    const statePromise = new Promise<typeof state>((resolve) => {
+      resolveState = resolve;
+    });
+    let draft = "/tmp/first-edit.yml";
+    const refresh = refreshCloudflaredTunnel({
+      bridge: { getCloudflaredTunnelState: vi.fn(() => statePromise) },
+      getDraft: () => ({ draft, isDirty: true }),
+    });
+    draft = "/tmp/latest-edit.yml";
+    resolveState?.(state);
+    const result = await refresh;
+
+    expect(result.state).toBe(state);
+    expect(result.configPath).toBe("/tmp/latest-edit.yml");
+  });
+});
 
 const baseWslState: DesktopWslState = {
   enabled: false,

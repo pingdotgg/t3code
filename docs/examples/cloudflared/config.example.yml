@@ -1,0 +1,12 @@
+# Named Cloudflare Tunnel configuration for a desktop T3 Code backend.
+# Replace the placeholders before using this file.
+# IMPORTANT: service must match the actual T3 backend port. T3 normally uses
+# 3773, but may choose another port if 3773 is already occupied. Do not expose
+# an unrelated process listening on 3773.
+tunnel: YOUR_TUNNEL_ID_OR_NAME
+credentials-file: /absolute/path/to/.cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: t3.example.com
+    service: http://127.0.0.1:3773
+  - service: http_status:404

@@ -28,6 +28,7 @@ squashfs-root/
 dist-electron/
 .electron-runtime/
 .showcase/
+.dev-loop/
 apps/mobile/.showcase/
 artifacts/app-store/screenshots/
 native/**/target/

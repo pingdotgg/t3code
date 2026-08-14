@@ -167,6 +167,28 @@ export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
 
+export const DesktopCloudflaredTunnelStatusSchema = Schema.Literals([
+  "disabled",
+  "running",
+  "failed",
+]);
+export type DesktopCloudflaredTunnelStatus = typeof DesktopCloudflaredTunnelStatusSchema.Type;
+
+export const DesktopCloudflaredTunnelStateSchema = Schema.Struct({
+  status: DesktopCloudflaredTunnelStatusSchema,
+  enabled: Schema.Boolean,
+  configPath: Schema.NullOr(Schema.String),
+  pid: Schema.NullOr(Schema.Number),
+  error: Schema.NullOr(Schema.String),
+});
+export type DesktopCloudflaredTunnelState = typeof DesktopCloudflaredTunnelStateSchema.Type;
+
+export const DesktopCloudflaredTunnelInputSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  configPath: Schema.NullOr(Schema.String),
+});
+export type DesktopCloudflaredTunnelInput = typeof DesktopCloudflaredTunnelInputSchema.Type;
+
 export interface DesktopAppBranding {
   baseName: string;
   stageLabel: DesktopAppStageLabel;
@@ -1054,6 +1076,10 @@ export interface DesktopBridge {
     readonly enabled: boolean;
     readonly port?: number;
   }) => Promise<DesktopServerExposureState>;
+  getCloudflaredTunnelState: () => Promise<DesktopCloudflaredTunnelState>;
+  setCloudflaredTunnel: (
+    input: DesktopCloudflaredTunnelInput,
+  ) => Promise<DesktopCloudflaredTunnelState>;
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
   getWslState: () => Promise<DesktopWslState>;
   setWslBackendEnabled: (enabled: boolean) => Promise<DesktopWslState>;
