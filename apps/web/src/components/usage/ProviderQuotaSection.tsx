@@ -283,7 +283,7 @@ export function ProviderQuotaSection({
 }) {
   const primaryEnvironment = usePrimaryEnvironment();
   const config = primaryEnvironment?.serverConfig ?? null;
-  const quota = usePrimaryProviderQuota();
+  const quota = usePrimaryProviderQuota({ liveRefresh: false });
   const sessionState = usePrimarySessionState();
   const rows = useMemo(
     () =>

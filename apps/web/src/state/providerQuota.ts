@@ -101,7 +101,9 @@ export interface PrimaryProviderQuotaState extends ProviderQuotaView {
   ) => Promise<ProviderQuotaConsumeResult | null>;
 }
 
-export function usePrimaryProviderQuota(): PrimaryProviderQuotaState {
+export function usePrimaryProviderQuota(
+  options: { readonly liveRefresh?: boolean } = {},
+): PrimaryProviderQuotaState {
   const environmentId = usePrimaryEnvironmentId();
   const quotaAtom =
     environmentId === null
@@ -163,7 +165,7 @@ export function usePrimaryProviderQuota(): PrimaryProviderQuotaState {
     !isOlderServerWithoutQuota &&
     (view.summary === null || isMissingEnabledProvider || hasUnknownCodexQuota);
   useLiveRefresh(refresh, {
-    enabled: environmentId !== null,
+    enabled: environmentId !== null && options.liveRefresh !== false,
     ...(environmentId === null ? {} : { key: environmentId }),
     intervalMs: needsRecovery
       ? PROVIDER_QUOTA_RECOVERY_INTERVAL_MS

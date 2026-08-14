@@ -932,4 +932,118 @@ describe("ProviderQuotaService", () => {
       expect(consumes).toBe(2);
     }).pipe(provideService(() => instances));
   });
+
+  it.effect("rejects concurrent credit mismatches before either reset can be duplicated", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      const eligibilityStarted = yield* Deferred.make<void>();
+      const releaseEligibility = yield* Deferred.make<void>();
+      let consumes = 0;
+      const instance = makeInstance({
+        id: "codex-concurrent-reset",
+        quota: {
+          read: Effect.gen(function* () {
+            yield* Deferred.succeed(eligibilityStarted, undefined);
+            yield* Deferred.await(releaseEligibility);
+            return {
+              ...snapshot("codex-concurrent-reset"),
+              bankedResets: {
+                availableCount: 2,
+                detailsComplete: true,
+                resets: [
+                  {
+                    id: "credit-a",
+                    title: null,
+                    description: null,
+                    grantedAt: "2026-08-11T00:00:00.000Z",
+                    expiresAt: null,
+                    resetType: "codexRateLimits",
+                    status: "available" as const,
+                  },
+                ],
+              },
+            };
+          }),
+          revision: Effect.succeed(0),
+          consumeBankedReset: () => Effect.sync(() => consumes++).pipe(Effect.as("reset")),
+        },
+      });
+      instances = [instance];
+      const service = yield* ProviderQuotaService;
+      const first = yield* service
+        .consumeBankedReset({
+          instanceId: instance.instanceId,
+          creditId: "credit-a",
+          idempotencyKey: "same-key",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(eligibilityStarted);
+
+      const mismatch = yield* service
+        .consumeBankedReset({
+          instanceId: instance.instanceId,
+          creditId: "credit-b",
+          idempotencyKey: "same-key",
+        })
+        .pipe(Effect.flip);
+      yield* Deferred.succeed(releaseEligibility, undefined);
+      yield* Fiber.join(first);
+
+      expect(mismatch.detail).toBe("The reset request does not match its original attempt.");
+      expect(consumes).toBe(1);
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("does not carry an idempotency attempt across replaced provider identities", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      let oldConsumes = 0;
+      let newConsumes = 0;
+      const oldInstance = makeInstance({
+        id: "codex-replaced-reset",
+        quota: {
+          read: Effect.succeed({
+            ...snapshot("codex-replaced-reset"),
+            bankedResets: { availableCount: 1, detailsComplete: false, resets: [] },
+          }),
+          revision: Effect.succeed(0),
+          consumeBankedReset: () => {
+            oldConsumes += 1;
+            return Effect.fail(
+              new ProviderQuotaAdapterError({
+                reason: "providerFailed",
+                detail: "Ambiguous provider response.",
+              }),
+            );
+          },
+        },
+      });
+      const newInstance = makeInstance({
+        id: "codex-replaced-reset",
+        quota: {
+          read: Effect.succeed({
+            ...snapshot("codex-replaced-reset"),
+            bankedResets: { availableCount: 0, detailsComplete: true, resets: [] },
+          }),
+          revision: Effect.succeed(0),
+          consumeBankedReset: () => Effect.sync(() => newConsumes++).pipe(Effect.as("reset")),
+        },
+      });
+      instances = [oldInstance];
+      const service = yield* ProviderQuotaService;
+      const input = {
+        instanceId: oldInstance.instanceId,
+        creditId: null,
+        idempotencyKey: "replacement-key",
+      } as const;
+
+      yield* service.consumeBankedReset(input).pipe(Effect.flip);
+      instances = [newInstance];
+      const replacementError = yield* service.consumeBankedReset(input).pipe(Effect.flip);
+
+      expect(replacementError.detail).toBe("The selected banked reset is no longer available.");
+      expect(oldConsumes).toBe(1);
+      expect(newConsumes).toBe(0);
+    }).pipe(provideService(() => instances));
+  });
 });

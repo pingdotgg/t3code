@@ -86,4 +86,43 @@ describe("provider quota live recovery", () => {
     dom.cleanup();
     registry.dispose();
   });
+
+  it("lets the persistent usage strip own polling while a detail consumer is mounted", async () => {
+    const quotaAtom = Atom.make(
+      AsyncResult.success<ProviderQuotaSummary, never>({
+        readAt: "2026-08-12T08:00:00.000Z",
+        instances: [],
+      }),
+    );
+    const projectionAtom = Atom.make(
+      AsyncResult.success({
+        config: { providers: [] },
+        latestEvent: { type: "snapshot" },
+      } as never),
+    );
+    const registry = AtomRegistry.make();
+    const dom = installReactHookTestDom();
+    mocks.serverEnvironment.providerQuota.mockReturnValue(quotaAtom);
+    mocks.serverEnvironment.configProjection.mockReturnValue(projectionAtom);
+
+    const mounted = await mountReactHookTestComponent(
+      createElement(
+        RegistryContext.Provider,
+        { value: registry },
+        createElement(() => {
+          usePrimaryProviderQuota();
+          usePrimaryProviderQuota({ liveRefresh: false });
+          return null;
+        }),
+      ),
+      dom.document,
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mocks.appAtomRegistry.refresh).toHaveBeenCalledExactlyOnceWith(quotaAtom);
+
+    await mounted.unmount();
+    dom.cleanup();
+    registry.dispose();
+  });
 });

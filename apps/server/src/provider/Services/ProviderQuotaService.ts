@@ -41,6 +41,13 @@ interface CacheEntry {
   readonly inFlight?: Deferred.Deferred<CacheReadOutcome>;
 }
 
+interface ResetAttempt {
+  readonly instance: ProviderInstance;
+  readonly creditId: ProviderQuotaConsumeResetInput["creditId"];
+  readonly lock: Semaphore.Semaphore;
+  attempted: boolean;
+}
+
 type CacheReadOutcome =
   | { readonly _tag: "snapshot"; readonly snapshot: ProviderQuotaSnapshot }
   | { readonly _tag: "obsolete" };
@@ -108,8 +115,9 @@ const withConsumeTimeout = <A>(
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry;
   const cache = new Map<ProviderInstanceId, CacheEntry>();
-  const resetAttempts = new Map<string, ProviderQuotaConsumeResetInput["creditId"]>();
+  const resetAttempts = new Map<string, ResetAttempt>();
   const cacheMutex = yield* Semaphore.make(1);
+  const resetAttemptsMutex = yield* Semaphore.make(1);
 
   const invalidate = Effect.fn("ProviderQuotaService.invalidate")(function* (
     instanceId?: ProviderInstanceId,
@@ -305,7 +313,7 @@ export const make = Effect.gen(function* () {
           Effect.fail(
             new ProviderQuotaReadError({
               reason: "registryUnavailable",
-              cause,
+              cause: Cause.squash(cause),
             }),
           ),
         ),
@@ -406,87 +414,113 @@ export const make = Effect.gen(function* () {
     }
 
     const attemptKey = `${instance.instanceId}\u0000${input.idempotencyKey}`;
-    const recordedCreditId = resetAttempts.get(attemptKey);
-    if (recordedCreditId !== undefined && recordedCreditId !== input.creditId) {
+    const attempt = yield* resetAttemptsMutex.withPermits(1)(
+      Effect.gen(function* () {
+        const recorded = resetAttempts.get(attemptKey);
+        if (recorded?.instance === instance) return recorded;
+        if (recorded !== undefined) resetAttempts.delete(attemptKey);
+        if (resetAttempts.size >= MAX_RECORDED_RESET_ATTEMPTS) {
+          const oldestKey = resetAttempts.keys().next().value;
+          if (oldestKey !== undefined) resetAttempts.delete(oldestKey);
+        }
+        const created: ResetAttempt = {
+          instance,
+          creditId: input.creditId,
+          lock: yield* Semaphore.make(1),
+          attempted: false,
+        };
+        resetAttempts.set(attemptKey, created);
+        return created;
+      }),
+    );
+    if (attempt.creditId !== input.creditId) {
       return yield* new ProviderQuotaConsumeResetError({
         reason: "providerFailed",
         detail: "The reset request does not match its original attempt.",
       });
     }
 
-    if (recordedCreditId === undefined) {
-      const eligibility = yield* withConsumeTimeout(quota.read).pipe(
-        Effect.catchCause((cause) => {
-          const error = Cause.findErrorOption(cause);
-          return Effect.fail(
-            Option.isSome(error)
-              ? mapConsumeError(error.value)
-              : new ProviderQuotaConsumeResetError({
-                  reason: "providerFailed",
-                  detail: "The provider quota inventory could not be refreshed.",
-                }),
+    return yield* attempt.lock.withPermits(1)(
+      Effect.gen(function* () {
+        if (!attempt.attempted) {
+          const eligibility = yield* withConsumeTimeout(quota.read).pipe(
+            Effect.catchCause((cause) => {
+              const error = Cause.findErrorOption(cause);
+              return Effect.fail(
+                Option.isSome(error)
+                  ? mapConsumeError(error.value)
+                  : new ProviderQuotaConsumeResetError({
+                      reason: "providerFailed",
+                      detail: "The provider quota inventory could not be refreshed.",
+                    }),
+              );
+            }),
           );
-        }),
-      );
-      if (eligibility.status === "authRequired") {
-        return yield* new ProviderQuotaConsumeResetError({
-          reason: "authRequired",
-          detail: "Sign in to the provider before consuming a reset.",
-        });
-      }
-      if (eligibility.status !== "current") {
-        return yield* new ProviderQuotaConsumeResetError({
-          reason: "providerFailed",
-          detail: "The provider quota inventory is not current.",
-        });
-      }
-      const inventory = eligibility.bankedResets;
-      const resetAvailable =
-        input.creditId === null
-          ? (inventory?.availableCount ?? 0) > 0
-          : inventory?.resets.some(
-              (reset) => reset.id === input.creditId && reset.status === "available",
-            ) === true;
-      if (!resetAvailable) {
-        return yield* new ProviderQuotaConsumeResetError({
-          reason: "providerFailed",
-          detail: "The selected banked reset is no longer available.",
-        });
-      }
-    }
+          if (eligibility.status === "authRequired") {
+            return yield* new ProviderQuotaConsumeResetError({
+              reason: "authRequired",
+              detail: "Sign in to the provider before consuming a reset.",
+            });
+          }
+          if (eligibility.status !== "current") {
+            return yield* new ProviderQuotaConsumeResetError({
+              reason: "providerFailed",
+              detail: "The provider quota inventory is not current.",
+            });
+          }
+          const inventory = eligibility.bankedResets;
+          const resetAvailable =
+            input.creditId === null
+              ? (inventory?.availableCount ?? 0) > 0
+              : inventory?.resets.some(
+                  (reset) => reset.id === input.creditId && reset.status === "available",
+                ) === true;
+          if (!resetAvailable) {
+            return yield* new ProviderQuotaConsumeResetError({
+              reason: "providerFailed",
+              detail: "The selected banked reset is no longer available.",
+            });
+          }
+        }
 
-    const currentInstance = yield* registry
-      .getInstance(input.instanceId)
-      .pipe(Effect.catchCause(() => Effect.succeed(undefined)));
-    if (currentInstance !== instance || !currentInstance.enabled) {
-      return yield* new ProviderQuotaConsumeResetError({
-        reason: "providerFailed",
-        detail: "The provider instance changed before the reset could be consumed.",
-      });
-    }
-    if (recordedCreditId === undefined) {
-      if (resetAttempts.size >= MAX_RECORDED_RESET_ATTEMPTS) {
-        const oldestKey = resetAttempts.keys().next().value;
-        if (oldestKey !== undefined) resetAttempts.delete(oldestKey);
-      }
-      resetAttempts.set(attemptKey, input.creditId);
-    }
+        const currentInstance = yield* registry
+          .getInstance(input.instanceId)
+          .pipe(Effect.catchCause(() => Effect.succeed(undefined)));
+        if (currentInstance !== instance || !currentInstance.enabled) {
+          return yield* new ProviderQuotaConsumeResetError({
+            reason: "providerFailed",
+            detail: "The provider instance changed before the reset could be consumed.",
+          });
+        }
+        attempt.attempted = true;
 
-    return yield* withConsumeTimeout(
-      consume({ creditId: input.creditId, idempotencyKey: input.idempotencyKey }),
-    ).pipe(
-      Effect.catchCause((cause) => {
-        const error = Cause.findErrorOption(cause);
-        return Effect.fail(
-          Option.isSome(error)
-            ? mapConsumeError(error.value)
-            : new ProviderQuotaConsumeResetError({
-                reason: "providerFailed",
-                detail: "The provider could not consume the banked reset.",
-              }),
+        return yield* withConsumeTimeout(
+          consume({ creditId: input.creditId, idempotencyKey: input.idempotencyKey }),
+        ).pipe(
+          Effect.catchCause((cause) => {
+            const error = Cause.findErrorOption(cause);
+            return Effect.fail(
+              Option.isSome(error)
+                ? mapConsumeError(error.value)
+                : new ProviderQuotaConsumeResetError({
+                    reason: "providerFailed",
+                    detail: "The provider could not consume the banked reset.",
+                  }),
+            );
+          }),
+          Effect.ensuring(invalidate(instance.instanceId)),
         );
-      }),
-      Effect.ensuring(invalidate(instance.instanceId)),
+      }).pipe(
+        Effect.onError(() =>
+          attempt.attempted
+            ? Effect.void
+            : resetAttemptsMutex.withPermits(1)(
+                Effect.sync(() => {
+                  if (resetAttempts.get(attemptKey) === attempt) resetAttempts.delete(attemptKey);
+                }),
+              ),
+        ),
+      ),
     );
   });
 
