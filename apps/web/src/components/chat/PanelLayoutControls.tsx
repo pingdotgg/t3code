@@ -64,7 +64,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       variant="ghost"
       size="sm"
     >
-      <ListFilterIcon className="size-3.5" />
+      <ListFilterIcon className="size-4" />
       {threadPanelHasAttention ? (
         <span
           className="absolute right-1 top-1 size-1.5 rounded-full bg-warning ring-2 ring-background"
@@ -131,7 +131,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
                 size="sm"
                 disabled={!terminalAvailable}
               >
-                <PanelBottomIcon className="size-3.5" />
+                <PanelBottomIcon className="size-4" />
               </Toggle>
             }
           />
@@ -159,7 +159,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
                 size="sm"
                 disabled={!rightPanelAvailable}
               >
-                <PanelRightIcon className="size-3.5" />
+                <PanelRightIcon className="size-4" />
                 {liveAgentCount > 0 ? (
                   <span
                     aria-hidden
@@ -207,9 +207,9 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
             size="sm"
           >
             {maximized ? (
-              <Minimize2Icon className="size-3.5" />
+              <Minimize2Icon className="size-4" />
             ) : (
-              <Maximize2Icon className="size-3.5" />
+              <Maximize2Icon className="size-4" />
             )}
           </Toggle>
         }
