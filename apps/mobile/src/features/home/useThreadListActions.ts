@@ -3,7 +3,7 @@ import { canSettle, canSnooze } from "@t3tools/client-runtime/state/thread-settl
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -13,6 +13,10 @@ import {
   planPinnedMove,
   sortPinnedThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  clearBackgroundConnectionRetainedThread,
+  getBackgroundConnectionRetainedThreadSnapshot,
+} from "../background-connection/retained-thread";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
@@ -169,6 +173,12 @@ function useThreadActionExecutor(
         // lifecycle still feeds the archived-snapshot surface.
         if (action === "archive" || action === "unarchive" || action === "delete") {
           refreshArchivedThreadsForEnvironment(thread.environmentId);
+        }
+        if (Platform.OS === "android" && action === "delete") {
+          const retained = getBackgroundConnectionRetainedThreadSnapshot().thread;
+          if (retained?.environmentId === thread.environmentId && retained.threadId === thread.id) {
+            void clearBackgroundConnectionRetainedThread();
+          }
         }
         onCompleted?.(action, thread);
         return true;

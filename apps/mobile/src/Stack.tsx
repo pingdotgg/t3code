@@ -23,6 +23,8 @@ import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardi
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
 import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
+import { parseActiveThreadPath } from "./features/keyboard/hardwareKeyboardCommands";
+import { saveBackgroundConnectionRetainedThread } from "./features/background-connection/retained-thread";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
@@ -404,6 +406,14 @@ function RootStackLayout(props: {
   const path = getPathFromState(props.state, navigationPathConfig);
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspacePathname = workspacePathFromState(props.state);
+  const activeThread = parseActiveThreadPath(workspacePathname);
+
+  useEffect(() => {
+    if (Platform.OS !== "android" || activeThread === null) {
+      return;
+    }
+    void saveBackgroundConnectionRetainedThread(activeThread);
+  }, [activeThread?.environmentId, activeThread?.threadId]);
 
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>

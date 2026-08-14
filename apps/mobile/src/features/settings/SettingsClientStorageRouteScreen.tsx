@@ -2,10 +2,14 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { SymbolView } from "expo-symbols";
 import { useMemo } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import {
+  clearBackgroundConnectionRetainedThread,
+  getBackgroundConnectionRetainedThreadSnapshot,
+} from "../background-connection/retained-thread";
 import { useThemeColor } from "../../lib/useThemeColor";
 import {
   clearClientCacheAtom,
@@ -47,8 +51,16 @@ export function SettingsClientStorageRouteScreen() {
         {
           text: "Clear Cache",
           style: "destructive",
-          onPress: () =>
-            clearCache({ type: "environment", environmentId: environment.environmentId }),
+          onPress: () => {
+            const retained = getBackgroundConnectionRetainedThreadSnapshot().thread;
+            if (
+              Platform.OS === "android" &&
+              retained?.environmentId === environment.environmentId
+            ) {
+              void clearBackgroundConnectionRetainedThread();
+            }
+            clearCache({ type: "environment", environmentId: environment.environmentId });
+          },
         },
       ],
     );
@@ -63,7 +75,12 @@ export function SettingsClientStorageRouteScreen() {
         {
           text: "Clear All Caches",
           style: "destructive",
-          onPress: () => clearCache({ type: "all" }),
+          onPress: () => {
+            if (Platform.OS === "android") {
+              void clearBackgroundConnectionRetainedThread();
+            }
+            clearCache({ type: "all" });
+          },
         },
       ],
     );

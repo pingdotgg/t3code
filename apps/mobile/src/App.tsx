@@ -2,7 +2,7 @@ import { BlurTargetView } from "expo-blur";
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
-import { StatusBar, useColorScheme } from "react-native";
+import { Platform, StatusBar, useColorScheme } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -22,6 +22,7 @@ import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
 import { useThemeColor } from "./lib/useThemeColor";
+import { ensureBackgroundConnectionStarted } from "./native/backgroundConnection";
 
 import "../global.css";
 
@@ -57,12 +58,22 @@ function SplashScreenCoordinator() {
   return null;
 }
 
+function BackgroundConnectionServiceCoordinator() {
+  useEffect(() => {
+    if (Platform.OS === "android") {
+      ensureBackgroundConnectionStarted();
+    }
+  }, []);
+  return null;
+}
+
 export default function App() {
   const colorScheme = useColorScheme();
   const statusBarBg = useThemeColor("--color-status-bar");
 
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
+      <BackgroundConnectionServiceCoordinator />
       <CloudAuthProvider>
         <AppearancePreferencesProvider>
           <SplashScreenCoordinator />

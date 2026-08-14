@@ -87,6 +87,28 @@ node ../../scripts/mobile-native-static-check.ts
 
 The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin. Missing native tools are reported as warnings and skipped locally. CI installs the default toolset from `apps/mobile/Brewfile` before running the native checks.
 
+## Android background connection
+
+Android builds expose an opt-in **Keep connected in background** switch in Settings. When enabled,
+the app runs one silent `remoteMessaging` foreground service and one React Native Headless JS task.
+That task keeps the existing connection supervisors, environment shells, active thread details, and
+outbox dispatcher alive; it does not introduce a second WebSocket or synchronization protocol.
+
+Android requires the ongoing `T3 Code · Connected in background` service notification. Granting the
+one-time unrestricted-battery exemption makes recovery more reliable under vendor power management,
+but declining it leaves the feature enabled with a degraded status. A user-initiated Android
+force-stop is the platform boundary: launch the app once before automatic service, update, or boot
+restoration can resume.
+
+The implementation lives in `modules/t3-background-connection`; generated files under `android/`
+are not authoritative. After native changes, regenerate and verify a development project with:
+
+```bash
+APP_VARIANT=development EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform android
+cd android
+./gradlew :t3-background-connection:compileDebugKotlin lintDebug
+```
+
 ## EAS Builds
 
 CI uses Expo fingerprinting with the `preview:dev` profile to reuse an existing compatible build when possible, or start a new internal EAS build when native runtime inputs change. Production and default local builds continue to use the `appVersion` runtime policy.
