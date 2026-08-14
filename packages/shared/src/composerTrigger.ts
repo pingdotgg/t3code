@@ -137,6 +137,10 @@ export function parseStandaloneComposerSlashCommand(
   return "default";
 }
 
+export function isClientOnlyComposerCommand(text: string): boolean {
+  return parseStandaloneComposerSlashCommand(text) === "feedback";
+}
+
 export function replaceTextRange(
   text: string,
   rangeStart: number,

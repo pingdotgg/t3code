@@ -5,6 +5,7 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import { BotIcon } from "lucide-react";
+import type { FeedbackType } from "@t3tools/shared/feedback";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -33,6 +34,7 @@ export type ComposerCommandItem =
       id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
+      feedbackType?: FeedbackType;
       label: string;
       description: string;
     }

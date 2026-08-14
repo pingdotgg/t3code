@@ -1,4 +1,5 @@
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
+import type { FeedbackType } from "@t3tools/shared/feedback";
 import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { memo } from "react";
@@ -20,6 +21,7 @@ export type ComposerCommandItem =
       readonly id: string;
       readonly type: "slash-command";
       readonly command: string;
+      readonly feedbackType?: FeedbackType;
       readonly label: string;
       readonly description: string;
     }

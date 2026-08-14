@@ -45,8 +45,10 @@ import {
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import type { FeedbackType } from "@t3tools/shared/feedback";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import { isClientOnlyComposerCommand } from "@t3tools/shared/composerTrigger";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -4259,6 +4261,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef, unsnoozeThreadMutation]);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
   const [branchRestoreConfirmOpen, setBranchRestoreConfirmOpen] = useState(false);
+  const [feedbackPickerOpen, setFeedbackPickerOpen] = useState(false);
   // Once revealed for a given mismatch, the banner stays mounted until the
   // mismatch changes or resolves, so clearing the draft doesn't flicker it.
   const [revealedBranchMismatchKey, setRevealedBranchMismatchKey] = useState<string | null>(null);
@@ -4878,6 +4881,25 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const openSelectedFeedbackForm = async (feedbackType: FeedbackType) => {
+    try {
+      await openFeedbackIssueForm(feedbackType);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not open feedback form",
+          description: error instanceof Error ? error.message : "Opening the form failed.",
+        }),
+      );
+      return;
+    }
+    promptRef.current = "";
+    setComposerDraftPrompt(composerDraftTarget, "");
+    composerRef.current?.resetCursorState();
+    setFeedbackPickerOpen(false);
+  };
+
   const onSend = async (
     e?: { preventDefault: () => void },
     directAnnotation?: {
@@ -4896,6 +4918,10 @@ function ChatViewContent(props: ChatViewProps) {
         }),
       );
     };
+    if (!directAnnotation && isClientOnlyComposerCommand(promptRef.current)) {
+      setFeedbackPickerOpen(true);
+      return;
+    }
     if (
       !activeThread ||
       isSendBusy ||
@@ -4992,8 +5018,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const parsedStandaloneSlashCommand = parseStandaloneComposerSlashCommand(trimmed);
     // Legacy plan mode: /plan and /default only act when the beta flag is on
-    // and the draft has no attachments or context. /feedback is always a
-    // client command and leaves those draft items in place.
+    // and the draft has no attachments or context.
     const canApplyLegacyModeCommand =
       settings.planModeEnabled &&
       composerImages.length === 0 &&
@@ -5002,28 +5027,10 @@ function ChatViewContent(props: ChatViewProps) {
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0;
     const standaloneSlashCommand =
-      parsedStandaloneSlashCommand === "feedback" || canApplyLegacyModeCommand
-        ? parsedStandaloneSlashCommand
-        : null;
+      parsedStandaloneSlashCommand === "feedback" || !canApplyLegacyModeCommand
+        ? null
+        : parsedStandaloneSlashCommand;
     if (standaloneSlashCommand) {
-      if (standaloneSlashCommand === "feedback") {
-        try {
-          await openFeedbackIssueForm();
-        } catch (error) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not open feedback form",
-              description: error instanceof Error ? error.message : "Opening the form failed.",
-            }),
-          );
-          return;
-        }
-        promptRef.current = "";
-        setComposerDraftPrompt(composerDraftTarget, "");
-        composerRef.current?.resetCursorState();
-        return;
-      }
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -6522,6 +6529,26 @@ function ChatViewContent(props: ChatViewProps) {
                     }}
                   >
                     Switch branch
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogPopup>
+            </AlertDialog>
+
+            <AlertDialog open={feedbackPickerOpen} onOpenChange={setFeedbackPickerOpen}>
+              <AlertDialogPopup>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Send feedback</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Choose the GitHub issue form that best matches your feedback.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                  <Button variant="outline" onClick={() => void openSelectedFeedbackForm("bug")}>
+                    Bug report
+                  </Button>
+                  <Button onClick={() => void openSelectedFeedbackForm("feature")}>
+                    Feature request
                   </Button>
                 </AlertDialogFooter>
               </AlertDialogPopup>

@@ -215,4 +215,36 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).not.toContain("stage-nightly");
     expect(markup).toContain("bg-message-action text-message-action-foreground");
   });
+
+  it("keeps client-only feedback submission enabled ahead of send-state guards", () => {
+    const markup = renderToStaticMarkup(
+      createElement(ComposerPrimaryActions, {
+        compact: true,
+        pendingAction: {
+          questionIndex: 0,
+          isLastQuestion: false,
+          canAdvance: false,
+          isResponding: true,
+          isComplete: false,
+        },
+        isRunning: true,
+        showPlanFollowUpPrompt: true,
+        promptHasText: true,
+        isSendBusy: true,
+        sendDisabledReason: "Provider unavailable",
+        isConnecting: true,
+        isEnvironmentUnavailable: true,
+        isPreparingWorktree: false,
+        hasSendableContent: true,
+        clientOnlyCommand: true,
+        onPreviousPendingQuestion: () => {},
+        onInterrupt: () => {},
+        onImplementPlanInNewThread: () => {},
+      }),
+    );
+
+    expect(markup).toContain('aria-label="Open feedback form"');
+    expect(markup).not.toMatch(/\sdisabled(?:=|\s|>)/);
+    expect(markup).not.toContain("Submitting...");
+  });
 });

@@ -27,6 +27,7 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  clientOnlyCommand?: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -67,6 +68,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  clientOnlyCommand = false,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -97,6 +99,28 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       </svg>
     </button>
   );
+
+  if (clientOnlyCommand) {
+    return (
+      <Button
+        type="submit"
+        size="icon"
+        className="rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover"
+        {...pointerFocusProps}
+        aria-label="Open feedback form"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path
+            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </Button>
+    );
+  }
 
   if (pendingAction) {
     return (

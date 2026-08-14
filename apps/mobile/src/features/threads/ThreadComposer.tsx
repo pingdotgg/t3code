@@ -18,6 +18,7 @@ import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/n
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
+  Alert,
   ActivityIndicator,
   Image,
   Platform,
@@ -66,7 +67,7 @@ import {
 } from "@t3tools/shared/searchRanking";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
-import { openMobileFeedbackIssueForm } from "../../lib/feedback";
+import { openMobileFeedbackFromDraft } from "../../lib/feedback";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import {
   type ExistingThreadSettingsRouteSession,
@@ -391,11 +392,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       const q = composerTrigger.query.toLowerCase();
       const allBuiltIn = [
         {
-          id: "cmd:feedback",
+          id: "cmd:feedback:bug",
           type: "slash-command" as const,
           command: "feedback",
           label: "/feedback",
-          description: "Report a bug or suggest a feature",
+          description: "Report a bug",
+          feedbackType: "bug" as const,
+        },
+        {
+          id: "cmd:feedback:feature",
+          type: "slash-command" as const,
+          command: "feedback",
+          label: "/feedback",
+          description: "Suggest a feature",
+          feedbackType: "feature" as const,
         },
         {
           id: "cmd:model",
@@ -545,9 +555,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     inFlightThreadIdsRef.current.add(threadKey);
     try {
       if (parseStandaloneComposerSlashCommand(draftMessage) === "feedback") {
-        if (await openMobileFeedbackIssueForm()) {
-          onChangeDraftMessage("");
-        }
+        Alert.alert("Send feedback", "What would you like to share?", [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Bug report",
+            onPress: () => {
+              void openMobileFeedbackFromDraft("bug", () => onChangeDraftMessage(""));
+            },
+          },
+          {
+            text: "Feature request",
+            onPress: () => {
+              void openMobileFeedbackFromDraft("feature", () => onChangeDraftMessage(""));
+            },
+          },
+        ]);
         return;
       }
       await onSendMessage();
@@ -598,9 +620,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           composerTrigger.rangeEnd,
           "",
         );
-        setComposerSelection({ start: result.cursor, end: result.cursor });
-        onChangeDraftMessage(result.text);
-        void openMobileFeedbackIssueForm();
+        void openMobileFeedbackFromDraft(item.feedbackType ?? "bug", () => {
+          setComposerSelection({ start: result.cursor, end: result.cursor });
+          onChangeDraftMessage(result.text);
+        });
         return;
       }
 

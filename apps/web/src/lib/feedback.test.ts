@@ -9,6 +9,7 @@ describe("buildWebFeedbackIssueUrl", () => {
         appVersion: "2.4.6",
         isDesktop: true,
         navigator: { platform: "MacIntel", userAgent: "Electron/39.0.0" },
+        feedbackType: "bug",
       }),
     );
 
@@ -21,6 +22,7 @@ describe("buildWebFeedbackIssueUrl", () => {
         appVersion: "2.4.6",
         isDesktop: false,
         navigator: { platform: "Linux x86_64", userAgent: "Firefox/141" },
+        feedbackType: "feature",
       }),
     );
 
