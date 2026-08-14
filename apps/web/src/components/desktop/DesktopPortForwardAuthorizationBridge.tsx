@@ -6,9 +6,13 @@ import * as Exit from "effect/Exit";
 import { useEffect } from "react";
 
 import { runtime } from "../../lib/runtime";
-import { readCurrentPreparedConnection } from "../../state/session";
+import {
+  readCurrentPreparedConnection,
+  refreshCurrentPreparedConnection,
+} from "../../state/session";
 import {
   isMissingPortForwardEnvironment,
+  isRejectedPortForwardAuthorization,
   portForwardAuthorizationErrorMessage,
 } from "./desktopPortForwardAuthorization";
 
@@ -18,24 +22,35 @@ export function DesktopPortForwardAuthorizationBridge() {
     if (bridge === undefined) return;
 
     return bridge.onAuthorizationRequest((request) => {
+      const authorize = (
+        prepared: NonNullable<Awaited<ReturnType<typeof readCurrentPreparedConnection>>>,
+      ) =>
+        runtime.runPromiseExit(
+          Effect.gen(function* () {
+            const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+            return yield* resolveTcpPortForwardSocketUrl({
+              prepared,
+              signer,
+              remoteHost: request.remoteHost,
+              remotePort: request.remotePort,
+            });
+          }),
+        );
+
       void readCurrentPreparedConnection(request.environmentId)
-        .then((prepared) => {
+        .then(async (prepared) => {
           if (prepared === null) {
             // Authorization requests are broadcast to every desktop window.
             // Only the renderer that owns a live connection should answer.
             return;
           }
-          return runtime.runPromiseExit(
-            Effect.gen(function* () {
-              const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-              return yield* resolveTcpPortForwardSocketUrl({
-                prepared,
-                signer,
-                remoteHost: request.remoteHost,
-                remotePort: request.remotePort,
-              });
-            }),
-          );
+          const first = await authorize(prepared);
+          if (Exit.isSuccess(first)) return first;
+          const failure = first.cause.reasons.find(Cause.isFailReason)?.error;
+          if (!isRejectedPortForwardAuthorization(failure)) return first;
+
+          const refreshed = await refreshCurrentPreparedConnection(request.environmentId);
+          return refreshed === null ? first : authorize(refreshed);
         })
         .then((result) => {
           if (result === undefined) return;

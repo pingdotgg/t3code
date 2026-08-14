@@ -43,6 +43,11 @@ This keeps framing, half-close behavior, cancellation, and backpressure simpler
 than a new multiplexing protocol and avoids head-of-line blocking the ordinary
 T3 control connection. Multiplex only if measured connection counts justify it.
 
+Relay connections refresh their DPoP credential before it expires. If a ticket
+request is nevertheless rejected, concurrent forward attempts share one
+environment reconnect and retry ticket authorization once with the refreshed
+prepared connection.
+
 The server must advertise an additive `tcpPortForwarding` environment
 capability. The implementation should remain generic T3 behavior rather than
 sovereign-only code:

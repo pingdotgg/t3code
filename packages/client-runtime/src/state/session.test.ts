@@ -14,7 +14,11 @@ import {
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import { currentPreparedConnection, initialConfigOption } from "./session.ts";
+import {
+  currentPreparedConnection,
+  initialConfigOption,
+  refreshCurrentPreparedConnection,
+} from "./session.ts";
 
 class TestConfigError extends Schema.TaggedErrorClass<TestConfigError>()("TestConfigError", {
   message: Schema.String,
@@ -82,6 +86,85 @@ describe("environment session state", () => {
       );
 
       expect(result).toEqual(Option.some(prepared));
+    }),
+  );
+
+  it.effect("replaces a stale lease and returns the next prepared connection", () =>
+    Effect.gen(function* () {
+      const target = new PrimaryConnectionTarget({
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "Test environment",
+        httpBaseUrl: "https://environment.example.test",
+        wsBaseUrl: "wss://environment.example.test",
+      });
+      const stale: PreparedConnection = {
+        environmentId: target.environmentId,
+        label: target.label,
+        httpBaseUrl: target.httpBaseUrl,
+        socketUrl: `${target.wsBaseUrl}/stale`,
+        httpAuthorization: null,
+        target,
+      };
+      const refreshed: PreparedConnection = {
+        ...stale,
+        socketUrl: `${target.wsBaseUrl}/refreshed`,
+      };
+      const state = yield* SubscriptionRef.make<SupervisorConnectionState>({
+        desired: true,
+        network: "online",
+        phase: "connected",
+        stage: null,
+        attempt: 1,
+        generation: 1,
+        lastFailure: null,
+        retryAt: null,
+      });
+      const prepared = yield* SubscriptionRef.make(Option.some(stale));
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target,
+        state,
+        session: yield* SubscriptionRef.make<Option.Option<RpcSession>>(Option.none()),
+        prepared,
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.all(
+          [
+            SubscriptionRef.set(prepared, Option.some(refreshed)),
+            SubscriptionRef.set(state, {
+              desired: true,
+              network: "online",
+              phase: "connected",
+              stage: null,
+              attempt: 1,
+              generation: 2,
+              lastFailure: null,
+              retryAt: null,
+            }),
+          ],
+          { discard: true },
+        ),
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+        _environmentId,
+        effect,
+      ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+      const runStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["runStream"] = (
+        _environmentId,
+        stream,
+      ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+      const registry = EnvironmentRegistry.EnvironmentRegistry.of({
+        run,
+        runStream,
+        state: () => SubscriptionRef.get(state),
+        stateChanges: () => SubscriptionRef.changes(state),
+        retryNow: () => supervisor.retryNow,
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+
+      const result = yield* refreshCurrentPreparedConnection(target.environmentId, 100).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+      );
+
+      expect(result).toEqual(Option.some(refreshed));
     }),
   );
 });
