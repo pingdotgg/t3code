@@ -519,7 +519,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   /* Fade rows themselves as they pass beneath the top chrome. A mask remains
-     visible even when the header and timeline share the same background. */
+     visible even when the header and timeline share the same background.
+
+     The fade band and the content below it are one full-height gradient, not a
+     band layer abutting a solid layer. Two layers meeting at
+     var(--topbar-scroll-fade-height) composite as `add`, so when that boundary
+     falls between two device pixels the straddled row resolves to
+     a1 + a2(1 - a1) < 1. It lands past the end of the gradient, where text is
+     back at full brightness, so it reads as a line struck across the message
+     rather than as part of the fade. Whether it falls badly depends on the
+     element's subpixel offset and the zoom level as well as the device pixel
+     ratio, so it shows on some displays and not others. Carrying the last stop
+     to the bottom leaves no interior edge to land off-grid. */
   .chat-timeline-scroll-fade,
   .settings-page-scroll-fade,
   .pull-requests-scroll-fade {
@@ -527,38 +538,36 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     -webkit-mask-image:
       linear-gradient(
         to bottom,
-        transparent 0%,
-        rgb(0 0 0 / 10%) 10%,
-        rgb(0 0 0 / 30%) 24%,
-        rgb(0 0 0 / 58%) 42%,
-        rgb(0 0 0 / 82%) 62%,
-        rgb(0 0 0 / 96%) 82%,
-        black 100%
+        transparent 0,
+        rgb(0 0 0 / 10%) calc(var(--topbar-scroll-fade-height) * 0.1),
+        rgb(0 0 0 / 30%) calc(var(--topbar-scroll-fade-height) * 0.24),
+        rgb(0 0 0 / 58%) calc(var(--topbar-scroll-fade-height) * 0.42),
+        rgb(0 0 0 / 82%) calc(var(--topbar-scroll-fade-height) * 0.62),
+        rgb(0 0 0 / 96%) calc(var(--topbar-scroll-fade-height) * 0.82),
+        black var(--topbar-scroll-fade-height)
       ),
-      linear-gradient(black, black), linear-gradient(black, black);
-    -webkit-mask-position: top, bottom, right;
+      linear-gradient(black, black);
+    -webkit-mask-position: top, right;
     -webkit-mask-repeat: no-repeat;
     -webkit-mask-size:
-      100% var(--topbar-scroll-fade-height),
-      100% calc(100% - var(--topbar-scroll-fade-height)),
+      100% 100%,
       var(--app-scrollbar-width) 100%;
     mask-image:
       linear-gradient(
         to bottom,
-        transparent 0%,
-        rgb(0 0 0 / 10%) 10%,
-        rgb(0 0 0 / 30%) 24%,
-        rgb(0 0 0 / 58%) 42%,
-        rgb(0 0 0 / 82%) 62%,
-        rgb(0 0 0 / 96%) 82%,
-        black 100%
+        transparent 0,
+        rgb(0 0 0 / 10%) calc(var(--topbar-scroll-fade-height) * 0.1),
+        rgb(0 0 0 / 30%) calc(var(--topbar-scroll-fade-height) * 0.24),
+        rgb(0 0 0 / 58%) calc(var(--topbar-scroll-fade-height) * 0.42),
+        rgb(0 0 0 / 82%) calc(var(--topbar-scroll-fade-height) * 0.62),
+        rgb(0 0 0 / 96%) calc(var(--topbar-scroll-fade-height) * 0.82),
+        black var(--topbar-scroll-fade-height)
       ),
-      linear-gradient(black, black), linear-gradient(black, black);
-    mask-position: top, bottom, right;
+      linear-gradient(black, black);
+    mask-position: top, right;
     mask-repeat: no-repeat;
     mask-size:
-      100% var(--topbar-scroll-fade-height),
-      100% calc(100% - var(--topbar-scroll-fade-height)),
+      100% 100%,
       var(--app-scrollbar-width) 100%;
   }
 
