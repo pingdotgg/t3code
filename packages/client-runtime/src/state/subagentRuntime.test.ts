@@ -497,6 +497,40 @@ describe("deriveAgentPanelModel", () => {
     expect(webRoster).toEqual(detailed.agents);
   });
 
+  it("assigns a reactivated direct task to its later turn's spawn batch", () => {
+    const firstTurnId = TurnId.make("turn-first-activation");
+    const secondTurnId = TurnId.make("turn-second-activation");
+    const started = {
+      ...activity("task.started", { taskId: "reusable-agent" }),
+      turnId: firstTurnId,
+    };
+    const completed = {
+      ...activity("task.completed", { taskId: "reusable-agent", status: "completed" }),
+      turnId: firstTurnId,
+    };
+    const reactivated = {
+      ...activity("task.updated", { taskId: "reusable-agent", status: "running" }),
+      turnId: secondTurnId,
+    };
+
+    const detailed = foldSubagentActivitiesWithBatchCounts([started, completed, reactivated]);
+
+    expect(detailed.batchKeyByActivityId.get(started.id)).toBe(`direct:${firstTurnId}`);
+    expect(detailed.batchKeyByActivityId.get(completed.id)).toBe(`direct:${firstTurnId}`);
+    expect(detailed.batchKeyByActivityId.get(reactivated.id)).toBe(`direct:${secondTurnId}`);
+    expect(detailed.batchKeyByTaskId.get("reusable-agent")).toBe(`direct:${secondTurnId}`);
+    expect(detailed.batchCounts.get(`direct:${firstTurnId}`)).toMatchObject({
+      totalCount: 1,
+      workingCount: 0,
+      completedCount: 1,
+    });
+    expect(detailed.batchCounts.get(`direct:${secondTurnId}`)).toMatchObject({
+      totalCount: 1,
+      workingCount: 1,
+      completedCount: 0,
+    });
+  });
+
   it("keeps an uncapped 150-member workflow roster consistent with its batch counts", () => {
     const workflowId = "workflow-fanout";
     const rows = [

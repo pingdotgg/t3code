@@ -606,7 +606,7 @@ export function applyThreadDetailEvent(
               ...thread.latestTurn,
               state: "interrupted" as const,
               startedAt: thread.latestTurn.startedAt ?? activity.createdAt,
-              completedAt: thread.latestTurn.completedAt ?? activity.createdAt,
+              completedAt: activity.createdAt,
             }
           : thread.latestTurn;
 

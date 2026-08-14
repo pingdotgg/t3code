@@ -30,7 +30,9 @@ export interface BackgroundWorkStopGuardOptions {
 export interface BackgroundWorkStopGuard {
   readonly isInFlight: () => boolean;
   readonly resolve: () => void;
-  readonly run: (interrupt: () => Promise<unknown>) => Promise<boolean>;
+  readonly run: (
+    interrupt: (attempt: { readonly resolve: () => void }) => Promise<unknown>,
+  ) => Promise<boolean>;
 }
 
 export function createBackgroundWorkStopGuard(
@@ -74,13 +76,16 @@ export function createBackgroundWorkStopGuard(
             "This server did not confirm whether background work stopped. Check the thread before trying again.",
         });
       }, options?.timeoutMs ?? 5_000);
-      try {
-        await interrupt();
-        return true;
-      } catch (error) {
+      const resolveAttempt = () => {
         if (generation === runGeneration) {
           resolve();
         }
+      };
+      try {
+        await interrupt({ resolve: resolveAttempt });
+        return true;
+      } catch (error) {
+        resolveAttempt();
         throw error;
       }
     },

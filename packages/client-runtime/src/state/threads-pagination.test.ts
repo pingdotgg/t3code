@@ -341,8 +341,10 @@ describe("thread pagination state", () => {
     }),
   );
 
-  it.effect("canonically orders a retained start anchor with an intermediate older page", () =>
-    Effect.gen(function* () {
+  it.effect("canonically orders a retained start anchor without ES2023 array methods", () => {
+    const toSortedDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
+    Reflect.deleteProperty(Array.prototype, "toSorted");
+    return Effect.gen(function* () {
       const startAt = "2026-04-01T00:00:00.000Z";
       const progressAt = "2026-04-01T00:30:00.000Z";
       const recentAt = "2026-04-01T01:00:00.000Z";
@@ -406,8 +408,16 @@ describe("thread pagination state", () => {
         firstSeenAt: startAt,
         startedAt: startAt,
       });
-    }),
-  );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (toSortedDescriptor !== undefined) {
+            Reflect.defineProperty(Array.prototype, "toSorted", toSortedDescriptor);
+          }
+        }),
+      ),
+    );
+  });
 
   it.effect("orders same-time sequence-less activities by id after merging an older page", () =>
     Effect.gen(function* () {

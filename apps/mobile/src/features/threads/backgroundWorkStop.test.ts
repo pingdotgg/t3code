@@ -230,4 +230,60 @@ describe("backgroundWorkStopConfirmation", () => {
       vi.useRealTimers();
     }
   });
+
+  it("keeps a newer Stop pending when an older command failure resolves late", async () => {
+    vi.useFakeTimers();
+    try {
+      let finishFirst: (() => void) | undefined;
+      const onTimeout = vi.fn();
+      const guard = createBackgroundWorkStopGuard(() => undefined, {
+        timeoutMs: 3_000,
+        onTimeout,
+      });
+      const first = guard.run(
+        async (attempt) =>
+          new Promise<void>((resolve) => {
+            finishFirst = () => {
+              attempt.resolve();
+              resolve();
+            };
+          }),
+      );
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(guard.isInFlight()).toBe(false);
+      onTimeout.mockClear();
+
+      await expect(guard.run(async () => undefined)).resolves.toBe(true);
+      finishFirst?.();
+      await expect(first).resolves.toBe(true);
+      expect(guard.isInFlight()).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(onTimeout).toHaveBeenCalledOnce();
+      expect(guard.isInFlight()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels the pending timeout when the route cleanup resolves the guard", async () => {
+    vi.useFakeTimers();
+    try {
+      const onTimeout = vi.fn();
+      const guard = createBackgroundWorkStopGuard(() => undefined, {
+        timeoutMs: 3_000,
+        onTimeout,
+      });
+
+      await expect(guard.run(async () => undefined)).resolves.toBe(true);
+      guard.resolve();
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(onTimeout).not.toHaveBeenCalled();
+      expect(guard.isInFlight()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

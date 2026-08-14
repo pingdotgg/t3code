@@ -1,11 +1,13 @@
 import {
   formatSubagentTokenCount,
+  isActiveSubagentStatus,
   type AgentPanelWorkflowGroup,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   StackActions,
+  useIsFocused,
   useNavigation,
   useRoute,
   type RouteProp,
@@ -17,7 +19,7 @@ import {
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import * as Option from "effect/Option";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -33,6 +35,7 @@ import {
   deriveMobileAgentPanelModel,
   deriveMobileAgentRowModel,
   findMobileAgent,
+  startAgentElapsedClock,
   type MobileAgentDetailModel,
 } from "./agentPresentation";
 import {
@@ -100,6 +103,15 @@ function sessionIsLive(
   return (
     status !== undefined && status !== "stopped" && status !== "interrupted" && status !== "error"
   );
+}
+
+function useAgentElapsedNow(enabled: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return;
+    return startAgentElapsedClock(setNowMs);
+  }, [enabled]);
+  return nowMs;
 }
 
 function statusDotClass(status: RuntimeSubagent["status"]): string {
@@ -367,20 +379,19 @@ export function ThreadAgentsSheet(props: ThreadAgentsSheetProps) {
   });
   const thread = Option.getOrNull(threadState.data);
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
   const activities = thread?.activities;
   const sessionLive = sessionIsLive(thread);
-  const presentation = useMemo(() => {
-    const model = deriveMobileAgentPanelModel({
-      activities: activities ?? [],
-      sessionLive,
-    });
-    return {
-      listItems: buildAgentsListItems(model),
-      model,
-      nowMs: Date.now(),
-    };
-  }, [activities, sessionLive]);
-  const { listItems, model, nowMs } = presentation;
+  const model = useMemo(
+    () =>
+      deriveMobileAgentPanelModel({
+        activities: activities ?? [],
+        sessionLive,
+      }),
+    [activities, sessionLive],
+  );
+  const listItems = useMemo(() => buildAgentsListItems(model), [model]);
+  const nowMs = useAgentElapsedNow(isFocused && model.liveCount > 0);
   const handleOpenAgent = useCallback(
     (agentId: string) => {
       navigation.navigate("ThreadAgentDetail", {
@@ -600,17 +611,24 @@ export function ThreadAgentDetailSheet(props: ThreadAgentDetailSheetProps) {
   });
   const thread = Option.getOrNull(threadState.data);
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
   const activities = thread?.activities;
   const sessionLive = sessionIsLive(thread);
-  const detail = useMemo(() => {
+  const agent = useMemo(() => {
     if (!activities) return null;
     const panel = deriveMobileAgentPanelModel({
       activities,
       sessionLive,
     });
-    const agent = findMobileAgent(panel, props.route.params.agentId);
-    return agent ? deriveMobileAgentDetailModel(agent, Date.now()) : null;
+    return findMobileAgent(panel, props.route.params.agentId);
   }, [activities, props.route.params.agentId, sessionLive]);
+  const nowMs = useAgentElapsedNow(
+    isFocused && agent !== null && isActiveSubagentStatus(agent.status),
+  );
+  const detail = useMemo(
+    () => (agent ? deriveMobileAgentDetailModel(agent, nowMs) : null),
+    [agent, nowMs],
+  );
   const listItems = useMemo(() => (detail ? buildAgentDetailListItems(detail) : []), [detail]);
   const hasOlderTurns = threadHasOlderTurns(threadState);
   const loadingOlder = Option.match(threadState.page, {

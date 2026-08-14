@@ -9,6 +9,11 @@ import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 
 import { memoizedFoldSubagentActivities } from "../../lib/threadActivity";
 
+export function startAgentElapsedClock(onTick: (nowMs: number) => void): () => void {
+  const intervalId = setInterval(() => onTick(Date.now()), 1_000);
+  return () => clearInterval(intervalId);
+}
+
 const STATUS_LABELS: Record<RuntimeSubagent["status"], string> = {
   pending: "Working",
   running: "Working",

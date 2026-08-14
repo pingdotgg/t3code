@@ -253,7 +253,10 @@ interface MutableAgent {
   runHandles: SubagentRunHandles | null;
   recentActivity: ReadonlyArray<SubagentActivityEntry>;
   recentActivityTruncated: boolean;
-  firstTurnId: string | null;
+  activations: Array<{
+    readonly turnId: string | null;
+    status: RuntimeSubagentStatus;
+  }>;
   firstSeenAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -279,7 +282,6 @@ function getOrCreate(
   id: string,
   payload: Record<string, unknown>,
   at: string,
-  turnId: string | null,
 ): MutableAgent {
   const existing = agents.get(id);
   if (existing) {
@@ -310,7 +312,7 @@ function getOrCreate(
     runHandles: null,
     recentActivity: [],
     recentActivityTruncated: false,
-    firstTurnId: turnId,
+    activations: [],
     firstSeenAt: at,
     startedAt: null,
     completedAt: null,
@@ -486,9 +488,11 @@ export interface FoldedSubagentActivitiesWithBatchCounts {
   readonly agents: ReadonlyArray<RuntimeSubagent>;
   /** Every recognized task identity, including agents omitted by the roster cap. */
   readonly agentTaskIds: ReadonlySet<string>;
-  /** Fold-owned spawn-batch identity for every recognized task. */
+  /** Spawn-batch identity for each task's latest retained activation. */
   readonly batchKeyByTaskId: ReadonlyMap<string, string>;
-  /** Uncapped status counts keyed by the spawn-batch ids used by clients. */
+  /** Spawn-batch identity for every recognized task activity. */
+  readonly batchKeyByActivityId: ReadonlyMap<string, string>;
+  /** Uncapped activation-aware status counts keyed by the spawn-batch ids used by clients. */
   readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
 }
 
@@ -498,7 +502,7 @@ export interface FoldSubagentActivitiesOptions {
   readonly rosterLimit?: number | null;
 }
 
-function subagentBatchKey(agent: MutableAgent): string {
+function subagentBatchKey(agent: MutableAgent, turnId: string | null): string {
   if (agent.kind === "workflow") {
     return `wf:${agent.id}`;
   }
@@ -508,7 +512,7 @@ function subagentBatchKey(agent: MutableAgent): string {
       agent.parentAgentId ?? (workflowMarker === -1 ? agent.id : agent.id.slice(0, workflowMarker));
     return `wf:${workflowId}`;
   }
-  return agent.firstTurnId ? `direct:${agent.firstTurnId}` : `direct:task:${agent.id}`;
+  return turnId ? `direct:${turnId}` : `direct:task:${agent.id}`;
 }
 
 const EMPTY_BATCH_COUNT: SubagentBatchCount = {
@@ -520,32 +524,61 @@ const EMPTY_BATCH_COUNT: SubagentBatchCount = {
   completedCount: 0,
 };
 
-function deriveSubagentBatchCounts(agents: Iterable<MutableAgent>): {
+interface SubagentActivityActivation {
+  readonly taskId: string;
+  readonly activationIndex: number;
+}
+
+function deriveSubagentBatchCounts(
+  agents: ReadonlyMap<string, MutableAgent>,
+  activityActivations: ReadonlyMap<string, SubagentActivityActivation>,
+): {
   readonly batchKeyByTaskId: ReadonlyMap<string, string>;
+  readonly batchKeyByActivityId: ReadonlyMap<string, string>;
   readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
 } {
   const batchKeyByTaskId = new Map<string, string>();
-  const counts = new Map<string, SubagentBatchCount>();
-  for (const agent of agents) {
-    const key = subagentBatchKey(agent);
-    batchKeyByTaskId.set(agent.id, key);
-    const current = counts.get(key) ?? EMPTY_BATCH_COUNT;
-    if (agent.kind === "workflow") {
-      counts.set(key, current);
-      continue;
+  const batchKeyByActivityId = new Map<string, string>();
+  const statusesByBatch = new Map<string, Map<string, RuntimeSubagentStatus>>();
+  for (const agent of agents.values()) {
+    for (const [activationIndex, activation] of agent.activations.entries()) {
+      const key = subagentBatchKey(agent, activation.turnId);
+      batchKeyByTaskId.set(agent.id, key);
+      const statuses = statusesByBatch.get(key) ?? new Map<string, RuntimeSubagentStatus>();
+      statusesByBatch.set(key, statuses);
+      if (agent.kind !== "workflow") {
+        const memberKey =
+          agent.kind === "workflow_agent" ? agent.id : `${agent.id}:${activationIndex}`;
+        statuses.set(memberKey, activation.status);
+      }
     }
-    counts.set(key, {
-      totalCount: current.totalCount + 1,
-      workingCount: current.workingCount + (isActiveSubagentStatus(agent.status) ? 1 : 0),
-      failedCount: current.failedCount + (agent.status === "failed" ? 1 : 0),
-      stoppedCount:
-        current.stoppedCount +
-        (agent.status === "cancelled" || agent.status === "interrupted" ? 1 : 0),
-      idleCount: current.idleCount + (agent.status === "idle" ? 1 : 0),
-      completedCount: current.completedCount + (agent.status === "completed" ? 1 : 0),
-    });
   }
-  return { batchKeyByTaskId, batchCounts: counts };
+
+  for (const [activityId, activationRef] of activityActivations) {
+    const agent = agents.get(activationRef.taskId);
+    const activation = agent?.activations[activationRef.activationIndex];
+    if (agent && activation) {
+      batchKeyByActivityId.set(activityId, subagentBatchKey(agent, activation.turnId));
+    }
+  }
+
+  const batchCounts = new Map<string, SubagentBatchCount>();
+  for (const [key, statuses] of statusesByBatch) {
+    let count = EMPTY_BATCH_COUNT;
+    for (const status of statuses.values()) {
+      count = {
+        totalCount: count.totalCount + 1,
+        workingCount: count.workingCount + (isActiveSubagentStatus(status) ? 1 : 0),
+        failedCount: count.failedCount + (status === "failed" ? 1 : 0),
+        stoppedCount:
+          count.stoppedCount + (status === "cancelled" || status === "interrupted" ? 1 : 0),
+        idleCount: count.idleCount + (status === "idle" ? 1 : 0),
+        completedCount: count.completedCount + (status === "completed" ? 1 : 0),
+      };
+    }
+    batchCounts.set(key, count);
+  }
+  return { batchKeyByTaskId, batchKeyByActivityId, batchCounts };
 }
 
 export function foldSubagentActivities(
@@ -565,6 +598,7 @@ export function foldSubagentActivitiesWithBatchCounts(
   options?: FoldSubagentActivitiesOptions,
 ): FoldedSubagentActivitiesWithBatchCounts {
   const agents = new Map<string, MutableAgent>();
+  const activityActivations = new Map<string, SubagentActivityActivation>();
 
   for (const activity of activities) {
     if (typeof activity.payload !== "object" || activity.payload === null) {
@@ -572,6 +606,7 @@ export function foldSubagentActivitiesWithBatchCounts(
     }
     const payload = activity.payload as Record<string, unknown>;
     const at = activity.createdAt;
+    let taskIdForBatch: string | null = null;
 
     switch (activity.kind) {
       case "task.started": {
@@ -581,7 +616,8 @@ export function foldSubagentActivitiesWithBatchCounts(
         // tasks are background work — they render in the ordinary work log,
         // not the Agents surface (a "Run 12s stall" shell is not a subagent).
         if (isBackgroundTaskActivity(payload)) break;
-        const agent = getOrCreate(agents, taskId, payload, at, activity.turnId);
+        taskIdForBatch = taskId;
+        const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         // Order-robustness: a start row arriving after a terminal state is a
         // late/out-of-order delivery and only fills metadata — it must not
@@ -610,7 +646,8 @@ export function foldSubagentActivitiesWithBatchCounts(
         // first row's classification instead of being re-judged.
         const existed = agents.has(taskId);
         if (!existed && isBackgroundTaskActivity(payload)) break;
-        const agent = getOrCreate(agents, taskId, payload, at, activity.turnId);
+        taskIdForBatch = taskId;
+        const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
         const explicitStatus = asRuntimeStatus(payload.status);
@@ -648,7 +685,8 @@ export function foldSubagentActivitiesWithBatchCounts(
         // rows often carry only taskId+status, no marker fields) inherit the
         // first row's classification instead of being re-judged.
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
-        const agent = getOrCreate(agents, taskId, payload, at, activity.turnId);
+        taskIdForBatch = taskId;
+        const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         // A task first seen via task.updated (start row aged out) has run at
         // least once — zero activations would misreport "run 0" and let a
@@ -676,7 +714,8 @@ export function foldSubagentActivitiesWithBatchCounts(
         // rows often carry only taskId+status, no marker fields) inherit the
         // first row's classification instead of being re-judged.
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
-        const agent = getOrCreate(agents, taskId, payload, at, activity.turnId);
+        taskIdForBatch = taskId;
+        const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
         // Already-terminal: status and timestamps are frozen (first write
@@ -728,6 +767,20 @@ export function foldSubagentActivitiesWithBatchCounts(
       default:
         break;
     }
+
+    if (taskIdForBatch !== null) {
+      const agent = agents.get(taskIdForBatch);
+      if (agent && agent.activationCount > 0) {
+        const activationIndex = agent.activationCount - 1;
+        const activation = agent.activations[activationIndex];
+        if (activation) {
+          activation.status = agent.status;
+        } else {
+          agent.activations[activationIndex] = { turnId: activity.turnId, status: agent.status };
+        }
+        activityActivations.set(activity.id, { taskId: taskIdForBatch, activationIndex });
+      }
+    }
   }
 
   // Consistency pass: when a workflow coordinator has settled, members that
@@ -764,8 +817,18 @@ export function foldSubagentActivitiesWithBatchCounts(
     }
   }
 
+  for (const agent of agents.values()) {
+    const latestActivation = agent.activations.at(-1);
+    if (latestActivation) {
+      latestActivation.status = agent.status;
+    }
+  }
+
   const agentTaskIds = new Set(agents.keys());
-  const { batchKeyByTaskId, batchCounts } = deriveSubagentBatchCounts(agents.values());
+  const { batchKeyByTaskId, batchKeyByActivityId, batchCounts } = deriveSubagentBatchCounts(
+    agents,
+    activityActivations,
+  );
   const rosterLimit =
     options?.rosterLimit === undefined ? DEFAULT_ROSTER_LIMIT : options.rosterLimit;
   let roster = Array.from(agents.values());
@@ -780,9 +843,10 @@ export function foldSubagentActivitiesWithBatchCounts(
   }
 
   return {
-    agents: roster.map(({ firstTurnId: _, ...agent }) => agent),
+    agents: roster.map(({ activations: _, ...agent }) => agent),
     agentTaskIds,
     batchKeyByTaskId,
+    batchKeyByActivityId,
     batchCounts,
   };
 }

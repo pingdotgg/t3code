@@ -376,6 +376,41 @@ describe("applyThreadDetailEvent", () => {
       }
       expect(resolved.thread.latestTurn?.state).toBe("interrupted");
     });
+
+    it("records interrupt resolution as the terminal turn time", () => {
+      const checkpointedThread: OrchestrationThread = {
+        ...runningThread,
+        latestTurn: {
+          ...runningThread.latestTurn!,
+          completedAt: "2026-04-01T05:45:00.000Z",
+        },
+      };
+      const resolved = applyThreadDetailEvent(checkpointedThread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("interrupt-resolved-after-checkpoint"),
+            kind: "provider.turn.interrupt.resolved",
+            tone: "info",
+            summary: "Stop request resolved",
+            payload: { requestId: "cmd-stop", outcome: "interrupted", timelineBypass: true },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-04-01T06:00:01.000Z",
+          },
+        },
+      });
+
+      if (resolved.kind !== "updated") {
+        throw new Error("Expected successful interrupt resolution to update the thread");
+      }
+      expect(resolved.thread.latestTurn?.completedAt).toBe("2026-04-01T06:00:01.000Z");
+    });
   });
 
   describe("thread.message-sent", () => {

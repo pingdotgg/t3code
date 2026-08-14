@@ -447,9 +447,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         // windowed collections gain rows from the older page.
         ...loaded,
         messages: mergeById(older.messages, loaded.messages),
-        activities: mergeById(older.activities, loaded.activities).toSorted(
-          compareCanonicalActivities,
-        ),
+        activities: mergeById(older.activities, loaded.activities)
+          .slice()
+          .sort(compareCanonicalActivities),
         proposedPlans: mergeById(older.proposedPlans, loaded.proposedPlans),
         checkpoints: [
           ...older.checkpoints.filter((row) => !seenCheckpoints.has(row.turnId)),

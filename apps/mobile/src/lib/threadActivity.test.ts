@@ -799,6 +799,26 @@ describe("subagent spawn batches", () => {
     ]);
   });
 
+  it("adds a spawn row when a settled task is reactivated in a later turn", () => {
+    const thread = spawnThread("thread-spawn-reactivation", [
+      taskActivity("reactivated-start", "reactivated-agent", 1),
+      taskActivity("reactivated-complete", "reactivated-agent", 2, {
+        kind: "task.completed",
+        status: "completed",
+      }),
+      taskActivity("reactivated-later", "reactivated-agent", 3, {
+        kind: "task.updated",
+        status: "running",
+        turnId: turnTwo,
+      }),
+    ]);
+
+    expect(workLogActivities(thread).map((row) => [row.id, row.summary])).toEqual([
+      ["agent-spawn:direct:turn-spawn-1", "Ran 1 subagent · completed"],
+      ["agent-spawn:direct:turn-spawn-2", "Kicked off 1 subagent · 1 working"],
+    ]);
+  });
+
   it("reconstructs a mid-flight batch when retained history starts at progress", () => {
     const thread = spawnThread("thread-spawn-replay", [
       taskActivity("retained-progress", "retained-agent", 1, {

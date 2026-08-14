@@ -435,7 +435,7 @@ function deriveAgentSpawnBatches(
     if (!taskId) {
       continue;
     }
-    const groupKey = fold.batchKeyByTaskId.get(taskId);
+    const groupKey = fold.batchKeyByActivityId.get(activity.id);
     if (!groupKey) {
       continue;
     }

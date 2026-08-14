@@ -307,6 +307,8 @@ function ThreadRouteContent(
   useFocusEffect(
     useCallback(() => {
       return () => {
+        stopThreadGuard.resolve();
+        setPendingStopCommandId(null);
         if (props.renderInspector === undefined) {
           // Inspectors are contextual to this chat destination. Clear the
           // hidden chat copy after a native push so returning from Files,
@@ -314,7 +316,7 @@ function ThreadRouteContent(
           setInspectorSelection(null);
         }
       };
-    }, [props.renderInspector]),
+    }, [props.renderInspector, stopThreadGuard]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const routeConnectionState =
@@ -519,7 +521,7 @@ function ThreadRouteContent(
     if (!selectedThread) {
       return;
     }
-    return stopThreadGuard.run(async () => {
+    return stopThreadGuard.run(async (attempt) => {
       const commandId = CommandId.make(uuidv4());
       setPendingStopCommandId(commandId);
       const result = await interruptThreadTurn({
@@ -531,7 +533,7 @@ function ThreadRouteContent(
         ),
       });
       if (result._tag === "Failure") {
-        stopThreadGuard.resolve();
+        attempt.resolve();
         setPendingStopCommandId((current) => (current === commandId ? null : current));
       }
       return result;
