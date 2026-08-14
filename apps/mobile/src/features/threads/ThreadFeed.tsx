@@ -93,7 +93,9 @@ import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCo
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
+  computeStableThreadFeedEntries,
   deriveThreadFeedPresentation,
+  type StableThreadFeedEntriesState,
   threadFeedRunIsUnsettled,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -135,6 +137,8 @@ function formatMessageTime(input: string): string {
 // remounts rows when they scroll back into view, and replaying an entrance for
 // old content would be its own kind of jank.
 const FRESH_ENTRY_WINDOW_MS = 3_000;
+const threadFeedItemsAreEqual = (previous: ThreadFeedEntry, next: ThreadFeedEntry) =>
+  previous === next;
 function isFreshTimestamp(input: string): boolean {
   const timestamp = Date.parse(input);
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ENTRY_WINDOW_MS;
@@ -1583,30 +1587,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   const markdownStyles = useMarkdownStyles(onMarkdownLinkPress);
   const reviewCommentColors = useReviewCommentColors();
-  // LegendList does not invalidate visible rows when only the renderItem closure changes.
-  // Keep row-local interaction props in extraData so disclosures and copy feedback repaint.
-  const listAppearanceData = useMemo(
-    () => ({
-      copiedRowId,
-      expandedWorkGroups,
-      expandedWorkRows,
-      iconSubtleColor,
-      markdownStyles,
-      reviewCommentColors,
-      userBubbleColor,
-      viewportWidth,
-    }),
-    [
-      copiedRowId,
-      expandedWorkGroups,
-      expandedWorkRows,
-      iconSubtleColor,
-      markdownStyles,
-      reviewCommentColors,
-      userBubbleColor,
-      viewportWidth,
-    ],
-  );
   const reportHeaderMaterialVisibility = useCallback(
     (visible: boolean) => {
       if (headerMaterialVisibleRef.current === visible) {
@@ -1722,7 +1702,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reportHeaderMaterialVisibility(false);
   }, [feedThreadKey, reportHeaderMaterialVisibility]);
 
-  const presentedFeed = useMemo(
+  const derivedFeed = useMemo(
     () =>
       deriveThreadFeedPresentation(
         props.feed,
@@ -1737,6 +1717,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     [expandedTurnIds, expandedWorkGroups, props.activeWorkStartedAt, props.feed, props.latestRun],
   );
+  const stableFeedRef = useRef<{
+    readonly threadKey: string;
+    readonly state: StableThreadFeedEntriesState;
+  }>({
+    threadKey: feedThreadKey,
+    state: { byId: new Map(), result: [] },
+  });
+  const presentedFeed = useMemo(() => {
+    const previous =
+      stableFeedRef.current.threadKey === feedThreadKey
+        ? stableFeedRef.current.state
+        : { byId: new Map<string, ThreadFeedEntry>(), result: [] };
+    const state = computeStableThreadFeedEntries(derivedFeed, previous);
+    stableFeedRef.current = { threadKey: feedThreadKey, state };
+    return state.result;
+  }, [derivedFeed, feedThreadKey]);
 
   // The empty↔filled key below remounts the list, which resets its imperative
   // content-inset override — and useKeyboardChatComposerInset (mounted above
@@ -1772,7 +1768,50 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return new Set(terminalIdsByTurn.values());
   }, [props.feed]);
+  const terminalAssistantMessageIdsKey = useMemo(
+    () => JSON.stringify(Array.from(terminalAssistantMessageIds)),
+    [terminalAssistantMessageIds],
+  );
+  const skillsKey = useMemo(() => JSON.stringify(props.skills ?? []), [props.skills]);
   const unsettledTurnId = threadFeedRunIsUnsettled(props.latestRun) ? props.latestRun.runId : null;
+  // LegendList does not invalidate visible rows when only the renderItem closure changes.
+  // Keep row-local render inputs in extraData, using value-stable keys for rebuilt collections.
+  const listAppearanceData = useMemo(
+    () => ({
+      copiedRowId,
+      expandedWorkGroups,
+      expandedWorkRows,
+      iconSubtleColor,
+      markdownStyles,
+      reviewCommentBubbleWidth,
+      reviewCommentColors,
+      skillsKey,
+      terminalAssistantMessageIdsKey,
+      threadTitle: props.threadTitle,
+      unsettledTurnId,
+      userBubbleColor,
+      userBubbleMaxWidth,
+      viewportWidth,
+      workspaceRoot: props.workspaceRoot,
+    }),
+    [
+      copiedRowId,
+      expandedWorkGroups,
+      expandedWorkRows,
+      iconSubtleColor,
+      markdownStyles,
+      props.threadTitle,
+      props.workspaceRoot,
+      reviewCommentBubbleWidth,
+      reviewCommentColors,
+      skillsKey,
+      terminalAssistantMessageIdsKey,
+      unsettledTurnId,
+      userBubbleColor,
+      userBubbleMaxWidth,
+      viewportWidth,
+    ],
+  );
 
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
@@ -2060,6 +2099,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }
             maintainVisibleContentPosition={maintainVisibleContentPosition}
             data={presentedFeed}
+            itemsAreEqual={threadFeedItemsAreEqual}
             extraData={listAppearanceData}
             renderItem={renderItem}
             keyExtractor={(entry) => entry.id}

@@ -24,6 +24,7 @@ export class ConnectionWakeups extends Context.Service<
   ConnectionWakeups,
   {
     readonly changes: Stream.Stream<ConnectionWakeup>;
+    readonly refreshCachedThreadOnSubscribe?: boolean;
   }
 >()("@t3tools/client-runtime/connection/wakeups/ConnectionWakeups") {}
 

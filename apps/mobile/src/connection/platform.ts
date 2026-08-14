@@ -86,6 +86,7 @@ const connectivityLayer = Connectivity.layer({
 });
 
 const wakeupsLayer = Wakeups.layer({
+  refreshCachedThreadOnSubscribe: true,
   changes: Stream.merge(
     Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
       Effect.acquireRelease(
