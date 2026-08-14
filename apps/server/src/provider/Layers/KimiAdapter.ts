@@ -106,6 +106,7 @@ interface KimiSessionContext {
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
   session: ProviderSession;
+  preparingTurnId: TurnId | undefined;
   activeTurnId: TurnId | undefined;
   promptsInFlight: number;
   readonly interruptedTurnIds: Set<TurnId>;
@@ -334,19 +335,22 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
         );
       });
     const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(getThreadLock(threadId), (lock) =>
-        lock.withPermit(effect).pipe(
-          Effect.ensuring(
-            SynchronizedRef.update(threadLocks, (current) => {
-              const entry = current.get(threadId);
-              if (entry?.semaphore !== lock) return current;
-              const next = new Map(current);
-              if (entry.users === 1) next.delete(threadId);
-              else next.set(threadId, { ...entry, users: entry.users - 1 });
-              return next;
-            }),
-          ),
-        ),
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const lock = yield* getThreadLock(threadId);
+          return yield* restore(lock.withPermit(effect)).pipe(
+            Effect.ensuring(
+              SynchronizedRef.update(threadLocks, (current) => {
+                const entry = current.get(threadId);
+                if (entry?.semaphore !== lock) return current;
+                const next = new Map(current);
+                if (entry.users === 1) next.delete(threadId);
+                else next.set(threadId, { ...entry, users: entry.users - 1 });
+                return next;
+              }),
+            ),
+          );
+        }),
       );
     const requireSession = (threadId: ThreadId) => {
       const context = sessions.get(threadId);
@@ -396,6 +400,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
       Effect.gen(function* () {
         if (context.stopped) return;
         context.stopped = true;
+        context.preparingTurnId = undefined;
         yield* Deferred.succeed(context.stoppedSignal, undefined);
         yield* context.turnCompletionLock.withPermit(
           Effect.gen(function* () {
@@ -653,6 +658,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             scope,
             acp,
             session,
+            preparingTurnId: undefined,
             activeTurnId: undefined,
             promptsInFlight: 0,
             interruptedTurnIds: new Set(),
@@ -790,8 +796,12 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
     const sendTurn: KimiAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const context = yield* requireSession(input.threadId);
-        const steeringTurnId = context.promptsInFlight > 0 ? context.activeTurnId : undefined;
+        const steeringTurnId =
+          context.promptsInFlight > 0
+            ? (context.activeTurnId ?? context.preparingTurnId)
+            : undefined;
         const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+        context.preparingTurnId = turnId;
         context.promptsInFlight += 1;
         return yield* Effect.gen(function* () {
           const selection =
@@ -839,6 +849,14 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               issue: "Turn requires non-empty text or attachments.",
             });
           }
+          if (sessions.get(input.threadId) !== context || context.stopped) {
+            return { threadId: input.threadId, turnId, resumeCursor: context.session.resumeCursor };
+          }
+          if (context.interruptedTurnIds.has(turnId)) {
+            if (context.promptsInFlight === 1) context.interruptedTurnIds.delete(turnId);
+            return { threadId: input.threadId, turnId, resumeCursor: context.session.resumeCursor };
+          }
+          context.preparingTurnId = undefined;
           context.activeTurnId = turnId;
           context.session = {
             ...context.session,
@@ -938,6 +956,9 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
           Effect.ensuring(
             Effect.sync(() => {
               context.promptsInFlight = Math.max(0, context.promptsInFlight - 1);
+              if (context.promptsInFlight === 0 && context.preparingTurnId === turnId) {
+                context.preparingTurnId = undefined;
+              }
             }),
           ),
         );
@@ -946,7 +967,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
     const interruptTurn: KimiAdapterShape["interruptTurn"] = (threadId, turnId) =>
       Effect.gen(function* () {
         const context = yield* requireSession(threadId);
-        const activeTurnId = turnId ?? context.activeTurnId;
+        const activeTurnId = turnId ?? context.activeTurnId ?? context.preparingTurnId;
         if (activeTurnId) context.interruptedTurnIds.add(activeTurnId);
         yield* settleApprovals(context.pendingApprovals);
         yield* settleUserInputs(context.pendingUserInputs);
