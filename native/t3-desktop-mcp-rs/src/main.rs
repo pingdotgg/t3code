@@ -12,6 +12,7 @@
 mod apps;
 mod browser;
 mod capture;
+mod history;
 mod platform;
 mod tools;
 
@@ -62,6 +63,25 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("native-host") {
         if let Err(error) = browser::run_native_host() {
             eprintln!("t3-desktop-mcp: native host stopped: {error}");
+        }
+        return;
+    }
+
+    if std::env::args().nth(1).as_deref() == Some("computer-history") {
+        let mut root: Option<std::path::PathBuf> = None;
+        let mut args = std::env::args().skip(2);
+        while let Some(arg) = args.next() {
+            if arg == "--root" {
+                root = args.next().map(std::path::PathBuf::from);
+            }
+        }
+        let Some(root) = root else {
+            eprintln!("t3-desktop-mcp: computer-history requires --root <dir>");
+            std::process::exit(2);
+        };
+        if let Err(error) = history::run(root) {
+            eprintln!("t3-desktop-mcp: computer-history stopped: {error}");
+            std::process::exit(1);
         }
         return;
     }

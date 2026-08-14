@@ -552,6 +552,39 @@ export const DesktopControlSettings = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 export type DesktopControlSettings = typeof DesktopControlSettings.Type;
 
+/**
+ * Computer History: opt-in background interaction capture → local memories.
+ * Mirrors Codex Skysight; off by default. Requires Accessibility (macOS),
+ * UI Automation (Windows), or AT-SPI (Linux).
+ */
+export const ComputerHistorySettings = Schema.Struct({
+  /** Master switch. When false the desktop daemon is not running. */
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Temporarily stop collecting without wiping history or turning the feature off. */
+  paused: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** How app filters are interpreted. */
+  appFilterMode: Schema.Literals(["exclude", "includeOnly"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("exclude" as const)),
+  ),
+  /** Bundle ids / exe names / app names to exclude or allow. */
+  apps: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** How website filters are interpreted. */
+  websiteFilterMode: Schema.Literals(["exclude", "includeOnly"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("exclude" as const)),
+  ),
+  /** Hostnames / URL prefixes to exclude or allow. Private browsing is always excluded. */
+  websites: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /**
+   * Also write Codex-compatible memories under
+   * `~/.codex/memories/extensions/skysight/` (or the configured Codex home)
+   * so Codex natively picks them up during memory consolidation.
+   */
+  mirrorToCodex: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type ComputerHistorySettings = typeof ComputerHistorySettings.Type;
+
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
   // `enableAssistantStreaming`): decoding drops the old key, so everyone,
@@ -630,6 +663,9 @@ export const ServerSettings = Schema.Struct({
   // agent-owned Chrome tab group. Off disables injection even when the binary
   // is present. Sub-flags are passed through to the MCP process as env.
   desktopControl: DesktopControlSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Opt-in Computer History (Skysight-style interaction → memories). Desktop
+  // owns the recorder daemon; the server summarizes and injects context.
+  computerHistory: ComputerHistorySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -761,6 +797,17 @@ export const ServerSettingsPatch = Schema.Struct({
       enabled: Schema.optionalKey(Schema.Boolean),
       agentCursorEnabled: Schema.optionalKey(Schema.Boolean),
       browserControlEnabled: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+  computerHistory: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      paused: Schema.optionalKey(Schema.Boolean),
+      appFilterMode: Schema.optionalKey(Schema.Literals(["exclude", "includeOnly"])),
+      apps: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+      websiteFilterMode: Schema.optionalKey(Schema.Literals(["exclude", "includeOnly"])),
+      websites: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+      mirrorToCodex: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   providers: Schema.optionalKey(

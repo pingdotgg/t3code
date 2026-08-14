@@ -8,6 +8,7 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/computer-use"
+  | "/settings/computer-history"
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -32,6 +33,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/computer-use": "Computer Use",
+  "/settings/computer-history": "Computer History",
   "/settings/archived": "Archive",
 };
 
@@ -231,6 +233,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "computer-use-screen-recording",
     title: "Screen Recording",
     to: "/settings/computer-use",
+  },
+  {
+    id: "computer-history-enabled",
+    title: "Enable Computer History",
+    to: "/settings/computer-history",
+    targetId: "computer-history",
+  },
+  {
+    id: "computer-history-timeline",
+    title: "Computer History timeline",
+    to: "/settings/computer-history",
+    targetId: "computer-history-timeline",
   },
   {
     id: "archive",

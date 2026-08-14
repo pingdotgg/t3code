@@ -2151,7 +2151,15 @@ func textResult(_ s: String, isError: Bool = false) -> [String: Any] {
 // Chrome launches this same binary as its native messaging host; in that mode
 // it is a relay, not an MCP server.
 if CommandLine.arguments.contains("native-host") { NativeHost.run() }
-
+// Computer History background recorder (Skysight-style interaction events).
+if CommandLine.arguments.contains("computer-history") {
+    let args = CommandLine.arguments
+    if let flag = args.firstIndex(of: "--root"), args.index(after: flag) < args.endIndex {
+        ComputerHistoryDaemon.run(root: args[args.index(after: flag)])
+    }
+    fputs("t3-desktop-mcp: computer-history requires --root <dir>\n", stderr)
+    exit(2)
+}
 // The agent pointer is a separate LSUIElement .app (see AgentCursor.swift)
 // launched via NSWorkspace with `--socket <path>` for move/hide commands.
 if CommandLine.arguments.contains("cursor-overlay") {

@@ -91,6 +91,10 @@
       "types": "./src/backgroundActivitySettings.ts",
       "import": "./src/backgroundActivitySettings.ts"
     },
+    "./computerHistory": {
+      "types": "./src/computerHistory/index.ts",
+      "import": "./src/computerHistory/index.ts"
+    },
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"

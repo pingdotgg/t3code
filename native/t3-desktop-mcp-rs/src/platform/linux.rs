@@ -891,6 +891,13 @@ impl Desktop for LinuxDesktop {
                 })
                 .collect();
             if !lines.is_empty() {
+                // If nothing matched the compositor focus, mark the first app so
+                // Computer History still has a frontmost sample target.
+                if !lines.iter().any(|line| line.contains("FRONTMOST")) {
+                    if let Some(first) = lines.first_mut() {
+                        first.push_str("  FRONTMOST");
+                    }
+                }
                 lines.sort_by_key(|line| (!line.contains("FRONTMOST"), line.to_lowercase()));
                 return Ok(lines.join("\n"));
             }
