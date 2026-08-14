@@ -141,6 +141,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
             httpAuthorization: {
               _tag: "Dpop" as const,
               accessToken: "dpop-access-token",
+              expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
             },
           }),
         )),
@@ -351,6 +352,7 @@ describe("ConnectionResolver", () => {
               httpAuthorization: {
                 _tag: "Dpop" as const,
                 accessToken: "dpop-access-token",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
               },
             }),
           ),
@@ -388,6 +390,7 @@ describe("ConnectionResolver", () => {
               httpAuthorization: {
                 _tag: "Dpop" as const,
                 accessToken: "dpop-access-token",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
               },
             }),
             Effect.withSpan("test.remote.authorizeDpop"),

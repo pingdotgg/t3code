@@ -1,6 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -322,6 +323,86 @@ describe("EnvironmentSupervisor", () => {
       });
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }),
+  );
+
+  it.effect("refreshes a live relay connection before its DPoP credential expires", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => ({
+              ...PREPARED_CONNECTION,
+              target: RELAY_TARGET,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: `access-token-${attempt}`,
+                expiresAtEpochMs: now + 5 * 60_000,
+              },
+            })),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* TestClock.adjust(3 * 60_000 + 59_000);
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+
+      yield* TestClock.adjust("1 second");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reauthorizes again when the scheduled credential refresh fails transiently", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 2
+            ? Effect.fail(transient("Reauthorization temporarily unavailable."))
+            : Clock.currentTimeMillis.pipe(
+                Effect.map((now) => ({
+                  ...PREPARED_CONNECTION,
+                  target: RELAY_TARGET,
+                  httpAuthorization: {
+                    _tag: "Dpop" as const,
+                    accessToken: `access-token-${attempt}`,
+                    expiresAtEpochMs: now + 5 * 60_000,
+                  },
+                })),
+              ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* TestClock.adjust("4 minutes");
+      const failedRefresh = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      expect(failedRefresh.lastFailure?.message).toBe("Reauthorization temporarily unavailable.");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("resets retries when activation arrives before the network returns", () =>

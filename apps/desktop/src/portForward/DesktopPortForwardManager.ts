@@ -24,7 +24,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as NodeNet from "node:net";
 
-const AUTHORIZATION_TIMEOUT = Duration.seconds(15);
+const AUTHORIZATION_TIMEOUT = Duration.seconds(45);
 const MAX_CONNECTIONS_PER_FORWARD = 32;
 const MAX_CONNECTIONS_TOTAL = 128;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1_000;
