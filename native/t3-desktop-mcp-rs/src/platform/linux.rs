@@ -555,8 +555,55 @@ fn truncate(value: &str, limit: usize) -> String {
     cleaned.chars().take(limit).collect::<String>() + "…"
 }
 
+/// Prefer an exact AT-SPI name match; otherwise require a unique substring hit
+/// so `Code` cannot silently activate `Visual Studio Code`.
+fn match_application(
+    applications: &[(ElementRef, String, u32)],
+    query: &str,
+) -> Result<(ElementRef, String, u32)> {
+    let lowered = query.to_lowercase();
+    let exact: Vec<_> = applications
+        .iter()
+        .filter(|(_, name, _)| name.eq_ignore_ascii_case(query))
+        .cloned()
+        .collect();
+    if exact.len() == 1 {
+        return Ok(exact[0].clone());
+    }
+    if exact.len() > 1 {
+        return Err(DesktopError::new(format!(
+            "'{query}' matches several apps exactly — pass a more specific name from list_apps"
+        )));
+    }
+    let partial: Vec<_> = applications
+        .iter()
+        .filter(|(_, name, _)| name.to_lowercase().contains(&lowered))
+        .cloned()
+        .collect();
+    match partial.as_slice() {
+        [single] => Ok(single.clone()),
+        [] => Err(DesktopError::new(format!(
+            "no app on the accessibility bus matches '{query}'. Toolkits only publish a tree \
+             when accessibility is enabled — try screenshot plus coordinate clicks instead"
+        ))),
+        many => {
+            let names = many
+                .iter()
+                .map(|(_, name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(DesktopError::new(format!(
+                "'{query}' matches several apps: {names} — pass an exact name from list_apps"
+            )))
+        }
+    }
+}
+
 /// Largest window owned by `pid` (including minimized), for EWMH activation.
 fn largest_window_id_for_pid(pid: u32) -> Result<u32> {
+    // Same PreferX11 guard as capture: without it xcap may return Wayland ids
+    // that cannot be used as X11 XIDs for EWMH raise.
+    let _display = crate::capture::PreferX11::engage();
     let windows = std::panic::catch_unwind(Window::all)
         .map_err(|_| DesktopError::new("window enumeration is not supported by this display server"))?
         .map_err(|error| DesktopError::new(format!("failed to enumerate windows: {error}")))?;
@@ -670,10 +717,9 @@ impl Desktop for LinuxDesktop {
                 .into_iter()
                 .filter(|(_, name, _)| !name.is_empty())
                 .map(|(_, name, pid)| {
-                    let is_frontmost = !focused.is_empty()
-                        && (name.to_lowercase() == focused
-                            || name.to_lowercase().contains(&focused)
-                            || focused.contains(&name.to_lowercase()));
+                    // Exact name match only — substring FRONTMOST labels (Code vs
+                    // Visual Studio Code, Chrome vs Chromium) mislead the agent.
+                    let is_frontmost = !focused.is_empty() && name.to_lowercase() == focused;
                     let marker = if is_frontmost { "  FRONTMOST" } else { "" };
                     if pid == 0 {
                         format!("{name}  [a11y]{marker}")
@@ -695,19 +741,11 @@ impl Desktop for LinuxDesktop {
     }
 
     fn get_app_state(&mut self, app: &str, max_depth: usize, max_elements: usize) -> Result<String> {
-        let applications = self.applications()?;
-        let lowered = app.to_lowercase();
-        let (reference, name, _) = applications
-            .into_iter()
-            .find(|(_, name, _)| name.to_lowercase().contains(&lowered))
-            .ok_or_else(|| {
-                DesktopError::new(format!(
-                    "no app on the accessibility bus matches '{app}'. Toolkits only publish a tree \
-                     when accessibility is enabled — try screenshot plus coordinate clicks instead"
-                ))
-            })?;
-
+        // Invalidate prior snapshot IDs even if this refresh fails to find `app`.
         self.registry.clear();
+        let applications = self.applications()?;
+        let (reference, name, _) = match_application(&applications, app)?;
+
         let mut next_id = 0u32;
         let mut lines = vec![format!("{name}")];
         self.walk(
@@ -736,13 +774,7 @@ impl Desktop for LinuxDesktop {
             ));
         }
         let applications = self.applications()?;
-        let lowered = app.to_lowercase();
-        let (reference, name, a11y_pid) = applications
-            .into_iter()
-            .find(|(_, name, _)| name.to_lowercase().contains(&lowered))
-            .ok_or_else(|| {
-                DesktopError::new(format!("no app on the accessibility bus matches '{app}'"))
-            })?;
+        let (reference, name, a11y_pid) = match_application(&applications, app)?;
 
         // The application object itself cannot take focus; its first frame can.
         let frames = {

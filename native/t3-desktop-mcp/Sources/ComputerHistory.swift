@@ -152,7 +152,7 @@ private final class DaemonState {
     websites = (json["websites"] as? [String]) ?? websites
   }
 
-  private func allowed(app: NSRunningApplication, url: String?) -> Bool {
+  private func allowed(app: NSRunningApplication, context: BrowserContext) -> Bool {
     let needles = apps.map { $0.lowercased() }
     let hay = [
       app.bundleIdentifier ?? "",
@@ -172,38 +172,60 @@ private final class DaemonState {
     }
     guard appOk else { return false }
 
-    if let url {
-      let lowered = url.lowercased()
-      if Self.isPrivateBrowsing(url: lowered) {
-        return false
-      }
-      let siteNeedles = websites.map { $0.lowercased() }
-      if siteNeedles.isEmpty {
-        return websiteFilterMode == "exclude"
-      }
-      let siteHit = siteNeedles.contains { lowered.contains($0) }
-      return websiteFilterMode == "exclude" ? !siteHit : siteHit
+    // Private-mode markers may live in the title even when AXURL is an ordinary https URL.
+    if let signal = context.privateSignal, Self.isPrivateBrowsing(url: signal.lowercased()) {
+      return false
     }
-    return true
+    guard let url = context.url else { return true }
+    let lowered = url.lowercased()
+    if Self.isPrivateBrowsing(url: lowered) {
+      return false
+    }
+    let siteNeedles = websites.map { $0.lowercased() }
+    // Website filters only apply to URL-like haystacks, never plain window titles.
+    let looksUrl = lowered.contains("://")
+      || lowered.hasPrefix("about:")
+      || lowered.hasPrefix("chrome:")
+      || lowered.hasPrefix("edge:")
+      || lowered.hasPrefix("brave:")
+    guard looksUrl else { return true }
+    if siteNeedles.isEmpty {
+      return websiteFilterMode == "exclude"
+    }
+    let siteHit = siteNeedles.contains { lowered.contains($0) }
+    return websiteFilterMode == "exclude" ? !siteHit : siteHit
+  }
+
+  private struct BrowserContext {
+    var url: String?
+    var privateSignal: String?
   }
 
   /// Best-effort browser page URL / private-mode signal from AX + window title.
-  private func browserContext(for app: NSRunningApplication) -> String? {
+  private func browserContext(for app: NSRunningApplication) -> BrowserContext {
+    var context = BrowserContext()
     let ax = AXUIElementCreateApplication(app.processIdentifier)
     if let focused = chAxElement(ax, kAXFocusedUIElementAttribute as String) {
-      if let url = chAxString(focused, "AXURL"), !url.isEmpty { return url }
-      if let doc = chAxString(focused, "AXDocument"), !doc.isEmpty { return doc }
+      if let url = chAxString(focused, "AXURL"), !url.isEmpty { context.url = url }
+      else if let doc = chAxString(focused, "AXDocument"), !doc.isEmpty { context.url = doc }
+      if let title = chAxString(focused, kAXTitleAttribute as String), !title.isEmpty {
+        context.privateSignal = title
+      }
     }
     if let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement] {
       for window in windows.prefix(4) {
-        if let url = chAxString(window, "AXURL"), !url.isEmpty { return url }
-        if let doc = chAxString(window, "AXDocument"), !doc.isEmpty { return doc }
-        if let title = chAxString(window, kAXTitleAttribute as String), !title.isEmpty {
-          return title
+        if context.url == nil {
+          if let url = chAxString(window, "AXURL"), !url.isEmpty { context.url = url }
+          else if let doc = chAxString(window, "AXDocument"), !doc.isEmpty { context.url = doc }
+        }
+        if context.privateSignal == nil,
+           let title = chAxString(window, kAXTitleAttribute as String), !title.isEmpty
+        {
+          context.privateSignal = title
         }
       }
     }
-    return nil
+    return context
   }
 
   private static func isPrivateBrowsing(url: String) -> Bool {
@@ -264,8 +286,10 @@ private final class DaemonState {
     writeStatus()
     guard enabled, !paused, AXIsProcessTrusted() else { return }
     let pageContext = browserContext(for: app)
-    guard allowed(app: app, url: pageContext) else {
+    guard allowed(app: app, context: pageContext) else {
       suppressed += 1
+      // Clear so returning to the same allowed app is not treated as a duplicate.
+      lastAppKey = nil
       return
     }
     let key = "\(app.processIdentifier):\(app.bundleIdentifier ?? "")"
@@ -308,8 +332,10 @@ private final class DaemonState {
 
     guard let app = NSWorkspace.shared.frontmostApplication else { return }
     let pageContext = browserContext(for: app)
-    guard allowed(app: app, url: pageContext) else {
+    guard allowed(app: app, context: pageContext) else {
       suppressed += 1
+      // Clear so returning to the same allowed control is not treated as a duplicate.
+      lastFocusKey = nil
       return
     }
 
