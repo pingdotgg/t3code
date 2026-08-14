@@ -16,11 +16,17 @@ import Foundation
 // later ones simply fall back to the accessibility path.
 
 let bridgeSocketPath: String = {
-    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    let preferred = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         ?? URL(fileURLWithPath: NSTemporaryDirectory())
-    let dir = base.appendingPathComponent("t3-desktop-mcp", isDirectory: true)
+    let dir = preferred.appendingPathComponent("t3-desktop-mcp", isDirectory: true)
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return dir.appendingPathComponent("bridge.sock").path
+    let candidate = dir.appendingPathComponent("bridge.sock").path
+    // sockaddr_un.sun_path is ~104 bytes; fall back to a short /tmp path when Application
+    // Support is nested too deep for bind()/connect() to succeed.
+    if candidate.utf8.count > 100 {
+        return "/tmp/t3-desktop-mcp-bridge.sock"
+    }
+    return candidate
 }()
 
 /// Reply from the extension. A custom type rather than `Result` because the
