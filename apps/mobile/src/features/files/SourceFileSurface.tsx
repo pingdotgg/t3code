@@ -240,20 +240,45 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     [props.selectable, tokens],
   );
   const listRef = useRef<FlatList<string>>(null);
+  const scrollRetryCountRef = useRef(0);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
   ) : undefined;
 
+  const scrollToLine = useCallback((index: number) => {
+    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.3 });
+  }, []);
+
   useEffect(() => {
     if (targetIndex === null) {
       return;
     }
+    scrollRetryCountRef.current = 0;
     const frame = requestAnimationFrame(() => {
-      listRef.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: 0.3 });
+      scrollToLine(targetIndex);
     });
     return () => cancelAnimationFrame(frame);
-  }, [props.path, targetIndex]);
+  }, [props.path, scrollToLine, targetIndex]);
+
+  const handleScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      if (scrollRetryCountRef.current >= 5) {
+        return;
+      }
+      scrollRetryCountRef.current += 1;
+      const itemLength =
+        info.averageItemLength > 0 ? info.averageItemLength : codeSurface.rowHeight;
+      listRef.current?.scrollToOffset({
+        offset: info.index * itemLength,
+        animated: false,
+      });
+      requestAnimationFrame(() => {
+        scrollToLine(info.index);
+      });
+    },
+    [codeSurface.rowHeight, scrollToLine],
+  );
 
   const renderLine = useCallback(
     ({ item, index }: { item: string; index: number }) => (
@@ -342,6 +367,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         paddingTop: 8,
       }}
       renderItem={renderLine}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
     />
   );
 
