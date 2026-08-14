@@ -279,8 +279,32 @@ function modeState(): AcpSchema.SessionModeState {
 }
 
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
-  { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
+  {
+    modelId: "grok-build",
+    name: "Grok Build",
+    _meta: {
+      supportsReasoningEffort: true,
+      reasoningEffort: "low",
+      reasoningEfforts: [
+        { id: "low", label: "Low", default: true },
+        { id: "high", label: "High", description: "Think more" },
+      ],
+      totalContextTokens: 256000,
+    },
+  },
+  {
+    modelId: "grok-mock-alt",
+    name: "Grok Mock Alt",
+    _meta: {
+      supportsReasoningEffort: true,
+      reasoningEffort: "high",
+      reasoningEfforts: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High", isDefault: true },
+      ],
+      totalContextTokens: 128000,
+    },
+  },
 ];
 
 function modelState(): AcpSchema.SessionModelState {
@@ -873,7 +897,27 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return { stopReason: "end_turn" };
+      yield* agent.client.sessionUpdate({
+        sessionId: requestedSessionId,
+        _meta: {
+          totalTokens: 1234,
+          totalContextTokens: 256000,
+        },
+        update: {
+          sessionUpdate: "usage_update",
+          used: 1234,
+          size: 256000,
+        },
+      });
+
+      return {
+        stopReason: "end_turn",
+        _meta: {
+          totalTokens: 1234,
+          totalContextTokens: 256000,
+          usage: { totalTokens: 1234 },
+        },
+      };
     }),
   );
 

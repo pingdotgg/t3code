@@ -6,7 +6,12 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { GrokSettings } from "@t3tools/contracts";
 
-import { buildInitialGrokProviderSnapshot, checkGrokProviderStatus } from "./GrokProvider.ts";
+import {
+  buildGrokDiscoveredModelsFromSessionModelState,
+  buildGrokModelCapabilities,
+  buildInitialGrokProviderSnapshot,
+  checkGrokProviderStatus,
+} from "./GrokProvider.ts";
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
@@ -107,4 +112,84 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.message).toContain("ACP startup failed");
     }),
   );
+});
+
+describe("buildGrokModelCapabilities", () => {
+  it("exposes a reasoningEffort select from ACP model _meta", () => {
+    expect(
+      buildGrokModelCapabilities({
+        modelId: "grok-4.6",
+        name: "Grok 4.6",
+        _meta: {
+          reasoningEffort: "low",
+          reasoningEfforts: [
+            { id: "low", label: "Low", default: true },
+            { id: "high", label: "High", description: "Think more" },
+          ],
+        },
+      }),
+    ).toEqual({
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          currentValue: "low",
+          options: [
+            { id: "low", label: "Low", isDefault: true },
+            { id: "high", label: "High", description: "Think more" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("keeps empty capabilities when _meta is missing or invalid", () => {
+    expect(buildGrokModelCapabilities({ modelId: "grok-build", name: "Grok Build" })).toEqual({
+      optionDescriptors: [],
+    });
+    expect(
+      buildGrokModelCapabilities({
+        modelId: "grok-build",
+        name: "Grok Build",
+        _meta: {
+          supportsReasoningEffort: false,
+          reasoningEfforts: [{ id: "low", label: "Low" }],
+        },
+      }),
+    ).toEqual({ optionDescriptors: [] });
+  });
+});
+
+describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
+  it("attaches per-model reasoning capabilities from ACP _meta", () => {
+    const models = buildGrokDiscoveredModelsFromSessionModelState({
+      currentModelId: "grok-4.6",
+      availableModels: [
+        {
+          modelId: "grok-4.6",
+          name: "Grok 4.6",
+          _meta: {
+            reasoningEfforts: [{ id: "low", label: "Low", isDefault: true }],
+          },
+        },
+        {
+          modelId: "grok-4.5",
+          name: "Grok 4.5",
+        },
+      ],
+    });
+
+    expect(models).toHaveLength(2);
+    expect(models[0]?.capabilities.optionDescriptors).toEqual([
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        currentValue: "low",
+        options: [{ id: "low", label: "Low", isDefault: true }],
+      },
+    ]);
+    expect(models[1]?.capabilities.optionDescriptors).toEqual([]);
+  });
 });

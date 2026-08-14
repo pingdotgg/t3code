@@ -125,6 +125,50 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
     );
   });
 
+  it.effect("forwards reasoning effort through session/set_model _meta", () => {
+    const requestLogDir = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-effort-log-"),
+    );
+    const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+
+    return withFakeAcpGrok(
+      {
+        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+          subject: "Tune Grok reasoning",
+          body: "Forward the composer effort selection.",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/grok",
+            stagedSummary: "M apps/server/src/provider/Drivers/GrokDriver.ts",
+            stagedPatch: "diff --git a/.../GrokDriver.ts b/.../GrokDriver.ts",
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-build", [
+              { id: "reasoningEffort", value: "high" },
+            ]),
+          });
+
+          const requests = readJsonRpcRequests(requestLogPath);
+          expect(
+            requests.some((request) => {
+              const meta = request.params?._meta;
+              return (
+                request.method === "session/set_model" &&
+                request.params?.modelId === "grok-build" &&
+                typeof meta === "object" &&
+                meta !== null &&
+                "reasoningEffort" in meta &&
+                meta.reasoningEffort === "high"
+              );
+            }),
+          ).toBe(true);
+        }),
+    );
+  });
+
   it.effect("extracts the JSON object when Grok wraps it in conversational text", () =>
     withFakeAcpGrok(
       {

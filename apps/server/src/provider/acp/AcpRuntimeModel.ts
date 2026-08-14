@@ -11,6 +11,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function readNonNegativeInt(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return value;
+  }
+  return undefined;
+}
+
+function readPositiveInt(value: unknown): number | undefined {
+  const parsed = readNonNegativeInt(value);
+  return parsed !== undefined && parsed > 0 ? parsed : undefined;
+}
+
+function parseSessionNotificationTokenUsage(
+  params: EffectAcpSchema.SessionNotification,
+): { readonly usedTokens: number; readonly maxTokens?: number } | undefined {
+  const update = params.update;
+  if (update.sessionUpdate === "usage_update") {
+    const usedTokens = readNonNegativeInt(update.used);
+    if (usedTokens === undefined) {
+      return undefined;
+    }
+    const maxTokens = readPositiveInt(update.size);
+    return {
+      usedTokens,
+      ...(maxTokens !== undefined ? { maxTokens } : {}),
+    };
+  }
+  const meta = params._meta;
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+  const usedTokens = readNonNegativeInt(meta.totalTokens);
+  if (usedTokens === undefined) {
+    return undefined;
+  }
+  const maxTokens =
+    readPositiveInt(meta.totalContextTokens) ??
+    readPositiveInt(meta.contextWindow) ??
+    readPositiveInt(meta.size);
+  return {
+    usedTokens,
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+  };
+}
+
 function isSessionModelState(value: unknown): value is EffectAcpSchema.SessionModelState {
   if (!isRecord(value) || typeof value.currentModelId !== "string") {
     return false;
@@ -107,6 +152,12 @@ export type AcpParsedSessionEvent =
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
       readonly text: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "TokenUsageUpdated";
+      readonly usedTokens: number;
+      readonly maxTokens?: number;
       readonly rawPayload: unknown;
     };
 
@@ -576,6 +627,16 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
     }
     default:
       break;
+  }
+
+  const usage = parseSessionNotificationTokenUsage(params);
+  if (usage) {
+    events.push({
+      _tag: "TokenUsageUpdated",
+      usedTokens: usage.usedTokens,
+      ...(usage.maxTokens !== undefined ? { maxTokens: usage.maxTokens } : {}),
+      rawPayload: params,
+    });
   }
 
   return { ...(modeId !== undefined ? { modeId } : {}), events };
