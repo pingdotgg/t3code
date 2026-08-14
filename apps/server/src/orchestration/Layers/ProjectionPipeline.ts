@@ -112,6 +112,14 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
+function isStalePendingUserInputFailureDetail(detail: string | null): boolean {
+  return (
+    detail !== null &&
+    (detail.includes("stale pending user-input request") ||
+      detail.includes("unknown pending user-input request"))
+  );
+}
+
 function isActionableApprovalRequest(payload: unknown): boolean {
   if (typeof payload !== "object" || payload === null) {
     return false;
@@ -128,6 +136,37 @@ function isActionableApprovalRequest(payload: unknown): boolean {
     request.requestType === "file_change_approval" ||
     request.requestType === "apply_patch_approval"
   );
+}
+
+function shouldRefreshThreadShellSummaryForActivity(
+  activity: Pick<ProjectionThreadActivity, "kind" | "payload">,
+): boolean {
+  if (activity.kind === "approval.requested") {
+    return isActionableApprovalRequest(activity.payload);
+  }
+  if (
+    activity.kind === "approval.resolved" ||
+    activity.kind === "user-input.requested" ||
+    activity.kind === "user-input.resolved"
+  ) {
+    return true;
+  }
+  if (
+    activity.kind !== "provider.approval.respond.failed" &&
+    activity.kind !== "provider.user-input.respond.failed"
+  ) {
+    return false;
+  }
+
+  const payload =
+    typeof activity.payload === "object" && activity.payload !== null
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
+
+  return activity.kind === "provider.approval.respond.failed"
+    ? isStalePendingApprovalFailureDetail(detail)
+    : isStalePendingUserInputFailureDetail(detail);
 }
 
 function derivePendingUserInputCountFromActivities(
@@ -163,9 +202,7 @@ function derivePendingUserInputCountFromActivities(
 
     if (
       activity.kind === "provider.user-input.respond.failed" &&
-      detail !== null &&
-      (detail.includes("stale pending user-input request") ||
-        detail.includes("unknown pending user-input request"))
+      isStalePendingUserInputFailureDetail(detail)
     ) {
       openRequestIds.delete(requestId);
     }
@@ -557,12 +594,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
-        projectionThreadMessageRepository.listByThreadId({ threadId }),
-        projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
-        projectionThreadActivityRepository.listByThreadId({ threadId }),
-        projectionPendingApprovalRepository.listByThreadId({ threadId }),
-      ]);
+      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all(
+        [
+          projectionThreadMessageRepository.listByThreadId({ threadId }),
+          projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
+          projectionThreadActivityRepository.listByThreadId({ threadId }),
+          projectionPendingApprovalRepository.listByThreadId({ threadId }),
+        ],
+        { concurrency: "unbounded" },
+      );
 
       const latestUserMessageAt =
         messages
@@ -893,7 +933,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : {}),
             updatedAt: event.occurredAt,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
+          const shouldRefreshShellSummary =
+            event.type === "thread.message-sent"
+              ? event.payload.role === "user"
+              : event.type === "thread.activity-appended"
+                ? shouldRefreshThreadShellSummaryForActivity(event.payload.activity)
+                : true;
+          if (shouldRefreshShellSummary) {
+            yield* refreshThreadShellSummary(event.payload.threadId);
+          }
           return;
         }
 
