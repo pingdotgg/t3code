@@ -22,6 +22,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { ThreadRelayToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
+import { ThreadRelayToolkit } from "./toolkits/threads/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -216,6 +218,15 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+export const ThreadRelayToolkitRegistrationLive = McpServer.toolkit(ThreadRelayToolkit).pipe(
+  Layer.provide(ThreadRelayToolkitHandlersLive),
+);
+
+const ToolkitRegistrationLive = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  ThreadRelayToolkitRegistrationLive,
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -223,4 +234,4 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = ToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));

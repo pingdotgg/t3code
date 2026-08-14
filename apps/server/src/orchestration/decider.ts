@@ -29,6 +29,20 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
+function formatThreadRelayMessage(input: {
+  readonly sourceThreadId: string;
+  readonly sourceThreadTitle: string;
+  readonly message: string;
+}): string {
+  return [
+    "[T3 thread message — server-authored]",
+    `From: ${JSON.stringify(input.sourceThreadTitle)} (${input.sourceThreadId})`,
+    `Reply with thread_send to ${input.sourceThreadId} only if useful.`,
+    "",
+    input.message,
+  ].join("\n");
+}
+
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
  * approval or user-input request with no later resolution for the same
@@ -917,6 +931,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const sourceThreadMessage = command.sourceThreadMessage;
+      const sourceMessageThread = sourceThreadMessage
+        ? yield* requireThreadNotArchived({
+            readModel,
+            command,
+            threadId: sourceThreadMessage.threadId,
+          })
+        : null;
+      if (sourceMessageThread && sourceMessageThread.id === targetThread.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "A thread cannot send a message to itself.",
+        });
+      }
+      if (sourceMessageThread && targetThread.archivedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${targetThread.id}' is archived and cannot receive a thread message.`,
+        });
+      }
+      if (sourceMessageThread && sourceMessageThread.projectId !== targetThread.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${sourceMessageThread.id}' cannot message thread '${targetThread.id}' in a different project.`,
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -953,7 +993,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.message.messageId,
           role: "user",
-          text: command.message.text,
+          text: sourceMessageThread
+            ? formatThreadRelayMessage({
+                sourceThreadId: sourceMessageThread.id,
+                sourceThreadTitle: sourceMessageThread.title,
+                message: command.message.text,
+              })
+            : command.message.text,
           attachments: command.message.attachments,
           turnId: null,
           streaming: false,
