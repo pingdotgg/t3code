@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  resolveDrawerResizeStartHeight,
+  resolveDrawerResizeStoredHeight,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
@@ -88,5 +90,73 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+});
+
+describe("resolveDrawerResizeStartHeight", () => {
+  it("starts the drag from the height the layout granted, not the stored one", () => {
+    expect(resolveDrawerResizeStartHeight(462.4, 700)).toBe(462);
+  });
+
+  it("falls back to the stored height when the drawer has not been measured", () => {
+    expect(resolveDrawerResizeStartHeight(null, 320)).toBe(320);
+    expect(resolveDrawerResizeStartHeight(0, 320)).toBe(320);
+    expect(resolveDrawerResizeStartHeight(Number.NaN, 320)).toBe(320);
+  });
+});
+
+describe("resolveDrawerResizeStoredHeight", () => {
+  it("persists a drag that shrinks the drawer", () => {
+    expect(
+      resolveDrawerResizeStoredHeight({
+        draggedHeight: 400,
+        dragStartHeight: 444,
+        storedHeight: 675,
+      }),
+    ).toBe(400);
+  });
+
+  it("keeps the taller stored height when a squeezed drag asks for more room", () => {
+    // Divider squeezed to 444 by the composer reserve; nudging it up must not
+    // quietly rewrite the user's 675 preference down to 454.
+    expect(
+      resolveDrawerResizeStoredHeight({
+        draggedHeight: 454,
+        dragStartHeight: 444,
+        storedHeight: 675,
+      }),
+    ).toBe(675);
+  });
+
+  it("grows normally when the drawer was not squeezed", () => {
+    expect(
+      resolveDrawerResizeStoredHeight({
+        draggedHeight: 600,
+        dragStartHeight: 500,
+        storedHeight: 500,
+      }),
+    ).toBe(600);
+  });
+
+  it("keeps the stored height when a drag ends back where it started", () => {
+    // The drag re-anchors on the squeezed height, so a drag that returns to its
+    // starting point still reaches this function — with no net resize.
+    expect(
+      resolveDrawerResizeStoredHeight({
+        draggedHeight: 444,
+        dragStartHeight: 444,
+        storedHeight: 675,
+      }),
+    ).toBe(675);
+  });
+
+  it("takes the dragged height when it already exceeds the stored one", () => {
+    expect(
+      resolveDrawerResizeStoredHeight({
+        draggedHeight: 700,
+        dragStartHeight: 444,
+        storedHeight: 675,
+      }),
+    ).toBe(700);
   });
 });

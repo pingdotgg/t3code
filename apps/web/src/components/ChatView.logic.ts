@@ -306,6 +306,63 @@ export function deriveComposerSendState(options: {
   };
 }
 
+/**
+ * Height the chat area must reserve for the composer.
+ *
+ * The composer is an overlay, so a chat area shorter than the composer does not
+ * clip it — it spills out instead, across the thread header above and the
+ * terminal drawer below. Reserving its height keeps the drawer from squeezing
+ * the chat area past that point.
+ *
+ * Docked, the composer is pinned to the bottom and the overlay box is the
+ * composer, so its height is the reserve.
+ *
+ * In the draft hero state the overlay instead spans the whole chat area and
+ * centers the composer stack inside it, with the headline and banners hanging
+ * above the stack. Reserving the overlay's own height there would latch the
+ * chat area at whatever size it already had, so the stack is the reserve, plus
+ * twice any banner — centering mirrors a banner's space below the composer, and
+ * banners carry actions that must not be pushed under the header.
+ *
+ * The hero headline is deliberately not reserved. It is decorative, and paying
+ * for it costs the terminal drawer far more height than it is worth; it hides
+ * instead (see {@link shouldShowDraftHeroHeadline}).
+ */
+export function chatAreaReservedComposerHeight(input: {
+  isDraftHeroState: boolean;
+  composerOverlayHeight: number;
+  composerStackHeight: number;
+  heroBannerHeight: number;
+}): number {
+  if (!input.isDraftHeroState) return Math.max(0, input.composerOverlayHeight);
+  return Math.max(0, input.composerStackHeight) + 2 * Math.max(0, input.heroBannerHeight);
+}
+
+/**
+ * Whether the draft hero headline has room to show above the centered composer.
+ *
+ * The composer is centered, so everything above it needs matching space below:
+ * the headline only fits when the chat area holds the composer stack plus twice
+ * the headline and banners. Below that the headline hides rather than forcing
+ * the terminal drawer to give up the height.
+ *
+ * Hidden means `visibility: hidden`, not unmounted — this reads the headline's
+ * measured height, so removing it from layout would make the decision oscillate.
+ */
+export function shouldShowDraftHeroHeadline(input: {
+  chatAreaHeight: number;
+  composerStackHeight: number;
+  heroHeadlineHeight: number;
+  heroBannerHeight: number;
+}): boolean {
+  // Nothing measured yet: show it, matching the roomy case it renders into.
+  if (input.chatAreaHeight <= 0 || input.composerStackHeight <= 0) return true;
+  const needed =
+    input.composerStackHeight +
+    2 * (Math.max(0, input.heroHeadlineHeight) + Math.max(0, input.heroBannerHeight));
+  return input.chatAreaHeight >= needed;
+}
+
 export function buildExpiredTerminalContextToastCopy(
   expiredTerminalContextCount: number,
   variant: "omitted" | "empty",

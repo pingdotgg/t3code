@@ -292,6 +292,7 @@ import {
   buildLocalDraftThread,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  chatAreaReservedComposerHeight,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -301,6 +302,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   shouldShowBranchMismatchBanner,
+  shouldShowDraftHeroHeadline,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -971,8 +973,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     return null;
   }
 
+  // `contents` keeps the drawer itself the flex child of the thread column, so
+  // it is the box that shrinks when the chat area reserves room for the composer.
   return (
-    <div className={visible ? undefined : "hidden"}>
+    <div className={visible ? "contents" : "hidden"}>
       <ThreadTerminalDrawer
         threadRef={threadRef}
         threadId={threadId}
@@ -1385,30 +1389,20 @@ function ChatViewContent(props: ChatViewProps) {
   const legendListRef = useRef<LegendListRef | null>(null);
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
+  // Composer geometry the chat area sizes itself from. The stack, headline and
+  // banners are all content-sized, so none of them tracks the chat area back.
+  const [composerHeroExtent, setComposerHeroExtent] = useState({
+    stack: 0,
+    headline: 0,
+    banners: 0,
+  });
+  const [chatAreaElement, setChatAreaElement] = useState<HTMLDivElement | null>(null);
+  const [chatAreaHeight, setChatAreaHeight] = useState(0);
   const isAtEndRef = useRef(true);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
-
-  useLayoutEffect(() => {
-    if (!composerOverlayElement) return;
-
-    const updateHeight = () => {
-      const nextHeight = Math.ceil(composerOverlayElement.getBoundingClientRect().height);
-      if (nextHeight <= 0) return;
-      setComposerOverlayHeight((currentHeight) =>
-        currentHeight === nextHeight ? currentHeight : nextHeight,
-      );
-    };
-
-    updateHeight();
-    if (typeof ResizeObserver === "undefined") return;
-
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(composerOverlayElement);
-    return () => observer.disconnect();
-  }, [composerOverlayElement]);
 
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef),
@@ -2566,6 +2560,79 @@ function ChatViewContent(props: ChatViewProps) {
     attachDraftHeroComposerAnchorRef,
     captureDraftHeroComposerRect,
   ] = useDraftHeroLayoutTransition(isDraftHeroState);
+
+  useLayoutEffect(() => {
+    if (!composerOverlayElement) return;
+
+    // The hero overlay spans the whole chat area and centers the composer inside
+    // it, so its own height says nothing about how much room the composer needs.
+    // Measure the composer stack, and the headline and banners hanging above it.
+    const stackElement = composerOverlayElement.querySelector<HTMLElement>(
+      "[data-chat-composer-stack]",
+    );
+    const headlineElement = isDraftHeroState
+      ? composerOverlayElement.querySelector<HTMLElement>("[data-chat-composer-hero-headline]")
+      : null;
+    const bannersElement = isDraftHeroState
+      ? composerOverlayElement.querySelector<HTMLElement>("[data-chat-composer-hero-banners]")
+      : null;
+
+    const updateHeight = () => {
+      const nextHeight = Math.ceil(composerOverlayElement.getBoundingClientRect().height);
+      if (nextHeight > 0) {
+        setComposerOverlayHeight((currentHeight) =>
+          currentHeight === nextHeight ? currentHeight : nextHeight,
+        );
+      }
+      const nextStack = stackElement ? Math.ceil(stackElement.getBoundingClientRect().height) : 0;
+      const nextHeadline = headlineElement
+        ? Math.ceil(headlineElement.getBoundingClientRect().height)
+        : 0;
+      const nextBanners = bannersElement
+        ? Math.ceil(bannersElement.getBoundingClientRect().height)
+        : 0;
+      setComposerHeroExtent((current) =>
+        current.stack === nextStack &&
+        current.headline === nextHeadline &&
+        current.banners === nextBanners
+          ? current
+          : { stack: nextStack, headline: nextHeadline, banners: nextBanners },
+      );
+    };
+
+    updateHeight();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(composerOverlayElement);
+    if (stackElement) observer.observe(stackElement);
+    if (headlineElement) observer.observe(headlineElement);
+    if (bannersElement) observer.observe(bannersElement);
+    return () => observer.disconnect();
+    // The overlay node is reused across threads, so the thread key is what
+    // re-measures on navigation. Leaving it to the observer would reserve the
+    // previous thread's composer for a frame, and a taller one would spill.
+  }, [composerOverlayElement, isDraftHeroState, activeThreadKey]);
+
+  useLayoutEffect(() => {
+    if (!chatAreaElement) return;
+    const updateChatAreaHeight = () => {
+      const nextHeight = Math.floor(chatAreaElement.getBoundingClientRect().height);
+      setChatAreaHeight((current) => (current === nextHeight ? current : nextHeight));
+    };
+    updateChatAreaHeight();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateChatAreaHeight);
+    observer.observe(chatAreaElement);
+    return () => observer.disconnect();
+  }, [chatAreaElement]);
+
+  const showDraftHeroHeadline = shouldShowDraftHeroHeadline({
+    chatAreaHeight,
+    composerStackHeight: composerHeroExtent.stack,
+    heroHeadlineHeight: composerHeroExtent.headline,
+    heroBannerHeight: composerHeroExtent.banners,
+  });
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
@@ -6214,7 +6281,21 @@ function ChatViewContent(props: ChatViewProps) {
           }}
         />
         {/* Main content area with optional plan sidebar */}
-        <div className="flex min-h-0 min-w-0 flex-1">
+        {/* The composer overlays this row, so it reserves the composer's height:
+            the terminal drawer below shrinks instead of pushing the composer out
+            over the thread header and back down across the terminal. */}
+        <div
+          ref={setChatAreaElement}
+          className="flex min-h-0 min-w-0 flex-1"
+          style={{
+            minHeight: chatAreaReservedComposerHeight({
+              isDraftHeroState,
+              composerOverlayHeight,
+              composerStackHeight: composerHeroExtent.stack,
+              heroBannerHeight: composerHeroExtent.banners,
+            }),
+          }}
+        >
           {/* Chat column */}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             {/* Provider status overlays the timeline without changing its content height. */}
@@ -6299,13 +6380,22 @@ function ChatViewContent(props: ChatViewProps) {
             >
               <div
                 ref={attachDraftHeroTransitionGroupRef}
+                data-chat-composer-stack="true"
                 className="chat-composer-horizontal-inset w-full"
               >
                 <div className="pointer-events-auto relative z-10">
                   {isDraftHeroState ? (
-                    <div className="absolute inset-x-0 bottom-full z-0">
+                    <div
+                      data-chat-composer-hero-lede="true"
+                      className="absolute inset-x-0 bottom-full z-0"
+                    >
+                      {/* Kept in layout while hidden so its height stays
+                          measurable — the decision to hide it depends on that
+                          height, and unmounting it would oscillate. */}
                       <div
-                        className="pb-8"
+                        data-chat-composer-hero-headline="true"
+                        aria-hidden={showDraftHeroHeadline ? undefined : true}
+                        className={cn("pb-8", !showDraftHeroHeadline && "invisible")}
                         style={
                           forceExpandedMobileComposer
                             ? {
@@ -6319,7 +6409,9 @@ function ChatViewContent(props: ChatViewProps) {
                           activeProjectTitle={activeProject?.title ?? null}
                         />
                       </div>
-                      <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                      <div data-chat-composer-hero-banners="true">
+                        <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                      </div>
                     </div>
                   ) : (
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
