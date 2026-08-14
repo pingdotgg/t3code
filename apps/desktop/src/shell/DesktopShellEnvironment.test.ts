@@ -355,12 +355,12 @@ describe("DesktopShellEnvironment", () => {
   it.effect("skips ALL PowerShell probes when node is available statically with quotes and no fnm", () =>
     Effect.gen(function* () {
       const mockDir = "C:\\mock\\temp";
-      const env: NodeJS.ProcessEnv = { PATH: `"${mockDir}"` };
+      const env: NodeJS.ProcessEnv = { PATH: `"${mockDir}"`, USERPROFILE: "C:\\Users\\test" };
       const commands: ChildProcess.Command[] = [];
 
       const mockFs = {
         exists: (path: string) => Effect.succeed(path.includes("node.exe")),
-        readFileString: () => Effect.fail(PlatformError.systemError({ _tag: "SystemError", reason: "NotFound", module: "FileSystem", method: "readFileString", pathOrDescriptor: "" })),
+        readFile: () => Effect.fail(PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "readFile", pathOrDescriptor: "" })),
       } as unknown as FileSystem.FileSystem;
 
       yield* runShellEnvironment({
@@ -386,7 +386,7 @@ describe("DesktopShellEnvironment", () => {
 
       const mockFs = {
         exists: (path: string) => Effect.succeed(path.includes("node.exe")),
-        readFileString: (path: string) => Effect.succeed('Invoke-Expression "fnm env"'),
+        readFile: () => Effect.succeed(textEncoder.encode('Invoke-Expression "fnm env"')),
       } as unknown as FileSystem.FileSystem;
 
       yield* runShellEnvironment({
@@ -417,7 +417,7 @@ describe("DesktopShellEnvironment", () => {
 
       const mockFs = {
         exists: (path: string) => Effect.succeed(path.includes("node.exe")),
-        readFileString: (path: string) => Effect.succeed('Write-Host "Hello World"'),
+        readFile: () => Effect.succeed(textEncoder.encode('Write-Host "Hello World"')),
       } as unknown as FileSystem.FileSystem;
 
       yield* runShellEnvironment({
@@ -437,12 +437,12 @@ describe("DesktopShellEnvironment", () => {
   it.effect("skips PowerShell probes when node is in knownWindowsCliDirs but not on PATH", () =>
     Effect.gen(function* () {
       const mockDir = "C:\\mock\\temp";
-      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32", LOCALAPPDATA: mockDir };
+      const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32", LOCALAPPDATA: mockDir, USERPROFILE: "C:\\Users\\test" };
       const commands: ChildProcess.Command[] = [];
 
       const mockFs = {
         exists: (path: string) => Effect.succeed(path.includes("node.exe") && path.includes(mockDir)),
-        readFileString: () => Effect.fail(PlatformError.systemError({ _tag: "SystemError", reason: "NotFound", module: "FileSystem", method: "readFileString", pathOrDescriptor: "" })),
+        readFile: () => Effect.fail(PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "readFile", pathOrDescriptor: "" })),
       } as unknown as FileSystem.FileSystem;
 
       yield* runShellEnvironment({

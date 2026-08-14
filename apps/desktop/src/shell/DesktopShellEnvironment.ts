@@ -393,7 +393,7 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
         const cleanDir = dir.trim().replace(/^"+|"+$/g, "");
         if (cleanDir.length === 0) continue;
         const hasNode = yield* fileSystem.exists(`${cleanDir}\\node.exe`).pipe(
-          Effect.catchAll(() => Effect.succeed(false))
+          Effect.orElseSucceed(() => false)
         );
         if (hasNode) return true;
       }
@@ -413,19 +413,23 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
         `${userProfile}\\Documents\\PowerShell\\profile.ps1`,
       ];
       for (const p of profilePaths) {
-        const content = yield* fileSystem.readFileString(p).pipe(
+        const bytes = yield* fileSystem.readFile(p).pipe(
           Effect.catchIf(
-            (err) => err._tag === "SystemError" && err.reason === "NotFound",
-            () => Effect.succeed("")
+            (err) => err.reason._tag === "NotFound",
+            () => Effect.succeed(new Uint8Array(0))
           )
         );
-        if (content.toLowerCase().includes("fnm")) {
-          return true;
+        if (bytes.length > 0) {
+          const textUtf8 = new TextDecoder("utf-8").decode(bytes);
+          const textUtf16 = new TextDecoder("utf-16le").decode(bytes);
+          if (textUtf8.toLowerCase().includes("fnm") || textUtf16.toLowerCase().includes("fnm")) {
+            return true;
+          }
         }
       }
       return false;
     }).pipe(
-      Effect.catchAll(() => Effect.succeed(true)), // On permission or other errors, assume unsafe to skip
+      Effect.orElseSucceed(() => true), // On permission or other errors, assume unsafe to skip
       Effect.timeoutOption(Duration.millis(250)),
       Effect.map(Option.getOrElse(() => true))
     );
