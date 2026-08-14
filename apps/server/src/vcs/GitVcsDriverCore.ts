@@ -420,9 +420,10 @@ function isNonRepositoryGitStderr(stderr: string): boolean {
   return stderr.toLowerCase().includes("not a git repository");
 }
 function isUnbornHeadStderr(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
   return (
-    stderr.toLowerCase().includes("unknown revision") &&
-    stderr.toLowerCase().includes("path not in the working tree")
+    normalized.includes("bad revision 'head'") ||
+    (normalized.includes("unknown revision") && normalized.includes("path not in the working tree"))
   );
 }
 
@@ -1600,7 +1601,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGitWithStableDiagnostics(
           "GitVcsDriver.statusDetails.numstat",
           cwd,
-          ["diff", "HEAD", "--numstat"],
+          ["diff", "HEAD", "--numstat", "--"],
           { allowNonZeroExit: true },
         ).pipe(
           Effect.flatMap((result) => {
@@ -1642,7 +1643,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 ...gitCommandContext({
                   operation: "GitVcsDriver.statusDetails.numstat",
                   cwd,
-                  args: ["diff", "HEAD", "--numstat"],
+                  args: ["diff", "HEAD", "--numstat", "--"],
                 }),
                 detail: "git diff HEAD --numstat failed.",
                 exitCode: result.exitCode,
