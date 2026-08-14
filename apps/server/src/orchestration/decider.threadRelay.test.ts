@@ -127,6 +127,15 @@ function archiveThread(readModel: OrchestrationReadModel, threadId: ThreadId) {
   } satisfies OrchestrationReadModel;
 }
 
+function deleteThread(readModel: OrchestrationReadModel, threadId: ThreadId) {
+  return {
+    ...readModel,
+    threads: readModel.threads.map((thread) =>
+      thread.id === threadId ? { ...thread, deletedAt: now } : thread,
+    ),
+  } satisfies OrchestrationReadModel;
+}
+
 it.layer(NodeServices.layer)("decider thread relay", (it) => {
   it.effect("persists authoritative source attribution before requesting the target turn", () =>
     Effect.gen(function* () {
@@ -219,6 +228,26 @@ it.layer(NodeServices.layer)("decider thread relay", (it) => {
         decideOrchestrationCommand({ command: turnStartCommand(), readModel }),
       );
       expect(error.message).toContain("cannot receive a thread message");
+    }),
+  );
+
+  it.effect("rejects a deleted source", () =>
+    Effect.gen(function* () {
+      const readModel = deleteThread(yield* seedReadModel, sourceThreadId);
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({ command: turnStartCommand(), readModel }),
+      );
+      expect(error.message).toContain("is deleted and cannot send a thread message");
+    }),
+  );
+
+  it.effect("rejects a deleted target", () =>
+    Effect.gen(function* () {
+      const readModel = deleteThread(yield* seedReadModel, targetThreadId);
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({ command: turnStartCommand(), readModel }),
+      );
+      expect(error.message).toContain("is deleted and cannot receive a thread message");
     }),
   );
 });

@@ -16,14 +16,8 @@ import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../../../orchestration/Services/OrchestrationEngine.ts";
-import {
-  ProjectionSnapshotQuery,
-  type ProjectionSnapshotQueryShape,
-} from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadRelayToolkitHandlersLive } from "./handlers.ts";
 import { ThreadRelayToolkit } from "./tools.ts";
 
@@ -105,7 +99,7 @@ function makeTestLayer(dispatched: Array<OrchestrationCommand>) {
       const thread = snapshot.threads.find(({ id }) => id === threadId);
       return Effect.succeed(thread === undefined ? Option.none() : Option.some(thread));
     },
-  } as unknown as ProjectionSnapshotQueryShape;
+  } as unknown as ProjectionSnapshotQuery["Service"];
 
   const engine = {
     readEvents: () => Stream.empty,
@@ -115,7 +109,7 @@ function makeTestLayer(dispatched: Array<OrchestrationCommand>) {
     },
     streamDomainEvents: Stream.empty,
     latestSequence: Effect.succeed(10),
-  } satisfies OrchestrationEngineShape;
+  } satisfies OrchestrationEngineService["Service"];
 
   return McpServer.toolkit(ThreadRelayToolkit).pipe(
     Layer.provide(ThreadRelayToolkitHandlersLive),

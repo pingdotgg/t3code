@@ -22,6 +22,7 @@ export class ThreadRelayError extends Schema.TaggedErrorClass<ThreadRelayError>(
       "dispatch_failed",
     ]),
     detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

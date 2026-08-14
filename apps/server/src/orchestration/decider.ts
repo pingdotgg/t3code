@@ -939,6 +939,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             threadId: sourceThreadMessage.threadId,
           })
         : null;
+      if (sourceMessageThread && sourceMessageThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${sourceMessageThread.id}' is deleted and cannot send a thread message.`,
+        });
+      }
       if (sourceMessageThread && sourceMessageThread.id === targetThread.id) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -949,6 +955,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `Thread '${targetThread.id}' is archived and cannot receive a thread message.`,
+        });
+      }
+      if (sourceMessageThread && targetThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${targetThread.id}' is deleted and cannot receive a thread message.`,
         });
       }
       if (sourceMessageThread && sourceMessageThread.projectId !== targetThread.projectId) {

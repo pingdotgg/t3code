@@ -6,10 +6,7 @@ import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
-import {
-  ProjectionSnapshotQuery,
-  type ProjectionSnapshotQueryShape,
-} from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { THREAD_RELAY_LIST_LIMIT, ThreadRelayError, ThreadRelayToolkit } from "./tools.ts";
 
 function relayStatus(
@@ -27,23 +24,20 @@ function relayStatus(
   return thread.backgroundLiveness === "monitoring" ? "monitoring" : "idle";
 }
 
-const queryFailure = () =>
-  new ThreadRelayError({
-    code: "query_failed",
-    detail: "T3 could not read the current thread catalog.",
-  });
-
-const dispatchFailure = () =>
-  new ThreadRelayError({
-    code: "dispatch_failed",
-    detail: "T3 could not durably accept the thread message.",
-  });
-
 const readActiveThread = Effect.fn("ThreadRelay.readActiveThread")(function* (
-  query: ProjectionSnapshotQueryShape,
+  query: ProjectionSnapshotQuery["Service"],
   threadId: OrchestrationThreadShell["id"],
 ) {
-  const thread = yield* query.getThreadShellById(threadId).pipe(Effect.mapError(queryFailure));
+  const thread = yield* query.getThreadShellById(threadId).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ThreadRelayError({
+          code: "query_failed",
+          detail: "T3 could not read the current thread catalog.",
+          cause,
+        }),
+    ),
+  );
   return Option.filter(thread, ({ archivedAt }) => archivedAt === null);
 });
 
@@ -59,7 +53,16 @@ const handlers = {
       });
     }
 
-    const snapshot = yield* query.getShellSnapshot().pipe(Effect.mapError(queryFailure));
+    const snapshot = yield* query.getShellSnapshot().pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadRelayError({
+            code: "query_failed",
+            detail: "T3 could not read the current thread catalog.",
+            cause,
+          }),
+      ),
+    );
     const peers = snapshot.threads
       .filter(
         (thread) =>
@@ -120,7 +123,16 @@ const handlers = {
       crypto.randomUUIDv4,
       crypto.randomUUIDv4,
       Effect.map(DateTime.now, DateTime.formatIso),
-    ]).pipe(Effect.mapError(dispatchFailure));
+    ]).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ThreadRelayError({
+            code: "dispatch_failed",
+            detail: "T3 could not durably accept the thread message.",
+            cause,
+          }),
+      ),
+    );
     const messageId = MessageId.make(messageUuid);
     const accepted = yield* engine
       .dispatch({
@@ -138,7 +150,16 @@ const handlers = {
         sourceThreadMessage: { threadId: source.value.id },
         createdAt,
       })
-      .pipe(Effect.mapError(dispatchFailure));
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadRelayError({
+              code: "dispatch_failed",
+              detail: "T3 could not durably accept the thread message.",
+              cause,
+            }),
+        ),
+      );
     return {
       messageId,
       targetThreadId: target.value.id,
