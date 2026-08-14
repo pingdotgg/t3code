@@ -211,18 +211,27 @@ private final class DaemonState {
       if let title = chAxString(focused, kAXTitleAttribute as String), !title.isEmpty {
         context.privateSignal = title
       }
+      // Prefer the focused element's own window title (not an unrelated window).
+      if context.privateSignal == nil,
+         let window = chAxElement(focused, kAXWindowAttribute as String),
+         let title = chAxString(window, kAXTitleAttribute as String),
+         !title.isEmpty
+      {
+        context.privateSignal = title
+      }
     }
-    if let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement] {
+    // Only pair a window title as the private-mode signal with the URL taken
+    // from that same window — never borrow another window's title.
+    if context.url == nil, let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement] {
       for window in windows.prefix(4) {
-        if context.url == nil {
-          if let url = chAxString(window, "AXURL"), !url.isEmpty { context.url = url }
-          else if let doc = chAxString(window, "AXDocument"), !doc.isEmpty { context.url = doc }
-        }
-        if context.privateSignal == nil,
-           let title = chAxString(window, kAXTitleAttribute as String), !title.isEmpty
-        {
+        let url = chAxString(window, "AXURL").flatMap { $0.isEmpty ? nil : $0 }
+          ?? chAxString(window, "AXDocument").flatMap { $0.isEmpty ? nil : $0 }
+        guard let url else { continue }
+        context.url = url
+        if let title = chAxString(window, kAXTitleAttribute as String), !title.isEmpty {
           context.privateSignal = title
         }
+        break
       }
     }
     return context
