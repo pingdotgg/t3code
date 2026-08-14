@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { PlusIcon, XIcon } from "lucide-react";
 import type {
   ComputerHistoryClearScope,
@@ -254,30 +254,34 @@ export function ComputerHistorySettings() {
     return () => window.clearInterval(id);
   }, [refresh, history.enabled, history.paused]);
 
+  const patchQueue = useRef(Promise.resolve());
   const patch = (partial: Partial<typeof history>) => {
-    // Persist via server settings for agents/summarizer, and via desktop IPC so the
-    // recorder daemon starts/stops immediately without racing a stale settings.json.
+    // Persist only the keys being changed so concurrent toggles cannot clobber
+    // unrelated nested Computer History fields via a stale full-object snapshot.
+    // Serialize desktop IPC patches so rapid toggles cannot complete out of order.
     updateSettings({
-      computerHistory: { ...history, ...partial },
+      computerHistory: partial,
     });
     const bridge = window.desktopBridge;
     if (!bridge?.patchComputerHistorySettings) return;
-    void (async () => {
-      const nextStatus = await bridge.patchComputerHistorySettings({
-        ...(partial.enabled === undefined ? {} : { enabled: partial.enabled }),
-        ...(partial.paused === undefined ? {} : { paused: partial.paused }),
-        ...(partial.mirrorToCodex === undefined ? {} : { mirrorToCodex: partial.mirrorToCodex }),
-        ...(partial.appFilterMode === undefined ? {} : { appFilterMode: partial.appFilterMode }),
-        ...(partial.apps === undefined ? {} : { apps: [...partial.apps] }),
-        ...(partial.websiteFilterMode === undefined
-          ? {}
-          : { websiteFilterMode: partial.websiteFilterMode }),
-        ...(partial.websites === undefined ? {} : { websites: [...partial.websites] }),
+    patchQueue.current = patchQueue.current
+      .catch(() => undefined)
+      .then(async () => {
+        const nextStatus = await bridge.patchComputerHistorySettings({
+          ...(partial.enabled === undefined ? {} : { enabled: partial.enabled }),
+          ...(partial.paused === undefined ? {} : { paused: partial.paused }),
+          ...(partial.mirrorToCodex === undefined ? {} : { mirrorToCodex: partial.mirrorToCodex }),
+          ...(partial.appFilterMode === undefined ? {} : { appFilterMode: partial.appFilterMode }),
+          ...(partial.apps === undefined ? {} : { apps: [...partial.apps] }),
+          ...(partial.websiteFilterMode === undefined
+            ? {}
+            : { websiteFilterMode: partial.websiteFilterMode }),
+          ...(partial.websites === undefined ? {} : { websites: [...partial.websites] }),
+        });
+        setStatus(nextStatus);
+        const timeline = await bridge.getComputerHistoryTimeline?.();
+        if (timeline) setItems([...timeline.items]);
       });
-      setStatus(nextStatus);
-      const timeline = await bridge.getComputerHistoryTimeline?.();
-      if (timeline) setItems([...timeline.items]);
-    })();
   };
 
   const exclusionSummary = (() => {

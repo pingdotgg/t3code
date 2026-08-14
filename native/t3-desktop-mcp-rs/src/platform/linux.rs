@@ -529,34 +529,41 @@ fn truncate(value: &str, limit: usize) -> String {
     cleaned.chars().take(limit).collect::<String>() + "…"
 }
 
-/// Largest on-screen window owned by `pid`, for EWMH activation.
+/// Largest window owned by `pid` (including minimized), for EWMH activation.
 fn largest_window_id_for_pid(pid: u32) -> Result<u32> {
     let windows = std::panic::catch_unwind(Window::all)
         .map_err(|_| DesktopError::new("window enumeration is not supported by this display server"))?
         .map_err(|error| DesktopError::new(format!("failed to enumerate windows: {error}")))?;
 
-    let mut best: Option<(u32, u32)> = None; // (area, id)
+    let mut best: Option<(u32, u32, bool)> = None; // (area, id, minimized)
     for window in windows {
-        if window.pid().unwrap_or(0) != pid || window.is_minimized().unwrap_or(false) {
+        if window.pid().unwrap_or(0) != pid {
             continue;
         }
         let width = window.width().unwrap_or(0);
         let height = window.height().unwrap_or(0);
-        if width == 0 || height == 0 {
-            continue;
-        }
+        // Prefer real geometry; minimized windows may report 0×0 — still keep as fallback.
+        let minimized = window.is_minimized().unwrap_or(false);
+        let area = if width == 0 || height == 0 {
+            0
+        } else {
+            width.saturating_mul(height)
+        };
         let Ok(id) = window.id() else {
             continue;
         };
-        let area = width.saturating_mul(height);
-        if best.is_none_or(|(best_area, _)| area > best_area) {
-            best = Some((area, id));
+        let better = match best {
+            None => true,
+            Some((best_area, _, best_min)) => {
+                (!minimized && best_min) || (minimized == best_min && area > best_area)
+            }
+        };
+        if better {
+            best = Some((area, id, minimized));
         }
     }
-    best.map(|(_, id)| id).ok_or_else(|| {
-        DesktopError::new(format!(
-            "pid {pid} has no raisable window — it may be minimized or have no UI"
-        ))
+    best.map(|(_, id, _)| id).ok_or_else(|| {
+        DesktopError::new(format!("pid {pid} has no raisable window — it may have no UI"))
     })
 }
 
@@ -638,13 +645,6 @@ impl Desktop for LinuxDesktop {
                 })
                 .collect();
             if !lines.is_empty() {
-                // If nothing matched the compositor focus, mark the first app so
-                // Computer History still has a frontmost sample target.
-                if !lines.iter().any(|line| line.contains("FRONTMOST")) {
-                    if let Some(first) = lines.first_mut() {
-                        first.push_str("  FRONTMOST");
-                    }
-                }
                 lines.sort_by_key(|line| (!line.contains("FRONTMOST"), line.to_lowercase()));
                 return Ok(lines.join("\n"));
             }
@@ -692,6 +692,11 @@ impl Desktop for LinuxDesktop {
     fn activate_app(&mut self, app: &str) -> Result<String> {
         // Prefer AT-SPI grab_focus (portable), then fall back to EWMH raise —
         // dialogs often refuse Component.grab_focus even when X11 can activate.
+        if app.trim().is_empty() {
+            return Err(DesktopError::new(
+                "missing required argument 'app' — pass an app name from list_apps",
+            ));
+        }
         let applications = self.applications()?;
         let lowered = app.to_lowercase();
         let (reference, name, a11y_pid) = applications
@@ -805,11 +810,18 @@ impl Desktop for LinuxDesktop {
             if self.insert_text(&reference, text, false).is_ok() {
                 return Ok(format!("typed {} characters into e{id}", text.chars().count()));
             }
-            // Fall back to focusing and using the keyboard.
-            let _ = self.grab_focus(&reference);
-            if let Ok((x, y)) = self.center(&reference) {
-                let _ = self.move_pointer(x, y);
-                let _ = self.tap_button(BUTTON_LEFT);
+            // Fall back to focusing and using the keyboard — require a successful
+            // focus or coordinate click so we don't type into the wrong window.
+            let focused = self.grab_focus(&reference).unwrap_or(false);
+            let clicked = if let Ok((x, y)) = self.center(&reference) {
+                self.move_pointer(x, y).and_then(|()| self.tap_button(BUTTON_LEFT)).is_ok()
+            } else {
+                false
+            };
+            if !focused && !clicked {
+                return Err(DesktopError::new(format!(
+                    "could not focus e{id} for typing — click the field first, or use set_value"
+                )));
             }
         }
         // Force a round trip so the server has drained anything queued, then let
@@ -830,10 +842,20 @@ impl Desktop for LinuxDesktop {
     }
 
     fn press_key(&mut self, key: &str, modifiers: &[String]) -> Result<String> {
-        let keysym = named_keysym(key).unwrap_or_else(|| {
-            // Single characters are the common case: ctrl+a, ctrl+shift+t.
-            char_to_keysym(key.chars().next().unwrap_or('\0'))
-        });
+        let keysym = if let Some(named) = named_keysym(key) {
+            named
+        } else {
+            let mut chars = key.chars();
+            let Some(first) = chars.next() else {
+                return Err(DesktopError::new("missing required argument 'key'"));
+            };
+            if chars.next().is_some() {
+                return Err(DesktopError::new(format!(
+                    "unsupported key '{key}' — use a single character or a named key (enter, escape, …)"
+                )));
+            }
+            char_to_keysym(first)
+        };
         let (keycode, needs_shift) = self.keycode_for(keysym)?.ok_or_else(|| {
             DesktopError::new(format!("'{key}' is not on the current keyboard layout"))
         })?;
@@ -852,8 +874,17 @@ impl Desktop for LinuxDesktop {
             held.push(shift);
         }
 
-        for code in &held {
-            self.key(*code, true)?;
+        let press_modifiers = (|| -> Result<()> {
+            for code in &held {
+                self.key(*code, true)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = press_modifiers {
+            for code in held.iter().rev() {
+                let _ = self.key(*code, false);
+            }
+            return Err(error);
         }
         let tapped = self.key(keycode, true).and_then(|()| self.key(keycode, false));
         // Release modifiers even if the tap failed, or the session is left with

@@ -1,8 +1,10 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { DEFAULT_SERVER_SETTINGS, ServerSettings } from "@t3tools/contracts/settings";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as Crypto from "effect/Crypto";
@@ -11,6 +13,7 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
+import * as ComputerHistoryManager from "../computerHistory/manager.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
@@ -199,6 +202,26 @@ const bootstrap = Effect.gen(function* () {
 
   yield* installDesktopIpcHandlers();
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
+
+  // Start the Computer History recorder when already enabled so capture resumes
+  // after relaunch without requiring a visit to Settings.
+  yield* Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const raw = yield* fileSystem
+      .readFileString(environment.serverSettingsPath)
+      .pipe(Effect.orElseSucceed(() => "{}"));
+    const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))(
+      raw,
+    ).pipe(Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS));
+    yield* Effect.promise(() =>
+      ComputerHistoryManager.ensureDaemon(environment.stateDir, decoded.computerHistory),
+    );
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("Computer History daemon bootstrap skipped", { cause }),
+    ),
+  );
 
   if (!(yield* Ref.get(state.quitting))) {
     // In wsl-only mode the renderer is served by the WSL backend, which can be

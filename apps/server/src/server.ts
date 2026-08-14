@@ -163,9 +163,7 @@ const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
   Layer.provide(HostPowerMonitorLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(
-    ComputerHistoryService.ComputerHistoryRuntimeLive.pipe(
-      Layer.provideMerge(ServerSettingsLayerLive),
-    ),
+    ComputerHistoryService.layer.pipe(Layer.provideMerge(ServerSettingsLayerLive)),
   ),
 );
 

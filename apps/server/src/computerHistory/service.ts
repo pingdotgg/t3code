@@ -8,6 +8,7 @@ import * as Schedule from "effect/Schedule";
 import * as Duration from "effect/Duration";
 import {
   defaultCodexHome,
+  buildComputerHistoryContextBlock,
   loadRecentContextMarkdown,
   resolveComputerHistoryRoot,
   runSummarizationPass,
@@ -17,17 +18,13 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
-export function buildComputerHistoryContextBlock(markdown: string): string {
-  return `<computer_history>
-${markdown}
-</computer_history>`;
-}
+export { buildComputerHistoryContextBlock };
 
 export const loadComputerHistoryContext = Effect.fn("computerHistory.loadContext")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;
   const snapshot = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => undefined));
-  if (!snapshot?.computerHistory.enabled) {
+  if (!snapshot?.computerHistory.enabled || snapshot.computerHistory.paused) {
     return undefined;
   }
   const root = resolveComputerHistoryRoot(config.stateDir);
@@ -77,11 +74,8 @@ export const runComputerHistorySummarization = Effect.fn("computerHistory.summar
  * Fork a lightweight loop that syncs control.json and summarizes segments.
  * Safe to install in any runtime; no-ops when Computer History is disabled.
  */
-export const ComputerHistoryRuntimeLive = Layer.effectDiscard(
+export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const config = yield* ServerConfig.ServerConfig;
-    process.env.T3CODE_STATE_DIR = config.stateDir;
-
     yield* syncComputerHistoryControl().pipe(Effect.ignore);
     yield* runComputerHistorySummarization().pipe(Effect.ignore);
 
@@ -94,3 +88,6 @@ export const ComputerHistoryRuntimeLive = Layer.effectDiscard(
     ).pipe(Effect.forkScoped);
   }),
 );
+
+/** @deprecated Prefer {@link layer}. */
+export const ComputerHistoryRuntimeLive = layer;

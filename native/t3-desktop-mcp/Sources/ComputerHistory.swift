@@ -156,8 +156,10 @@ private final class DaemonState {
       app.bundleIdentifier ?? "",
       app.localizedName ?? "",
       app.bundleURL?.path ?? "",
-    ].map { $0.lowercased() }
-    let hit = needles.contains { needle in
+    ]
+    .map { $0.lowercased() }
+    .filter { !$0.isEmpty }
+    let hit = !needles.isEmpty && needles.contains { needle in
       hay.contains { $0.contains(needle) || needle.contains($0) }
     }
     let appOk: Bool
@@ -181,6 +183,25 @@ private final class DaemonState {
       return websiteFilterMode == "exclude" ? !siteHit : siteHit
     }
     return true
+  }
+
+  /// Best-effort browser page URL / private-mode signal from AX + window title.
+  private func browserContext(for app: NSRunningApplication) -> String? {
+    let ax = AXUIElementCreateApplication(app.processIdentifier)
+    if let focused = chAxElement(ax, kAXFocusedUIElementAttribute as String) {
+      if let url = chAxString(focused, "AXURL"), !url.isEmpty { return url }
+      if let doc = chAxString(focused, "AXDocument"), !doc.isEmpty { return doc }
+    }
+    if let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement] {
+      for window in windows.prefix(4) {
+        if let url = chAxString(window, "AXURL"), !url.isEmpty { return url }
+        if let doc = chAxString(window, "AXDocument"), !doc.isEmpty { return doc }
+        if let title = chAxString(window, kAXTitleAttribute as String), !title.isEmpty {
+          return title
+        }
+      }
+    }
+    return nil
   }
 
   private static func isPrivateBrowsing(url: String) -> Bool {
@@ -236,7 +257,8 @@ private final class DaemonState {
     reloadControl()
     writeStatus()
     guard enabled, !paused, AXIsProcessTrusted() else { return }
-    guard allowed(app: app, url: nil) else {
+    let pageContext = browserContext(for: app)
+    guard allowed(app: app, url: pageContext) else {
       suppressed += 1
       return
     }
@@ -279,7 +301,8 @@ private final class DaemonState {
     guard AXIsProcessTrusted() else { return }
 
     guard let app = NSWorkspace.shared.frontmostApplication else { return }
-    guard allowed(app: app, url: nil) else {
+    let pageContext = browserContext(for: app)
+    guard allowed(app: app, url: pageContext) else {
       suppressed += 1
       return
     }
