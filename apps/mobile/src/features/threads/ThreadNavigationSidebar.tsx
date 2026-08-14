@@ -10,6 +10,7 @@ import {
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -29,6 +30,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -211,8 +213,13 @@ function ThreadNavigationSidebarPane(
     pinThread,
     unpinThread,
     movePinnedThread,
+    regenerateThreadTitle,
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const autoSettleOnMerge =
+    !AsyncResult.isSuccess(preferencesResult) ||
+    preferencesResult.value.autoSettleOnMerge !== false;
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
@@ -410,8 +417,8 @@ function ThreadNavigationSidebarPane(
 
   // Thread List v2 (beta) support — same model as the compact Home list
   // (HomeScreen.tsx): flat creation-order card block + settled recency tail.
-  // PR states stream in per-row; merged/closed PRs auto-settle their thread
-  // on the next partition.
+  // PR states stream in per-row. The next partition applies the configured
+  // merge rule and the always-on close rule.
   const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
     ReadonlyMap<string, "open" | "closed" | "merged">
   >(() => new Map());
@@ -505,6 +512,15 @@ function ThreadNavigationSidebarPane(
     }
     return supported;
   }, [serverConfigs]);
+  const titleRegenerationEnvironmentIds = useMemo(() => {
+    const supported = new Set<EnvironmentId>();
+    for (const [environmentId, config] of serverConfigs) {
+      if (config.environment.capabilities.threadTitleRegeneration === true) {
+        supported.add(environmentId);
+      }
+    }
+    return supported;
+  }, [serverConfigs]);
   // Canonical arranged pinned order for Move up/down flags — computed from
   // all shells so search/scope filtering never disables a valid move.
   const arrangedPinnedKeys = useMemo(() => {
@@ -536,6 +552,7 @@ function ThreadNavigationSidebarPane(
       searchQuery: props.searchQuery,
       matchedThreadKeys,
       changeRequestStateByKey,
+      autoSettleOnMerge,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       settledLimit: settledVisibleCount,
@@ -547,6 +564,7 @@ function ThreadNavigationSidebarPane(
     });
   }, [
     changeRequestStateByKey,
+    autoSettleOnMerge,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -950,6 +968,8 @@ function ThreadNavigationSidebarPane(
               onSelectThread={handleSelectThread}
               onDeleteThread={confirmDeleteThread}
               onArchiveThread={archiveThread}
+              onRegenerateThreadTitle={regenerateThreadTitle}
+              titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
               settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
               onSettleThread={settleThread}
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
@@ -1067,6 +1087,8 @@ function ThreadNavigationSidebarPane(
               fullSwipeWidth={props.width - 20}
               onArchiveThread={archiveThread}
               onDeleteThread={confirmDeleteThread}
+              onRegenerateThreadTitle={regenerateThreadTitle}
+              titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
               onSelectThread={handleSelectThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -1103,6 +1125,7 @@ function ThreadNavigationSidebarPane(
       projectByKey,
       projectCwdByKey,
       projectTitleByProjectKey,
+      regenerateThreadTitle,
       props.onNewThreadInProject,
       props.searchQuery,
       props.selectedThreadKey,
@@ -1110,6 +1133,7 @@ function ThreadNavigationSidebarPane(
       savedConnectionsById,
       serverConfigs,
       threadSearchMatchByKey,
+      titleRegenerationEnvironmentIds,
       settleThread,
       settlementEnvironmentIds,
       showMoreSettled,
