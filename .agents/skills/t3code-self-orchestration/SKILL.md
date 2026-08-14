@@ -18,17 +18,20 @@ correct flavor-scoped CLI.
 1. Resolve the project from current context or with the flavor-scoped CLI when necessary.
 2. Choose an available GitHub Copilot model and, when supported, a reasoning level based on the
    delegated task.
-3. Create a nested helper thread with the `create_nested_thread` MCP tool. Never use
-   terminal-based `t3 chat new` for delegation: shell environment does not carry an
+3. Create a nested helper thread with the `create_nested_thread` MCP tool. If the child needs an
+   isolated checkout, pass the tool's `workspace` input so T3 creates and binds the child's
+   worktree before starting its first turn. Never move the parent thread to prepare a child's
+   workspace, and never use `create_isolated_workspace` before delegation.
+4. Never use terminal-based `t3 chat new` for delegation: shell environment does not carry an
    authoritative current thread id and a globally installed CLI can target another app flavor.
-4. Capture the returned `threadId`.
-5. Monitor only when needed:
+5. Capture the returned `threadId`.
+6. Monitor only when needed:
    - Use `t3 chat show <threadId> --messages` for a point-in-time result and to confirm
      the latest turn state.
    - `t3 chat stream <threadId>` is a persistent subscription. Never run it as an
      attached command to wait for completion; it does not exit when a turn completes.
-6. If blocked, use approval/input skills only under the user’s authorization.
-7. Summarize findings back in the current chat with thread IDs and decisive outcomes.
+7. If blocked, use approval/input skills only under the user’s authorization.
+8. Summarize findings back in the current chat with thread IDs and decisive outcomes.
 
 ## Model selection
 
@@ -37,6 +40,8 @@ correct flavor-scoped CLI.
 - When the model supports selectable reasoning, choose `low`, `medium`, `high`, or `xhigh` based on
   the task's complexity, ambiguity, and risk. Omit reasoning for models that do not expose it.
 - Pass the selected model explicitly to every `create_nested_thread` call.
+- Prefer the atomic `workspace` input for delegated implementation work that needs isolation;
+  workspace handoff tools always operate on the thread that calls them.
 
 ## Prompting helper threads
 

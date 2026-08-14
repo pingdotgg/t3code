@@ -12,6 +12,7 @@ import { killProcessTree } from "@t3tools/shared/processTree";
 import { ThreadId } from "@t3tools/contracts";
 
 import { issueCrossThreadDispatchCapability } from "./orchestration/CrossThreadDispatchCapability.ts";
+import { CHAT_NEW_WORKSPACE_CLEANUP_SAFE } from "./cliProtocol.ts";
 
 type JsonRpcId = string | number | null;
 
@@ -456,6 +457,19 @@ interface TerminalResult {
   readonly stderr: string;
 }
 
+class CommandExecutionError extends Error {
+  readonly result: TerminalResult;
+
+  constructor(command: string, args: ReadonlyArray<string>, result: TerminalResult) {
+    const detail =
+      [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n") ||
+      `exited with code ${result.code}`;
+    super(`${command} ${args.join(" ")} failed: ${detail}`);
+    this.name = "CommandExecutionError";
+    this.result = result;
+  }
+}
+
 async function runCommand(
   root: string,
   command: string,
@@ -464,10 +478,7 @@ async function runCommand(
   const output = await spawnCommand(root, command, args);
   const result = JSON.parse(output) as TerminalResult;
   if (result.code !== 0) {
-    const detail =
-      [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n") ||
-      `exited with code ${result.code}`;
-    throw new Error(`${command} ${args.join(" ")} failed: ${detail}`);
+    throw new CommandExecutionError(command, args, result);
   }
   return result;
 }
@@ -485,8 +496,55 @@ function requireAbsolutePath(value: string | undefined, toolName: string): strin
 const toErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const isDefinitiveBindingRejection = (error: unknown): boolean =>
-  toErrorMessage(error).includes("ORCHESTRATION_COMMAND_REJECTED:");
+const isDefinitiveCommandRejection = (error: unknown): boolean =>
+  error instanceof CommandExecutionError &&
+  [error.result.stdout, error.result.stderr].some((output) =>
+    output.includes("ORCHESTRATION_COMMAND_REJECTED:"),
+  );
+
+const isSafeNestedThreadCleanup = (error: unknown, cleanupToken: string): boolean =>
+  error instanceof CommandExecutionError &&
+  [error.result.stdout, error.result.stderr].some((output) =>
+    output.includes(`${CHAT_NEW_WORKSPACE_CLEANUP_SAFE}${cleanupToken}`),
+  );
+
+interface IsolatedWorkspaceSpec {
+  readonly branch: string;
+  readonly path: string;
+  readonly baseRef: string | undefined;
+}
+
+function parseIsolatedWorkspaceSpec(
+  value: Record<string, unknown>,
+  toolName: string,
+): IsolatedWorkspaceSpec {
+  const branch = asString(value.branch)?.trim();
+  if (!branch) {
+    throw new Error(`${toolName} requires a non-empty workspace branch`);
+  }
+  return {
+    branch,
+    path: requireAbsolutePath(asString(value.path), toolName),
+    baseRef: asString(value.baseRef)?.trim() || undefined,
+  };
+}
+
+async function createGitWorktree(cwd: string, workspace: IsolatedWorkspaceSpec): Promise<string> {
+  const baseRef =
+    workspace.baseRef ?? (await runCommand(cwd, "git", ["branch", "--show-current"])).stdout.trim();
+  if (!baseRef) {
+    throw new Error("Could not determine the current branch; pass baseRef explicitly.");
+  }
+  await runCommand(cwd, "git", [
+    "worktree",
+    "add",
+    workspace.path,
+    "-b",
+    workspace.branch,
+    baseRef,
+  ]);
+  return baseRef;
+}
 
 async function recordThreadWorkspaceBinding(
   options: McpServeOptions,
@@ -515,7 +573,7 @@ async function recordThreadWorkspaceBinding(
   try {
     await runCommand(options.cwd, options.cliCommand, commandArgs);
   } catch (firstError) {
-    if (isDefinitiveBindingRejection(firstError)) {
+    if (isDefinitiveCommandRejection(firstError)) {
       throw firstError;
     }
     try {
@@ -555,40 +613,20 @@ async function createIsolatedWorkspaceTool(
     throw new Error("create_isolated_workspace is only available from a T3 provider session");
   }
 
-  const branch = asString(args.branch);
-  if (!branch?.trim()) {
-    throw new Error("create_isolated_workspace requires a non-empty branch");
-  }
-  const branchName = branch.trim();
-  const targetPath = requireAbsolutePath(asString(args.path), "create_isolated_workspace");
-  const baseRef = asString(args.baseRef);
-
-  const currentBranch =
-    baseRef ?? (await runCommand(options.cwd, "git", ["branch", "--show-current"])).stdout.trim();
-  if (!currentBranch) {
-    throw new Error("Could not determine the current branch; pass baseRef explicitly.");
-  }
-
-  await runCommand(options.cwd, "git", [
-    "worktree",
-    "add",
-    targetPath,
-    "-b",
-    branchName,
-    currentBranch,
-  ]);
+  const workspace = parseIsolatedWorkspaceSpec(args, "create_isolated_workspace");
+  const currentBranch = await createGitWorktree(options.cwd, workspace);
 
   try {
-    await recordThreadWorkspaceBinding(options, branchName, targetPath);
+    await recordThreadWorkspaceBinding(options, workspace.branch, workspace.path);
   } catch (bindingError) {
-    if (!isDefinitiveBindingRejection(bindingError)) {
+    if (!isDefinitiveCommandRejection(bindingError)) {
       throw new Error(
-        `${toErrorMessage(bindingError)}\nThe worktree was preserved because the server may have committed the handoff despite the lost response. Use switch_workspace with '${targetPath}' to retry the binding, or inspect chat '${options.threadId}' before removing it.`,
+        `${toErrorMessage(bindingError)}\nThe worktree was preserved because the server may have committed the handoff despite the lost response. Use switch_workspace with '${workspace.path}' to retry the binding, or inspect chat '${options.threadId}' before removing it.`,
         { cause: bindingError },
       );
     }
     try {
-      await rollbackCreatedWorktree(options, branchName, targetPath);
+      await rollbackCreatedWorktree(options, workspace.branch, workspace.path);
     } catch (cleanupError) {
       throw new Error(
         `${toErrorMessage(bindingError)}\nWorkspace cleanup also failed: ${toErrorMessage(cleanupError)}`,
@@ -599,8 +637,8 @@ async function createIsolatedWorkspaceTool(
   }
 
   return JSON.stringify({
-    worktreePath: targetPath,
-    branch: branchName,
+    worktreePath: workspace.path,
+    branch: workspace.branch,
     baseRef: currentBranch,
     continuationQueued: true,
     note: "Handoff recorded. Stop this turn now without editing the new worktree, and without explaining the handoff or the turn boundary to the user: T3 already shows the move in the transcript and resumes the task automatically in the bound workspace.",
@@ -657,7 +695,22 @@ async function createNestedThreadTool(
   if (!options.providerInstanceId) {
     throw new Error("create_nested_thread requires an authenticated parent provider instance");
   }
-  const result = await runCommand(options.cwd, options.cliCommand, [
+
+  let workspace: IsolatedWorkspaceSpec | undefined;
+  const workspaceCleanupToken = randomUUID();
+  if (args.workspace !== undefined) {
+    if (!args.workspace || typeof args.workspace !== "object" || Array.isArray(args.workspace)) {
+      throw new Error("create_nested_thread workspace must be an object");
+    }
+    const workspaceInput = asRecord(args.workspace);
+    if (asString(workspaceInput.mode) !== "isolated") {
+      throw new Error("create_nested_thread workspace mode must be 'isolated'");
+    }
+    workspace = parseIsolatedWorkspaceSpec(workspaceInput, "create_nested_thread");
+    await createGitWorktree(options.cwd, workspace);
+  }
+
+  const commandArgs = [
     ...(options.cliArgsPrefix ?? []),
     "chat",
     "new",
@@ -676,11 +729,46 @@ async function createNestedThreadTool(
     ...(reasoning ? ["--reasoning", reasoning] : []),
     "--runtime-mode",
     options.runtimeMode,
+    ...(workspace
+      ? [
+          "--branch",
+          workspace.branch,
+          "--worktree",
+          workspace.path,
+          "--workspace-cleanup-token",
+          workspaceCleanupToken,
+        ]
+      : []),
     "--title",
     title,
     prompt,
     ...(options.cliBaseDir ? ["--base-dir", options.cliBaseDir] : []),
-  ]);
+  ];
+  let result: TerminalResult;
+  try {
+    result = await runCommand(options.cwd, options.cliCommand, commandArgs);
+  } catch (creationError) {
+    if (!workspace) {
+      throw creationError;
+    }
+    if (!isSafeNestedThreadCleanup(creationError, workspaceCleanupToken)) {
+      throw new Error(
+        `${toErrorMessage(creationError)}\nThe child worktree was preserved because the nested thread may have been created before the response was lost. Inspect child threads under '${options.threadId}' before removing '${workspace.path}'.`,
+        {
+          cause: creationError,
+        },
+      );
+    }
+    try {
+      await rollbackCreatedWorktree(options, workspace.branch, workspace.path);
+    } catch (cleanupError) {
+      throw new Error(
+        `${toErrorMessage(creationError)}\nWorkspace cleanup also failed: ${toErrorMessage(cleanupError)}`,
+        { cause: cleanupError },
+      );
+    }
+    throw creationError;
+  }
   return result.stdout.trim();
 }
 
@@ -843,7 +931,7 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
   {
     name: "create_isolated_workspace",
     description:
-      "Required instead of running git worktree add directly when this thread needs a new isolated checkout. Creates a Git worktree, durably binds this T3 thread to it, and queues an automatic continuation. After calling, do not edit the new worktree during the current turn; finish so T3 can restart in the bound workspace and continue automatically.",
+      "Move the current calling thread to a new isolated checkout instead of running git worktree add directly. Creates a Git worktree, durably binds this T3 thread to it, and queues an automatic continuation. Never use this tool to prepare a workspace for a future delegated thread; pass workspace to create_nested_thread instead. After calling, do not edit the new worktree during the current turn; finish so T3 can restart in the bound workspace and continue automatically.",
     inputSchema: {
       type: "object",
       properties: {
@@ -869,7 +957,7 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
   {
     name: "create_nested_thread",
     description:
-      "Create and start a helper thread nested under the current T3 thread. Uses the authenticated current thread identity and flavor-scoped CLI automatically; do not use terminal-based `t3 chat new` for delegation.",
+      "Create and start a helper thread nested under the current T3 thread. When the child needs an isolated checkout, pass workspace here so T3 creates and binds the child before its first turn without moving the parent. Always call this tool before any child workspace operation; do not use terminal-based `t3 chat new` for delegation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -882,6 +970,19 @@ const ALL_TOOLS: ReadonlyArray<McpTool> = [
           description: "Any model slug available through the authenticated Copilot provider.",
         },
         reasoning: { type: "string", enum: ["low", "medium", "high", "xhigh"] },
+        workspace: {
+          type: "object",
+          description:
+            "Optional isolated checkout created and bound to the child before its first turn.",
+          properties: {
+            mode: { type: "string", enum: ["isolated"] },
+            branch: { type: "string" },
+            path: { type: "string", description: "Absolute path for the child worktree." },
+            baseRef: { type: "string", description: "Optional branch or ref to start from." },
+          },
+          required: ["mode", "branch", "path"],
+          additionalProperties: false,
+        },
       },
       required: ["project", "title", "prompt", "model"],
     },

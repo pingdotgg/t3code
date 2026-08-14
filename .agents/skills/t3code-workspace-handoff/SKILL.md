@@ -9,6 +9,8 @@ Use T3's workspace tools instead of mutating Git worktrees directly.
 
 ## Choose the operation
 
+- If the user wants work delegated to a new thread, call `create_nested_thread` first and pass its
+  optional `workspace` input. Never move the current thread to prepare the child's checkout.
 - Stay in the current workspace when isolation is unnecessary.
 - Use `create_isolated_workspace` for a new worktree and new local branch.
 - Use `switch_workspace` when the desired worktree already exists.

@@ -96,6 +96,12 @@ describe("buildCopilotAcpSpawnInput", () => {
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`git worktree remove` is allowed");
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`create_isolated_workspace`");
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`switch_workspace`");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain(
+        "call `create_nested_thread` before any workspace operation",
+      );
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain(
+        "Never call them to prepare a workspace for a future delegated thread",
+      );
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`associate_pull_request`");
     }).pipe(Effect.provide(NodeServices.layer)),
   );

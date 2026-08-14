@@ -62,6 +62,7 @@ export class CliLiveTargetError extends Schema.TaggedErrorClass<CliLiveTargetErr
 export class CliRpcError extends Schema.TaggedErrorClass<CliRpcError>()("CliRpcError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Unknown),
+  definitiveCommandRejection: Schema.optional(Schema.Boolean),
 }) {}
 
 export const isDefinitiveCommandRejectionResponse = (body: string): boolean => {
@@ -88,6 +89,8 @@ const decodeDispatchResult = HttpClientResponse.schemaBodyJson(DispatchResult);
 const decodeWsToken = HttpClientResponse.schemaBodyJson(AuthWebSocketTokenResult);
 const makeWsRpcClient = RpcClient.make(WsRpcGroup);
 const isCliRpcError = Schema.is(CliRpcError);
+export const isDefinitiveCommandRejectionError = (error: unknown): boolean =>
+  isCliRpcError(error) && error.definitiveCommandRejection === true;
 const isCliLiveTargetError = Schema.is(CliLiveTargetError);
 const isCliPayloadError = Schema.is(CliPayloadError);
 
@@ -349,11 +352,13 @@ const dispatchCommand = (
         if (response.status < 200 || response.status >= 300) {
           const responseBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
           const responseDetail = responseBody.trim().slice(0, 1_000);
-          const rejectionMarker = isDefinitiveCommandRejectionResponse(responseBody)
+          const definitiveCommandRejection = isDefinitiveCommandRejectionResponse(responseBody);
+          const rejectionMarker = definitiveCommandRejection
             ? "ORCHESTRATION_COMMAND_REJECTED: "
             : "";
           return yield* new CliRpcError({
             message: `${rejectionMarker}Failed to dispatch orchestration command: HTTP ${response.status}.${responseDetail.length > 0 ? ` ${responseDetail}` : ""}`,
+            definitiveCommandRejection,
           });
         }
         return yield* decodeDispatchResult(response).pipe(
