@@ -27,8 +27,15 @@ $support = Join-Path $env:LOCALAPPDATA 't3-desktop-mcp'
 New-Item -ItemType Directory -Force -Path $support | Out-Null
 
 # Chrome passes no arguments to a host, so the wrapper supplies the mode.
+# Write UTF-8 without BOM: ASCII would corrupt non-ASCII path characters, and
+# PowerShell's "UTF8" encoding inserts a BOM that some hosts mishandle.
 $wrapper = Join-Path $support 'native-host.cmd'
-"@echo off`r`n`"$binary`" native-host" | Set-Content -Path $wrapper -Encoding ASCII
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText(
+  $wrapper,
+  "@echo off`r`n`"$binary`" native-host",
+  $utf8NoBom
+)
 
 $manifestPath = Join-Path $support "$HostName.json"
 $manifest = [ordered]@{
@@ -40,7 +47,6 @@ $manifest = [ordered]@{
 }
 # Chrome rejects native-host manifests with a UTF-8 BOM (PowerShell's UTF8
 # encoding inserts one). Write UTF-8 without BOM explicitly.
-$utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText(
   $manifestPath,
   ($manifest | ConvertTo-Json -Depth 4),
