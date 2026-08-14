@@ -562,11 +562,12 @@ async function loadThemeObject(
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(path);
   const base = await loadThemeObject(zip, includePath, cache, budget, nextAncestors, signal);
+  const hasTokenColors = Array.isArray(base.tokenColors) || Array.isArray(value.tokenColors);
   const tokenColors = [
     ...(Array.isArray(base.tokenColors) ? base.tokenColors : []),
     ...(Array.isArray(value.tokenColors) ? value.tokenColors : []),
   ];
-  const syntax = normalizeThemeTokenColors(tokenColors);
+  const syntax = hasTokenColors ? normalizeThemeTokenColors(tokenColors) : undefined;
   if (tokenColors.length > 0 && !syntax) {
     throw new Error("Theme includes contain too many syntax rules.");
   }

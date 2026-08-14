@@ -79,7 +79,12 @@ function loadDiffPreviewHtml(theme: DiffThemeName): Promise<readonly string[]> {
     promise = preloadPatchFile({
       patch: DIFF_PREVIEW_PATCH,
       options: { diffStyle: "unified", theme },
-    }).then((results) => results.map((result) => result.prerenderedHTML));
+    })
+      .then((results) => results.map((result) => result.prerenderedHTML))
+      .catch((error) => {
+        diffPreviewHtmlByTheme.delete(theme);
+        throw error;
+      });
     diffPreviewHtmlByTheme.set(theme, promise);
   }
   return promise;

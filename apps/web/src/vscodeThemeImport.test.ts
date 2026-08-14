@@ -89,6 +89,12 @@ describe("VS Code theme import", () => {
     expect(theme.syntax?.dark?.tokenColors).toEqual(VSCODE_DARK.tokenColors);
   });
 
+  it("preserves an explicitly empty TextMate rule set", () => {
+    const theme = parseVsCodeThemeFile({ ...VSCODE_DARK, tokenColors: [] });
+
+    expect(theme.syntax?.dark?.tokenColors).toEqual([]);
+  });
+
   it("normalizes compact TextMate colors for Shiki", () => {
     const theme = parseVsCodeThemeFile({
       ...VSCODE_DARK,

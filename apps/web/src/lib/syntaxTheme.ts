@@ -36,10 +36,9 @@ function syntaxThemeName(input: {
 
   const serialized = stableStringify(input);
   const digest = [...sha256(new TextEncoder().encode(serialized))]
-    .slice(0, 12)
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
-  const name = `t3-syntax-${input.appearance}-${digest}`;
+  const name = `t3-syntax-v1-${input.appearance}-${digest}`;
   const names = syntaxThemeNameCache.get(input.syntax) ?? new Map<string, string>();
   names.set(cacheKey, name);
   syntaxThemeNameCache.set(input.syntax, names);
@@ -53,7 +52,7 @@ export function resolveSyntaxThemeName(input: {
   label?: string;
   syntax?: ThemeSyntax;
 }): DiffsThemeNames {
-  if (!input.syntax || input.syntax.tokenColors.length === 0) {
+  if (!input.syntax) {
     return resolveDiffThemeName(input.appearance);
   }
 

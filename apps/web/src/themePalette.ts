@@ -280,7 +280,7 @@ export function normalizeThemeTokenColors(value: unknown): ThemeSyntax | undefin
     const parsed = parseThemeTokenColorRule(rule);
     return parsed ? [parsed] : [];
   });
-  return tokenColors.length > 0 ? { tokenColors } : undefined;
+  return value.length === 0 || tokenColors.length > 0 ? { tokenColors } : undefined;
 }
 
 function parseThemeSyntax(value: unknown): ThemeSyntax | null {
@@ -340,6 +340,21 @@ function parseStoredThemeVariants(
   return Object.keys(variants).length > 0 ? variants : undefined;
 }
 
+function syntaxForAvailableAppearances(
+  syntax: ThemeSyntaxVariants | null | undefined,
+  appearance: ThemeAppearance,
+  variants: ThemeVariants | undefined,
+): ThemeSyntaxVariants | undefined {
+  if (!syntax) return undefined;
+  const availableSyntax = Object.fromEntries(
+    Object.entries(syntax).filter(
+      ([syntaxAppearance]) =>
+        syntaxAppearance === appearance || syntaxAppearance in (variants ?? {}),
+    ),
+  );
+  return Object.keys(availableSyntax).length > 0 ? availableSyntax : undefined;
+}
+
 function parseStoredTheme(value: unknown): ThemeDefinition | null {
   if (!isRecord(value)) return null;
   if (!isThemeId(value.id) || RESERVED_THEME_IDS.has(value.id)) return null;
@@ -348,7 +363,11 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   if (!colors) return null;
   const variants = parseStoredThemeVariants(value.variants, value.appearance);
   if (value.variants !== undefined && variants === null) return null;
-  const syntax = parseThemeSyntaxVariants(value.syntax);
+  const syntax = syntaxForAvailableAppearances(
+    parseThemeSyntaxVariants(value.syntax),
+    value.appearance,
+    variants ?? undefined,
+  );
   const collection = parseThemeCollection(value.collection);
 
   return {
@@ -1976,6 +1995,11 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
         ...variantFallback,
         ...parseThemeColorOverrides(variantColors),
       };
+    }
+  }
+  for (const syntaxAppearance of Object.keys(syntax ?? {})) {
+    if (syntaxAppearance !== appearance && !(syntaxAppearance in variants)) {
+      throw new Error(`Theme syntax for "${syntaxAppearance}" needs a matching palette.`);
     }
   }
 

@@ -391,10 +391,10 @@ export default function DiffPanel({
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
     () =>
-      getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`, {
+      getRenderablePatch(selectedPatch, `diff-panel:${syntaxThemeName}`, {
         compactPartialHunkOffsets: selectedTurnId === null,
       }),
-    [resolvedTheme, selectedPatch, selectedTurnId],
+    [selectedPatch, selectedTurnId, syntaxThemeName],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {

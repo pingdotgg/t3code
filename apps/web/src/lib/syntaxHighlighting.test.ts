@@ -25,6 +25,20 @@ it("caches the recovered text highlighter for unsupported languages", async () =
 
   expect(second).toBe(first);
   expect(getSharedHighlighter).toHaveBeenCalledTimes(2);
+  expect(getSharedHighlighter).toHaveBeenLastCalledWith(
+    expect.objectContaining({ langs: ["text"], themes: ["pierre-dark"] }),
+  );
+});
+
+it("evicts rejected text highlighters so initialization can retry", async () => {
+  getSharedHighlighter.mockRejectedValue(new Error("initialization failed"));
+
+  const first = getSyntaxHighlighterPromise("text", "t3-syntax-retry");
+  await expect(first).rejects.toThrow("initialization failed");
+  const second = getSyntaxHighlighterPromise("text", "t3-syntax-retry");
+
+  expect(second).not.toBe(first);
+  await expect(second).rejects.toThrow("initialization failed");
 });
 
 it("loads and caches each custom syntax theme independently", async () => {

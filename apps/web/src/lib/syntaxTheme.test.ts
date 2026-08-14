@@ -44,10 +44,10 @@ describe("syntax theme resolution", () => {
       syntax,
     };
     const first = resolveSyntaxThemeName(input);
-    const second = resolveSyntaxThemeName(input);
+    const second = resolveSyntaxThemeName({ ...input, label: "Renamed" });
 
     expect(first).toBe(second);
-    expect(first).toMatch(/^t3-syntax-dark-/);
+    expect(first).toMatch(/^t3-syntax-v1-dark-[\da-f]{64}$/);
     expect(registerCustomTheme).toHaveBeenCalledTimes(1);
 
     const loader = registerCustomTheme.mock
@@ -61,6 +61,20 @@ describe("syntax theme resolution", () => {
       settings: syntax.tokenColors,
       tokenColors: syntax.tokenColors,
     });
+  });
+
+  it("registers empty token colors instead of restoring Pierre rules", async () => {
+    const name = resolveSyntaxThemeName({
+      appearance: "light",
+      background: "#faf4ed",
+      foreground: "#575279",
+      syntax: { tokenColors: [] },
+    });
+
+    expect(name).toMatch(/^t3-syntax-v1-light-[\da-f]{64}$/);
+    const loader = registerCustomTheme.mock
+      .calls[0]![1] as () => Promise<ThemeRegistrationResolved>;
+    await expect(loader()).resolves.toMatchObject({ settings: [], tokenColors: [] });
   });
 
   it("uses a new registration when token colors change", () => {

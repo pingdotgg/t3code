@@ -327,6 +327,31 @@ describe("theme files", () => {
     expect(parsed.syntax).toEqual(theme.syntax);
   });
 
+  it("preserves empty syntax rules without restoring the Pierre fallback", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Empty syntax",
+      appearance: "light",
+      colors: { accent: "#8b5cf6" },
+      syntax: { light: { tokenColors: [] } },
+    });
+
+    expect(theme.syntax?.light?.tokenColors).toEqual([]);
+    expect(parseThemeFile(JSON.parse(serializeThemeFile(theme))).syntax).toEqual(theme.syntax);
+  });
+
+  it("rejects syntax without a matching appearance palette", () => {
+    expect(() =>
+      parseThemeFile({
+        version: THEME_FILE_VERSION,
+        name: "Mismatched syntax",
+        appearance: "light",
+        colors: { accent: "#8b5cf6" },
+        syntax: { dark: { tokenColors: [] } },
+      }),
+    ).toThrow('Theme syntax for "dark" needs a matching palette.');
+  });
+
   it("rejects unbounded or unsafe syntax rules", () => {
     const parseWithTokenColors = (tokenColors: unknown[]) =>
       parseThemeFile({
@@ -597,6 +622,48 @@ describe("theme files", () => {
       { id: "github-light" },
     ]);
     expect(getCustomThemes()[1]).not.toHaveProperty("collection");
+
+    vi.unstubAllGlobals();
+    invalidateCustomThemes();
+  });
+
+  it("keeps stored palettes while dropping malformed or unavailable syntax", () => {
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) =>
+          key === CUSTOM_THEMES_STORAGE_KEY
+            ? JSON.stringify([
+                {
+                  id: "malformed-syntax",
+                  label: "Malformed syntax",
+                  appearance: "light",
+                  colors: { canvas: "#ffffff" },
+                  syntax: {
+                    light: {
+                      tokenColors: [
+                        { scope: "keyword", settings: { foreground: "var(--unsafe)" } },
+                      ],
+                    },
+                  },
+                },
+                {
+                  id: "unavailable-syntax",
+                  label: "Unavailable syntax",
+                  appearance: "light",
+                  colors: { canvas: "#ffffff" },
+                  syntax: { dark: { tokenColors: [] } },
+                },
+              ])
+            : null,
+      },
+    });
+
+    invalidateCustomThemes();
+    expect(getCustomThemes()).toMatchObject([
+      { id: "malformed-syntax", appearance: "light" },
+      { id: "unavailable-syntax", appearance: "light" },
+    ]);
+    expect(getCustomThemes().every((theme) => theme.syntax === undefined)).toBe(true);
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
