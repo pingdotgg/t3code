@@ -19,6 +19,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
+  changeRequestAutoSettles,
   effectiveSettled,
   effectiveSnoozed,
   threadWokeAt,
@@ -657,6 +658,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // False on environments whose server predates thread.settle/unsettle:
   // the lifecycle affordances hide entirely rather than fail on click.
   settlementSupported: boolean;
+  autoSettleOnMerge: boolean;
   // Same contract for thread.snooze/unsnooze.
   snoozeSupported: boolean;
   // Renders the pin glyph. Pinned cards keep the full settle/snooze quick
@@ -765,17 +767,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
   // reading a completion-triggered wake, clicking the pill, sending a
-  // message, settling, archiving — or finishing the work outright (merged
-  // or closed PR). Timer wakes survive a mere visit. An unparseable visit
-  // timestamp counts as never-visited — corrupt local data must not eat
-  // the wake signal.
+  // message, settling, archiving, or a change request state that settles the
+  // thread. Timer wakes survive a mere visit. An unparseable visit timestamp
+  // counts as never-visited, so corrupt local data cannot eat the wake signal.
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
     wokeAtDate !== null &&
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
-    prState !== "merged" &&
-    prState !== "closed";
+    !changeRequestAutoSettles(prState, props.autoSettleOnMerge);
   // In-flight rows (working, or waiting on approval/input) fade as a whole:
   // there is nothing for the user to do yet, so prominence is reserved for
   // rows that need a human — done (unread), read-but-unsettled, failed, and
@@ -851,8 +851,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state) : undefined;
-  // Report the PR state up: the parent partitions rows with effectiveSettled,
-  // and a merged/closed PR auto-settles a thread — data only rows have.
+  // Report the PR state so the parent can apply the configured merge rule
+  // and the always-on close rule during partitioning.
   useEffect(() => {
     onChangeRequestState(threadKey, prState);
   }, [onChangeRequestState, prState, threadKey]);
@@ -1211,11 +1211,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     aria-label="Wake thread now"
                     onClick={handleUnsnoozeClick}
                     className={cn(
-                      "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                      "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
                       isWoke && "group-hover/sidebar-row:static",
                     )}
                   >
-                    <AlarmClockOffIcon className="size-3" />
+                    <AlarmClockOffIcon className="mb-px size-3" />
                   </button>
                 )
               ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
@@ -1599,6 +1599,7 @@ export default function Sidebar() {
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
+  const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -1801,8 +1802,8 @@ export default function Sidebar() {
   // fresh clock whenever it recomputes.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
 
-  // PR states stream in per-row (rows own the VCS subscriptions); a merged or
-  // closed PR auto-settles its thread on the next partition.
+  // PR states stream in per-row. The next partition applies the configured
+  // merge rule and the always-on close rule.
   const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
     ReadonlyMap<string, "open" | "closed" | "merged">
   >(() => new Map());
@@ -1953,7 +1954,12 @@ export default function Sidebar() {
         pinned.push(thread);
       } else if (
         supportsSettlement &&
-        effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+        effectiveSettled(thread, {
+          now,
+          autoSettleAfterDays,
+          autoSettleOnMerge,
+          changeRequestState,
+        })
       ) {
         settled.push(thread);
       } else {
@@ -1988,6 +1994,7 @@ export default function Sidebar() {
     };
   }, [
     autoSettleAfterDays,
+    autoSettleOnMerge,
     changeRequestStateByKey,
     nowMinute,
     scopedProjectKeys,
@@ -3532,6 +3539,7 @@ export default function Sidebar() {
                           serverConfigs.get(thread.environmentId)?.environment.capabilities
                             .threadSettlement === true
                         }
+                        autoSettleOnMerge={autoSettleOnMerge}
                         snoozeSupported={
                           serverConfigs.get(thread.environmentId)?.environment.capabilities
                             .threadSnooze === true
