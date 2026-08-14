@@ -848,21 +848,19 @@ impl Desktop for LinuxDesktop {
         // window and synthetic clicks would land in the wrong place. Invoking
         // the action sidesteps coordinates entirely, and matches what the
         // Windows backend does with the Invoke pattern.
-        if let Point::Element(id) = target
-            && click_count == 1
-        {
+        if let Point::Element(id) = target {
             let reference = self.element(id)?;
-            if self.invoke(&reference).is_ok() {
+            if click_count <= 1 && self.invoke(&reference).is_ok() {
                 return Ok(format!("pressed e{id}"));
             }
             // Native Wayland clients report window-relative geometry; XTEST
             // clicks would land on the wrong place. Refuse the coordinate
-            // fallback instead of silently clicking elsewhere.
+            // fallback for every click count, not just singles.
             if crate::capture::on_wayland() {
                 return Err(DesktopError::new(format!(
-                    "e{id} has no AT-SPI action and this is a Wayland session — coordinate \
-                     clicks are unsafe here. Use screenshot + click with absolute screen \
-                     coordinates, or activate an X11/XWayland client"
+                    "e{id} cannot be clicked via coordinates on Wayland — AT-SPI bounds are \
+                     window-relative. Use screenshot + absolute screen coordinates, invoke a \
+                     single-click action, or activate an X11/XWayland client"
                 )));
             }
         }
@@ -924,18 +922,29 @@ impl Desktop for LinuxDesktop {
             if self.insert_text(&reference, text, false).is_ok() {
                 return Ok(format!("typed {} characters into e{id}", text.chars().count()));
             }
-            // Fall back to focusing and using the keyboard — require a successful
-            // focus or coordinate click so we don't type into the wrong window.
+            // Fall back to focusing and using the keyboard. Only click when
+            // focus failed — clicking a focused field can move the caret.
+            // On Wayland, never use coordinate clicks (bounds are window-relative).
             let focused = self.grab_focus(&reference).unwrap_or(false);
-            let clicked = if let Ok((x, y)) = self.center(&reference) {
-                self.move_pointer(x, y).and_then(|()| self.tap_button(BUTTON_LEFT)).is_ok()
-            } else {
-                false
-            };
-            if !focused && !clicked {
-                return Err(DesktopError::new(format!(
-                    "could not focus e{id} for typing — click the field first, or use set_value"
-                )));
+            if !focused {
+                if crate::capture::on_wayland() {
+                    return Err(DesktopError::new(format!(
+                        "could not focus e{id} for typing on Wayland — click the field first, \
+                         or use set_value (coordinate fallback is unsafe here)"
+                    )));
+                }
+                let clicked = if let Ok((x, y)) = self.center(&reference) {
+                    self.move_pointer(x, y)
+                        .and_then(|()| self.tap_button(BUTTON_LEFT))
+                        .is_ok()
+                } else {
+                    false
+                };
+                if !clicked {
+                    return Err(DesktopError::new(format!(
+                        "could not focus e{id} for typing — click the field first, or use set_value"
+                    )));
+                }
             }
         }
         // Force a round trip so the server has drained anything queued, then let
@@ -976,13 +985,21 @@ impl Desktop for LinuxDesktop {
 
         let mut held = Vec::new();
         for modifier in modifiers {
-            let Some(symbol) = modifier_keysym(modifier) else {
-                // `fn` has no X11 equivalent; dropping it beats refusing the chord.
+            // `fn` has no X11 equivalent; ignore only that known no-op.
+            if modifier.eq_ignore_ascii_case("fn") {
                 continue;
-            };
-            if let Some((code, _)) = self.keycode_for(symbol)? {
-                held.push(code);
             }
+            let symbol = modifier_keysym(modifier).ok_or_else(|| {
+                DesktopError::new(format!(
+                    "unsupported modifier '{modifier}' — use ctrl, shift, alt, or cmd"
+                ))
+            })?;
+            let (code, _) = self.keycode_for(symbol)?.ok_or_else(|| {
+                DesktopError::new(format!(
+                    "modifier '{modifier}' is not available on the current keyboard layout"
+                ))
+            })?;
+            held.push(code);
         }
         if needs_shift && let Some((shift, _)) = self.keycode_for(0xffe1)? {
             held.push(shift);
@@ -1112,5 +1129,30 @@ mod tests {
     #[test]
     fn truncation_collapses_newlines() {
         assert_eq!(truncate("a\nb", 10), "a b");
+    }
+
+    #[test]
+    fn match_application_prefers_pid_and_rejects_ambiguous_names() {
+        let a = (
+            ElementRef {
+                bus: ":1.1".into(),
+                path: "/a".into(),
+            },
+            "Terminal".into(),
+            11,
+        );
+        let b = (
+            ElementRef {
+                bus: ":1.2".into(),
+                path: "/b".into(),
+            },
+            "Terminal".into(),
+            22,
+        );
+        let apps = vec![a.clone(), b.clone()];
+        let by_pid = match_application(&apps, "22").expect("pid");
+        assert_eq!(by_pid.2, 22);
+        let err = match_application(&apps, "Terminal").unwrap_err().0;
+        assert!(err.contains("pids"), "{err}");
     }
 }
