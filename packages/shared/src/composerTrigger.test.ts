@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeComposerFileLink, serializeComposerMentionPath } from "./composerTrigger.ts";
+import {
+  parseStandaloneComposerSlashCommand,
+  serializeComposerFileLink,
+  serializeComposerMentionPath,
+} from "./composerTrigger.ts";
 
 describe("serializeComposerMentionPath", () => {
   it("keeps simple mention paths unquoted", () => {
@@ -39,5 +43,12 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",
     );
+  });
+});
+
+describe("parseStandaloneComposerSlashCommand", () => {
+  it("parses standalone feedback commands without swallowing message text", () => {
+    expect(parseStandaloneComposerSlashCommand(" /FeEdBaCk ")).toBe("feedback");
+    expect(parseStandaloneComposerSlashCommand("/feedback here are details")).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 name: Feature request
 description: Propose a scoped improvement or new capability.
-title: "[Feature]: "
+title: "Feature: "
 labels:
   - enhancement
   - needs-triage

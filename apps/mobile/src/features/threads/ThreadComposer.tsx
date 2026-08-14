@@ -9,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   detectComposerTrigger,
+  parseStandaloneComposerSlashCommand,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
@@ -65,6 +66,7 @@ import {
 } from "@t3tools/shared/searchRanking";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
+import { openMobileFeedbackIssueForm } from "../../lib/feedback";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import {
   type ExistingThreadSettingsRouteSession,
@@ -389,6 +391,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       const q = composerTrigger.query.toLowerCase();
       const allBuiltIn = [
         {
+          id: "cmd:feedback",
+          type: "slash-command" as const,
+          command: "feedback",
+          label: "/feedback",
+          description: "Report a bug or suggest a feature",
+        },
+        {
           id: "cmd:model",
           type: "slash-command" as const,
           command: "model",
@@ -535,6 +544,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
     try {
+      if (parseStandaloneComposerSlashCommand(draftMessage) === "feedback") {
+        if (await openMobileFeedbackIssueForm()) {
+          onChangeDraftMessage("");
+        }
+        return;
+      }
       await onSendMessage();
       // Sending a prompt starts agent work: arm the lock-screen card while the
       // app is foregrounded and the activity token can be registered. Armed
@@ -549,6 +564,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
   }, [
     onSendMessage,
+    draftMessage,
+    onChangeDraftMessage,
     props.environmentId,
     props.environmentLabel,
     props.selectedThread.id,
@@ -571,6 +588,19 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         setComposerSelection({ start: result.cursor, end: result.cursor });
         onChangeDraftMessage(result.text);
         onUpdateInteractionMode(item.command);
+        return;
+      }
+
+      if (item.type === "slash-command" && item.command === "feedback") {
+        const result = replaceTextRange(
+          draftMessage,
+          composerTrigger.rangeStart,
+          composerTrigger.rangeEnd,
+          "",
+        );
+        setComposerSelection({ start: result.cursor, end: result.cursor });
+        onChangeDraftMessage(result.text);
+        void openMobileFeedbackIssueForm();
         return;
       }
 

@@ -1,6 +1,6 @@
 name: Bug report
 description: Report broken behavior, regressions, crashes, or reliability issues.
-title: "[Bug]: "
+title: "Bug: "
 labels:
   - bug
   - needs-triage

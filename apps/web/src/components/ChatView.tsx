@@ -74,6 +74,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
+import { openFeedbackIssueForm } from "../lib/feedback";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
@@ -4989,18 +4990,40 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
-    // Legacy plan mode: /plan and /default only act when the beta flag is on;
-    // otherwise they send as plain text like any other message.
-    const standaloneSlashCommand =
+    const parsedStandaloneSlashCommand = parseStandaloneComposerSlashCommand(trimmed);
+    // Legacy plan mode: /plan and /default only act when the beta flag is on
+    // and the draft has no attachments or context. /feedback is always a
+    // client command and leaves those draft items in place.
+    const canApplyLegacyModeCommand =
       settings.planModeEnabled &&
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0
-        ? parseStandaloneComposerSlashCommand(trimmed)
+      composerReviewComments.length === 0;
+    const standaloneSlashCommand =
+      parsedStandaloneSlashCommand === "feedback" || canApplyLegacyModeCommand
+        ? parsedStandaloneSlashCommand
         : null;
     if (standaloneSlashCommand) {
+      if (standaloneSlashCommand === "feedback") {
+        try {
+          await openFeedbackIssueForm();
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not open feedback form",
+              description: error instanceof Error ? error.message : "Opening the form failed.",
+            }),
+          );
+          return;
+        }
+        promptRef.current = "";
+        setComposerDraftPrompt(composerDraftTarget, "");
+        composerRef.current?.resetCursorState();
+        return;
+      }
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
