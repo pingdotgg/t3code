@@ -153,8 +153,10 @@ impl LinuxDesktop {
         }
 
         // Append at the caret rather than the start, so repeated calls read the
-        // way a person typing would expect.
-        let caret = self.caret_offset(element).unwrap_or(0);
+        // way a person typing would expect. Propagate caret errors so callers
+        // (type_text) can fall back to focused keystrokes instead of inserting
+        // at offset 0.
+        let caret = self.caret_offset(element)?;
         match block_on(editable.insert_text(caret, text, text.chars().count() as i32)) {
             Ok(true) => Ok(()),
             Ok(false) => Err(DesktopError::new("the element refused the text")),
@@ -555,24 +557,40 @@ fn truncate(value: &str, limit: usize) -> String {
     cleaned.chars().take(limit).collect::<String>() + "…"
 }
 
-/// Prefer an exact AT-SPI name match; otherwise require a unique substring hit
-/// so `Code` cannot silently activate `Visual Studio Code`.
+/// Prefer PID when the query is numeric, then an exact AT-SPI name match;
+/// otherwise require a unique substring hit so `Code` cannot silently activate
+/// `Visual Studio Code`. Duplicate exact names must be selected by pid.
 fn match_application(
     applications: &[(ElementRef, String, u32)],
     query: &str,
 ) -> Result<(ElementRef, String, u32)> {
-    let lowered = query.to_lowercase();
+    let trimmed = query.trim();
+    if let Ok(pid) = trimmed.parse::<u32>() {
+        if let Some(hit) = applications.iter().find(|(_, _, app_pid)| *app_pid == pid) {
+            return Ok(hit.clone());
+        }
+        return Err(DesktopError::new(format!(
+            "no app on the accessibility bus has pid {pid}"
+        )));
+    }
+
+    let lowered = trimmed.to_lowercase();
     let exact: Vec<_> = applications
         .iter()
-        .filter(|(_, name, _)| name.eq_ignore_ascii_case(query))
+        .filter(|(_, name, _)| name.eq_ignore_ascii_case(trimmed))
         .cloned()
         .collect();
     if exact.len() == 1 {
         return Ok(exact[0].clone());
     }
     if exact.len() > 1 {
+        let pids = exact
+            .iter()
+            .map(|(_, _, pid)| pid.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(DesktopError::new(format!(
-            "'{query}' matches several apps exactly — pass a more specific name from list_apps"
+            "'{trimmed}' matches several apps exactly (pids {pids}) — pass a pid from list_apps"
         )));
     }
     let partial: Vec<_> = applications
@@ -583,17 +601,23 @@ fn match_application(
     match partial.as_slice() {
         [single] => Ok(single.clone()),
         [] => Err(DesktopError::new(format!(
-            "no app on the accessibility bus matches '{query}'. Toolkits only publish a tree \
+            "no app on the accessibility bus matches '{trimmed}'. Toolkits only publish a tree \
              when accessibility is enabled — try screenshot plus coordinate clicks instead"
         ))),
         many => {
-            let names = many
+            let detail = many
                 .iter()
-                .map(|(_, name, _)| name.as_str())
+                .map(|(_, name, pid)| {
+                    if *pid == 0 {
+                        name.clone()
+                    } else {
+                        format!("{name} (pid {pid})")
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             Err(DesktopError::new(format!(
-                "'{query}' matches several apps: {names} — pass an exact name from list_apps"
+                "'{trimmed}' matches several apps: {detail} — pass an exact name or pid from list_apps"
             )))
         }
     }
@@ -702,14 +726,14 @@ impl Desktop for LinuxDesktop {
         // Window enumeration needs EWMH properties that minimal window managers
         // (WSLg included) do not publish, and the accessibility bus is the more
         // relevant view here anyway: an app absent from it cannot be driven.
-        let focused = apps::list_apps()
-            .ok()
-            .and_then(|apps| {
-                apps.into_iter()
-                    .find(|app| app.frontmost)
-                    .map(|app| app.name.to_lowercase())
-            })
+        let focused = apps::list_apps().ok().and_then(|apps| {
+            apps.into_iter().find(|app| app.frontmost)
+        });
+        let focused_name = focused
+            .as_ref()
+            .map(|app| app.name.to_lowercase())
             .unwrap_or_default();
+        let focused_pid = focused.map(|app| app.pid);
         if let Ok(applications) = self.applications()
             && !applications.is_empty()
         {
@@ -717,9 +741,12 @@ impl Desktop for LinuxDesktop {
                 .into_iter()
                 .filter(|(_, name, _)| !name.is_empty())
                 .map(|(_, name, pid)| {
-                    // Exact name match only — substring FRONTMOST labels (Code vs
-                    // Visual Studio Code, Chrome vs Chromium) mislead the agent.
-                    let is_frontmost = !focused.is_empty() && name.to_lowercase() == focused;
+                    // Prefer pid equality — xcap and AT-SPI names often disagree
+                    // (`Code` vs `Visual Studio Code`). Exact name is the fallback.
+                    let is_frontmost = focused_pid
+                        .filter(|front| *front != 0 && *front == pid)
+                        .is_some()
+                        || (!focused_name.is_empty() && name.to_lowercase() == focused_name);
                     let marker = if is_frontmost { "  FRONTMOST" } else { "" };
                     if pid == 0 {
                         format!("{name}  [a11y]{marker}")
@@ -827,6 +854,16 @@ impl Desktop for LinuxDesktop {
             let reference = self.element(id)?;
             if self.invoke(&reference).is_ok() {
                 return Ok(format!("pressed e{id}"));
+            }
+            // Native Wayland clients report window-relative geometry; XTEST
+            // clicks would land on the wrong place. Refuse the coordinate
+            // fallback instead of silently clicking elsewhere.
+            if crate::capture::on_wayland() {
+                return Err(DesktopError::new(format!(
+                    "e{id} has no AT-SPI action and this is a Wayland session — coordinate \
+                     clicks are unsafe here. Use screenshot + click with absolute screen \
+                     coordinates, or activate an X11/XWayland client"
+                )));
             }
         }
 
