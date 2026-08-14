@@ -2,10 +2,24 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
 const SAFE_EXTERNAL_PROTOCOLS = new Set(["http:", "https:"]);
+
+export class ElectronShellOpenPathError extends Schema.TaggedErrorClass<ElectronShellOpenPathError>()(
+  "ElectronShellOpenPathError",
+  {
+    path: Schema.String,
+    reason: Schema.Literals(["shell-rejected", "open-refused"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Unable to open ${JSON.stringify(this.path)} in its default application`;
+  }
+}
 
 export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   if (typeof rawUrl !== "string") {
@@ -24,6 +38,7 @@ export class ElectronShell extends Context.Service<
   ElectronShell,
   {
     readonly openExternal: (rawUrl: unknown) => Effect.Effect<boolean>;
+    readonly openPath: (path: string) => Effect.Effect<void, ElectronShellOpenPathError>;
     readonly copyText: (text: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
@@ -40,6 +55,23 @@ export const make = ElectronShell.of({
           ),
         ),
     }),
+  openPath: Effect.fn("desktop.electron.shell.openPath")(function* (path) {
+    const result = yield* Effect.tryPromise({
+      try: () => Electron.shell.openPath(path),
+      catch: (cause) =>
+        new ElectronShellOpenPathError({
+          path,
+          reason: "shell-rejected",
+          cause,
+        }),
+    });
+    if (result !== "") {
+      return yield* new ElectronShellOpenPathError({
+        path,
+        reason: "open-refused",
+      });
+    }
+  }),
   copyText: (text) =>
     Effect.sync(() => {
       Electron.clipboard.writeText(text);
