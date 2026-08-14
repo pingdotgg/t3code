@@ -590,6 +590,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('aria-label="Expand current tool calls"');
     expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain("Running vp");
     expect(markup).not.toContain("lucide-chevron-right");
     expect(markup).not.toContain("hover:bg-accent/20");
   });

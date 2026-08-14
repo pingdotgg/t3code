@@ -722,24 +722,75 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
-  it("omits tool started entries and keeps completed entries", () => {
+  it("shows a command from its start event while it is still running", () => {
     const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "tool-complete",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        summary: "Tool call complete",
-        kind: "tool.completed",
-      }),
       makeActivity({
         id: "tool-start",
         createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Tool call",
+        summary: "Command run started",
         kind: "tool.started",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-1",
+          status: "inProgress",
+          title: "Command run",
+          detail: "Bash: vp test run",
+          data: {
+            toolName: "Bash",
+            input: { command: "vp test run" },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry).toMatchObject({
+      id: "tool-start",
+      command: "vp test run",
+      toolCallId: "call-1",
+      toolLifecycleStatus: "inProgress",
+      sourceActivityKind: "tool.started",
+    });
+  });
+
+  it("retains the start command when the matching completion omits it", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-start",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        summary: "Command run started",
+        kind: "tool.started",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-1",
+          status: "inProgress",
+          title: "Command run",
+          data: { input: { command: "vp test run" } },
+        },
+      }),
+      makeActivity({
+        id: "tool-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "Command run",
+        kind: "tool.completed",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "call-1",
+          status: "completed",
+          title: "Command run",
+        },
       }),
     ];
 
     const entries = deriveWorkLogEntries(activities);
-    expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "tool-complete",
+      command: "vp test run",
+      toolCallId: "call-1",
+      toolLifecycleStatus: "completed",
+      sourceActivityKind: "tool.completed",
+    });
   });
 
   it("omits task.started but shows task.progress and task.completed", () => {
