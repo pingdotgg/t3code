@@ -2,6 +2,8 @@ import {
   DesktopHostTelemetryMessage,
   type DesktopHostTelemetrySnapshot,
   type DesktopTelemetryControlMessage,
+  type DesktopTelemetryRequestDesktopUpdate,
+  type DesktopUpdateStatusReport,
   type HostPowerSnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -65,6 +67,12 @@ export class DesktopTelemetryPublisher extends Context.Service<
       message: DesktopTelemetryControlMessage,
     ) => Effect.Effect<void>;
     readonly removeControlSource: (sourceId: string) => Effect.Effect<void>;
+    /** Sends the report to the attached backend and replays the latest one
+        to backends that attach later (including the one spawned after a
+        relaunch). */
+    readonly publishUpdateReport: (report: DesktopUpdateStatusReport) => Effect.Effect<void>;
+    /** Update requests received over the control channel. Single consumer. */
+    readonly updateRequests: Stream.Stream<DesktopTelemetryRequestDesktopUpdate>;
   }
 >()("@t3tools/desktop/telemetry/DesktopTelemetryPublisher") {}
 
@@ -160,6 +168,9 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const changes = yield* PubSub.sliding<DesktopHostTelemetrySnapshot>(8);
   const sequence = yield* Ref.make(0);
+  const latestUpdateReport = yield* Ref.make(Option.none<DesktopUpdateStatusReport>());
+  const updateReportChanges = yield* PubSub.sliding<DesktopUpdateStatusReport>(16);
+  const updateRequestQueue = yield* Queue.unbounded<DesktopTelemetryRequestDesktopUpdate>();
 
   const offer = (event: PowerEvent): void => {
     Queue.offerUnsafe(powerEvents, event);
@@ -324,6 +335,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
           active: Duration.millis(message.activeIntervalMs),
           idle: Duration.millis(message.idleIntervalMs),
         }).pipe(Effect.andThen(Queue.offer(sampleTriggers, undefined)), Effect.asVoid);
+      case "requestDesktopUpdate":
+        return Queue.offer(updateRequestQueue, message).pipe(Effect.asVoid);
     }
   };
   const removeControlSource: DesktopTelemetryPublisher["Service"]["removeControlSource"] = (
@@ -357,14 +370,35 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       );
     }),
   );
+  const updateReports = Stream.unwrap(
+    Effect.gen(function* () {
+      const subscription = yield* PubSub.subscribe(updateReportChanges);
+      const initial = yield* Ref.get(latestUpdateReport);
+      return Stream.concat(
+        Option.match(initial, {
+          onNone: () => Stream.empty,
+          onSome: Stream.make,
+        }),
+        Stream.fromSubscription(subscription),
+      );
+    }),
+  );
   const encoded = Stream.concat(
     Stream.make({
       version: 1,
       type: "desktopTelemetryHello",
       electronPid: process.pid,
     } as const),
-    snapshots,
+    Stream.merge(snapshots, updateReports),
   ).pipe(Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)));
+
+  const publishUpdateReport: DesktopTelemetryPublisher["Service"]["publishUpdateReport"] = (
+    report,
+  ) =>
+    Ref.set(latestUpdateReport, Option.some(report)).pipe(
+      Effect.andThen(PubSub.publish(updateReportChanges, report)),
+      Effect.asVoid,
+    );
 
   return DesktopTelemetryPublisher.of({
     latest: Ref.get(latest),
@@ -373,6 +407,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     handleControl,
     handleControlForSource,
     removeControlSource,
+    publishUpdateReport,
+    updateRequests: Stream.fromQueue(updateRequestQueue),
   });
 });
 

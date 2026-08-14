@@ -59,6 +59,7 @@ const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
 
 const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   getState: Effect.die("unexpected getState"),
+  subscribe: Effect.die("unexpected subscribe"),
   emitState: Effect.void,
   disabledReason: Effect.succeed(Option.none()),
   configure: Effect.void,

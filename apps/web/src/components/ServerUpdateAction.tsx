@@ -5,6 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -71,15 +72,20 @@ export function ServerUpdateAction({
   environmentId,
   serverLabel,
   selfUpdate,
+  desktopAppUpdate = false,
   targetVersion,
   label = "Update",
 }: {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
   readonly selfUpdate: ServerSelfUpdateCapability | null;
+  /** The desktop app supervising this server accepts remote update
+      requests (capabilities.desktopAppUpdate). */
+  readonly desktopAppUpdate?: boolean;
   readonly targetVersion: string;
   readonly label?: string;
 }) {
+  const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const updateServer = useAtomCommand(serverEnvironment.updateServer, {
     reportFailure: false,
   });
@@ -105,6 +111,21 @@ export function ServerUpdateAction({
     if (pendingUpdateEnvironmentIds.has(environmentId)) {
       return;
     }
+    if (isDesktopAppUpdate) {
+      // No themed host mounted (undefined) means proceed: the click itself
+      // was the request. This is the only confirmation in the flow; the
+      // remote machine installs without asking anyone there.
+      const confirmed =
+        (await requestConfirmDialog(
+          `Update the T3 Code desktop app on ${serverLabel}? It will close and relaunch on that machine.`,
+        )) ?? true;
+      if (!confirmed) {
+        return;
+      }
+    }
+    if (pendingUpdateEnvironmentIds.has(environmentId)) {
+      return;
+    }
     pendingUpdateEnvironmentIds.add(environmentId);
     try {
       const result = await updateServer({
@@ -125,14 +146,16 @@ export function ServerUpdateAction({
       toastManager.add({
         type: "success",
         title: `${serverLabel} updated`,
-        description: `Reconnected on t3@${result.value.targetVersion}.`,
+        description: isDesktopAppUpdate
+          ? `Desktop app relaunched on ${result.value.targetVersion}.`
+          : `Reconnected on t3@${result.value.targetVersion}.`,
       });
     } finally {
       pendingUpdateEnvironmentIds.delete(environmentId);
     }
   };
 
-  if (selfUpdate === "desktop-managed") {
+  if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
     return (
       <span className="text-muted-foreground text-xs">
         Update the desktop app on that machine to update this server.

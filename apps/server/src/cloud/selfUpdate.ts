@@ -15,6 +15,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import * as ServerConfig from "../config.ts";
+import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
@@ -47,6 +48,7 @@ export class ServerSelfUpdate extends Context.Service<
 
 export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const desktopAppUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
   const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
   const runner = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
@@ -65,6 +67,12 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     "cloud.server_self_update.update",
   )(function* (input, reportProgress = () => Effect.void) {
     if (capability === "desktop-managed") {
+      // input.targetVersion is meaningless here: the desktop app's own
+      // update feed decides what it downloads, and the result carries what
+      // it actually got.
+      if (desktopAppUpdate.available) {
+        return yield* desktopAppUpdate.run(reportProgress);
+      }
       return yield* failWith(
         "This server is managed by the T3 Code desktop app on its machine; update the desktop app to update it.",
       );

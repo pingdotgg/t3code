@@ -84,8 +84,14 @@ recorded reason. Older servers without an ID retain version-only reconnect behav
 
 The existing additive RPC and lifecycle schemas remain compatible with older clients. New servers
 advertise remote self-update only when they have valid launcher context and a live IPC channel.
-Desktop-managed servers direct the user to update the desktop app. Other process shapes provide a
-manual command; the old detached foreground respawn path no longer exists.
+Desktop-managed servers advertise `desktopAppUpdate` when the desktop telemetry control fd is
+attached; `server.updateServer` then drives the desktop app's own check, download, and
+quit-and-install over that channel (`apps/server/src/desktopUpdate/DesktopAppUpdate.ts`), and the
+app relaunch brings the server back. The result carries no update ID, so client resume correlation
+relies on the desktop app version equaling the bundled server version (both are bumped together by
+`scripts/update-release-package-versions.ts`). Desktop servers without the capability direct the
+user to update the desktop app locally. Other process shapes provide a manual command; the old
+detached foreground respawn path no longer exists.
 
 ## Source Map
 

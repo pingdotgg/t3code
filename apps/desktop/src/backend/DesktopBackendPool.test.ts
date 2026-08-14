@@ -72,6 +72,8 @@ function makePoolLayer(
           handleControl: () => Effect.void,
           handleControlForSource: () => Effect.void,
           removeControlSource: () => Effect.void,
+          publishUpdateReport: () => Effect.void,
+          updateRequests: Stream.empty,
         }),
         Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
           resolvePrimary: Effect.die("unexpected primary config resolve"),
