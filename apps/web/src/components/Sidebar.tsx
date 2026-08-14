@@ -3130,7 +3130,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
       >
         <button
           type="button"
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left leading-tight outline-none"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 p-0 text-left leading-tight outline-none"
           onClick={() => props.onNavigate(draftId)}
         >
           <span aria-hidden="true" className="size-3.5 shrink-0" />
