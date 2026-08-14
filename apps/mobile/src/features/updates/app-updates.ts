@@ -36,7 +36,11 @@ export interface AppUpdateClient {
 export interface AppUpdateEnvironment {
   /** Asks the user to install the waiting update now; `false` keeps it deferred. */
   readonly confirmInstallNow: () => Promise<boolean>;
-  /** Lands best-effort persisted state (drafts, outbox) before the restart. */
+  /**
+   * Lands persisted state (drafts, outbox) before the restart. Rejects when a
+   * write failed, so a silent restart can hold off instead of dropping the
+   * unsaved in-memory state.
+   */
   readonly flushPendingWrites: () => Promise<void>;
   /**
    * Whether a deferred restart may fire right now: the app must still be
@@ -58,10 +62,16 @@ export interface AppUpdateEnvironment {
 /** Tracks a downloaded update waiting for a safe moment to install. */
 export interface AppUpdateDeferral {
   pendingInstall: boolean;
+  /**
+   * Claimed by whichever restart sequence (deferred backgrounding, foreground
+   * prompt, manual install) starts first, so racing paths cannot tear down
+   * the runtime twice.
+   */
+  installInProgress: boolean;
 }
 
 export function createAppUpdateDeferral(): AppUpdateDeferral {
-  return { pendingInstall: false };
+  return { pendingInstall: false, installInProgress: false };
 }
 
 const appUpdateDeferral = createAppUpdateDeferral();
@@ -138,6 +148,15 @@ export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Pr
 
   if (appUpdateCheckInFlight) {
     await observeAppUpdateCheck(appUpdateCheckInFlight, options);
+    // A background-mode check in flight may have deferred the download this
+    // caller explicitly asked to install; honor the explicit request now.
+    if (options.applyMode === "immediate") {
+      const deferral = options.deferral ?? appUpdateDeferral;
+      if (deferral.pendingInstall) {
+        const environment = options.environment ?? defaultAppUpdateEnvironment;
+        await installPendingAppUpdate(client, environment, deferral, options);
+      }
+    }
     return;
   }
 
@@ -233,6 +252,13 @@ async function performAppUpdateCheck(
   const environment = options.environment ?? defaultAppUpdateEnvironment;
   const deferral = options.deferral ?? appUpdateDeferral;
 
+  // The user explicitly asked to install and a previous check has already
+  // downloaded the update; restart into it without another network round trip.
+  if (options.applyMode === "immediate" && deferral.pendingInstall) {
+    await installPendingAppUpdate(client, environment, deferral, options);
+    return;
+  }
+
   setState("checking");
   const check = await settlePromise(() => client.checkForUpdateAsync());
   if (check._tag === "Failure") {
@@ -263,7 +289,7 @@ async function performAppUpdateCheck(
   // A rollback directive exists to pull a broken bundle; never hold it
   // behind a prompt or a deferred install.
   if (options.applyMode === "immediate" || fetched.value.isRollBackToEmbedded) {
-    await installAppUpdate(client, environment, options);
+    await installAppUpdate(client, environment, deferral, options);
     return;
   }
 
@@ -275,21 +301,47 @@ async function performAppUpdateCheck(
  * Restarting mid-session while native surfaces are mounted is the crashiest
  * moment expo-updates has, so the restart flushes persistence first and, by
  * default, waits for a backgrounding — where nothing is rendering and the
- * teardown is invisible.
+ * teardown is invisible. Returns whether the restart went through (or is
+ * being handled by a concurrent install); `false` means it failed.
  */
 async function installAppUpdate(
   client: AppUpdateClient,
   environment: AppUpdateEnvironment,
+  deferral: AppUpdateDeferral,
   options: AppUpdateCheckOptions,
-): Promise<void> {
+): Promise<boolean> {
+  if (deferral.installInProgress) return true;
+  deferral.installInProgress = true;
   const setState = options.onStateChange ?? (() => {});
   setState("restarting");
-  // Best-effort: a failed flush must not block the restart.
-  await settlePromise(() => environment.flushPendingWrites());
+  const flushed = await settlePromise(() => environment.flushPendingWrites());
+  if (flushed._tag === "Failure") {
+    // The user asked for this restart, so a failed flush is logged but does
+    // not block it.
+    reportUpdateFailure(flushed, "Could not save pending state.", undefined);
+  }
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
     reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", options.onFailure);
     setState("idle");
+    deferral.installInProgress = false;
+    return false;
+  }
+  return true;
+}
+
+/** Restarts into an already-downloaded update; a failed restart releases the deferral. */
+async function installPendingAppUpdate(
+  client: AppUpdateClient,
+  environment: AppUpdateEnvironment,
+  deferral: AppUpdateDeferral,
+  options: AppUpdateCheckOptions,
+): Promise<void> {
+  const installed = await installAppUpdate(client, environment, deferral, options);
+  if (!installed) {
+    // Let later checks re-arm the install; the downloaded update still
+    // applies at the next cold start regardless.
+    deferral.pendingInstall = false;
   }
 }
 
@@ -316,10 +368,13 @@ async function promptDeferredAppUpdateInstall(
   environment: AppUpdateEnvironment,
   deferral: AppUpdateDeferral,
 ): Promise<void> {
-  if (!deferral.pendingInstall) return;
+  if (!deferral.pendingInstall || deferral.installInProgress) return;
   const installNow = await settlePromise(() => environment.confirmInstallNow());
-  if (installNow._tag !== "Success" || !installNow.value || !deferral.pendingInstall) return;
-  await installAppUpdate(client, environment, {});
+  if (installNow._tag !== "Success" || !installNow.value) return;
+  // A backgrounding while the alert was up may have started the deferred
+  // restart already; the stale accept must not start a second one.
+  if (!deferral.pendingInstall || deferral.installInProgress) return;
+  await installPendingAppUpdate(client, environment, deferral, {});
 }
 
 function scheduleDeferredAppUpdateInstall(
@@ -337,15 +392,24 @@ async function applyDeferredAppUpdateInstall(
   environment: AppUpdateEnvironment,
   deferral: AppUpdateDeferral,
 ): Promise<void> {
-  await settlePromise(() => environment.flushPendingWrites());
+  if (!deferral.pendingInstall || deferral.installInProgress) return;
+  deferral.installInProgress = true;
+  const flushed = await settlePromise(() => environment.flushPendingWrites());
   const safe = await settlePromise(() => environment.isSafeToRestartInBackground());
-  if (safe._tag !== "Success" || !safe.value) {
+  if (flushed._tag === "Failure" || safe._tag !== "Success" || !safe.value) {
+    if (flushed._tag === "Failure") {
+      // Nothing is lost yet: keep the state-bearing runtime alive and retry
+      // the flush at the next backgrounding instead of restarting over it.
+      reportUpdateFailure(flushed, "Could not save pending state.", undefined);
+    }
+    deferral.installInProgress = false;
     scheduleDeferredAppUpdateInstall(client, environment, deferral);
     return;
   }
   const reloaded = await settlePromise(() => client.reloadAsync());
   if (reloaded._tag === "Failure") {
     reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", undefined);
+    deferral.installInProgress = false;
     // Let later checks re-arm the install; the downloaded update still
     // applies at the next cold start regardless.
     deferral.pendingInstall = false;
@@ -368,10 +432,16 @@ async function defaultConfirmInstallNow(): Promise<boolean> {
 }
 
 async function defaultFlushPendingWrites(): Promise<void> {
-  await Promise.allSettled([
+  // Attempt every flush before surfacing the first failure, so one broken
+  // store cannot keep the others from landing.
+  const results = await Promise.allSettled([
     import("../../state/use-composer-drafts").then((drafts) => drafts.flushComposerDrafts()),
-    import("../../state/thread-outbox-storage").then((outbox) => outbox.flushThreadOutboxWrites()),
+    import("../../state/thread-outbox").then((outbox) => outbox.flushThreadOutbox()),
   ]);
+  const failed = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failed) throw failed.reason;
 }
 
 async function defaultIsSafeToRestartInBackground(): Promise<boolean> {
@@ -388,6 +458,12 @@ function defaultOnNextBackground(apply: () => void): void {
       subscription.remove();
       apply();
     });
+    // The app may already have backgrounded while this module was loading;
+    // the listener alone would then wait a whole extra foreground cycle.
+    if (AppState.currentState === "background") {
+      subscription.remove();
+      apply();
+    }
   });
 }
 

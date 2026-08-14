@@ -224,6 +224,98 @@ describe("runAppUpdateCheck", () => {
     expect(environment.onForegroundStay).toHaveBeenCalledOnce();
   });
 
+  it("restarts into an already-downloaded update when the user asks to install", async () => {
+    const client = makeUpdateClient();
+    const { environment } = makeUpdateEnvironment();
+    const deferral = createAppUpdateDeferral();
+    deferral.pendingInstall = true;
+
+    await runAppUpdateCheck({ applyMode: "immediate", client, deferral, environment });
+
+    expect(client.checkForUpdateAsync).not.toHaveBeenCalled();
+    expect(client.reloadAsync).toHaveBeenCalledOnce();
+  });
+
+  it("honors an immediate request that joined an in-flight background check", async () => {
+    let resolveCheck!: (result: {
+      readonly isAvailable: boolean;
+      readonly isRollBackToEmbedded: boolean;
+    }) => void;
+    const checkResult = new Promise<{
+      readonly isAvailable: boolean;
+      readonly isRollBackToEmbedded: boolean;
+    }>((resolve) => {
+      resolveCheck = resolve;
+    });
+    const client = makeUpdateClient({
+      checkForUpdateAsync: vi.fn(() => checkResult),
+    });
+    const { environment } = makeUpdateEnvironment();
+    const deferral = createAppUpdateDeferral();
+
+    const backgroundCheck = runAppUpdateCheck({ client, deferral, environment });
+    const manualCheck = runAppUpdateCheck({
+      applyMode: "immediate",
+      client,
+      deferral,
+      environment,
+    });
+
+    resolveCheck({ isAvailable: true, isRollBackToEmbedded: false });
+    await Promise.all([backgroundCheck, manualCheck]);
+
+    // The coalesced background check deferred the download, but the manual
+    // caller explicitly asked to install, so the restart happens anyway.
+    expect(client.checkForUpdateAsync).toHaveBeenCalledOnce();
+    expect(client.reloadAsync).toHaveBeenCalledOnce();
+  });
+
+  it("runs a single restart when the deferred install races the foreground prompt", async () => {
+    const client = makeAvailableUpdateClient();
+    let releaseFlush!: () => void;
+    const blockedFlush = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
+    const flushPendingWrites = vi.fn(async (): Promise<void> => {});
+    const { backgroundCallbacks, environment, foregroundStayCallbacks } = makeUpdateEnvironment({
+      flushPendingWrites,
+    });
+    const deferral = createAppUpdateDeferral();
+
+    await runAppUpdateCheck({ client, deferral, environment });
+    flushPendingWrites.mockReturnValue(blockedFlush);
+
+    // The deferred install starts and blocks on its flush; the foreground
+    // prompt firing in that window must not begin a second restart.
+    backgroundCallbacks[0]!();
+    await vi.waitFor(() => expect(flushPendingWrites).toHaveBeenCalledOnce());
+    foregroundStayCallbacks[0]!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(environment.confirmInstallNow).not.toHaveBeenCalled();
+
+    releaseFlush();
+    await vi.waitFor(() => expect(client.reloadAsync).toHaveBeenCalledOnce());
+  });
+
+  it("holds the deferred restart and re-arms when the pre-restart flush fails", async () => {
+    const reportError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = makeAvailableUpdateClient();
+    const { backgroundCallbacks, environment } = makeUpdateEnvironment({
+      flushPendingWrites: vi.fn(async () => {
+        throw new Error("disk full");
+      }),
+    });
+    const deferral = createAppUpdateDeferral();
+
+    await runAppUpdateCheck({ client, deferral, environment });
+    backgroundCallbacks[0]!();
+
+    await vi.waitFor(() => expect(backgroundCallbacks).toHaveLength(2));
+    expect(client.reloadAsync).not.toHaveBeenCalled();
+    expect(deferral.pendingInstall).toBe(true);
+    reportError.mockRestore();
+  });
+
   it("restarts without prompting when the caller asked for an immediate install", async () => {
     const client = makeAvailableUpdateClient();
     const { environment } = makeUpdateEnvironment();
