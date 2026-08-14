@@ -65,27 +65,32 @@ function configuredUsageInstances(settings: ServerSettings): readonly ProviderIn
  * environment config dirs store transcripts directly under `projects`; only
  * the default installation nests them under `~/.claude/projects`.
  */
-const resolveClaudeInstanceTranscriptDir = Effect.fn(
-  "UsageTranscriptSources.resolveClaudeInstanceTranscriptDir",
+const resolveClaudeInstanceTranscriptDirs = Effect.fn(
+  "UsageTranscriptSources.resolveClaudeInstanceTranscriptDirs",
 )(function* (
   config: ClaudeSettings,
   instance: ProviderInstanceConfig,
   baseEnvironment: NodeJS.ProcessEnv,
+  workspaceCwds: readonly string[],
 ) {
   const path = yield* Path.Path;
   if (config.homePath.trim().length > 0) {
-    return path.join(yield* resolveClaudeHomePath(config), "projects");
+    return [path.join(yield* resolveClaudeHomePath(config), "projects")];
   }
 
   const environment = mergeProviderInstanceEnvironment(instance.environment, baseEnvironment);
   const environmentHome = environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
   if (environmentHome.length > 0) {
     // Environment variables are passed directly to the subprocess and do
-    // not receive shell-style tilde expansion.
-    return path.join(path.resolve(environmentHome), "projects");
+    // not receive shell-style tilde expansion. Relative values resolve from
+    // each workspace cwd used to launch Claude.
+    const configDirs = path.isAbsolute(environmentHome)
+      ? [path.resolve(environmentHome)]
+      : workspaceCwds.map((cwd) => path.resolve(cwd, environmentHome));
+    return configDirs.map((configDir) => path.join(configDir, "projects"));
   }
 
-  return path.join(NodeOS.homedir(), ".claude", "projects");
+  return [path.join(NodeOS.homedir(), ".claude", "projects")];
 });
 
 /**
@@ -119,7 +124,11 @@ const resolveCodexInstanceLayout = Effect.fn("UsageTranscriptSources.resolveCode
 /** Resolve unique transcript roots for every configured Claude/Codex instance. */
 export const resolveUsageTranscriptSources = Effect.fn(
   "UsageTranscriptSources.resolveUsageTranscriptSources",
-)(function* (settings: ServerSettings, baseEnvironment: NodeJS.ProcessEnv = process.env) {
+)(function* (
+  settings: ServerSettings,
+  baseEnvironment: NodeJS.ProcessEnv = process.env,
+  workspaceCwds: readonly string[] = [process.cwd()],
+) {
   const path = yield* Path.Path;
   const sources: UsageTranscriptSource[] = [];
   const seen = new Set<string>();
@@ -135,10 +144,13 @@ export const resolveUsageTranscriptSources = Effect.fn(
     if (instance.driver === CLAUDE_DRIVER) {
       const decoded = decodeClaudeSettings(instance.config ?? {});
       if (Option.isNone(decoded)) continue;
-      append({
-        provider: "claude",
-        dir: yield* resolveClaudeInstanceTranscriptDir(decoded.value, instance, baseEnvironment),
-      });
+      const dirs = yield* resolveClaudeInstanceTranscriptDirs(
+        decoded.value,
+        instance,
+        baseEnvironment,
+        workspaceCwds,
+      );
+      for (const dir of dirs) append({ provider: "claude", dir });
       continue;
     }
 

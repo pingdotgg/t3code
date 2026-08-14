@@ -103,6 +103,35 @@ it.layer(NodeServices.layer)("resolveUsageTranscriptSources", (it) => {
     }),
   );
 
+  it.effect("resolves a relative CLAUDE_CONFIG_DIR from every workspace cwd", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const settings = decodeSettings({
+        providerInstances: {
+          claudeAgent: {
+            driver: "claudeAgent",
+            config: {},
+            environment: [{ name: "CLAUDE_CONFIG_DIR", value: "relative-config" }],
+          },
+          codex: { driver: "codex", config: {} },
+        },
+      });
+
+      const sources = yield* resolveUsageTranscriptSources(settings, {}, [
+        "/tmp/workspace-a",
+        "/tmp/workspace-b",
+      ]);
+
+      assert.deepEqual(
+        sources.filter((source) => source.provider === "claude"),
+        [
+          { provider: "claude", dir: path.resolve("/tmp/workspace-a/relative-config/projects") },
+          { provider: "claude", dir: path.resolve("/tmp/workspace-b/relative-config/projects") },
+        ],
+      );
+    }),
+  );
+
   it.effect("honors per-instance CODEX_HOME when homePath is empty", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

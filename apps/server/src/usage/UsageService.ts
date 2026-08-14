@@ -88,7 +88,10 @@ const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 export class UsageService extends Context.Service<
   UsageService,
   {
-    readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readSummary: (
+      input: UsageSummaryInput,
+      workspaceCwds?: readonly string[],
+    ) => Effect.Effect<UsageSummary, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
 
@@ -184,7 +187,9 @@ export const make = Effect.gen(function* () {
   });
 
   /** Resolves the transcript directory for each provider. */
-  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
+  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
+    workspaceCwds: readonly string[],
+  ) {
     // A settings failure must surface as an error: swallowing it here would
     // present "zero usage from every provider" as a valid answer.
     const settings = yield* settingsService.getSettings.pipe(
@@ -201,7 +206,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    return yield* resolveUsageTranscriptSources(settings);
+    return yield* resolveUsageTranscriptSources(settings, process.env, workspaceCwds);
   });
 
   /**
@@ -269,7 +274,10 @@ export const make = Effect.gen(function* () {
       return records;
     });
 
-  const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
+  const readSummary = Effect.fn("UsageService.readSummary")(function* (
+    input: UsageSummaryInput,
+    workspaceCwds: readonly string[] = [config.cwd],
+  ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -308,7 +316,9 @@ export const make = Effect.gen(function* () {
     const hostId = NodeOS.hostname();
     // The source resolvers ask for Path themselves; satisfy them from the
     // instance we already hold so readSummary stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const dirs = yield* resolveTranscriptDirs(workspaceCwds).pipe(
+      Effect.provideService(Path.Path, path),
+    );
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({

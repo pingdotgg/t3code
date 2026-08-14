@@ -44,6 +44,7 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
+  UsageReadError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -1564,9 +1565,38 @@ const makeWsRpcLayer = (
             },
           ),
         [WS_METHODS.serverGetUsageSummary]: (input) =>
-          observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
-            "rpc.aggregate": "server",
-          }),
+          observeRpcEffect(
+            WS_METHODS.serverGetUsageSummary,
+            Effect.gen(function* () {
+              const [active, archived] = yield* Effect.all(
+                [
+                  projectionSnapshotQuery.getShellSnapshot(),
+                  projectionSnapshotQuery.getArchivedShellSnapshot(),
+                ],
+                { concurrency: "unbounded" },
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new UsageReadError({
+                      reason: "scanFailed",
+                      detail: "Project workspaces could not be read.",
+                      cause,
+                    }),
+                ),
+              );
+              const workspaceCwds = new Set([config.cwd]);
+              for (const snapshot of [active, archived]) {
+                for (const project of snapshot.projects) {
+                  workspaceCwds.add(project.workspaceRoot);
+                }
+                for (const thread of snapshot.threads) {
+                  if (thread.worktreePath !== null) workspaceCwds.add(thread.worktreePath);
+                }
+              }
+              return yield* usage.readSummary(input, [...workspaceCwds]);
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) =>
           observeRpcEffect(WS_METHODS.serverRetryResourceTelemetry, resourceTelemetry.retry, {
             "rpc.aggregate": "server",
