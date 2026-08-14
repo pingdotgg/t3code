@@ -287,11 +287,19 @@ export function ComputerHistorySettings() {
   const exclusionSummary = (() => {
     const appCount = history.apps.length;
     const siteCount = history.websites.length;
-    if (appCount === 0 && siteCount === 0) return "No apps or websites excluded";
+    if (appCount === 0 && siteCount === 0) return "No app or website filters";
+    const describe = (count: number, noun: string, mode: "exclude" | "includeOnly") => {
+      const label = `${count} ${noun}${count === 1 ? "" : "s"}`;
+      return mode === "includeOnly" ? `only ${label}` : `excluding ${label}`;
+    };
     const parts: string[] = [];
-    if (appCount > 0) parts.push(`${appCount} app${appCount === 1 ? "" : "s"}`);
-    if (siteCount > 0) parts.push(`${siteCount} website${siteCount === 1 ? "" : "s"}`);
-    return `Excluding ${parts.join(" · ")}`;
+    if (appCount > 0) {
+      parts.push(describe(appCount, "app", history.appFilterMode));
+    }
+    if (siteCount > 0) {
+      parts.push(describe(siteCount, "website", history.websiteFilterMode));
+    }
+    return parts.join(" · ");
   })();
 
   return (
@@ -504,12 +512,8 @@ export function ComputerHistorySettings() {
         websites={history.websites}
         disabled={!onDesktop}
         onSave={({ apps, websites }) =>
-          patch({
-            apps,
-            websites,
-            appFilterMode: "exclude",
-            websiteFilterMode: "exclude",
-          })
+          // Preserve existing filter modes — Done only edits the lists.
+          patch({ apps, websites })
         }
       />
     </SettingsPageContainer>
