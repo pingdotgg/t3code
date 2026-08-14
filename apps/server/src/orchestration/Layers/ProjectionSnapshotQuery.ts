@@ -169,6 +169,10 @@ const ThreadTurnRangeLookupInput = Schema.Struct({
   beforeAnchorAt: Schema.String,
   beforeTurnKey: Schema.String,
 });
+const ThreadLiveTaskActivityLookupInput = Schema.Struct({
+  threadId: ThreadId,
+  activityIds: Schema.Array(Schema.String),
+});
 const ProjectionProjectLookupRowSchema = ProjectionProjectDbRowSchema;
 const ProjectionThreadIdLookupRowSchema = Schema.Struct({
   threadId: ThreadId,
@@ -1409,6 +1413,34 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listThreadActivityRowsByIds = SqlSchema.findAll({
+    Request: ThreadLiveTaskActivityLookupInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, activityIds }) =>
+      // Drive from the bounded ID list and keep ordering in the caller. An
+      // ORDER BY here makes SQLite prefer the thread/sequence index and scan
+      // the thread's full activity history instead of probing the PK per ID.
+      sql`
+        SELECT
+          activities.activity_id AS "activityId",
+          activities.thread_id AS "threadId",
+          activities.turn_id AS "turnId",
+          activities.tone,
+          activities.kind,
+          activities.summary,
+          activities.payload_json AS "payload",
+          activities.sequence,
+          activities.created_at AS "createdAt"
+        FROM json_each(${JSON.stringify(activityIds)}) AS ids
+        CROSS JOIN projection_thread_activities AS activities
+          ON activities.activity_id = ids.value
+        WHERE activities.thread_id = ${threadId}
+          AND activities.kind IN (
+            'task.started', 'task.progress', 'task.updated', 'task.completed', 'tool.progress'
+          )
+      `,
+  });
+
   const getFullThreadDiffContextRow = SqlSchema.findOneOption({
     Request: FullThreadDiffContextLookupInput,
     Result: ProjectionFullThreadDiffContextRowSchema,
@@ -2494,7 +2526,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     readonly beforeTurnKey: string;
   }
 
-  const getThreadDetailByIdBounded = (threadId: ThreadId, bounds: ThreadDetailBounds | undefined) =>
+  const getThreadDetailByIdBounded = (
+    threadId: ThreadId,
+    bounds: ThreadDetailBounds | undefined,
+    liveTaskActivityIds: ReadonlyArray<string> = [],
+  ) =>
     Effect.gen(function* () {
       const [
         threadRow,
@@ -2533,10 +2569,26 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
-        (bounds === undefined
-          ? listThreadActivityRowsByThread({ threadId })
-          : listThreadActivityRowsByThreadWindow({ threadId, ...bounds })
-        ).pipe(
+        Effect.gen(function* () {
+          const windowRows = yield* bounds === undefined
+            ? listThreadActivityRowsByThread({ threadId })
+            : listThreadActivityRowsByThreadWindow({ threadId, ...bounds });
+          if (bounds === undefined || liveTaskActivityIds.length === 0) {
+            return windowRows;
+          }
+          const anchorRows = yield* listThreadActivityRowsByIds({
+            threadId,
+            activityIds: [...liveTaskActivityIds],
+          });
+          return [
+            ...new Map([...windowRows, ...anchorRows].map((row) => [row.activityId, row])).values(),
+          ].toSorted(
+            (left, right) =>
+              (left.sequence ?? -1) - (right.sequence ?? -1) ||
+              left.createdAt.localeCompare(right.createdAt) ||
+              left.activityId.localeCompare(right.activityId),
+          );
+        }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               "ProjectionSnapshotQuery.getThreadDetailById:listActivities:query",
@@ -2674,6 +2726,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // fan-out group across pages (the cursor continues the same group). Also
   // structurally bounds the window scan via the candidates CTE's LIMIT.
   const THREAD_DETAIL_MAX_RAW_TURNS_PER_PAGE = 150;
+  const THREAD_DETAIL_LIVE_AGENT_ANCHOR_LIMIT = 100;
   // Sentinels for unbounded keyset ends; "~" sorts after any ISO timestamp.
   const ANCHOR_UNBOUNDED = "~";
 
@@ -2744,7 +2797,30 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ? { minAnchorAt: "", minTurnKey: "", beforeAnchorAt: "", beforeTurnKey: "" }
               : undefined;
 
-          const thread = yield* getThreadDetailByIdBounded(threadId, emptyBounds ?? bounds);
+          const liveTaskActivityIds = new Set<string>();
+          if (cursor === null) {
+            for (const agent of threadBackgroundLiveness.getThreadLiveAgentAnchors(
+              String(threadId),
+            )) {
+              if (liveTaskActivityIds.size >= THREAD_DETAIL_LIVE_AGENT_ANCHOR_LIMIT) {
+                break;
+              }
+              for (const activityId of [
+                ...agent.activityIds,
+                `task-progress:${threadId}:${agent.taskId}`,
+                `task-usage:${threadId}:${agent.taskId}`,
+                `tool-progress:${threadId}:${agent.taskId}`,
+              ]) {
+                if (liveTaskActivityIds.size >= THREAD_DETAIL_LIVE_AGENT_ANCHOR_LIMIT) {
+                  break;
+                }
+                liveTaskActivityIds.add(activityId);
+              }
+            }
+          }
+          const thread = yield* getThreadDetailByIdBounded(threadId, emptyBounds ?? bounds, [
+            ...liveTaskActivityIds,
+          ]);
           if (Option.isNone(thread)) {
             return Option.none<OrchestrationThreadDetailSnapshot>();
           }

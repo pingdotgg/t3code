@@ -307,6 +307,77 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 
+  describe("thread.turn-interrupt-requested", () => {
+    const runningThread: OrchestrationThread = {
+      ...baseThread,
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "running",
+        requestedAt: "2026-04-01T05:30:00.000Z",
+        startedAt: "2026-04-01T05:30:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    };
+
+    it("waits for guarded resolution while preserving legacy optimistic interrupts", () => {
+      const interruptEvent = {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread" as const,
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-interrupt-requested" as const,
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-04-01T06:00:00.000Z",
+        },
+      };
+
+      const guarded = applyThreadDetailEvent(runningThread, {
+        ...interruptEvent,
+        payload: {
+          ...interruptEvent.payload,
+          expectedTurnId: TurnId.make("turn-1"),
+          expectedSessionUpdatedAt: "2026-04-01T05:59:59.000Z",
+        },
+      });
+      expect(guarded).toEqual({ kind: "unchanged" });
+
+      const legacy = applyThreadDetailEvent(runningThread, interruptEvent);
+      if (legacy.kind !== "updated") {
+        throw new Error("Expected legacy interrupt to update the thread");
+      }
+      expect(legacy.thread.latestTurn?.state).toBe("interrupted");
+
+      const resolved = applyThreadDetailEvent(runningThread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T06:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("interrupt-resolved"),
+            kind: "provider.turn.interrupt.resolved",
+            tone: "info",
+            summary: "Stop request resolved",
+            payload: { requestId: "cmd-stop", outcome: "interrupted", timelineBypass: true },
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-04-01T06:00:01.000Z",
+          },
+        },
+      });
+      if (resolved.kind !== "updated") {
+        throw new Error("Expected successful interrupt resolution to update the thread");
+      }
+      expect(resolved.thread.latestTurn?.state).toBe("interrupted");
+    });
+  });
+
   describe("thread.message-sent", () => {
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {

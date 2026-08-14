@@ -602,6 +602,23 @@ describe("ProviderRuntimeIngestion", () => {
         )!;
         expect(thread.session?.status).toBe("running");
         expect(thread.session?.activeTurnId).toBe(asTurnId("turn-after-reconnect"));
+        expect(thread.session?.updatedAt).toBe("2026-01-01T00:00:04.000Z");
+
+        harness.emit({
+          type: "session.state.changed",
+          eventId: asEventId("evt-api-retry-heartbeat-midturn"),
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          createdAt: "2026-01-01T00:00:06.000Z",
+          payload: { state: "running", reason: "api_retry:3/10" },
+        });
+        yield* Effect.promise(() => harness.drain());
+        thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        )!;
+        expect(thread.session?.status).toBe("running");
+        expect(thread.session?.activeTurnId).toBe(asTurnId("turn-after-reconnect"));
+        expect(thread.session?.updatedAt).toBe("2026-01-01T00:00:04.000Z");
       }),
   );
 

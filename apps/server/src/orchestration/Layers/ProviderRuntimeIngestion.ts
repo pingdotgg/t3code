@@ -1629,24 +1629,37 @@ const make = Effect.gen(function* () {
             );
           }
 
-          yield* orchestrationEngine.dispatch({
-            type: "thread.session.set",
-            commandId: yield* providerCommandId(event, "thread-session-set"),
+          const nextSession = {
             threadId: thread.id,
-            session: {
+            status,
+            providerName: event.provider,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+            runtimeMode: thread.session?.runtimeMode ?? "full-access",
+            activeTurnId: nextActiveTurnId,
+            lastError,
+            updatedAt: now,
+          } as const;
+          const currentSession = thread.session;
+          const sessionStateUnchanged =
+            currentSession !== null &&
+            currentSession.status === nextSession.status &&
+            currentSession.providerName === nextSession.providerName &&
+            currentSession.providerInstanceId === nextSession.providerInstanceId &&
+            currentSession.runtimeMode === nextSession.runtimeMode &&
+            currentSession.activeTurnId === nextSession.activeTurnId &&
+            currentSession.lastError === nextSession.lastError;
+
+          if (!sessionStateUnchanged) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.session.set",
+              commandId: yield* providerCommandId(event, "thread-session-set"),
               threadId: thread.id,
-              status,
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: nextActiveTurnId,
-              lastError,
-              updatedAt: now,
-            },
-            createdAt: now,
-          });
+              session: nextSession,
+              createdAt: now,
+            });
+          }
         }
       }
 
@@ -1988,6 +2001,7 @@ const make = Effect.gen(function* () {
             taskType: payload.taskType,
             status: payload.status,
             agentId: payload.agentId,
+            activityId: String(event.eventId),
             kind:
               event.type === "task.started"
                 ? "started"

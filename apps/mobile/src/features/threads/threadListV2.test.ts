@@ -150,6 +150,55 @@ describe("resolveThreadListV2Status", () => {
       "ready",
     );
   });
+
+  it("stays working after the parent settles while background children run", () => {
+    const parentSettled = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      backgroundLiveness: "working",
+      session: {
+        threadId: ThreadId.make("t"),
+        status: "ready",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: NOW,
+      },
+    });
+
+    expect(resolveThreadListV2Status(parentSettled)).toBe("working");
+    expect(resolveThreadListV2Status({ ...parentSettled, backgroundLiveness: "monitoring" })).toBe(
+      "monitoring",
+    );
+    expect(resolveThreadListV2Status({ ...parentSettled, backgroundLiveness: null })).toBe("ready");
+  });
+
+  it("suppresses stale liveness after stopped and interrupted sessions", () => {
+    for (const status of ["stopped", "interrupted"] as const) {
+      const threadId = ThreadId.make(`thread-${status}`);
+      expect(
+        resolveThreadListV2Status(
+          makeThread({
+            id: threadId,
+            title: status,
+            backgroundLiveness: "working",
+            session: {
+              threadId,
+              status,
+              providerName: "Codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: NOW,
+            },
+          }),
+        ),
+      ).toBe("ready");
+    }
+  });
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
@@ -525,6 +574,68 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items.map((item) => item.isLast)).toEqual([false, false, true]);
     expect(layout.settledCount).toBe(2);
     expect(layout.settledShelfHeaderIndex).toBe(1);
+  });
+
+  it("honors an explicit settle while background monitoring remains live", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("monitoring"),
+          title: "Monitoring",
+          backgroundLiveness: "monitoring",
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["monitoring", "slim"],
+    ]);
+    expect(layout.settledCount).toBe(1);
+  });
+
+  it("does not let stale liveness keep stopped or interrupted threads active", () => {
+    const threads = (["stopped", "interrupted"] as const).map((status, index) => {
+      const threadId = ThreadId.make(status);
+      const updatedAt = `2026-05-0${index + 1}T00:00:00.000Z`;
+      return makeThread({
+        id: threadId,
+        title: status,
+        backgroundLiveness: "monitoring",
+        createdAt: "2026-05-01T00:00:00.000Z",
+        updatedAt,
+        session: {
+          threadId,
+          status,
+          providerName: "Codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt,
+        },
+      });
+    });
+    const layout = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      changeRequestStateByKey: new Map<string, "merged">([
+        [`${environmentId}:stopped`, "merged"],
+        [`${environmentId}:interrupted`, "merged"],
+      ]),
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([
+      ["interrupted", "slim"],
+      ["stopped", "slim"],
+    ]);
+    expect(layout.settledCount).toBe(2);
   });
 
   it("collapses settled threads to a counted shelf header", () => {

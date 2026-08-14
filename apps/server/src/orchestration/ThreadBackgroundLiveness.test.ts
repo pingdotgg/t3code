@@ -147,6 +147,158 @@ describe("ThreadBackgroundLiveness", () => {
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
 
+  it("retains only bounded indexed anchors for live agents and clears them on settle", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-live-anchors";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+      activityId: "activity-start",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: "subagent",
+      status: "waiting",
+      kind: "updated",
+      activityId: "activity-update-old",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: "subagent",
+      status: "running",
+      kind: "updated",
+      activityId: "activity-update-latest",
+    });
+
+    expect([...liveness.getThreadLiveAgentIds(threadId)]).toEqual(["a1"]);
+    expect([...liveness.getThreadLiveAgentActivityIds(threadId)].toSorted()).toEqual([
+      "activity-start",
+      "activity-update-latest",
+    ]);
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: undefined,
+      status: "completed",
+      kind: "completed",
+      activityId: "activity-completed",
+    });
+    expect(liveness.getThreadLiveAgentIds(threadId).size).toBe(0);
+    expect(liveness.getThreadLiveAgentActivityIds(threadId).size).toBe(0);
+  });
+
+  it("ignores status-less progress after completion until a new start", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-terminal-usage";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: "subagent",
+      status: "completed",
+      kind: "completed",
+    });
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: undefined,
+      status: undefined,
+      kind: "progress",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
+
+  it("does not resurrect a completed task from trailing running progress", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-terminal-trailing-progress";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: "subagent",
+      status: "completed",
+      kind: "completed",
+    });
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "codex-child",
+      taskType: undefined,
+      status: "running",
+      kind: "progress",
+    });
+
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  });
+
+  it("expires terminal tombstones using the injected clock", () => {
+    let nowMs = 1_000;
+    const liveness = ThreadBackgroundLiveness.make(() => nowMs);
+    const threadId = "t-terminal-expiry";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "expired-child",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "expired-child",
+      taskType: "subagent",
+      status: "completed",
+      kind: "completed",
+    });
+
+    nowMs += 60 * 60 * 1_000;
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "expired-child",
+      taskType: undefined,
+      status: "running",
+      kind: "progress",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    nowMs += 2 * 60 * 60 * 1_000;
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "expired-child",
+      taskType: undefined,
+      status: "running",
+      kind: "progress",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
+
   it("plan tasks are inert; clear removes everything; instances are isolated", () => {
     const a = ThreadBackgroundLiveness.make();
     const b = ThreadBackgroundLiveness.make();

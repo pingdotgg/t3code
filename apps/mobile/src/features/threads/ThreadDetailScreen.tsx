@@ -29,9 +29,11 @@ import {
 } from "react";
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import {
+  Alert,
   AppState,
   Keyboard,
   Platform,
+  Pressable,
   useColorScheme,
   useWindowDimensions,
   View,
@@ -54,7 +56,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ControlPill";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
+import { AppText as Text } from "../../components/AppText";
 import type { StatusTone } from "../../components/StatusPill";
+import { cn } from "../../lib/cn";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
@@ -67,6 +71,7 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
+import { backgroundWorkStopConfirmation } from "./backgroundWorkStop";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,
@@ -79,6 +84,7 @@ import {
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import { resolveThreadBackgroundLiveness } from "./threadPresentation";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -115,6 +121,7 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  readonly stopThreadInFlight: boolean;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
@@ -248,6 +255,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       setKeyboardStateSuspect(false);
     }
   }, []);
+  const confirmStopBackgroundWork = useCallback(() => {
+    if (props.stopThreadInFlight) {
+      return;
+    }
+    const confirmation = backgroundWorkStopConfirmation(props.onStopThread);
+    Alert.alert(confirmation.title, confirmation.message, [...confirmation.actions]);
+  }, [props.onStopThread, props.stopThreadInFlight]);
   const windowHeight = useWindowDimensions().height;
   const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + IOS_NAV_BAR_HEIGHT;
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -540,6 +554,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
   const isDarkMode = useColorScheme() === "dark";
+  const activeThreadBusy =
+    props.selectedThread.session?.status === "running" ||
+    props.selectedThread.session?.status === "starting";
+  const backgroundLiveness = activeThreadBusy
+    ? null
+    : resolveThreadBackgroundLiveness(props.selectedThread);
 
   const handleFeedTouchStart = useCallback((event: GestureResponderEvent) => {
     feedTouchStartRef.current = {
@@ -624,6 +644,41 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               list's bottom inset, so any padding above the pill/composer
               pushes the resting content floor up by the same amount. */}
           <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+            {backgroundLiveness ? (
+              <View
+                accessibilityLabel={
+                  backgroundLiveness === "working"
+                    ? "Background work running"
+                    : "Monitoring in the background"
+                }
+                className="w-full self-center px-4 pb-1.5"
+                style={{ maxWidth: contentMaxWidth }}
+              >
+                <View className="min-h-7 flex-row items-center gap-2 px-1">
+                  <View className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+                  <Text className="min-w-0 flex-1 font-t3-medium text-xs text-foreground-muted">
+                    {backgroundLiveness === "working"
+                      ? "Background work running"
+                      : "Monitoring in the background"}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Stop background work"
+                    disabled={props.stopThreadInFlight}
+                    hitSlop={8}
+                    onPress={confirmStopBackgroundWork}
+                    className={cn(
+                      "min-h-7 justify-center px-1.5",
+                      props.stopThreadInFlight && "opacity-50",
+                    )}
+                  >
+                    <Text className="font-t3-bold text-xs text-rose-600 dark:text-rose-400">
+                      Stop
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
             {showScrollToEndButton ? (
               <Animated.View
                 pointerEvents="box-none"
@@ -695,6 +750,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       collapsed={userInputCollapsed}
                       onToggleCollapsed={handleToggleUserInputCollapsed}
                       onStopThread={props.onStopThread}
+                      stopThreadDisabled={props.stopThreadInFlight}
                       cardProgress={userInputCardProgress}
                       cardCoverage={userInputCardCoverage}
                       onInputFocusChange={handleOwnedInputFocusChange}
@@ -734,6 +790,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onNativePasteImages={props.onNativePasteImages}
                 onRemoveDraftImage={props.onRemoveDraftImage}
                 onStopThread={props.onStopThread}
+                stopThreadDisabled={props.stopThreadInFlight}
                 onSendMessage={handleSendMessage}
                 onReconnectEnvironment={props.onReconnectEnvironment}
                 onUpdateModelSelection={props.onUpdateThreadModelSelection}

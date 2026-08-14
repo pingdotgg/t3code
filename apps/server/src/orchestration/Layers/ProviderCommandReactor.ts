@@ -34,6 +34,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -308,6 +309,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const receiptBus = yield* RuntimeReceiptBus;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -339,6 +341,7 @@ const make = Effect.gen(function* () {
     readonly turnId: TurnId | null;
     readonly createdAt: string;
     readonly requestId?: string;
+    readonly reason?: "work-changed";
   }) =>
     Effect.all({
       commandId: serverCommandId("provider-failure-activity"),
@@ -357,6 +360,41 @@ const make = Effect.gen(function* () {
             payload: {
               detail: input.detail,
               ...(input.requestId ? { requestId: input.requestId } : {}),
+              ...(input.reason ? { reason: input.reason } : {}),
+            },
+            turnId: input.turnId,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        }),
+      ),
+    );
+
+  const appendProviderInterruptResolutionActivity = (input: {
+    readonly threadId: ThreadId;
+    readonly requestId: CommandId;
+    readonly outcome: "interrupted" | "work-changed" | "no-session" | "interrupt-failed";
+    readonly turnId: TurnId | null;
+    readonly createdAt: string;
+  }) =>
+    Effect.all({
+      commandId: serverCommandId("provider-interrupt-resolution-activity"),
+      eventId: serverEventId(),
+    }).pipe(
+      Effect.flatMap(({ commandId, eventId }) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: eventId,
+            tone: "info",
+            kind: "provider.turn.interrupt.resolved",
+            summary: "Stop request resolved",
+            payload: {
+              requestId: input.requestId,
+              outcome: input.outcome,
+              timelineBypass: true,
             },
             turnId: input.turnId,
             createdAt: input.createdAt,
@@ -1176,24 +1214,115 @@ const make = Effect.gen(function* () {
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
   ) {
+    const hasGuard =
+      event.payload.expectedTurnId !== undefined ||
+      event.payload.expectedSessionUpdatedAt !== undefined;
+
+    // Preserve the legacy session-scoped interrupt path exactly. Web omits
+    // guards, so it keeps the same provider call and failure activity bytes.
+    if (!hasGuard) {
+      const thread = yield* resolveThread(event.payload.threadId);
+      if (!thread) {
+        return;
+      }
+      const hasSession = thread.session && thread.session.status !== "stopped";
+      if (!hasSession) {
+        return yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.interrupt.failed",
+          summary: "Provider turn interrupt failed",
+          detail: "No active provider session is bound to this thread.",
+          turnId: event.payload.turnId ?? null,
+          createdAt: event.payload.createdAt,
+        });
+      }
+
+      // Orchestration turn ids are not provider turn ids, so interrupt by session.
+      yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+      return;
+    }
+
+    const decidedGuard = event.payload.guardDecision;
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
       return;
     }
+    const actualTurnId =
+      thread.session !== null ? thread.session.activeTurnId : (decidedGuard?.actualTurnId ?? null);
+    const publishOutcome = (
+      outcome: "interrupted" | "work-changed" | "no-session" | "interrupt-failed",
+    ) =>
+      Effect.gen(function* () {
+        if (event.commandId !== null) {
+          yield* appendProviderInterruptResolutionActivity({
+            threadId: event.payload.threadId,
+            requestId: event.commandId,
+            outcome,
+            turnId: actualTurnId,
+            createdAt: event.payload.createdAt,
+          });
+        }
+        yield* receiptBus.publish({
+          type: "provider.turn.interrupt.resolved",
+          threadId: event.payload.threadId,
+          commandId: event.commandId,
+          outcome,
+          ...(event.payload.expectedTurnId !== undefined
+            ? { expectedTurnId: event.payload.expectedTurnId }
+            : {}),
+          actualTurnId,
+          createdAt: event.payload.createdAt,
+        });
+      });
+    const turnChanged =
+      event.payload.expectedTurnId !== undefined && event.payload.expectedTurnId !== actualTurnId;
+    const sessionChanged =
+      event.payload.expectedSessionUpdatedAt !== undefined &&
+      event.payload.expectedSessionUpdatedAt !== thread.session?.updatedAt;
     const hasSession = thread.session && thread.session.status !== "stopped";
     if (!hasSession) {
-      return yield* appendProviderFailureActivity({
+      yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
         summary: "Provider turn interrupt failed",
         detail: "No active provider session is bound to this thread.",
         turnId: event.payload.turnId ?? null,
         createdAt: event.payload.createdAt,
+        ...(event.commandId !== null ? { requestId: event.commandId } : {}),
       });
+      return yield* publishOutcome("no-session");
+    }
+    if (decidedGuard?.outcome === "work-changed" || turnChanged || sessionChanged) {
+      yield* appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.interrupt.failed",
+        summary: "Work already changed",
+        detail:
+          "The provider session changed after Stop was requested. The newer work was left running.",
+        turnId: actualTurnId,
+        createdAt: event.payload.createdAt,
+        ...(event.commandId !== null ? { requestId: event.commandId } : {}),
+        reason: "work-changed",
+      });
+      return yield* publishOutcome("work-changed");
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    yield* providerService.interruptTurn({ threadId: event.payload.threadId }).pipe(
+      Effect.matchCauseEffect({
+        onFailure: (cause) =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.turn.interrupt.failed",
+            summary: "Provider turn interrupt failed",
+            detail: Cause.pretty(cause),
+            turnId: actualTurnId,
+            createdAt: event.payload.createdAt,
+            ...(event.commandId !== null ? { requestId: event.commandId } : {}),
+          }).pipe(Effect.flatMap(() => publishOutcome("interrupt-failed"))),
+        onSuccess: () => publishOutcome("interrupted"),
+      }),
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

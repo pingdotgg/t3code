@@ -31,6 +31,7 @@ import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
+import { ThreadAgentDetailSheet, ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
 import { HomeRouteScreen } from "./features/home/HomeRouteScreen";
@@ -488,6 +489,22 @@ export const RootStack = createNativeStackNavigator({
       screen: ReviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/review`,
       options: SOLID_HEADER_OPTIONS,
+    }),
+    ThreadAgents: createNativeStackScreen({
+      screen: ThreadAgentsSheet,
+      linking: `${THREAD_LINKING_PREFIX}/agents`,
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        title: "Agents",
+      },
+    }),
+    ThreadAgentDetail: createNativeStackScreen({
+      screen: ThreadAgentDetailSheet,
+      linking: `${THREAD_LINKING_PREFIX}/agents/:agentId`,
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        title: "Agent",
+      },
     }),
     ThreadReviewComment: createNativeStackScreen({
       screen: ReviewCommentComposerSheet,

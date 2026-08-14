@@ -16,6 +16,7 @@ import {
   buildThreadFeed,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
+  memoizedFoldSubagentActivities,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type ThreadFeedActivity,
@@ -629,7 +630,7 @@ describe("buildThreadFeed", () => {
 });
 
 describe("quiet timeline: nested agents", () => {
-  it("keeps a nested agent's terminal row but hides its background work", () => {
+  it("summarizes a nested agent but hides its background work", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-nested"),
       projectId: ProjectId.make("project-1"),
@@ -643,8 +644,7 @@ describe("quiet timeline: nested agents", () => {
           createdAt: "2026-04-01T00:00:02.000Z",
           payload: { taskId: "sh-1", agentId: "owner", agentKind: "background" },
         }),
-        // A nested AGENT's completion: mobile has no Agents sheet, so this
-        // terminal row is the only signal it ever finished.
+        // A nested AGENT's completion joins the spawn summary and Agents sheet.
         makeActivity({
           id: EventId.make("nested-done"),
           kind: "task.completed",
@@ -659,7 +659,456 @@ describe("quiet timeline: nested agents", () => {
     const ids = feed.flatMap((entry) =>
       entry.type === "activity-group" ? entry.activities.map((row) => row.id) : [],
     );
-    expect(ids).toContain("nested-done");
+    expect(ids).toContain("agent-spawn:direct:task:n-1");
     expect(ids).not.toContain("shell-done");
+  });
+});
+
+function workLogActivities(thread: OrchestrationThread): ReadonlyArray<ThreadFeedActivity> {
+  return buildThreadFeed(thread).flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  );
+}
+
+describe("subagent spawn batches", () => {
+  const turnOne = TurnId.make("turn-spawn-1");
+  const turnTwo = TurnId.make("turn-spawn-2");
+
+  function taskActivity(
+    id: string,
+    taskId: string,
+    sequence: number,
+    options: {
+      readonly kind?: "task.started" | "task.progress" | "task.updated" | "task.completed";
+      readonly status?: string;
+      readonly taskType?: "local_agent" | "local_workflow";
+      readonly parentAgentId?: string;
+      readonly turnId?: TurnId;
+    } = {},
+  ): OrchestrationThreadActivity {
+    return makeActivity({
+      id: EventId.make(id),
+      kind: options.kind ?? "task.started",
+      summary: options.kind ?? "task.started",
+      createdAt: `2026-04-01T00:00:${String(sequence).padStart(2, "0")}.000Z`,
+      turnId: options.turnId ?? turnOne,
+      sequence,
+      payload: {
+        taskId,
+        taskType: options.taskType ?? "local_agent",
+        agentKind: "agent",
+        ...(options.parentAgentId ? { parentAgentId: options.parentAgentId } : {}),
+        ...(options.status ? { status: options.status } : {}),
+      },
+    });
+  }
+
+  function spawnThread(
+    id: string,
+    activities: ReadonlyArray<OrchestrationThreadActivity>,
+    latestTurn: OrchestrationThread["latestTurn"] = null,
+  ): OrchestrationThread {
+    const threadId = ThreadId.make(id);
+    return makeThread({
+      id: threadId,
+      projectId: ProjectId.make("project-1"),
+      title: id,
+      latestTurn,
+      activities,
+      session: {
+        threadId,
+        status: "ready",
+        providerName: "Codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+    });
+  }
+
+  function toolActivity(id: string, sequence: number): OrchestrationThreadActivity {
+    return makeActivity({
+      id: EventId.make(id),
+      kind: "tool.completed",
+      tone: "tool",
+      summary: id,
+      createdAt: `2026-04-01T00:00:0${sequence}.000Z`,
+      turnId: turnOne,
+      sequence,
+      payload: { itemType: "command_execution", status: "completed" },
+    });
+  }
+
+  it("keeps one stable row while a started/progress/completed batch settles", () => {
+    const activities = [
+      taskActivity("agent-1-start", "agent-1", 1),
+      taskActivity("agent-2-start", "agent-2", 2),
+      taskActivity("agent-1-progress", "agent-1", 3, {
+        kind: "task.progress",
+        status: "running",
+      }),
+      taskActivity("agent-2-complete", "agent-2", 4, {
+        kind: "task.completed",
+        status: "completed",
+      }),
+    ];
+    const runningThread = spawnThread("thread-spawn-running", activities);
+    const runningRow = workLogActivities(runningThread)[0];
+
+    expect(workLogActivities(runningThread)).toHaveLength(1);
+    expect(runningRow).toMatchObject({
+      id: "agent-spawn:direct:turn-spawn-1",
+      summary: "Kicked off 2 subagents · 1 working",
+      icon: "agent",
+      canExpand: false,
+    });
+
+    const settledThread = spawnThread("thread-spawn-settled", [
+      ...activities,
+      taskActivity("agent-1-complete", "agent-1", 5, {
+        kind: "task.completed",
+        status: "completed",
+      }),
+    ]);
+    const settledRow = workLogActivities(settledThread)[0];
+
+    expect(settledRow).toMatchObject({
+      id: runningRow?.id,
+      createdAt: runningRow?.createdAt,
+      summary: "Ran 2 subagents · completed",
+    });
+  });
+
+  it("keeps separate spawn turns as separate batches", () => {
+    const thread = spawnThread("thread-spawn-batches", [
+      taskActivity("batch-1-start", "batch-1-agent", 1),
+      taskActivity("batch-1-complete", "batch-1-agent", 2, {
+        kind: "task.completed",
+        status: "completed",
+      }),
+      taskActivity("batch-2-start", "batch-2-agent", 3, {
+        turnId: turnTwo,
+      }),
+    ]);
+
+    expect(workLogActivities(thread).map((row) => [row.id, row.summary])).toEqual([
+      ["agent-spawn:direct:turn-spawn-1", "Ran 1 subagent · completed"],
+      ["agent-spawn:direct:turn-spawn-2", "Kicked off 1 subagent · 1 working"],
+    ]);
+  });
+
+  it("reconstructs a mid-flight batch when retained history starts at progress", () => {
+    const thread = spawnThread("thread-spawn-replay", [
+      taskActivity("retained-progress", "retained-agent", 1, {
+        kind: "task.progress",
+        status: "running",
+      }),
+    ]);
+
+    expect(workLogActivities(thread)).toMatchObject([
+      {
+        id: "agent-spawn:direct:turn-spawn-1",
+        summary: "Kicked off 1 subagent · 1 working",
+      },
+    ]);
+  });
+
+  it("uses the fold batch when a background start is followed by marker-less progress", () => {
+    const thread = spawnThread("thread-spawn-late-agent", [
+      makeActivity({
+        id: EventId.make("background-start"),
+        kind: "task.started",
+        summary: "task.started",
+        createdAt: "2026-04-01T00:00:01.000Z",
+        turnId: turnOne,
+        sequence: 1,
+        payload: { taskId: "late-agent", agentKind: "background" },
+      }),
+      makeActivity({
+        id: EventId.make("marker-less-progress"),
+        kind: "task.progress",
+        summary: "task.progress",
+        createdAt: "2026-04-01T00:00:02.000Z",
+        turnId: turnTwo,
+        sequence: 2,
+        payload: { taskId: "late-agent", agentKind: "agent", status: "running" },
+      }),
+    ]);
+
+    expect(workLogActivities(thread)).toMatchObject([
+      {
+        id: "agent-spawn:direct:turn-spawn-2",
+        summary: "Kicked off 1 subagent · 1 working",
+      },
+    ]);
+  });
+
+  it("does not let stale progress or a late start reopen a failed agent", () => {
+    const thread = spawnThread("thread-spawn-stale", [
+      taskActivity("stale-complete", "stale-agent", 1, {
+        kind: "task.completed",
+        status: "failed",
+      }),
+      taskActivity("stale-complete-duplicate", "stale-agent", 2, {
+        kind: "task.completed",
+        status: "failed",
+      }),
+      taskActivity("stale-progress", "stale-agent", 3, {
+        kind: "task.progress",
+      }),
+      taskActivity("late-start", "stale-agent", 4),
+    ]);
+
+    expect(workLogActivities(thread)).toMatchObject([
+      {
+        id: "agent-spawn:direct:turn-spawn-1",
+        summary: "Ran 1 subagent · 1 failed",
+      },
+    ]);
+  });
+
+  it("reports stopped and idle batch outcomes instead of calling them completed", () => {
+    const thread = spawnThread("thread-spawn-stopped", [
+      taskActivity("interrupted-start", "interrupted-agent", 1),
+      taskActivity("cancelled-start", "cancelled-agent", 2),
+      taskActivity("idle-start", "idle-agent", 3),
+      taskActivity("interrupted-end", "interrupted-agent", 4, {
+        kind: "task.updated",
+        status: "interrupted",
+      }),
+      taskActivity("cancelled-end", "cancelled-agent", 5, {
+        kind: "task.updated",
+        status: "cancelled",
+      }),
+      taskActivity("idle-end", "idle-agent", 6, {
+        kind: "task.updated",
+        status: "idle",
+      }),
+    ]);
+
+    expect(workLogActivities(thread)).toMatchObject([
+      {
+        id: "agent-spawn:direct:turn-spawn-1",
+        summary: "Ran 3 subagents · 2 stopped · 1 idle",
+      },
+    ]);
+  });
+
+  it("keeps 101-child batch labels exact while the visible roster stays capped", () => {
+    const thread = spawnThread(
+      "thread-spawn-101",
+      Array.from({ length: 101 }, (_, index) =>
+        taskActivity(`fanout-${index}`, `fanout-agent-${index}`, index + 1),
+      ),
+    );
+
+    expect(workLogActivities(thread)).toMatchObject([
+      {
+        id: "agent-spawn:direct:turn-spawn-1",
+        summary: "Kicked off 101 subagents · 101 working",
+      },
+    ]);
+  });
+
+  it("keeps a failed workflow coordinator authoritative above the 100-agent cap", () => {
+    const workflowId = "workflow-over-cap";
+    const thread = spawnThread("thread-workflow-over-cap", [
+      taskActivity("workflow-over-cap-start", workflowId, 1, {
+        taskType: "local_workflow",
+      }),
+      taskActivity("workflow-over-cap-failed", workflowId, 2, {
+        kind: "task.completed",
+        status: "failed",
+        taskType: "local_workflow",
+      }),
+      ...Array.from({ length: 101 }, (_, index) =>
+        taskActivity(`workflow-over-cap-member-${index}`, `${workflowId}:wf:${index}`, index + 3, {
+          kind: "task.completed",
+          status: "completed",
+          parentAgentId: workflowId,
+        }),
+      ),
+    ]);
+
+    expect(workLogActivities(thread)).toMatchObject([
+      {
+        id: `agent-spawn:wf:${workflowId}`,
+        summary: "Ran 101 subagents · failed",
+      },
+    ]);
+  });
+
+  it("memoizes folds separately for different roster limits", () => {
+    const activities = [
+      taskActivity("cache-agent-1", "cache-agent-1", 1),
+      taskActivity("cache-agent-2", "cache-agent-2", 2),
+      taskActivity("cache-agent-3", "cache-agent-3", 3),
+    ];
+
+    expect(memoizedFoldSubagentActivities(activities, { rosterLimit: 1 }).agents).toHaveLength(1);
+    expect(memoizedFoldSubagentActivities(activities, { rosterLimit: null }).agents).toHaveLength(
+      3,
+    );
+  });
+
+  it("keeps the spawn row visible while sibling tools fold into Worked for…", () => {
+    const thread = spawnThread(
+      "thread-spawn-visible",
+      [
+        taskActivity("visible-agent-start", "visible-agent", 1),
+        toolActivity("earlier-tool", 2),
+        toolActivity("latest-tool", 3),
+      ],
+      {
+        turnId: turnOne,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:05.000Z",
+        assistantMessageId: null,
+      },
+    );
+
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+    );
+    const activityIds = presented.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((activity) => activity.id) : [],
+    );
+
+    expect(presented.map((entry) => entry.type)).toEqual(["turn-fold", "activity-group"]);
+    expect(activityIds).toEqual(["agent-spawn:direct:turn-spawn-1"]);
+    expect(presented[0]).toMatchObject({ type: "turn-fold", label: "Worked for 4.0s" });
+  });
+
+  it("does not add a turn fold when a settled turn only contains a spawn row", () => {
+    const thread = spawnThread(
+      "thread-spawn-only",
+      [taskActivity("spawn-only-start", "spawn-only-agent", 1)],
+      {
+        turnId: turnOne,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:05.000Z",
+        assistantMessageId: null,
+      },
+    );
+
+    const presented = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+    );
+
+    expect(presented.map((entry) => entry.type)).toEqual(["activity-group"]);
+    expect(presented[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ id: "agent-spawn:direct:turn-spawn-1" }],
+    });
+  });
+
+  it("keeps a workflow live until its coordinator settles", () => {
+    const activities = [
+      taskActivity("workflow-start", "workflow-1", 1, {
+        taskType: "local_workflow",
+      }),
+      taskActivity("workflow-member-complete", "workflow-1:wf:0", 2, {
+        kind: "task.completed",
+        parentAgentId: "workflow-1",
+        status: "completed",
+      }),
+    ];
+
+    expect(workLogActivities(spawnThread("thread-workflow-live", activities))).toMatchObject([
+      {
+        id: "agent-spawn:wf:workflow-1",
+        summary: "Kicked off 1 subagent · working",
+      },
+    ]);
+
+    expect(
+      workLogActivities(
+        spawnThread("thread-workflow-settled", [
+          ...activities,
+          taskActivity("workflow-complete", "workflow-1", 3, {
+            kind: "task.completed",
+            taskType: "local_workflow",
+            status: "completed",
+          }),
+        ]),
+      ),
+    ).toMatchObject([
+      {
+        id: "agent-spawn:wf:workflow-1",
+        summary: "Ran 1 subagent · completed",
+      },
+    ]);
+  });
+
+  it("anchors workflow rows at the coordinator and keeps memberless failures visible", () => {
+    const thread = spawnThread("thread-workflow-anchor", [
+      taskActivity("workflow-start", "workflow-1", 1, {
+        taskType: "local_workflow",
+      }),
+      toolActivity("between-workflows", 2),
+      taskActivity("workflow-member-complete", "workflow-1:wf:0", 3, {
+        kind: "task.completed",
+        parentAgentId: "workflow-1",
+        status: "completed",
+      }),
+      taskActivity("workflow-complete", "workflow-1", 4, {
+        kind: "task.completed",
+        taskType: "local_workflow",
+        status: "completed",
+      }),
+      taskActivity("failed-workflow-start", "workflow-2", 5, {
+        taskType: "local_workflow",
+      }),
+      taskActivity("failed-workflow-end", "workflow-2", 6, {
+        kind: "task.completed",
+        taskType: "local_workflow",
+        status: "failed",
+      }),
+    ]);
+
+    expect(workLogActivities(thread).map((row) => [row.id, row.createdAt, row.summary])).toEqual([
+      ["agent-spawn:wf:workflow-1", "2026-04-01T00:00:01.000Z", "Ran 1 subagent · completed"],
+      ["between-workflows", "2026-04-01T00:00:02.000Z", "Between-workflows"],
+      ["agent-spawn:wf:workflow-2", "2026-04-01T00:00:05.000Z", "Ran workflow · failed"],
+    ]);
+  });
+
+  it("keeps a memberless workflow live without claiming zero subagents", () => {
+    const thread = spawnThread("thread-workflow-memberless", [
+      taskActivity("workflow-start", "workflow-1", 1, {
+        taskType: "local_workflow",
+      }),
+    ]);
+
+    expect(workLogActivities(thread)).toMatchObject([
+      {
+        id: "agent-spawn:wf:workflow-1",
+        summary: "Kicked off workflow · working",
+      },
+    ]);
+  });
+
+  it("does not leave replayed start-only agents working after session death", () => {
+    const thread = {
+      ...spawnThread("thread-dead-session", [taskActivity("orphan-start", "orphan", 1)]),
+      session: null,
+    };
+
+    expect(workLogActivities(thread)).toMatchObject([
+      {
+        id: "agent-spawn:direct:turn-spawn-1",
+        summary: "Ran 1 subagent · 1 stopped",
+      },
+    ]);
   });
 });

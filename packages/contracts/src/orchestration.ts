@@ -867,6 +867,10 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  // Optional compare-and-swap guard. Absent preserves the legacy
+  // session-scoped interrupt; null explicitly expects no active turn.
+  expectedTurnId: Schema.optional(Schema.NullOr(TurnId)),
+  expectedSessionUpdatedAt: Schema.optional(IsoDateTime),
   createdAt: IsoDateTime,
 });
 
@@ -1260,6 +1264,14 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.optional(TurnId),
+  expectedTurnId: Schema.optional(Schema.NullOr(TurnId)),
+  expectedSessionUpdatedAt: Schema.optional(IsoDateTime),
+  guardDecision: Schema.optional(
+    Schema.Struct({
+      outcome: Schema.Literals(["matched", "work-changed"]),
+      actualTurnId: Schema.NullOr(TurnId),
+    }),
+  ),
   createdAt: IsoDateTime,
 });
 

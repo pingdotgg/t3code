@@ -2,6 +2,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadDetailPage,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
@@ -48,6 +49,17 @@ function statusWithoutLiveData(data: Option.Option<OrchestrationThread>): Enviro
  */
 export const INITIAL_THREAD_USER_TURN_LIMIT = 10;
 export const OLDER_THREAD_PAGE_USER_TURN_LIMIT = 20;
+
+function compareCanonicalActivities(
+  left: OrchestrationThreadActivity,
+  right: OrchestrationThreadActivity,
+): number {
+  return (
+    (left.sequence ?? -1) - (right.sequence ?? -1) ||
+    left.createdAt.localeCompare(right.createdAt) ||
+    left.id.localeCompare(right.id)
+  );
+}
 
 function pageStateFromSnapshot(
   page: OrchestrationThreadDetailPage | undefined,
@@ -435,7 +447,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         // windowed collections gain rows from the older page.
         ...loaded,
         messages: mergeById(older.messages, loaded.messages),
-        activities: mergeById(older.activities, loaded.activities),
+        activities: mergeById(older.activities, loaded.activities).toSorted(
+          compareCanonicalActivities,
+        ),
         proposedPlans: mergeById(older.proposedPlans, loaded.proposedPlans),
         checkpoints: [
           ...older.checkpoints.filter((row) => !seenCheckpoints.has(row.turnId)),

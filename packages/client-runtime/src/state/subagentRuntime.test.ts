@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import {
+  TurnId,
+  classifyTaskAgentKind,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
+  foldSubagentActivitiesWithBatchCounts,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
   isAgentAttributedToolActivity,
@@ -256,6 +261,7 @@ describe("foldSubagentActivities", () => {
     // Consecutive identical summaries dedupe (truncation makes them equal).
     const summaries = agent.recentActivity.map((entry) => entry.summary);
     expect(new Set(summaries).size).toBe(summaries.length);
+    expect(agent.recentActivityTruncated).toBe(false);
   });
 
   it("plan tasks are not agents", () => {
@@ -467,6 +473,58 @@ describe("deriveAgentPanelModel", () => {
     expect(ids).toHaveLength(100);
     expect(ids.slice(0, 3)).toEqual(["capped-0", "capped-2", "capped-3"]);
     expect(ids.at(-1)).toBe("capped-100");
+  });
+
+  it("parameterizes the roster cap while preserving the 100-row web default", () => {
+    const turnId = TurnId.make("turn-fanout-101");
+    const starts = Array.from({ length: 101 }, (_, index) => ({
+      ...activity("task.started", { taskId: `fanout-${index}`, title: `Agent ${index}` }),
+      turnId,
+    }));
+
+    const detailed = foldSubagentActivitiesWithBatchCounts(starts);
+    const uncapped = foldSubagentActivitiesWithBatchCounts(starts, { rosterLimit: null });
+    const webRoster = foldSubagentActivities(starts);
+
+    expect(detailed.batchCounts.get(`direct:${turnId}`)).toMatchObject({
+      totalCount: 101,
+      workingCount: 101,
+    });
+    expect(detailed.agentTaskIds).toHaveLength(101);
+    expect(detailed.agents).toHaveLength(100);
+    expect(uncapped.agents).toHaveLength(101);
+    expect(uncapped.agents.length).toBe(uncapped.batchCounts.get(`direct:${turnId}`)?.totalCount);
+    expect(webRoster).toEqual(detailed.agents);
+  });
+
+  it("keeps an uncapped 150-member workflow roster consistent with its batch counts", () => {
+    const workflowId = "workflow-fanout";
+    const rows = [
+      activity("task.started", {
+        taskId: workflowId,
+        taskType: "local_workflow",
+        workflowName: "Large audit",
+      }),
+      ...Array.from({ length: 150 }, (_, index) =>
+        activity("task.progress", {
+          taskId: `${workflowId}:wf:${index}`,
+          parentAgentId: workflowId,
+          agentKind: "agent",
+          agentIndex: index,
+          status: "running",
+        }),
+      ),
+    ];
+
+    const defaultFold = foldSubagentActivitiesWithBatchCounts(rows);
+    const uncapped = foldSubagentActivitiesWithBatchCounts(rows, { rosterLimit: null });
+    const batchCount = uncapped.batchCounts.get(`wf:${workflowId}`);
+    const workflowMembers = uncapped.agents.filter((agent) => agent.parentAgentId === workflowId);
+
+    expect(defaultFold.agents).toHaveLength(100);
+    expect(uncapped.agents).toHaveLength(151);
+    expect(batchCount).toMatchObject({ totalCount: 150, workingCount: 150 });
+    expect(workflowMembers).toHaveLength(batchCount?.totalCount ?? 0);
   });
 
   it("a phase with only pending members never reads as running", () => {

@@ -35,11 +35,13 @@ import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
   OrchestrationProjectionPipelineLive.pipe(
     Layer.provideMerge(OrchestrationEventStoreLive),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
@@ -53,6 +55,139 @@ const exists = (filePath: string) =>
   });
 
 const BaseTestLayer = makeProjectionPipelinePrefixedTestLayer("t3-projection-pipeline-test-");
+
+const RevertLivenessTestLayer = Layer.mergeAll(
+  OrchestrationProjectionPipelineLive,
+  OrchestrationProjectionSnapshotQueryLive,
+).pipe(
+  Layer.provideMerge(OrchestrationEventStoreLive),
+  Layer.provideMerge(ThreadBackgroundLiveness.layer),
+  Layer.provide(ThreadPlanProgress.layer),
+  Layer.provide(RepositoryIdentityResolver.layer),
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-projection-revert-liveness-test-" }),
+  ),
+  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+it.layer(RevertLivenessTestLayer)("OrchestrationProjectionPipeline revert liveness", (it) => {
+  it.effect("preserves surviving live-task liveness while pruning reverted tasks", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-revert-liveness");
+      const sql = yield* SqlClient.SqlClient;
+      const eventStore = yield* OrchestrationEventStore;
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at
+        ) VALUES (
+          'project-revert-liveness', 'Revert liveness', '/tmp/project-revert-liveness', '[]',
+          '2026-08-14T12:00:00.000Z', '2026-08-14T12:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          latest_turn_id, pending_approval_count, pending_user_input_count,
+          has_actionable_proposed_plan, created_at, updated_at, deleted_at
+        ) VALUES (
+          ${threadId}, 'project-revert-liveness', 'Revert liveness thread',
+          '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+          'turn-remove', 0, 0, 0,
+          '2026-08-14T12:00:00.000Z', '2026-08-14T12:00:02.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id, turn_id, state, requested_at, started_at, completed_at,
+          checkpoint_turn_count, checkpoint_ref, checkpoint_status, checkpoint_files_json
+        ) VALUES
+          (${threadId}, 'turn-keep', 'completed', '2026-08-14T12:00:00.000Z',
+            '2026-08-14T12:00:00.000Z', '2026-08-14T12:00:01.000Z', 1,
+            'refs/t3/checkpoints/thread-revert-liveness/turn/1', 'ready', '[]'),
+          (${threadId}, 'turn-remove', 'completed', '2026-08-14T12:00:01.000Z',
+            '2026-08-14T12:00:01.000Z', '2026-08-14T12:00:02.000Z', 2,
+            'refs/t3/checkpoints/thread-revert-liveness/turn/2', 'ready', '[]')
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        ) VALUES
+          ('kept-live-task-start', ${threadId}, 'turn-keep', 'info', 'task.started',
+            'Kept live task',
+            '{"taskId":"kept-task","taskType":"subagent","status":"running"}',
+            0, '2026-08-14T12:00:00.500Z'),
+          ('reverted-live-task-start', ${threadId}, 'turn-remove', 'info', 'task.started',
+            'Reverted live task',
+            '{"taskId":"reverted-task","taskType":"subagent","status":"running"}',
+            1, '2026-08-14T12:00:01.500Z')
+      `;
+      backgroundLiveness.recordTaskLiveness({
+        threadId,
+        taskId: "kept-task",
+        taskType: "subagent",
+        status: "running",
+        kind: "started",
+        activityId: "kept-live-task-start",
+      });
+      backgroundLiveness.recordTaskLiveness({
+        threadId,
+        taskId: "reverted-task",
+        taskType: "subagent",
+        status: "running",
+        kind: "started",
+        activityId: "reverted-live-task-start",
+      });
+
+      const before = yield* snapshotQuery.getThreadDetailSnapshot(threadId, { turnLimit: 1 });
+      const beforeShell = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(before._tag, "Some");
+      if (before._tag === "Some") {
+        assert.deepEqual(
+          before.value.thread.activities.map((activity) => activity.id),
+          ["kept-live-task-start", "reverted-live-task-start"],
+        );
+      }
+      assert.equal(
+        beforeShell.threads.find((thread) => thread.id === threadId)?.backgroundLiveness,
+        "working",
+      );
+
+      const reverted = yield* eventStore.append({
+        type: "thread.reverted",
+        eventId: EventId.make("evt-revert-liveness"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-08-14T12:00:03.000Z",
+        commandId: CommandId.make("cmd-revert-liveness"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-revert-liveness"),
+        metadata: {},
+        payload: { threadId, turnCount: 1 },
+      });
+      yield* projectionPipeline.projectEvent(reverted);
+
+      const after = yield* snapshotQuery.getThreadDetailSnapshot(threadId, { turnLimit: 1 });
+      const afterShell = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(after._tag, "Some");
+      if (after._tag === "Some") {
+        assert.deepEqual(
+          after.value.thread.activities.map((activity) => activity.id),
+          ["kept-live-task-start"],
+        );
+      }
+      assert.equal(
+        afterShell.threads.find((thread) => thread.id === threadId)?.backgroundLiveness,
+        "working",
+      );
+      assert.deepEqual([...backgroundLiveness.getThreadLiveAgentIds(threadId)], ["kept-task"]);
+    }),
+  );
+});
 
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   it.effect("bootstraps all projection states and writes projection rows", () =>
@@ -2547,10 +2682,12 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
     const persistenceLayer = makeSqlitePersistenceLive(dbPath);
     const firstProjectionLayer = OrchestrationProjectionPipelineLive.pipe(
       Layer.provideMerge(OrchestrationEventStoreLive),
+      Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(persistenceLayer),
     );
     const secondProjectionLayer = OrchestrationProjectionPipelineLive.pipe(
       Layer.provideMerge(OrchestrationEventStoreLive),
+      Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(persistenceLayer),
     );
 
@@ -2675,7 +2812,9 @@ const engineLayer = it.layer(
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provide(
+      OrchestrationProjectionPipelineLive.pipe(Layer.provide(ThreadBackgroundLiveness.layer)),
+    ),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),

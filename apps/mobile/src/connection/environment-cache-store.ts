@@ -125,7 +125,15 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         operation: "load-shell",
         decode: decodeStoredShellSnapshot,
         select: (stored) =>
-          stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
+          stored.environmentId === environmentId
+            ? Option.some({
+                ...stored.snapshot,
+                threads: stored.snapshot.threads.map((thread) => ({
+                  ...thread,
+                  backgroundLiveness: null,
+                })),
+              })
+            : Option.none(),
       }),
     ),
     saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {

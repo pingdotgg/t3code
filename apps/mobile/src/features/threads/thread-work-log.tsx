@@ -125,6 +125,7 @@ export function ThreadWorkLog(props: {
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly onCopyRow: (rowId: string, value: string) => void;
+  readonly onOpenAgents: () => void;
   readonly onToggleRow: (rowId: string) => void;
 }) {
   const colorScheme = useColorScheme();
@@ -155,6 +156,7 @@ export function ThreadWorkLog(props: {
           const fullDetail = expanded ? row.getFullDetail() : null;
           const displayText = row.detail ? `${row.summary} ${row.detail}` : row.summary;
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
+          const opensAgents = row.id.startsWith("agent-spawn:");
 
           return (
             <Animated.View
@@ -162,16 +164,23 @@ export function ThreadWorkLog(props: {
               {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
             >
               <Pressable
-                accessibilityRole={canExpand ? "button" : undefined}
+                accessibilityRole={canExpand || opensAgents ? "button" : undefined}
                 accessibilityLabel={displayText}
                 accessibilityHint={
-                  canExpand
-                    ? "Double tap to show full details. Long press to copy."
-                    : "Long press to copy."
+                  opensAgents
+                    ? "Double tap to open Agents. Long press to copy."
+                    : canExpand
+                      ? "Double tap to show full details. Long press to copy."
+                      : "Long press to copy."
                 }
                 accessibilityState={canExpand ? { expanded } : undefined}
                 hitSlop={4}
                 onPress={() => {
+                  if (opensAgents) {
+                    triggerDisclosureFeedback();
+                    props.onOpenAgents();
+                    return;
+                  }
                   if (canExpand) {
                     triggerDisclosureFeedback();
                     props.onToggleRow(row.id);

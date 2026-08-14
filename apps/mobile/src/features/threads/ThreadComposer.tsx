@@ -113,6 +113,7 @@ export interface ThreadComposerProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  readonly stopThreadDisabled: boolean;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
@@ -831,7 +832,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           {!isExpanded ? (
             <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
               {showStopAction ? (
-                <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
+                <ControlPill
+                  icon="stop.fill"
+                  variant="danger"
+                  disabled={props.stopThreadDisabled}
+                  onPress={props.onStopThread}
+                />
               ) : (
                 <ControlPill
                   icon="arrow.up"
@@ -870,6 +876,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     accessibilityLabel="Stop"
                     icon="stop.fill"
                     variant="danger"
+                    disabled={props.stopThreadDisabled}
                     onPress={props.onStopThread}
                     showChevron={false}
                   />

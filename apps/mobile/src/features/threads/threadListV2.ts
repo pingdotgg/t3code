@@ -13,6 +13,7 @@ import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/threa
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { resolveThreadBackgroundLiveness } from "./threadPresentation";
 
 export { snoozeWakeLabel };
 
@@ -24,7 +25,13 @@ export { snoozeWakeLabel };
  * (approval), "in motion" (working), and "broken" (failed). Ready is the
  * unlabeled resting state.
  */
-export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type ThreadListV2Status =
+  | "approval"
+  | "input"
+  | "working"
+  | "monitoring"
+  | "failed"
+  | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
@@ -123,7 +130,10 @@ export function resolveThreadListV2Enabled(input: {
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
+  thread: Pick<
+    EnvironmentThreadShell,
+    "hasPendingApprovals" | "hasPendingUserInput" | "session" | "backgroundLiveness"
+  >,
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -136,6 +146,13 @@ export function resolveThreadListV2Status(
   }
   if (thread.session?.status === "error") {
     return "failed";
+  }
+  const backgroundLiveness = resolveThreadBackgroundLiveness(thread);
+  if (backgroundLiveness === "working") {
+    return "working";
+  }
+  if (backgroundLiveness === "monitoring") {
+    return "monitoring";
   }
   return "ready";
 }
@@ -402,6 +419,10 @@ export function buildThreadListV2Items(input: {
     // the inbox and never auto-settle out of sight.
     if (thread.pinnedAt != null) {
       pinned.push(thread);
+      continue;
+    }
+    if (thread.settledOverride !== "settled" && resolveThreadBackgroundLiveness(thread) !== null) {
+      active.push(thread);
       continue;
     }
     if (

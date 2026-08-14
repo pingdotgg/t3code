@@ -40,6 +40,7 @@ export interface SubagentUsage {
 }
 
 export interface SubagentActivityEntry {
+  readonly id: string;
   readonly at: string;
   readonly summary: string;
 }
@@ -80,6 +81,7 @@ export interface RuntimeSubagent {
   readonly phases: ReadonlyArray<SubagentWorkflowPhase>;
   readonly runHandles: SubagentRunHandles | null;
   readonly recentActivity: ReadonlyArray<SubagentActivityEntry>;
+  readonly recentActivityTruncated: boolean;
   /** First retained observation, used as the roster's stable display order. */
   readonly firstSeenAt: string;
   readonly startedAt: string | null;
@@ -106,7 +108,7 @@ export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
 
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
-const ROSTER_LIMIT = 100;
+const DEFAULT_ROSTER_LIMIT = 100;
 
 /**
  * True when this activity's payload does NOT belong on the Agents surface.
@@ -127,6 +129,7 @@ function bounded(value: string): string {
 /** Appends to the ring buffer, deduping consecutive identical summaries. */
 function appendActivity(
   entries: ReadonlyArray<SubagentActivityEntry>,
+  id: string,
   at: string,
   summary: string,
 ): ReadonlyArray<SubagentActivityEntry> {
@@ -134,7 +137,7 @@ function appendActivity(
   if (entries.length > 0 && entries[entries.length - 1]?.summary === boundedSummary) {
     return entries;
   }
-  const next = [...entries, { at, summary: boundedSummary }];
+  const next = [...entries, { id, at, summary: boundedSummary }];
   return next.length > RECENT_ACTIVITY_LIMIT ? next.slice(-RECENT_ACTIVITY_LIMIT) : next;
 }
 
@@ -249,6 +252,8 @@ interface MutableAgent {
   phases: ReadonlyArray<SubagentWorkflowPhase>;
   runHandles: SubagentRunHandles | null;
   recentActivity: ReadonlyArray<SubagentActivityEntry>;
+  recentActivityTruncated: boolean;
+  firstTurnId: string | null;
   firstSeenAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -274,6 +279,7 @@ function getOrCreate(
   id: string,
   payload: Record<string, unknown>,
   at: string,
+  turnId: string | null,
 ): MutableAgent {
   const existing = agents.get(id);
   if (existing) {
@@ -303,6 +309,8 @@ function getOrCreate(
     phases: [],
     runHandles: null,
     recentActivity: [],
+    recentActivityTruncated: false,
+    firstTurnId: turnId,
     firstSeenAt: at,
     startedAt: null,
     completedAt: null,
@@ -310,6 +318,14 @@ function getOrCreate(
   };
   agents.set(id, created);
   return created;
+}
+
+function recordActivity(agent: MutableAgent, id: string, at: string, summary: string): void {
+  const next = appendActivity(agent.recentActivity, id, at, summary);
+  if (next !== agent.recentActivity && agent.recentActivity.length === RECENT_ACTIVITY_LIMIT) {
+    agent.recentActivityTruncated = true;
+  }
+  agent.recentActivity = next;
 }
 
 /** Metadata fill from any payload: never downgrades known values to null. */
@@ -456,10 +472,98 @@ function asRuntimeStatus(value: unknown): RuntimeSubagentStatus | undefined {
  * session left a panel full of "Working" agents while the sidebar showed
  * nothing). Idle is preserved — a resumable Codex child stays resumable.
  */
+export interface SubagentBatchCount {
+  readonly totalCount: number;
+  readonly workingCount: number;
+  readonly failedCount: number;
+  readonly stoppedCount: number;
+  readonly idleCount: number;
+  readonly completedCount: number;
+}
+
+export interface FoldedSubagentActivitiesWithBatchCounts {
+  /** Roster selected by the requested cap (default 100). */
+  readonly agents: ReadonlyArray<RuntimeSubagent>;
+  /** Every recognized task identity, including agents omitted by the roster cap. */
+  readonly agentTaskIds: ReadonlySet<string>;
+  /** Fold-owned spawn-batch identity for every recognized task. */
+  readonly batchKeyByTaskId: ReadonlyMap<string, string>;
+  /** Uncapped status counts keyed by the spawn-batch ids used by clients. */
+  readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
+}
+
+export interface FoldSubagentActivitiesOptions {
+  readonly sessionLive?: boolean;
+  /** null keeps the full roster; absent preserves the web-facing default of 100. */
+  readonly rosterLimit?: number | null;
+}
+
+function subagentBatchKey(agent: MutableAgent): string {
+  if (agent.kind === "workflow") {
+    return `wf:${agent.id}`;
+  }
+  if (agent.kind === "workflow_agent") {
+    const workflowMarker = agent.id.indexOf(":wf:");
+    const workflowId =
+      agent.parentAgentId ?? (workflowMarker === -1 ? agent.id : agent.id.slice(0, workflowMarker));
+    return `wf:${workflowId}`;
+  }
+  return agent.firstTurnId ? `direct:${agent.firstTurnId}` : `direct:task:${agent.id}`;
+}
+
+const EMPTY_BATCH_COUNT: SubagentBatchCount = {
+  totalCount: 0,
+  workingCount: 0,
+  failedCount: 0,
+  stoppedCount: 0,
+  idleCount: 0,
+  completedCount: 0,
+};
+
+function deriveSubagentBatchCounts(agents: Iterable<MutableAgent>): {
+  readonly batchKeyByTaskId: ReadonlyMap<string, string>;
+  readonly batchCounts: ReadonlyMap<string, SubagentBatchCount>;
+} {
+  const batchKeyByTaskId = new Map<string, string>();
+  const counts = new Map<string, SubagentBatchCount>();
+  for (const agent of agents) {
+    const key = subagentBatchKey(agent);
+    batchKeyByTaskId.set(agent.id, key);
+    const current = counts.get(key) ?? EMPTY_BATCH_COUNT;
+    if (agent.kind === "workflow") {
+      counts.set(key, current);
+      continue;
+    }
+    counts.set(key, {
+      totalCount: current.totalCount + 1,
+      workingCount: current.workingCount + (isActiveSubagentStatus(agent.status) ? 1 : 0),
+      failedCount: current.failedCount + (agent.status === "failed" ? 1 : 0),
+      stoppedCount:
+        current.stoppedCount +
+        (agent.status === "cancelled" || agent.status === "interrupted" ? 1 : 0),
+      idleCount: current.idleCount + (agent.status === "idle" ? 1 : 0),
+      completedCount: current.completedCount + (agent.status === "completed" ? 1 : 0),
+    });
+  }
+  return { batchKeyByTaskId, batchCounts: counts };
+}
+
 export function foldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
-  options?: { readonly sessionLive?: boolean },
+  options?: FoldSubagentActivitiesOptions,
 ): ReadonlyArray<RuntimeSubagent> {
+  return foldSubagentActivitiesWithBatchCounts(activities, options).agents;
+}
+
+/**
+ * Additive detailed fold for timeline clients that need exact spawn-batch
+ * counts. The default roster stays capped so existing web behavior is unchanged;
+ * callers that render a virtualized full roster may explicitly pass null.
+ */
+export function foldSubagentActivitiesWithBatchCounts(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: FoldSubagentActivitiesOptions,
+): FoldedSubagentActivitiesWithBatchCounts {
   const agents = new Map<string, MutableAgent>();
 
   for (const activity of activities) {
@@ -477,7 +581,7 @@ export function foldSubagentActivities(
         // tasks are background work — they render in the ordinary work log,
         // not the Agents surface (a "Run 12s stall" shell is not a subagent).
         if (isBackgroundTaskActivity(payload)) break;
-        const agent = getOrCreate(agents, taskId, payload, at);
+        const agent = getOrCreate(agents, taskId, payload, at, activity.turnId);
         fillMetadata(agent, payload);
         // Order-robustness: a start row arriving after a terminal state is a
         // late/out-of-order delivery and only fills metadata — it must not
@@ -506,7 +610,7 @@ export function foldSubagentActivities(
         // first row's classification instead of being re-judged.
         const existed = agents.has(taskId);
         if (!existed && isBackgroundTaskActivity(payload)) break;
-        const agent = getOrCreate(agents, taskId, payload, at);
+        const agent = getOrCreate(agents, taskId, payload, at, activity.turnId);
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
         const explicitStatus = asRuntimeStatus(payload.status);
@@ -522,13 +626,13 @@ export function foldSubagentActivities(
         const summary = asString(payload.summary);
         if (summary) {
           agent.progress = bounded(summary);
-          agent.recentActivity = appendActivity(agent.recentActivity, at, summary);
+          recordActivity(agent, activity.id, at, summary);
         }
         const lastToolName = asString(payload.lastToolName);
         if (lastToolName) {
           agent.lastToolName = lastToolName;
           if (!summary) {
-            agent.recentActivity = appendActivity(agent.recentActivity, at, `▸ ${lastToolName}`);
+            recordActivity(agent, activity.id, at, `▸ ${lastToolName}`);
           }
         }
         const error = asString(payload.error);
@@ -544,7 +648,7 @@ export function foldSubagentActivities(
         // rows often carry only taskId+status, no marker fields) inherit the
         // first row's classification instead of being re-judged.
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
-        const agent = getOrCreate(agents, taskId, payload, at);
+        const agent = getOrCreate(agents, taskId, payload, at, activity.turnId);
         fillMetadata(agent, payload);
         // A task first seen via task.updated (start row aged out) has run at
         // least once — zero activations would misreport "run 0" and let a
@@ -572,7 +676,7 @@ export function foldSubagentActivities(
         // rows often carry only taskId+status, no marker fields) inherit the
         // first row's classification instead of being re-judged.
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
-        const agent = getOrCreate(agents, taskId, payload, at);
+        const agent = getOrCreate(agents, taskId, payload, at, activity.turnId);
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
         // Already-terminal: status and timestamps are frozen (first write
@@ -616,7 +720,7 @@ export function foldSubagentActivities(
         const toolName = asString(payload.toolName);
         if (toolName) {
           agent.lastToolName = toolName;
-          agent.recentActivity = appendActivity(agent.recentActivity, at, `▸ ${toolName}`);
+          recordActivity(agent, activity.id, at, `▸ ${toolName}`);
         }
         agent.updatedAt = at;
         break;
@@ -660,18 +764,27 @@ export function foldSubagentActivities(
     }
   }
 
+  const agentTaskIds = new Set(agents.keys());
+  const { batchKeyByTaskId, batchCounts } = deriveSubagentBatchCounts(agents.values());
+  const rosterLimit =
+    options?.rosterLimit === undefined ? DEFAULT_ROSTER_LIMIT : options.rosterLimit;
   let roster = Array.from(agents.values());
-  if (roster.length > ROSTER_LIMIT) {
+  if (rosterLimit !== null && roster.length > rosterLimit) {
     // Prefer live, then waiting/idle, then newest settled.
     const rank = (agent: MutableAgent): number =>
       isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
     roster = roster
       .slice()
       .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, ROSTER_LIMIT);
+      .slice(0, rosterLimit);
   }
 
-  return roster.map((agent) => ({ ...agent }));
+  return {
+    agents: roster.map(({ firstTurnId: _, ...agent }) => agent),
+    agentTaskIds,
+    batchKeyByTaskId,
+    batchCounts,
+  };
 }
 
 export interface AgentPanelWorkflowGroup {

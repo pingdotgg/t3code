@@ -1,4 +1,10 @@
 import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
+import {
+  foldSubagentActivitiesWithBatchCounts,
+  isTerminalSubagentStatus,
+  type FoldSubagentActivitiesOptions,
+  type FoldedSubagentActivitiesWithBatchCounts,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
@@ -80,7 +86,7 @@ interface WorkLogEntry {
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
-  /** Grouping key for subagent lifecycle rows (one row per agent). */
+  /** Subagent identity used to collapse lifecycle rows into spawn batches. */
   taskId?: string;
 }
 
@@ -282,11 +288,9 @@ function isTerminalBypassUpdate(activity: OrchestrationThreadActivity): boolean 
 
 /**
  * Quiet-timeline guarantee (mirrors web's session-logic): agent-internal
- * activity lives in the Agents sheet, not the work log. Terminal rows are
- * kept — with no Agents surface on mobile they are the terminal signal
- * (a surface that hides rows must keep its own terminal signal). That means
- * task.completed (Claude) AND terminal bypassed task.updated (Codex, whose
- * children never emit task.completed — review finding).
+ * detail stays out of the work log. Recognized task lifecycles are replaced
+ * by spawn-batch summaries before this filter; terminal rows remain a
+ * defensive fallback when malformed or legacy rows cannot join a batch.
  */
 function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean {
   const payload =
@@ -314,10 +318,22 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
 
 function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: FoldSubagentActivitiesOptions,
 ): DerivedWorkLogEntry[] {
   const ordered = Arr.sort(activities, activityOrder);
+  const agentFold = memoizedFoldSubagentActivitiesOrdered(activities, ordered, {
+    ...options,
+    rosterLimit: null,
+  });
+  const spawnBatches = deriveAgentSpawnBatches(ordered, agentFold);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of ordered) {
+    const spawnBatch = spawnBatches.byAnchorActivityId.get(activity.id);
+    if (spawnBatch) {
+      entries.push(spawnBatch);
+    }
+    const taskId = taskIdFromActivity(activity);
+    if (taskId && spawnBatches.agentTaskIds.has(taskId)) continue;
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     // Terminal bypassed updates pass: Codex children's only terminal signal.
@@ -330,6 +346,172 @@ function deriveWorkLogEntries(
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries);
+}
+
+const AGENT_TASK_ACTIVITY_KINDS: ReadonlySet<OrchestrationThreadActivity["kind"]> = new Set([
+  "task.started",
+  "task.progress",
+  "task.updated",
+  "task.completed",
+]);
+
+const foldedSubagentsByActivityList = new WeakMap<
+  ReadonlyArray<OrchestrationThreadActivity>,
+  Map<string, FoldedSubagentActivitiesWithBatchCounts>
+>();
+
+function subagentFoldCacheKey(options?: FoldSubagentActivitiesOptions): string {
+  const sessionLiveness =
+    options?.sessionLive === undefined ? "unknown" : options.sessionLive ? "live" : "stopped";
+  const rosterLimit =
+    options?.rosterLimit === undefined
+      ? "default"
+      : options.rosterLimit === null
+        ? "all"
+        : String(options.rosterLimit);
+  return `${sessionLiveness}:${rosterLimit}`;
+}
+
+function memoizedFoldSubagentActivitiesOrdered(
+  activityListIdentity: ReadonlyArray<OrchestrationThreadActivity>,
+  orderedActivities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: FoldSubagentActivitiesOptions,
+): FoldedSubagentActivitiesWithBatchCounts {
+  const cacheKey = subagentFoldCacheKey(options);
+  let cachedByOptions = foldedSubagentsByActivityList.get(activityListIdentity);
+  if (cachedByOptions?.has(cacheKey)) {
+    return cachedByOptions.get(cacheKey)!;
+  }
+  const agents = foldSubagentActivitiesWithBatchCounts(orderedActivities, options);
+  cachedByOptions ??= new Map();
+  cachedByOptions.set(cacheKey, agents);
+  foldedSubagentsByActivityList.set(activityListIdentity, cachedByOptions);
+  return agents;
+}
+
+export function memoizedFoldSubagentActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: FoldSubagentActivitiesOptions,
+): FoldedSubagentActivitiesWithBatchCounts {
+  return memoizedFoldSubagentActivitiesOrdered(
+    activities,
+    Arr.sort(activities, activityOrder),
+    options,
+  );
+}
+
+function taskIdFromActivity(activity: OrchestrationThreadActivity): string | null {
+  if (!AGENT_TASK_ACTIVITY_KINDS.has(activity.kind)) {
+    return null;
+  }
+  const payload = asRecord(activity.payload);
+  return asTrimmedString(payload?.taskId);
+}
+
+/**
+ * Builds one stable, compact work-log row per subagent spawn batch. The
+ * shared fold owns lifecycle semantics (including out-of-order/stale rows),
+ * while this layer only owns mobile's quiet timeline grouping.
+ */
+function deriveAgentSpawnBatches(
+  orderedActivities: ReadonlyArray<OrchestrationThreadActivity>,
+  fold: FoldedSubagentActivitiesWithBatchCounts,
+): {
+  readonly agentTaskIds: ReadonlySet<string>;
+  readonly byAnchorActivityId: ReadonlyMap<string, DerivedWorkLogEntry>;
+} {
+  const agentsById = new Map(fold.agents.map((agent) => [agent.id, agent]));
+  const agentTaskIds = fold.agentTaskIds;
+  const batches = new Map<
+    string,
+    {
+      anchor: OrchestrationThreadActivity;
+      anchorIsCoordinator: boolean;
+    }
+  >();
+
+  for (const activity of orderedActivities) {
+    const taskId = taskIdFromActivity(activity);
+    if (!taskId) {
+      continue;
+    }
+    const groupKey = fold.batchKeyByTaskId.get(taskId);
+    if (!groupKey) {
+      continue;
+    }
+    const isWorkflowCoordinator = groupKey === `wf:${taskId}`;
+    const batch = batches.get(groupKey);
+    if (batch) {
+      if (isWorkflowCoordinator && !batch.anchorIsCoordinator) {
+        batch.anchor = activity;
+        batch.anchorIsCoordinator = true;
+      }
+      continue;
+    }
+    batches.set(groupKey, {
+      anchor: activity,
+      anchorIsCoordinator: isWorkflowCoordinator,
+    });
+  }
+
+  const byAnchorActivityId = new Map<string, DerivedWorkLogEntry>();
+  for (const [groupKey, batch] of batches) {
+    const batchCounts = fold.batchCounts.get(groupKey);
+    if (!batchCounts) {
+      continue;
+    }
+    const {
+      totalCount: agentCount,
+      workingCount,
+      failedCount,
+      stoppedCount,
+      idleCount,
+      completedCount,
+    } = batchCounts;
+    const workflowCoordinator = groupKey.startsWith("wf:")
+      ? agentsById.get(groupKey.slice(3))
+      : undefined;
+    const live =
+      workflowCoordinator?.kind === "workflow"
+        ? !isTerminalSubagentStatus(workflowCoordinator.status)
+        : workingCount > 0;
+    const lead =
+      agentCount === 0 && workflowCoordinator?.kind === "workflow"
+        ? `${live ? "Kicked off" : "Ran"} workflow`
+        : `${live ? "Kicked off" : "Ran"} ${agentCount} subagent${agentCount === 1 ? "" : "s"}`;
+    const terminalOutcomes = [
+      failedCount > 0 ? `${failedCount} failed` : null,
+      stoppedCount > 0 ? `${stoppedCount} stopped` : null,
+      idleCount > 0 ? `${idleCount} idle` : null,
+    ].filter((outcome): outcome is string => outcome !== null);
+    const coordinatorOutcome =
+      workflowCoordinator?.status === "failed"
+        ? "failed"
+        : workflowCoordinator?.status === "cancelled" ||
+            workflowCoordinator?.status === "interrupted"
+          ? "stopped"
+          : null;
+    const status = live
+      ? workingCount > 0
+        ? `${workingCount} working`
+        : "working"
+      : terminalOutcomes.join(" · ") ||
+        coordinatorOutcome ||
+        (completedCount === agentCount &&
+        (agentCount > 0 || workflowCoordinator?.status === "completed")
+          ? "completed"
+          : "stopped");
+    byAnchorActivityId.set(batch.anchor.id, {
+      id: `agent-spawn:${groupKey}`,
+      createdAt: batch.anchor.createdAt,
+      turnId: batch.anchor.turnId,
+      label: `${lead} · ${status}`,
+      tone: "info",
+      activityKind: batch.anchor.kind,
+    });
+  }
+
+  return { agentTaskIds, byAnchorActivityId };
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -622,6 +804,7 @@ function workEntryStatus(entry: WorkLogEntry): ThreadFeedActivity["status"] {
 }
 
 function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
+  if (entry.id.startsWith("agent-spawn:")) return "agent";
   if (
     entry.activityKind === "user-input.requested" ||
     entry.activityKind === "user-input.resolved"
@@ -710,6 +893,9 @@ function capitalizePhrase(value: string): string {
 }
 
 function workEntryHeading(workEntry: WorkLogEntry): string {
+  if (workEntry.id.startsWith("agent-spawn:")) {
+    return workEntry.label;
+  }
   if (!workEntry.toolTitle) {
     return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
@@ -1087,6 +1273,21 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
       continue;
     }
 
+    // Spawn summaries are persistent CTAs. Give them their own feed identity
+    // before settled-turn folding so sibling tool rows remain foldable.
+    if (isAgentSpawnActivity(entry.activity)) {
+      grouped.push({
+        type: "activity-group",
+        id: entry.id,
+        createdAt: entry.createdAt,
+        turnId: entry.turnId,
+        activities: [entry.activity],
+      });
+      openGroupActivities = null;
+      openGroupTurnId = null;
+      continue;
+    }
+
     if (openGroupActivities !== null && openGroupTurnId === entry.turnId) {
       openGroupActivities.push(entry.activity);
       continue;
@@ -1131,6 +1332,10 @@ function deriveUnsettledTurnId(latestTurn: ThreadFeedLatestTurn | null): TurnId 
   }
   const settled = latestTurn.completedAt !== null && latestTurn.state !== "running";
   return settled ? null : latestTurn.turnId;
+}
+
+function isAgentSpawnActivity(activity: ThreadFeedActivity): boolean {
+  return activity.id.startsWith("agent-spawn:");
 }
 
 interface ThreadFeedTurnFold {
@@ -1195,8 +1400,20 @@ function deriveThreadFeedTurnFolds(
     }
 
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
+    const persistentActivityGroupIds = new Set(
+      entries
+        .filter(
+          (entry) => entry.type === "activity-group" && entry.activities.some(isAgentSpawnActivity),
+        )
+        .map((entry) => entry.id),
+    );
     const hiddenEntryIds = new Set(
-      entries.filter((entry) => entry.id !== terminalAssistantMessageId).map((entry) => entry.id),
+      entries
+        .filter(
+          (entry) =>
+            entry.id !== terminalAssistantMessageId && !persistentActivityGroupIds.has(entry.id),
+        )
+        .map((entry) => entry.id),
     );
     if (hiddenEntryIds.size === 0) {
       continue;
@@ -1307,18 +1524,28 @@ function appendPresentedFeedEntry(
   if (activities.length === 0) {
     return;
   }
-  if (activities.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+  const pinnedActivities = activities.filter(isAgentSpawnActivity);
+  const latestOrdinaryActivities = activities
+    .filter((activity) => !isAgentSpawnActivity(activity))
+    .slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+  const collapsedActivityIds = new Set(
+    [...pinnedActivities, ...latestOrdinaryActivities].map((activity) => activity.id),
+  );
+  const collapsedActivities = activities.filter((activity) =>
+    collapsedActivityIds.has(activity.id),
+  );
+  const hiddenActivities = activities.filter((activity) => !collapsedActivityIds.has(activity.id));
+  if (hiddenActivities.length === 0) {
     result.push({
       ...entry,
-      activities,
+      activities: collapsedActivities,
     });
     return;
   }
 
   const groupId = entry.id;
   const expanded = expandedWorkGroupIds.has(groupId);
-  const hiddenCount = activities.length - MAX_VISIBLE_WORK_LOG_ENTRIES;
-  const visibleActivities = expanded ? activities : activities.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+  const visibleActivities = expanded ? activities : collapsedActivities;
 
   for (const activity of visibleActivities) {
     result.push({
@@ -1335,9 +1562,9 @@ function appendPresentedFeedEntry(
     createdAt: entry.createdAt,
     turnId: entry.turnId,
     groupId,
-    hiddenCount,
+    hiddenCount: hiddenActivities.length,
     expanded,
-    onlyToolActivities: activities.every((activity) => activity.toolLike),
+    onlyToolActivities: hiddenActivities.every((activity) => activity.toolLike),
   });
 }
 
@@ -1520,7 +1747,12 @@ export function buildThreadFeed(
   const loadedMessages = options?.loadedMessages ?? thread.messages;
   const oldestLoadedMessageCreatedAt =
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
-  const workLogEntries = deriveWorkLogEntries(thread.activities);
+  const sessionLive =
+    thread.session !== null &&
+    thread.session.status !== "stopped" &&
+    thread.session.status !== "interrupted" &&
+    thread.session.status !== "error";
+  const workLogEntries = deriveWorkLogEntries(thread.activities, { sessionLive });
   const entries = Arr.sortWith(
     [
       ...loadedMessages.map<RawThreadFeedEntry>((message) => ({

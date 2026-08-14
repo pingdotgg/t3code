@@ -58,6 +58,11 @@ import {
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import {
+  RuntimeReceiptBus,
+  type ProviderTurnInterruptResolvedReceipt,
+} from "../Services/RuntimeReceiptBus.ts";
+import { RuntimeReceiptBusTest } from "./RuntimeReceiptBus.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -93,7 +98,10 @@ async function waitFor(
 
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderCommandReactor | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderCommandReactor
+    | ProjectionSnapshotQuery
+    | RuntimeReceiptBus,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -349,7 +357,9 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(ThreadPlanProgress.layer),
-      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(
+        OrchestrationProjectionPipelineLive.pipe(Layer.provide(ThreadBackgroundLiveness.layer)),
+      ),
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(RepositoryIdentityResolver.layer),
@@ -413,6 +423,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(RuntimeReceiptBusTest),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -421,6 +432,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const receiptBus = await runtime.runPromise(Effect.service(RuntimeReceiptBus));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await Effect.runPromise(
@@ -486,6 +498,14 @@ describe("ProviderCommandReactor", () => {
     }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
+    const interruptReceipts: ProviderTurnInterruptResolvedReceipt[] = [];
+    await Effect.runPromise(
+      Stream.runForEach(receiptBus.streamEventsForTest, (receipt) =>
+        receipt.type === "provider.turn.interrupt.resolved"
+          ? Effect.sync(() => interruptReceipts.push(receipt))
+          : Effect.void,
+      ).pipe(Effect.forkIn(scope)),
+    );
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
 
@@ -505,6 +525,7 @@ describe("ProviderCommandReactor", () => {
       runtimeSessions,
       stateDir,
       drain,
+      interruptReceipts,
       runEffect,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
@@ -2486,6 +2507,211 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("rejects a stale conditional interrupt without stopping the newer turn", async () => {
+    const harness = await createHarness();
+    const previousUpdatedAt = "2026-01-01T00:00:00.000Z";
+    const currentUpdatedAt = "2026-01-01T00:00:01.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-newer-turn"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-2"),
+          lastError: null,
+          updatedAt: currentUpdatedAt,
+        },
+        createdAt: currentUpdatedAt,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-stale"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        expectedTurnId: asTurnId("turn-1"),
+        expectedSessionUpdatedAt: previousUpdatedAt,
+        createdAt: currentUpdatedAt,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId: "cmd-turn-interrupt-stale",
+      outcome: "work-changed",
+      expectedTurnId: "turn-1",
+      actualTurnId: "turn-2",
+      createdAt: currentUpdatedAt,
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.latestTurn).toMatchObject({ turnId: "turn-2", state: "running" });
+    const activity = thread?.activities.find((entry) => entry.summary === "Work already changed");
+    expect(activity).toMatchObject({
+      kind: "provider.turn.interrupt.failed",
+      payload: {
+        reason: "work-changed",
+        requestId: "cmd-turn-interrupt-stale",
+      },
+    });
+    expect(
+      readModel.threads
+        .find((thread) => thread.id === ThreadId.make("thread-1"))
+        ?.activities.find((entry) => entry.kind === "provider.turn.interrupt.resolved"),
+    ).toMatchObject({
+      payload: {
+        outcome: "work-changed",
+        requestId: "cmd-turn-interrupt-stale",
+        timelineBypass: true,
+      },
+    });
+  });
+
+  it("revalidates a matched guard after session state changes while the reactor is queued", async () => {
+    const harness = await createHarness();
+    const initialUpdatedAt = "2026-01-01T00:00:00.000Z";
+    const stoppedAt = "2026-01-01T00:00:01.000Z";
+    let markStopStarted: () => void = () => {};
+    const stopStarted = new Promise<void>((resolve) => {
+      markStopStarted = resolve;
+    });
+    let releaseStop: () => void = () => {};
+    const stopRelease = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    harness.stopSession.mockImplementationOnce(() =>
+      Effect.promise(async () => {
+        markStopStarted();
+        await stopRelease;
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-before-queued-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: initialUpdatedAt,
+        },
+        createdAt: initialUpdatedAt,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-block-reactor-before-queued-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: stoppedAt,
+      }),
+    );
+    await stopStarted;
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-queued"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        expectedTurnId: asTurnId("turn-1"),
+        expectedSessionUpdatedAt: initialUpdatedAt,
+        createdAt: stoppedAt,
+      }),
+    );
+    releaseStop();
+    await harness.drain();
+
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId: "cmd-turn-interrupt-queued",
+      outcome: "no-session",
+      expectedTurnId: "turn-1",
+      actualTurnId: null,
+      createdAt: stoppedAt,
+    });
+  });
+
+  it("interrupts when the expected provider-session turn matches", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-conditional-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-conditional"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        expectedTurnId: asTurnId("turn-1"),
+        expectedSessionUpdatedAt: now,
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.interruptTurn).toHaveBeenCalledOnce();
+    expect(harness.interruptReceipts).toContainEqual({
+      type: "provider.turn.interrupt.resolved",
+      threadId: "thread-1",
+      commandId: "cmd-turn-interrupt-conditional",
+      outcome: "interrupted",
+      expectedTurnId: "turn-1",
+      actualTurnId: "turn-1",
+      createdAt: now,
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.latestTurn).toMatchObject({
+      turnId: "turn-1",
+      state: "interrupted",
+      completedAt: now,
+    });
+    expect(
+      thread?.activities.find((entry) => entry.kind === "provider.turn.interrupt.resolved"),
+    ).toMatchObject({
+      payload: {
+        outcome: "interrupted",
+        requestId: "cmd-turn-interrupt-conditional",
+        timelineBypass: true,
+      },
+    });
+  });
+
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -2729,7 +2955,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-approval-requested"),
@@ -2750,7 +2976,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond-stale"),
@@ -2806,7 +3032,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
@@ -2824,7 +3050,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -2857,7 +3083,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),

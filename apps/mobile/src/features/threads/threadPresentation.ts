@@ -1,5 +1,9 @@
 import type { StatusTone } from "../../components/StatusPill";
-import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
+import type {
+  OrchestrationLatestTurn,
+  OrchestrationSession,
+  OrchestrationThreadShell,
+} from "@t3tools/contracts";
 import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 export function threadSortValue(thread: EnvironmentThreadShell): number {
@@ -11,6 +15,7 @@ export type ThreadStatusKind =
   | "pending-approval"
   | "awaiting-input"
   | "working"
+  | "monitoring"
   | "connecting"
   | "error"
   | "plan-ready";
@@ -30,6 +35,16 @@ export const THREAD_STATUS_NEUTRAL_ICON = {
   iconColor: "#8e8e93",
   iconBackground: "rgba(142,142,147,0.22)",
 } as const;
+
+export function resolveThreadBackgroundLiveness(
+  thread: Pick<OrchestrationThreadShell, "backgroundLiveness" | "session">,
+): "working" | "monitoring" | null {
+  const sessionStatus = thread.session?.status;
+  if (sessionStatus === "error" || sessionStatus === "stopped" || sessionStatus === "interrupted") {
+    return null;
+  }
+  return thread.backgroundLiveness ?? null;
+}
 
 function isLatestTurnSettled(
   latestTurn: OrchestrationLatestTurn | null,
@@ -121,6 +136,31 @@ export function resolveThreadStatus(
       textClassName: "text-violet-700 dark:text-violet-300",
       iconColor: "#bf5af2",
       iconBackground: "rgba(191,90,242,0.22)",
+      pulse: false,
+    };
+  }
+
+  const backgroundLiveness = resolveThreadBackgroundLiveness(thread);
+  if (backgroundLiveness === "working") {
+    return {
+      kind: "working",
+      label: "Working",
+      pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
+      textClassName: "text-sky-700 dark:text-sky-300",
+      iconColor: "#0a84ff",
+      iconBackground: "rgba(10,132,255,0.22)",
+      pulse: false,
+    };
+  }
+
+  if (backgroundLiveness === "monitoring") {
+    return {
+      kind: "monitoring",
+      label: "Monitoring",
+      pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
+      textClassName: "text-sky-700 dark:text-sky-300",
+      iconColor: "#0a84ff",
+      iconBackground: "rgba(10,132,255,0.22)",
       pulse: false,
     };
   }

@@ -258,6 +258,12 @@ export function applyThreadDetailEvent(
       };
 
     case "thread.turn-interrupt-requested": {
+      if (
+        event.payload.expectedTurnId !== undefined ||
+        event.payload.expectedSessionUpdatedAt !== undefined
+      ) {
+        return { kind: "unchanged" };
+      }
       if (event.payload.turnId === undefined) {
         return { kind: "unchanged" };
       }
@@ -585,10 +591,28 @@ export function applyThreadDetailEvent(
         Arr.append(activity),
         Arr.sort(activityOrder),
       );
+      const activityPayload =
+        typeof activity.payload === "object" && activity.payload !== null
+          ? (activity.payload as Record<string, unknown>)
+          : null;
+      const interruptResolved =
+        activity.kind === "provider.turn.interrupt.resolved" &&
+        activityPayload?.outcome === "interrupted";
+      const latestTurn =
+        interruptResolved &&
+        activity.turnId !== null &&
+        thread.latestTurn?.turnId === activity.turnId
+          ? {
+              ...thread.latestTurn,
+              state: "interrupted" as const,
+              startedAt: thread.latestTurn.startedAt ?? activity.createdAt,
+              completedAt: thread.latestTurn.completedAt ?? activity.createdAt,
+            }
+          : thread.latestTurn;
 
       return {
         kind: "updated",
-        thread: { ...thread, activities, updatedAt: event.occurredAt },
+        thread: { ...thread, activities, latestTurn, updatedAt: event.occurredAt },
       };
     }
 

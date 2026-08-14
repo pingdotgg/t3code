@@ -1037,11 +1037,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const hasGuard =
+        command.expectedTurnId !== undefined || command.expectedSessionUpdatedAt !== undefined;
+      const actualTurnId = thread.session?.activeTurnId ?? null;
+      const guardDecision = hasGuard
+        ? {
+            outcome:
+              (command.expectedTurnId !== undefined && command.expectedTurnId !== actualTurnId) ||
+              (command.expectedSessionUpdatedAt !== undefined &&
+                command.expectedSessionUpdatedAt !== thread.session?.updatedAt)
+                ? ("work-changed" as const)
+                : ("matched" as const),
+            actualTurnId,
+          }
+        : undefined;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1053,6 +1067,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
+          ...(command.expectedTurnId !== undefined
+            ? { expectedTurnId: command.expectedTurnId }
+            : {}),
+          ...(command.expectedSessionUpdatedAt !== undefined
+            ? { expectedSessionUpdatedAt: command.expectedSessionUpdatedAt }
+            : {}),
+          ...(guardDecision !== undefined ? { guardDecision } : {}),
           createdAt: command.createdAt,
         },
       };

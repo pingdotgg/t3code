@@ -8,6 +8,7 @@ import {
   TurnId,
   type OrchestrationMessage,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
@@ -38,6 +39,7 @@ import {
   ThreadSnapshotLoader,
   type EnvironmentThreadState,
 } from "./threads.ts";
+import { foldSubagentActivities } from "./subagentRuntime.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -336,6 +338,122 @@ describe("thread pagination state", () => {
         hasMore: false,
         loadingOlder: false,
       });
+    }),
+  );
+
+  it.effect("canonically orders a retained start anchor with an intermediate older page", () =>
+    Effect.gen(function* () {
+      const startAt = "2026-04-01T00:00:00.000Z";
+      const progressAt = "2026-04-01T00:30:00.000Z";
+      const recentAt = "2026-04-01T01:00:00.000Z";
+      const taskActivity = (
+        id: string,
+        kind: "task.started" | "task.progress",
+        activitySequence: number,
+        createdAt: string,
+        status?: "running",
+      ): OrchestrationThreadActivity => ({
+        id: EventId.make(id),
+        tone: "info",
+        kind,
+        summary: kind,
+        payload: {
+          taskId: "retained-agent",
+          taskType: "subagent",
+          agentKind: "agent",
+          ...(status ? { status } : {}),
+        },
+        turnId: TurnId.make(`turn-${activitySequence}`),
+        sequence: activitySequence,
+        createdAt,
+      });
+      const start = taskActivity("retained-start", "task.started", 1, startAt);
+      const intermediate = taskActivity(
+        "intermediate-progress",
+        "task.progress",
+        2,
+        progressAt,
+        "running",
+      );
+      const recent = taskActivity("recent-progress", "task.progress", 3, recentAt);
+      const initial: OrchestrationThreadDetailSnapshot = {
+        ...WINDOWED_SNAPSHOT,
+        thread: { ...BASE_THREAD, activities: [start, recent] },
+      };
+      const intermediatePage: OrchestrationThreadDetailSnapshot = {
+        ...OLDER_PAGE,
+        thread: { ...OLDER_PAGE.thread, activities: [intermediate] },
+      };
+      const harness = yield* makeHarness({ initialResponse: Option.some(initial) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+
+      expect(requestOlderThreadTurns(TARGET.environmentId, THREAD_ID)).toBe(true);
+      yield* harness.awaitState((value) =>
+        Option.match(value.page, { onNone: () => false, onSome: (page) => page.loadingOlder }),
+      );
+      yield* harness.resolveNextPage(Option.some(intermediatePage));
+
+      const state = yield* harness.awaitState(
+        (value) => Option.getOrNull(value.data)?.activities.length === 3,
+      );
+      const activities = Option.getOrThrow(state.data).activities;
+      expect(activities.map((activity) => activity.id)).toEqual([
+        "retained-start",
+        "intermediate-progress",
+        "recent-progress",
+      ]);
+      expect(foldSubagentActivities(activities)[0]).toMatchObject({
+        firstSeenAt: startAt,
+        startedAt: startAt,
+      });
+    }),
+  );
+
+  it.effect("orders same-time sequence-less activities by id after merging an older page", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-04-01T00:30:00.000Z";
+      const taskActivity = (
+        id: string,
+        kind: "task.started" | "task.completed",
+      ): OrchestrationThreadActivity => ({
+        id: EventId.make(id),
+        tone: "info",
+        kind,
+        summary: kind,
+        payload: { taskId: "same-time-agent", agentKind: "agent" },
+        turnId: TurnId.make("turn-same-time"),
+        createdAt,
+      });
+      const initial: OrchestrationThreadDetailSnapshot = {
+        ...WINDOWED_SNAPSHOT,
+        thread: {
+          ...BASE_THREAD,
+          activities: [taskActivity("a-completed", "task.completed")],
+        },
+      };
+      const olderPage: OrchestrationThreadDetailSnapshot = {
+        ...OLDER_PAGE,
+        thread: {
+          ...OLDER_PAGE.thread,
+          activities: [taskActivity("z-started", "task.started")],
+        },
+      };
+      const harness = yield* makeHarness({ initialResponse: Option.some(initial) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+
+      expect(requestOlderThreadTurns(TARGET.environmentId, THREAD_ID)).toBe(true);
+      yield* harness.awaitState((value) =>
+        Option.match(value.page, { onNone: () => false, onSome: (page) => page.loadingOlder }),
+      );
+      yield* harness.resolveNextPage(Option.some(olderPage));
+
+      const state = yield* harness.awaitState(
+        (value) => Option.getOrNull(value.data)?.activities.length === 2,
+      );
+      expect(Option.getOrThrow(state.data).activities.map((activity) => activity.id)).toEqual([
+        "a-completed",
+        "z-started",
+      ]);
     }),
   );
 

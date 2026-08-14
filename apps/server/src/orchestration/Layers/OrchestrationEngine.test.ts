@@ -823,7 +823,9 @@ describe("OrchestrationEngine", () => {
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
-        Layer.provide(OrchestrationProjectionPipelineLive),
+        Layer.provide(
+          OrchestrationProjectionPipelineLive.pipe(Layer.provide(ThreadBackgroundLiveness.layer)),
+        ),
         Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolver.layer),

@@ -252,6 +252,37 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
   }),
 );
 
+it.effect("decodes additive thread interrupt preconditions without changing legacy commands", () =>
+  Effect.gen(function* () {
+    const legacy = yield* decodeOrchestrationCommand({
+      type: "thread.turn.interrupt",
+      commandId: "cmd-interrupt-legacy",
+      threadId: "thread-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const conditional = yield* decodeOrchestrationCommand({
+      type: "thread.turn.interrupt",
+      commandId: "cmd-interrupt-conditional",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      expectedTurnId: null,
+      expectedSessionUpdatedAt: "2026-01-01T00:00:01.000Z",
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+
+    if (legacy.type !== "thread.turn.interrupt") {
+      throw new Error("Expected legacy interrupt command");
+    }
+    assert.strictEqual(legacy.expectedTurnId, undefined);
+    assert.strictEqual(legacy.expectedSessionUpdatedAt, undefined);
+    if (conditional.type !== "thread.turn.interrupt") {
+      throw new Error("Expected conditional interrupt command");
+    }
+    assert.strictEqual(conditional.expectedTurnId, null);
+    assert.strictEqual(conditional.expectedSessionUpdatedAt, "2026-01-01T00:00:01.000Z");
+  }),
+);
+
 it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

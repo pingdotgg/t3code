@@ -30,7 +30,7 @@ const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(val
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -1949,8 +1949,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
   // and a turnless activity at T03.6 — both belong to the page containing T03+.
   const seedFanOutThread = Effect.fnUntraced(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
 
     // Tests in this block share one in-memory database; reset before seeding.
+    backgroundLiveness.clearThreadLiveness("thread-w");
     yield* sql`DELETE FROM projection_projects`;
     yield* sql`DELETE FROM projection_threads`;
     yield* sql`DELETE FROM projection_turns`;
@@ -2093,6 +2095,183 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         assert.equal(snapshot.value.page?.hasMore, true);
         assert.notEqual(snapshot.value.page?.beforeCursor, null);
         assert.equal(snapshot.value.page?.snapshotSequence, 42);
+      }
+    }),
+  );
+
+  it.effect("includes lifecycle anchors for live agents outside the initial turn window", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+        ) VALUES
+          ('live-agent-start', 'thread-w', 'turn-1', 'info', 'task.started', 'Spawned agent',
+            '{"taskId":"live-agent","agentKind":"agent","detail":"Live agent"}',
+            '2026-03-01T00:00:10.000Z'),
+          ('live-agent-obsolete-update', 'thread-w', 'turn-2', 'info', 'task.updated', 'Old state',
+            '{"taskId":"live-agent","agentKind":"agent","status":"running"}',
+            '2026-03-01T00:01:00.000Z'),
+          ('task-progress:thread-w:live-agent', 'thread-w', 'turn-2', 'info', 'task.progress',
+            'Still working',
+            '{"taskId":"live-agent","agentKind":"agent","summary":"Still working"}',
+            '2026-03-01T00:01:10.000Z'),
+          ('live-agent-latest-update', 'thread-w', 'turn-3', 'info', 'task.updated', 'Waiting',
+            '{"taskId":"live-agent","agentKind":"agent","status":"waiting"}',
+            '2026-03-01T00:02:10.000Z'),
+          ('task-usage:thread-w:live-agent', 'thread-w', 'turn-5', 'info', 'task.progress',
+            'Usage',
+            '{"taskId":"live-agent","agentKind":"agent","usageSnapshot":true,"typedUsage":{"totalTokens":42}}',
+            '2026-03-01T00:04:10.000Z'),
+          ('inactive-agent-start', 'thread-w', 'turn-1', 'info', 'task.started', 'Old agent',
+            '{"taskId":"inactive-agent","agentKind":"agent","detail":"Old agent"}',
+            '2026-03-01T00:00:20.000Z')
+      `;
+      backgroundLiveness.recordTaskLiveness({
+        threadId: "thread-w",
+        taskId: "live-agent",
+        taskType: "agent",
+        status: "running",
+        kind: "started",
+        activityId: "live-agent-start",
+      });
+      backgroundLiveness.recordTaskLiveness({
+        threadId: "thread-w",
+        taskId: "live-agent",
+        taskType: "agent",
+        status: "waiting",
+        kind: "updated",
+        activityId: "live-agent-latest-update",
+      });
+      backgroundLiveness.recordTaskLiveness({
+        threadId: "thread-w",
+        taskId: "inactive-agent",
+        taskType: "agent",
+        status: "running",
+        kind: "started",
+        activityId: "inactive-agent-start",
+      });
+      backgroundLiveness.recordTaskLiveness({
+        threadId: "thread-w",
+        taskId: "inactive-agent",
+        taskType: undefined,
+        status: "completed",
+        kind: "completed",
+        activityId: "inactive-agent-complete",
+      });
+
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        const ids = activityIds(snapshot.value);
+        assert.deepEqual(ids, [
+          "live-agent-latest-update",
+          "live-agent-start",
+          "task-progress:thread-w:live-agent",
+          "task-usage:thread-w:live-agent",
+          "turn-4-activity",
+          "turn-5-activity",
+          "turnless-activity",
+        ]);
+        assert.equal(new Set(ids).size, ids.length);
+
+        const beforeCursor = snapshot.value.page?.beforeCursor;
+        assert.notEqual(beforeCursor, null);
+        if (beforeCursor) {
+          const older = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+            turnLimit: 2,
+            beforeCursor,
+          });
+          assert.equal(older._tag, "Some");
+          if (older._tag === "Some") {
+            assert.equal(
+              activityIds(older.value).includes("task-usage:thread-w:live-agent"),
+              false,
+            );
+          }
+        }
+      }
+    }),
+  );
+
+  it.effect("caps live-agent anchors at 100 with newest agents first", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+      const allAnchorIds = new Set<string>();
+
+      for (let index = 0; index < 21; index += 1) {
+        const taskId = `cap-agent-${index}`;
+        const startId = `cap-start-${index}`;
+        const updateId = `cap-update-${index}`;
+        const syntheticIds = [
+          `task-progress:thread-w:${taskId}`,
+          `task-usage:thread-w:${taskId}`,
+          `tool-progress:thread-w:${taskId}`,
+        ];
+        const rows = [
+          { id: startId, kind: "task.started", status: "running" },
+          { id: updateId, kind: "task.updated", status: "waiting" },
+          ...syntheticIds.map((id) => ({ id, kind: "task.progress", status: "running" })),
+        ];
+        for (const row of rows) {
+          allAnchorIds.add(row.id);
+          yield* sql`
+            INSERT INTO projection_thread_activities (
+              activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+            ) VALUES (
+              ${row.id}, 'thread-w', 'turn-1', 'info', ${row.kind}, ${row.kind},
+              json_object('taskId', ${taskId}, 'agentKind', 'agent', 'status', ${row.status}),
+              '2026-03-01T00:00:30.000Z'
+            )
+          `;
+        }
+        backgroundLiveness.recordTaskLiveness({
+          threadId: "thread-w",
+          taskId,
+          taskType: "agent",
+          status: "running",
+          kind: "started",
+          activityId: startId,
+        });
+        backgroundLiveness.recordTaskLiveness({
+          threadId: "thread-w",
+          taskId,
+          taskType: "agent",
+          status: "waiting",
+          kind: "updated",
+          activityId: updateId,
+        });
+      }
+
+      const snapshot = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(snapshot._tag, "Some");
+      if (snapshot._tag === "Some") {
+        const retainedAnchorIds = snapshot.value.thread.activities
+          .map((activity) => String(activity.id))
+          .filter((id) => allAnchorIds.has(id));
+        assert.equal(retainedAnchorIds.length, 100);
+        for (const suffix of [
+          "cap-start-20",
+          "cap-update-20",
+          "task-progress:thread-w:cap-agent-20",
+          "task-usage:thread-w:cap-agent-20",
+          "tool-progress:thread-w:cap-agent-20",
+        ]) {
+          assert.equal(retainedAnchorIds.includes(suffix), true);
+        }
+        assert.equal(
+          retainedAnchorIds.some((id) => id.includes("cap-agent-0")),
+          false,
+        );
+        assert.equal(retainedAnchorIds.includes("cap-start-0"), false);
+        assert.equal(retainedAnchorIds.includes("cap-update-0"), false);
       }
     }),
   );

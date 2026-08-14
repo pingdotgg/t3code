@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationReadModel,
   type OrchestrationSession,
   type OrchestrationThread,
@@ -644,6 +645,62 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       expect(unconditionalEvents.map((event) => event.type)).toEqual([
         "thread.session-stop-requested",
       ]);
+    }),
+  );
+
+  it.effect("stamps interrupt guards from the serialized current session state", () =>
+    Effect.gen(function* () {
+      const activeTurnId = TurnId.make("turn-current");
+      const session = { ...makeSession("running"), activeTurnId };
+      const decideInterrupt = (input: {
+        readonly commandId: string;
+        readonly expectedTurnId: TurnId;
+        readonly expectedSessionUpdatedAt: string;
+      }) =>
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.turn.interrupt",
+            commandId: CommandId.make(input.commandId),
+            threadId: ThreadId.make("thread-1"),
+            turnId: input.expectedTurnId,
+            expectedTurnId: input.expectedTurnId,
+            expectedSessionUpdatedAt: input.expectedSessionUpdatedAt,
+            createdAt: NOW,
+          },
+          readModel: makeReadModel(null, null, session),
+        });
+
+      const matched = yield* decideInterrupt({
+        commandId: "cmd-interrupt-matched",
+        expectedTurnId: activeTurnId,
+        expectedSessionUpdatedAt: NOW,
+      });
+      const changed = yield* decideInterrupt({
+        commandId: "cmd-interrupt-changed",
+        expectedTurnId: TurnId.make("turn-stale"),
+        expectedSessionUpdatedAt: NOW,
+      });
+
+      const matchedEvents = Array.isArray(matched) ? matched : [matched];
+      const changedEvents = Array.isArray(changed) ? changed : [changed];
+      expect(matchedEvents).toHaveLength(1);
+      expect(changedEvents).toHaveLength(1);
+      const matchedEvent = matchedEvents[0];
+      const changedEvent = changedEvents[0];
+      if (matchedEvent?.type !== "thread.turn-interrupt-requested") {
+        throw new Error("Expected matched interrupt request event");
+      }
+      expect(matchedEvent.payload.guardDecision).toEqual({
+        outcome: "matched",
+        actualTurnId: activeTurnId,
+      });
+      if (changedEvent?.type !== "thread.turn-interrupt-requested") {
+        throw new Error("Expected changed interrupt request event");
+      }
+      expect(changedEvent.payload.guardDecision).toEqual({
+        outcome: "work-changed",
+        actualTurnId: activeTurnId,
+      });
     }),
   );
 });

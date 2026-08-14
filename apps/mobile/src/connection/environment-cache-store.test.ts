@@ -1,4 +1,11 @@
-import { EnvironmentId, type VcsListRefsResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type OrchestrationShellSnapshot,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type VcsListRefsResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -63,6 +70,50 @@ function makeDatabase() {
 }
 
 describe("mobile SQLite environment cache store", () => {
+  it.effect("clears background liveness when loading a cached shell snapshot", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(Effect.provideService(MobileDatabase, memory.database));
+      const snapshot: OrchestrationShellSnapshot = {
+        snapshotSequence: 1,
+        projects: [],
+        threads: [
+          {
+            id: ThreadId.make("thread-1"),
+            projectId: ProjectId.make("project-1"),
+            title: "Thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            latestTurn: null,
+            createdAt: "2026-06-01T00:00:00.000Z",
+            updatedAt: "2026-06-01T00:00:00.000Z",
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            session: null,
+            latestUserMessageAt: null,
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            hasActionableProposedPlan: false,
+            backgroundLiveness: "working",
+          },
+        ],
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      };
+
+      yield* store.saveShell(ENVIRONMENT_ID, snapshot);
+
+      const loaded = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
+      expect(loaded.threads[0]?.backgroundLiveness).toBeNull();
+    }),
+  );
+
   it.effect("round-trips schema-validated VCS refs", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();
