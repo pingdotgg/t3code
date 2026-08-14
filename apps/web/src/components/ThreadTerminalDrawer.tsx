@@ -443,6 +443,38 @@ export function TerminalViewport({
         onCopy: (text) => handleCopy(text),
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
+        onContextMenu: (event) => {
+          if (!localApi) return;
+          event.preventDefault();
+          const terminal = terminalRef.current;
+          const hasSelection = terminal?.hasSelection();
+          const items = hasSelection
+            ? [{ id: "copy", label: "Copy" }, { id: "paste", label: "Paste" }]
+            : [{ id: "paste", label: "Paste" }];
+          localApi.contextMenu
+            .show(items as any, { x: event.clientX, y: event.clientY })
+            .then((action) => {
+              if (action === "copy" && hasSelection) {
+                const text = terminal?.getSelection();
+                if (text) {
+                  handleCopy(text);
+                  terminal?.clearSelection();
+                  terminal?.focus();
+                }
+              } else if (action === "paste") {
+                navigator.clipboard
+                  .readText()
+                  .then((text) => {
+                    if (text && terminal) {
+                      handleData(terminal.core.encodePaste(text));
+                      terminal.focus();
+                    }
+                  })
+                  .catch(() => {});
+              }
+            })
+            .catch(() => {});
+        },
       };
       const terminal = await GhosttyTerminalSurface.create(mount, terminalOptions);
       if (cancelled) {

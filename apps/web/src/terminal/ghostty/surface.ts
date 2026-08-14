@@ -1,4 +1,4 @@
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "../../lib/utils";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GhosttyTerminalCore,
@@ -333,7 +333,9 @@ export function isTerminalCopyShortcut(
   platform = navigator.platform,
 ) {
   if (event.key.toLowerCase() !== "c") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  if (isMacPlatform(platform)) return event.metaKey;
+  if (isWindowsPlatform(platform)) return event.ctrlKey;
+  return event.ctrlKey && event.shiftKey;
 }
 
 export function isTerminalPasteShortcut(
@@ -341,7 +343,9 @@ export function isTerminalPasteShortcut(
   platform = navigator.platform,
 ) {
   if (event.key.toLowerCase() !== "v") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  if (isMacPlatform(platform)) return event.metaKey;
+  if (isWindowsPlatform(platform)) return event.ctrlKey;
+  return event.ctrlKey && event.shiftKey;
 }
 
 export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputType">): boolean {
@@ -466,6 +470,7 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onCopy: (text: string) => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
+  readonly onContextMenu?: (event: MouseEvent) => void;
 }
 
 export class GhosttyTerminalSurface {
@@ -1310,6 +1315,8 @@ export class GhosttyTerminalSurface {
   private readonly onContextMenu = (event: MouseEvent) => {
     if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
       event.preventDefault();
+    } else if (this.options.onContextMenu) {
+      this.options.onContextMenu(event);
     }
   };
 
