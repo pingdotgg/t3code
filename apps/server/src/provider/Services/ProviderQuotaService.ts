@@ -122,27 +122,32 @@ export const make = Effect.gen(function* () {
   const invalidate = Effect.fn("ProviderQuotaService.invalidate")(function* (
     instanceId?: ProviderInstanceId,
   ) {
-    const retired = yield* cacheMutex.withPermits(1)(
-      Effect.sync(() => {
-        const deferreds: Array<Deferred.Deferred<CacheReadOutcome>> = [];
-        const ids = instanceId === undefined ? Array.from(cache.keys()) : [instanceId];
-        for (const id of ids) {
-          const entry = cache.get(id);
-          if (entry === undefined) continue;
-          if (entry.inFlight !== undefined) deferreds.push(entry.inFlight);
-          cache.set(id, {
-            instance: entry.instance,
-            revision: entry.revision,
-            ...(entry.lastSuccess ? { lastSuccess: entry.lastSuccess } : {}),
-          });
-        }
-        return deferreds;
+    yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const retired = yield* cacheMutex.withPermits(1)(
+          Effect.sync(() => {
+            const deferreds: Array<Deferred.Deferred<CacheReadOutcome>> = [];
+            const ids = instanceId === undefined ? Array.from(cache.keys()) : [instanceId];
+            for (const id of ids) {
+              const entry = cache.get(id);
+              if (entry === undefined) continue;
+              if (entry.inFlight !== undefined) deferreds.push(entry.inFlight);
+              cache.set(id, {
+                instance: entry.instance,
+                revision: entry.revision,
+                ...(entry.lastSuccess ? { lastSuccess: entry.lastSuccess } : {}),
+              });
+            }
+            return deferreds;
+          }),
+        );
+        yield* Effect.forEach(
+          retired,
+          (deferred) => Deferred.succeed(deferred, obsoleteCacheRead),
+          { concurrency: "unbounded", discard: true },
+        );
       }),
     );
-    yield* Effect.forEach(retired, (deferred) => Deferred.succeed(deferred, obsoleteCacheRead), {
-      concurrency: "unbounded",
-      discard: true,
-    });
   });
 
   const readCached = Effect.fn("ProviderQuotaService.readCached")(function* (
@@ -151,69 +156,80 @@ export const make = Effect.gen(function* () {
     readAt: string,
   ) {
     const now = yield* Clock.monotonicTimeNanos;
-    const selection = yield* cacheMutex.withPermits(1)(
-      Effect.gen(function* (): Effect.fn.Return<CacheSelection> {
-        const existing = cache.get(instance.instanceId);
-        const sameIdentity = existing?.instance === instance;
-        const sameRevision = sameIdentity && existing.revision === revision;
+    const selection = yield* Effect.uninterruptible(
+      cacheMutex
+        .withPermits(1)(
+          Effect.gen(function* (): Effect.fn.Return<CacheSelection> {
+            const existing = cache.get(instance.instanceId);
+            const sameIdentity = existing?.instance === instance;
+            const sameRevision = sameIdentity && existing.revision === revision;
 
-        if (
-          sameRevision &&
-          existing.snapshot !== undefined &&
-          existing.cachedAtNanos !== undefined &&
-          now - existing.cachedAtNanos < CACHE_TTL_NANOS
-        ) {
-          return { _tag: "cached", snapshot: existing.snapshot };
-        }
-        if (sameRevision && existing.inFlight !== undefined) {
-          return { _tag: "waiting", deferred: existing.inFlight };
-        }
+            if (
+              sameRevision &&
+              existing.snapshot !== undefined &&
+              existing.cachedAtNanos !== undefined &&
+              now - existing.cachedAtNanos < CACHE_TTL_NANOS
+            ) {
+              return { _tag: "cached", snapshot: existing.snapshot };
+            }
+            if (sameRevision && existing.inFlight !== undefined) {
+              return { _tag: "waiting", deferred: existing.inFlight };
+            }
 
-        const deferred = yield* Deferred.make<CacheReadOutcome>();
-        const previous = sameIdentity ? existing?.lastSuccess : undefined;
-        const retired = existing?.inFlight;
-        cache.set(instance.instanceId, {
-          instance,
-          revision,
-          ...(previous ? { lastSuccess: previous } : {}),
-          inFlight: deferred,
-        });
-        return {
-          _tag: "owner",
-          deferred,
-          ...(previous ? { previous } : {}),
-          ...(retired ? { retired } : {}),
-        };
-      }),
+            const deferred = yield* Deferred.make<CacheReadOutcome>();
+            const previous = sameIdentity ? existing?.lastSuccess : undefined;
+            const retired = existing?.inFlight;
+            cache.set(instance.instanceId, {
+              instance,
+              revision,
+              ...(previous ? { lastSuccess: previous } : {}),
+              inFlight: deferred,
+            });
+            return {
+              _tag: "owner",
+              deferred,
+              ...(previous ? { previous } : {}),
+              ...(retired ? { retired } : {}),
+            };
+          }),
+        )
+        .pipe(
+          Effect.tap((selection) =>
+            selection._tag === "owner" && selection.retired !== undefined
+              ? Deferred.succeed(selection.retired, obsoleteCacheRead)
+              : Effect.void,
+          ),
+        ),
     );
 
     if (selection._tag === "cached") {
       return { _tag: "snapshot", snapshot: selection.snapshot } satisfies CacheReadOutcome;
     }
     if (selection._tag === "waiting") return yield* Deferred.await(selection.deferred);
-    if (selection.retired !== undefined) {
-      yield* Deferred.succeed(selection.retired, obsoleteCacheRead);
-    }
-
-    const retireOwnedGeneration = cacheMutex
-      .withPermits(1)(
-        Effect.sync(() => {
-          const current = cache.get(instance.instanceId);
-          if (
-            current?.instance !== instance ||
-            current.revision !== revision ||
-            current.inFlight !== selection.deferred
-          ) {
-            return;
-          }
-          cache.set(instance.instanceId, {
-            instance,
-            revision,
-            ...(current.lastSuccess ? { lastSuccess: current.lastSuccess } : {}),
-          });
-        }),
-      )
-      .pipe(Effect.andThen(Deferred.succeed(selection.deferred, obsoleteCacheRead)), Effect.asVoid);
+    const retireOwnedGeneration = Effect.uninterruptible(
+      cacheMutex
+        .withPermits(1)(
+          Effect.sync(() => {
+            const current = cache.get(instance.instanceId);
+            if (
+              current?.instance !== instance ||
+              current.revision !== revision ||
+              current.inFlight !== selection.deferred
+            ) {
+              return;
+            }
+            cache.set(instance.instanceId, {
+              instance,
+              revision,
+              ...(current.lastSuccess ? { lastSuccess: current.lastSuccess } : {}),
+            });
+          }),
+        )
+        .pipe(
+          Effect.andThen(Deferred.succeed(selection.deferred, obsoleteCacheRead)),
+          Effect.asVoid,
+        ),
+    );
 
     return yield* Effect.gen(function* () {
       const quota = instance.quota;
@@ -246,6 +262,7 @@ export const make = Effect.gen(function* () {
                         new ProviderQuotaAdapterError({
                           reason: "providerFailed",
                           detail: "The provider quota read failed.",
+                          cause: Cause.squash(cause),
                         }),
                         selection.previous,
                       ),
@@ -322,21 +339,26 @@ export const make = Effect.gen(function* () {
         .filter((instance) => instance.enabled)
         .slice(0, PROVIDER_QUOTA_SUMMARY_MAX_INSTANCES);
       const enabledIdentities = new Map(enabled.map((instance) => [instance.instanceId, instance]));
-      const retired = yield* cacheMutex.withPermits(1)(
-        Effect.sync(() => {
-          const deferreds: Array<Deferred.Deferred<CacheReadOutcome>> = [];
-          for (const [id, entry] of cache) {
-            if (enabledIdentities.get(id) === entry.instance) continue;
-            cache.delete(id);
-            if (entry.inFlight !== undefined) deferreds.push(entry.inFlight);
-          }
-          return deferreds;
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const retired = yield* cacheMutex.withPermits(1)(
+            Effect.sync(() => {
+              const deferreds: Array<Deferred.Deferred<CacheReadOutcome>> = [];
+              for (const [id, entry] of cache) {
+                if (enabledIdentities.get(id) === entry.instance) continue;
+                cache.delete(id);
+                if (entry.inFlight !== undefined) deferreds.push(entry.inFlight);
+              }
+              return deferreds;
+            }),
+          );
+          yield* Effect.forEach(
+            retired,
+            (deferred) => Deferred.succeed(deferred, obsoleteCacheRead),
+            { concurrency: "unbounded", discard: true },
+          );
         }),
       );
-      yield* Effect.forEach(retired, (deferred) => Deferred.succeed(deferred, obsoleteCacheRead), {
-        concurrency: "unbounded",
-        discard: true,
-      });
 
       const readAt = DateTime.formatIso(yield* DateTime.now);
       const outcomes = yield* Effect.forEach(
