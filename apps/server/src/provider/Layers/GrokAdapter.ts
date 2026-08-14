@@ -126,6 +126,7 @@ interface GrokSessionContext {
   currentModelId: string | undefined;
   currentReasoningEffort: string | undefined;
   contextWindowTokens: number | undefined;
+  lastEmittedUsage: { usedTokens: number; maxTokens: number | undefined } | undefined;
   stopped: boolean;
 }
 
@@ -299,6 +300,18 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         if (usage.maxTokens !== undefined) {
           ctx.contextWindowTokens = usage.maxTokens;
         }
+        const last = ctx.lastEmittedUsage;
+        if (
+          last !== undefined &&
+          last.usedTokens === usage.usedTokens &&
+          last.maxTokens === usage.maxTokens
+        ) {
+          return;
+        }
+        ctx.lastEmittedUsage = {
+          usedTokens: usage.usedTokens,
+          maxTokens: usage.maxTokens,
+        };
         yield* offerRuntimeEvent(
           makeAcpTokenUsageUpdatedEvent({
             stamp: yield* makeEventStamp(),
@@ -826,6 +839,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               started.sessionSetupResult.models?.availableModels,
               boundModelId,
             ),
+            lastEmittedUsage: undefined,
             stopped: false,
           };
 

@@ -213,6 +213,21 @@ describe("applyGrokAcpModelSelection", () => {
     }),
   );
 
+  it.effect("does not clear effort when no model or effort is requested", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-build",
+        requestedModelId: undefined,
+        currentReasoningEffort: "high",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toEqual({ modelId: "grok-build", reasoningEffort: "high" });
+    }),
+  );
+
   it.effect("propagates session/set_model failures via mapError", () =>
     Effect.gen(function* () {
       const failure = EffectAcpErrors.AcpRequestError.invalidParams("session id not known");

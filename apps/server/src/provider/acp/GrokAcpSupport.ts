@@ -327,7 +327,11 @@ export function applyGrokAcpModelSelection<E>(input: {
   );
   const modelChanged =
     input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  const effortChanged = requestedReasoningEffort !== currentReasoningEffort;
+  // A missing model selection is not a clear. Only treat effort as changed when
+  // the caller actually sent a model or an effort value.
+  const effortSpecified =
+    input.requestedModelId !== undefined || input.requestedReasoningEffort !== undefined;
+  const effortChanged = effortSpecified && requestedReasoningEffort !== currentReasoningEffort;
   const targetModelId = modelChanged ? input.requestedModelId : input.currentModelId;
 
   if (!modelChanged && !effortChanged) {
