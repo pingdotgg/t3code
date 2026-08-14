@@ -11,16 +11,18 @@ index ee181aef5007e4bf34a49479c089ca30f73a320b..327e2c55c83cc4c50d396a3109190ef1
  import { fileURLToPath } from "node:url";
  import { getLibFilename, getNpmPackageName } from "./platform.js";
  /**
-@@ -46,6 +46,14 @@ function getPackageDir() {
+@@ -46,6 +46,16 @@ function getPackageDir() {
      // Fallback: assume we're one level deep in src/
      return dirname(currentDir);
  }
 +function resolveUnpackedAsarPath(binaryPath) {
-+    const asarSegment = `${sep}app.asar${sep}`;
-+    if (!binaryPath.includes(asarSegment)) {
++    const pathSegments = binaryPath.split(sep);
++    const asarIndex = pathSegments.findLastIndex((segment) => segment.endsWith(".asar"));
++    if (asarIndex === -1) {
 +        return binaryPath;
 +    }
-+    const unpackedPath = binaryPath.replace(asarSegment, `${sep}app.asar.unpacked${sep}`);
++    pathSegments[asarIndex] = `${pathSegments[asarIndex]}.unpacked`;
++    const unpackedPath = pathSegments.join(sep);
 +    return existsSync(unpackedPath) ? unpackedPath : binaryPath;
 +}
  /**

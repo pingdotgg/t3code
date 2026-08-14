@@ -4,14 +4,12 @@
  * Two consumers derive from this list, and they must never disagree:
  *
  * - apps/server/vite.config.ts decides what stays external to the bundle.
- * - scripts/build-desktop-artifact.ts decides what gets unpacked out of the asar.
+ * - scripts/build-desktop-artifact.ts selects the runtime dependency roots for
+ *   the Windows server sidecar.
  *
- * A package that is external but not unpacked still resolves on the Windows
- * primary, which runs under ELECTRON_RUN_AS_NODE and reads app.asar
- * transparently. It fails only under WSL, where the backend is launched as plain
- * `wsl.exe -- node` and cannot read inside an archive. That asymmetry makes the
- * drift invisible on the platform you are most likely to test on, which is why
- * both consumers derive from one list instead of maintaining their own.
+ * A runtime package that is external but absent from the sidecar fails as soon
+ * as Node resolves it from the emitted bundle. Keeping both consumers on one
+ * list prevents packaging from drifting away from the bundle boundary.
  *
  * Entries are matched as prefixes (`id.startsWith(prefix)`), so they also cover
  * a package's platform-specific siblings — `node-gyp-build` covers
@@ -24,8 +22,8 @@
  * critically — the ordinary JS packages those wrappers require. An external
  * package is loaded from the real filesystem, so its own `require` also
  * resolves from the real filesystem; a dependency that was bundled away exists
- * only inside app.asar and is unreachable there. This closure is enforced by a
- * test, not by inspection.
+ * only inside the emitted bundle and is unreachable there. This closure is
+ * enforced by a test, not by inspection.
  */
 export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "node-pty",
@@ -70,6 +68,10 @@ export const CLI_EXTERNAL_PACKAGE_PREFIXES = [
   ...CLI_BUILD_ONLY_EXTERNAL_PREFIXES,
 ] as const;
 
+export function isRuntimeExternalCliDependency(id: string): boolean {
+  return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
+}
+
 /**
  * True when `id` must stay out of the bundle.
  *
@@ -90,20 +92,14 @@ export function shouldBundleCliDependency(id: string): boolean {
   return !isExternalCliDependency(id);
 }
 
-/**
- * asar-unpack globs covering every external package.
- *
- * The trailing `*` is what keeps these aligned with the prefix matching above:
- * without it, `node-gyp-build` would be left external by the bundler and then
- * not unpacked, because the real package is `node-gyp-build-optional-packages`.
- *
- * pnpm stores real files under `.pnpm` and symlinks the top-level names, so both
- * paths are unpacked for the link target to exist on disk.
- */
-export const CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS = CLI_EXTERNAL_PACKAGE_PREFIXES.flatMap(
-  (prefix) =>
-    [`node_modules/${prefix}*/**/*`, `node_modules/.pnpm/**/node_modules/${prefix}*/**/*`] as const,
-);
+/** Select direct dependency roots whose runtime closure belongs in the sidecar. */
+export function selectCliRuntimeExternalDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(dependencies).filter(([name]) => isRuntimeExternalCliDependency(name)),
+  );
+}
 
 /**
  * Scan an emitted bundle chunk for runtime-external packages that were inlined.
@@ -122,8 +118,8 @@ export const CLI_EXTERNAL_PACKAGE_UNPACK_GLOBS = CLI_EXTERNAL_PACKAGE_PREFIXES.f
  * check the opposite direction too. Verifying only that externals are absent
  * would still pass if the bundler reverted to leaving everything external: the
  * scan would see source-file regions, report nothing inlined, and the packaged
- * WSL backend would then fail with ERR_MODULE_NOT_FOUND because those packages
- * are not in the unpack globs either.
+ * backends would then fail with ERR_MODULE_NOT_FOUND because those packages
+ * are not in the selected sidecar closure either.
  */
 export function findInlinedExternalPackages(source: string): {
   readonly regionCount: number;
