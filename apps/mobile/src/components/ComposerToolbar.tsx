@@ -17,10 +17,72 @@ import { cn } from "../lib/cn";
 import { AppText as Text } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 
-export const COMPOSER_TOOLBAR_CONTROL_HEIGHT = 44;
-export const COMPOSER_TOOLBAR_GAP = 8;
-export const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
+const COMPOSER_TOOLBAR_GAP = 8;
+const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
 const COMPOSER_TOOLBAR_SCROLL_EPSILON = 4;
+
+/**
+ * Quiet inline composer control used inside cards and their context rows.
+ * Unlike ComposerToolbarButton, this does not draw another pill inside the
+ * composer surface, so model and workspace controls read as part of the card.
+ */
+export function ComposerInlineControl(props: {
+  readonly accessibilityHint?: string;
+  readonly accessibilityLabel?: string;
+  readonly disabled?: boolean;
+  readonly emphasized?: boolean;
+  readonly icon?: ComponentProps<typeof SymbolView>["name"];
+  readonly iconNode?: ReactNode;
+  readonly label: string;
+  readonly maxWidth?: number;
+  readonly onPress?: () => void;
+  readonly selected?: boolean;
+  readonly static?: boolean;
+  readonly chevronDirection?: "down" | "right";
+  readonly showChevron?: boolean;
+}) {
+  const iconColor = useThemeColor(
+    props.emphasized || props.selected ? "--color-icon" : "--color-icon-muted",
+  );
+
+  return (
+    <Pressable
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
+      accessibilityHint={props.accessibilityHint}
+      accessibilityRole={props.static ? undefined : "button"}
+      accessibilityState={
+        props.static ? undefined : { disabled: props.disabled, selected: props.selected }
+      }
+      className="h-11 flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
+      disabled={props.disabled || props.static}
+      onPress={props.onPress}
+      style={{ maxWidth: props.maxWidth ?? 190, opacity: props.disabled ? 0.45 : 1 }}
+    >
+      {props.iconNode ? (
+        <View className="size-4 shrink-0 items-center justify-center">{props.iconNode}</View>
+      ) : props.icon ? (
+        <SymbolView name={props.icon} size={16} tintColor={iconColor} type="monochrome" />
+      ) : null}
+      <Text
+        className={cn(
+          "shrink text-sm font-t3-medium",
+          props.emphasized || props.selected ? "text-foreground" : "text-foreground-muted",
+        )}
+        numberOfLines={1}
+      >
+        {props.label}
+      </Text>
+      {props.showChevron === false ? null : (
+        <SymbolView
+          name={props.chevronDirection === "right" ? "chevron.right" : "chevron.down"}
+          size={10}
+          tintColor={iconColor}
+          type="monochrome"
+        />
+      )}
+    </Pressable>
+  );
+}
 
 export function ComposerToolbarRow(props: {
   readonly children: ReactNode;
@@ -247,5 +309,3 @@ export function ComposerToolbarButton(props: {
     </Pressable>
   );
 }
-
-export const ComposerToolbarTrigger = ComposerToolbarButton;
