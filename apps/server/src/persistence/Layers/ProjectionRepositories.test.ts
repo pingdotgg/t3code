@@ -29,6 +29,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         projectId: ProjectId.make("project-null-options"),
         title: "Null options project",
         workspaceRoot: "/tmp/project-null-options",
+        repoRoots: ["/tmp/project-null-options"],
         defaultModelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
@@ -88,6 +89,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        worktrees: [],
         latestTurnId: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -151,6 +153,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        worktrees: [],
         latestTurnId: null,
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-25T00:00:00.000Z",

@@ -25,7 +25,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
-import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import {
+  resolveThreadRepoRoots,
+  resolveThreadWorkspaceCwd,
+} from "../../workspace/WorkspaceRoots.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
@@ -308,6 +311,28 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 
   const safeFragment = branchFragment.length > 0 ? branchFragment : "update";
   return `${WORKTREE_BRANCH_PREFIX}/${safeFragment}`;
+}
+
+function samePaths(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
+  return left.length === right.length && left.every((path, index) => path === right[index]);
+}
+
+function withWorkspaceContext(
+  input: string | undefined,
+  session: ProviderSession | undefined,
+): string | undefined {
+  const additionalRoots = session?.additionalRoots ?? [];
+  if (!input || !session?.cwd || additionalRoots.length === 0) return input;
+  return [
+    "<t3_project_context>",
+    `Primary repository: ${session.cwd}`,
+    "Additional repositories:",
+    ...additionalRoots.map((root) => `- ${root}`),
+    "Treat these repositories as one project. Use the primary repository for default Git actions unless the task targets another repository.",
+    "</t3_project_context>",
+    "",
+    input,
+  ].join("\n");
 }
 
 const make = Effect.gen(function* () {
@@ -616,6 +641,14 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+    const additionalRoots = project
+      ? resolveThreadRepoRoots({
+          worktreePath: thread.worktreePath ?? null,
+          worktrees: thread.worktrees,
+          workspaceRoot: project.workspaceRoot,
+          repoRoots: project.repoRoots ?? [],
+        }).filter((root) => root !== effectiveCwd)
+      : [];
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
@@ -626,6 +659,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(additionalRoots.length > 0 ? { additionalRoots } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
@@ -665,6 +699,10 @@ const make = Effect.gen(function* () {
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
+      const additionalRootsChanged = !samePaths(
+        activeSession?.additionalRoots ?? [],
+        additionalRoots,
+      );
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
       const modelChanged =
@@ -683,6 +721,7 @@ const make = Effect.gen(function* () {
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
+        !additionalRootsChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
@@ -706,6 +745,9 @@ const make = Effect.gen(function* () {
         previousCwd: activeSession?.cwd,
         desiredCwd: effectiveCwd,
         cwdChanged,
+        previousAdditionalRoots: activeSession?.additionalRoots ?? [],
+        desiredAdditionalRoots: additionalRoots,
+        additionalRootsChanged,
         modelChanged,
         instanceChanged,
         shouldRestartForModelChange,
@@ -782,10 +824,11 @@ const make = Effect.gen(function* () {
             }
           : requestedModelSelection
         : input.modelSelection;
+    const providerInput = withWorkspaceContext(normalizedInput, activeSession);
 
     return {
       threadId: input.threadId,
-      ...(normalizedInput ? { input: normalizedInput } : {}),
+      ...(providerInput ? { input: providerInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),

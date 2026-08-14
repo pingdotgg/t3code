@@ -26,6 +26,10 @@ export type ComposerCommandItem =
       type: "path";
       path: string;
       pathKind: ProjectEntry["kind"];
+      // Absolute owning root for multi-repo results (#923); when set, the
+      // inserted file link uses the absolute path so the agent and previews
+      // resolve it unambiguously across cousin repos.
+      root?: string;
       label: string;
       description: string;
     }

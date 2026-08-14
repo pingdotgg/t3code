@@ -1355,6 +1355,9 @@ export function makeOpenCodeAdapter(
           status: "ready",
           runtimeMode: input.runtimeMode,
           cwd: directory,
+          ...(input.additionalRoots && input.additionalRoots.length > 0
+            ? { additionalRoots: input.additionalRoots }
+            : {}),
           ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
           threadId: input.threadId,
           // ProviderService persists this cursor and feeds it back into

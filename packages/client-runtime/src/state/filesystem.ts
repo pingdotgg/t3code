@@ -2,6 +2,7 @@ import { type FilesystemBrowseEntry, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
+import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   canNavigateUp,
@@ -11,7 +12,6 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
   const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
@@ -78,6 +78,14 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
+    }),
+    scanGitRepos: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:filesystem:scanGitRepos",
+      tag: WS_METHODS.filesystemScanGitRepos,
+    }),
+    readWorkspaceFile: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:filesystem:readWorkspaceFile",
+      tag: WS_METHODS.filesystemReadWorkspaceFile,
     }),
   };
 }

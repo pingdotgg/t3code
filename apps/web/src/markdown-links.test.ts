@@ -108,6 +108,41 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("resolves a non-anchor repo root for a multi-repo file (#923)", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("/work/backend/src/api.ts", "/work/anchor", [
+        "/work/frontend",
+        "/work/backend",
+      ]),
+    ).toMatchObject({
+      fileRoot: "/work/backend",
+      workspaceRelativePath: "src/api.ts",
+    });
+  });
+
+  it("prefers the most specific root when roots are nested", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("/work/repo/packages/ui/index.ts", "/work/anchor", [
+        "/work/repo",
+        "/work/repo/packages/ui",
+      ]),
+    ).toMatchObject({
+      fileRoot: "/work/repo/packages/ui",
+      workspaceRelativePath: "index.ts",
+    });
+  });
+
+  it("leaves fileRoot unset when no repo root claims the path", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("/work/anchor/notes.md", "/work/anchor", ["/work/backend"]),
+    ).toMatchObject({
+      workspaceRelativePath: "notes.md",
+    });
+    expect(
+      resolveMarkdownFileLinkMeta("/work/anchor/notes.md", "/work/anchor", ["/work/backend"]),
+    ).not.toHaveProperty("fileRoot");
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(

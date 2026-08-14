@@ -6,12 +6,19 @@ const FILESYSTEM_PATH_MAX_LENGTH = 512;
 export const FilesystemBrowseInput = Schema.Struct({
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
+  /** When true, also list `.code-workspace` files alongside directories. */
+  includeWorkspaceFiles: Schema.optional(Schema.Boolean),
 });
 export type FilesystemBrowseInput = typeof FilesystemBrowseInput.Type;
+
+export const FilesystemBrowseEntryKind = Schema.Literals(["directory", "workspaceFile"]);
+export type FilesystemBrowseEntryKind = typeof FilesystemBrowseEntryKind.Type;
 
 export const FilesystemBrowseEntry = Schema.Struct({
   name: TrimmedNonEmptyString,
   fullPath: TrimmedNonEmptyString,
+  /** Absent ⇒ `"directory"` for back-compat with older servers. */
+  kind: Schema.optional(FilesystemBrowseEntryKind),
 });
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 
@@ -63,5 +70,115 @@ export class FilesystemBrowseError extends Schema.TaggedErrorClass<FilesystemBro
         decodedFilesystemBrowseErrorMessage(props) ??
         `Failed to browse filesystem path '${props.partialPath}'${cwd}.`,
     } as any);
+  }
+}
+
+export const FilesystemScanGitReposInput = Schema.Struct({
+  parentPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
+});
+export type FilesystemScanGitReposInput = typeof FilesystemScanGitReposInput.Type;
+
+export const FilesystemScanGitReposChild = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  absolutePath: TrimmedNonEmptyString,
+  hasGit: Schema.Boolean,
+});
+export type FilesystemScanGitReposChild = typeof FilesystemScanGitReposChild.Type;
+
+export const FilesystemScanGitReposResult = Schema.Struct({
+  parentPath: TrimmedNonEmptyString,
+  parentHasGit: Schema.Boolean,
+  children: Schema.Array(FilesystemScanGitReposChild),
+});
+export type FilesystemScanGitReposResult = typeof FilesystemScanGitReposResult.Type;
+
+export const FilesystemScanGitReposFailure = Schema.Literals([
+  "stat_failed",
+  "not_directory",
+  "read_directory_failed",
+]);
+export type FilesystemScanGitReposFailure = typeof FilesystemScanGitReposFailure.Type;
+
+export class FilesystemScanGitReposError extends Schema.TaggedErrorClass<FilesystemScanGitReposError>()(
+  "FilesystemScanGitReposError",
+  {
+    parentPath: TrimmedNonEmptyString,
+    normalizedParentPath: TrimmedNonEmptyString,
+    failure: FilesystemScanGitReposFailure,
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly parentPath: string;
+    readonly normalizedParentPath: string;
+    readonly failure: FilesystemScanGitReposFailure;
+    readonly cause?: unknown;
+  }) {
+    super({
+      ...props,
+      message: `Failed to scan Git repositories under '${props.parentPath}' (${props.failure}).`,
+    });
+  }
+}
+
+export const FilesystemReadWorkspaceFileInput = Schema.Struct({
+  workspaceFilePath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
+});
+export type FilesystemReadWorkspaceFileInput = typeof FilesystemReadWorkspaceFileInput.Type;
+
+export const FilesystemReadWorkspaceFileFolder = Schema.Struct({
+  /** The `path` exactly as written in the file (relative, absolute, or `~`-prefixed). */
+  rawPath: Schema.String,
+  /** Display name — the explicit `name` field if present, else the resolved basename. */
+  name: Schema.String,
+  /** Absolute, normalized path (relative paths resolved against the file's directory). */
+  absolutePath: Schema.String,
+  /** Whether the resolved folder currently exists on disk as a directory. */
+  exists: Schema.Boolean,
+  /** Whether the resolved folder is a git repository. */
+  isGit: Schema.Boolean,
+});
+export type FilesystemReadWorkspaceFileFolder = typeof FilesystemReadWorkspaceFileFolder.Type;
+
+export const FilesystemReadWorkspaceFileResult = Schema.Struct({
+  /** Absolute, normalized path to the `.code-workspace` file. */
+  workspaceFilePath: TrimmedNonEmptyString,
+  /** Directory containing the file. Importers choose the first Git folder as the project root. */
+  anchorDir: TrimmedNonEmptyString,
+  /** Every resolved folder entry, in file order. Missing/non-git folders are surfaced. */
+  folders: Schema.Array(FilesystemReadWorkspaceFileFolder),
+  /** Absolute paths of folders that exist and are git repos — the project's `repoRoots`. */
+  repoRoots: Schema.Array(Schema.String),
+});
+export type FilesystemReadWorkspaceFileResult = typeof FilesystemReadWorkspaceFileResult.Type;
+
+export const FilesystemReadWorkspaceFileFailure = Schema.Literals([
+  "read_failed",
+  "parse_failed",
+  "folders_invalid",
+]);
+export type FilesystemReadWorkspaceFileFailure = typeof FilesystemReadWorkspaceFileFailure.Type;
+
+export class FilesystemReadWorkspaceFileError extends Schema.TaggedErrorClass<FilesystemReadWorkspaceFileError>()(
+  "FilesystemReadWorkspaceFileError",
+  {
+    workspaceFilePath: TrimmedNonEmptyString,
+    failure: FilesystemReadWorkspaceFileFailure,
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  // @effect-diagnostics-next-line overriddenSchemaConstructor:off
+  constructor(props: {
+    readonly workspaceFilePath: string;
+    readonly failure: FilesystemReadWorkspaceFileFailure;
+    readonly cause?: unknown;
+  }) {
+    super({
+      ...props,
+      message: `Failed to read workspace file '${props.workspaceFilePath}' (${props.failure}).`,
+    });
   }
 }

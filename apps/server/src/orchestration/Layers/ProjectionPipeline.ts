@@ -35,6 +35,7 @@ import {
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
+import * as ProjectionCheckpointRefs from "../../persistence/ProjectionCheckpointRefs.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
@@ -65,6 +66,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  checkpointRefs: "projection.checkpoint-refs",
 } as const;
 
 type ProjectorName =
@@ -479,6 +481,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
+    const projectionCheckpointRefsRepository =
+      yield* ProjectionCheckpointRefs.ProjectionCheckpointRefsRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
 
     const fileSystem = yield* FileSystem.FileSystem;
@@ -494,6 +498,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             projectId: event.payload.projectId,
             title: event.payload.title,
             workspaceRoot: event.payload.workspaceRoot,
+            workspaceFile: event.payload.workspaceFile ?? null,
+            repoRoots:
+              event.payload.repoRoots && event.payload.repoRoots.length > 0
+                ? event.payload.repoRoots
+                : [event.payload.workspaceRoot],
             defaultModelSelection: event.payload.defaultModelSelection,
             defaultThreadEnvMode: null,
             faviconPath: event.payload.faviconPath ?? null,
@@ -511,12 +520,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+          const nextWorkspaceRoot = event.payload.workspaceRoot ?? existingRow.value.workspaceRoot;
+          const nextRepoRoots =
+            event.payload.repoRoots !== undefined
+              ? [...new Set([nextWorkspaceRoot, ...event.payload.repoRoots])]
+              : event.payload.workspaceRoot !== undefined
+                ? [
+                    ...new Set([
+                      nextWorkspaceRoot,
+                      ...existingRow.value.repoRoots.filter(
+                        (root) => root !== existingRow.value.workspaceRoot,
+                      ),
+                    ]),
+                  ]
+                : existingRow.value.repoRoots;
           yield* projectionProjectRepository.upsert({
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.workspaceRoot !== undefined
               ? { workspaceRoot: event.payload.workspaceRoot }
               : {}),
+            ...(event.payload.workspaceFile !== undefined
+              ? { workspaceFile: event.payload.workspaceFile }
+              : {}),
+            repoRoots: nextRepoRoots,
             ...(event.payload.defaultModelSelection !== undefined
               ? { defaultModelSelection: event.payload.defaultModelSelection }
               : {}),
@@ -611,6 +638,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            worktrees: event.payload.worktrees,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -798,6 +826,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            ...(event.payload.worktrees !== undefined
+              ? { worktrees: event.payload.worktrees }
               : {}),
             updatedAt: event.payload.updatedAt,
           });
@@ -1482,6 +1513,124 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const applyCheckpointsProjection: ProjectorDefinition["apply"] = () => Effect.void;
 
+    interface LegacyCheckpointThreadLocation {
+      readonly projectId: string;
+      readonly worktreePath: string | null;
+      readonly worktrees: ReadonlyArray<{
+        readonly repoRoot: string;
+        readonly worktreePath: string;
+      }>;
+    }
+
+    const legacyCheckpointProjectRoots = new Map<string, string>();
+    const legacyCheckpointThreadLocations = new Map<string, LegacyCheckpointThreadLocation>();
+
+    // Checkpoint refs use their own cursor so the first startup after migration
+    // replays historical diff-completed events even when the turn projector is
+    // already caught up. Its small replay state preserves the worktree/project
+    // location at each legacy event rather than consulting final projected rows.
+    const applyCheckpointRefsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyCheckpointRefsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "project.created":
+          legacyCheckpointProjectRoots.set(event.payload.projectId, event.payload.workspaceRoot);
+          break;
+        case "project.meta-updated":
+          if (event.payload.workspaceRoot !== undefined) {
+            legacyCheckpointProjectRoots.set(event.payload.projectId, event.payload.workspaceRoot);
+          }
+          break;
+        case "project.deleted":
+          legacyCheckpointProjectRoots.delete(event.payload.projectId);
+          break;
+        case "thread.created":
+          legacyCheckpointThreadLocations.set(event.payload.threadId, {
+            projectId: event.payload.projectId,
+            worktreePath: event.payload.worktreePath,
+            worktrees: event.payload.worktrees,
+          });
+          break;
+        case "thread.meta-updated": {
+          const current = legacyCheckpointThreadLocations.get(event.payload.threadId);
+          if (current) {
+            legacyCheckpointThreadLocations.set(event.payload.threadId, {
+              ...current,
+              ...(event.payload.worktreePath !== undefined
+                ? { worktreePath: event.payload.worktreePath }
+                : {}),
+              ...(event.payload.worktrees !== undefined
+                ? { worktrees: event.payload.worktrees }
+                : {}),
+            });
+          }
+          break;
+        }
+      }
+
+      if (event.type === "thread.deleted") {
+        legacyCheckpointThreadLocations.delete(event.payload.threadId);
+        yield* projectionCheckpointRefsRepository.deleteByThreadId({
+          threadId: event.payload.threadId,
+        });
+        return;
+      }
+      if (event.type !== "thread.turn-diff-completed") {
+        return;
+      }
+
+      if (event.payload.checkpointRefs !== undefined) {
+        yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
+          threadId: event.payload.threadId,
+          checkpointTurnCount: event.payload.checkpointTurnCount,
+          refs: event.payload.checkpointRefs.map((entry) => ({
+            repoRoot: entry.repoRoot,
+            checkpointRef: entry.checkpointRef,
+          })),
+        });
+        return;
+      }
+
+      if (event.payload.status === "missing") {
+        yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
+          threadId: event.payload.threadId,
+          checkpointTurnCount: event.payload.checkpointTurnCount,
+          refs: [],
+        });
+        return;
+      }
+
+      const historicalThread = legacyCheckpointThreadLocations.get(event.payload.threadId);
+      let legacyRepoRoot =
+        historicalThread?.worktreePath ?? historicalThread?.worktrees[0]?.worktreePath ?? null;
+      if (legacyRepoRoot === null && historicalThread) {
+        legacyRepoRoot = legacyCheckpointProjectRoots.get(historicalThread.projectId) ?? null;
+      }
+      if (legacyRepoRoot === null) {
+        const thread = yield* projectionThreadRepository.getById({
+          threadId: event.payload.threadId,
+        });
+        if (Option.isNone(thread)) {
+          return;
+        }
+        const project = yield* projectionProjectRepository.getById({
+          projectId: thread.value.projectId,
+        });
+        if (Option.isNone(project)) {
+          return;
+        }
+        legacyRepoRoot =
+          thread.value.worktreePath ??
+          thread.value.worktrees[0]?.worktreePath ??
+          project.value.workspaceRoot;
+      }
+      yield* projectionCheckpointRefsRepository.replaceForCheckpoint({
+        threadId: event.payload.threadId,
+        checkpointTurnCount: event.payload.checkpointTurnCount,
+        refs: [{ repoRoot: legacyRepoRoot, checkpointRef: event.payload.checkpointRef }],
+      });
+    });
+
     const applyPendingApprovalsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyPendingApprovalsProjection",
     )(function* (event, _attachmentSideEffects) {
@@ -1643,6 +1792,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
       },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.checkpointRefs,
+        apply: applyCheckpointRefsProjection,
+      },
     ];
 
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
@@ -1746,4 +1899,5 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
   Layer.provideMerge(ProjectionStateRepositoryLive),
+  Layer.provideMerge(ProjectionCheckpointRefs.layer),
 );

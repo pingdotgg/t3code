@@ -80,23 +80,47 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         );
 
     if (canonicalCommand.type === "project.create") {
+      const workspaceRoot = yield* normalizeProjectWorkspaceRootForCreate(
+        canonicalCommand.workspaceRoot,
+        canonicalCommand.createWorkspaceRootIfMissing,
+      );
+      const normalizedRepoRoots = canonicalCommand.repoRoots
+        ? yield* Effect.forEach(canonicalCommand.repoRoots, normalizeProjectWorkspaceRoot)
+        : undefined;
+      const repoRoots = normalizedRepoRoots
+        ? [...new Set([workspaceRoot, ...normalizedRepoRoots])]
+        : undefined;
       return {
         ...canonicalCommand,
-        workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
-          canonicalCommand.workspaceRoot,
-          canonicalCommand.createWorkspaceRootIfMissing,
-        ),
+        workspaceRoot,
+        ...(repoRoots ? { repoRoots } : {}),
         createWorkspaceRootIfMissing: canonicalCommand.createWorkspaceRootIfMissing === true,
       } satisfies OrchestrationCommand;
     }
 
-    if (
-      canonicalCommand.type === "project.meta.update" &&
-      canonicalCommand.workspaceRoot !== undefined
-    ) {
+    if (canonicalCommand.type === "project.meta.update") {
+      const workspaceRoot =
+        canonicalCommand.workspaceRoot !== undefined
+          ? yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot)
+          : undefined;
+      const normalizedRepoRoots = canonicalCommand.repoRoots
+        ? yield* Effect.forEach(canonicalCommand.repoRoots, normalizeProjectWorkspaceRoot)
+        : undefined;
+      // The normalizer only canonicalizes supplied paths. The stateful decider
+      // prepends the project's current primary root when repoRoots is updated
+      // without workspaceRoot.
+      const repoRoots = normalizedRepoRoots
+        ? [
+            ...new Set([
+              ...(workspaceRoot !== undefined ? [workspaceRoot] : []),
+              ...normalizedRepoRoots,
+            ]),
+          ]
+        : undefined;
       return {
         ...canonicalCommand,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(canonicalCommand.workspaceRoot),
+        ...(workspaceRoot !== undefined ? { workspaceRoot } : {}),
+        ...(repoRoots !== undefined ? { repoRoots } : {}),
       } satisfies OrchestrationCommand;
     }
 

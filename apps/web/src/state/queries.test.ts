@@ -20,6 +20,12 @@ describe("areProjectPathSearchTargetsEqual", () => {
     ).toBe(false);
     expect(areProjectPathSearchTargetsEqual(target, { ...target, cwd: "/project-b" })).toBe(false);
     expect(areProjectPathSearchTargetsEqual(target, { ...target, query: "readme" })).toBe(false);
+    expect(
+      areProjectPathSearchTargetsEqual(target, {
+        ...target,
+        roots: ["/project-a", "/project-b"],
+      }),
+    ).toBe(false);
     expect(areProjectPathSearchTargetsEqual(target, { ...target, kind: "file" })).toBe(false);
     expect(areProjectPathSearchTargetsEqual(target, { ...target, imageOnly: true })).toBe(false);
   });

@@ -26,6 +26,7 @@ const readModel: OrchestrationReadModel = {
       interactionMode: "default",
       branch: null,
       worktreePath: null,
+      worktrees: [],
       latestTurn: null,
       createdAt: UPDATED_AT,
       updatedAt: UPDATED_AT,

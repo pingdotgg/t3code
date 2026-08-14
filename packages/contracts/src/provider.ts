@@ -40,6 +40,7 @@ export const ProviderSession = Schema.Struct({
   status: ProviderSessionStatus,
   runtimeMode: RuntimeMode,
   cwd: Schema.optional(TrimmedNonEmptyString),
+  additionalRoots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   model: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
   resumeCursor: Schema.optional(Schema.Unknown),
@@ -56,6 +57,11 @@ export const ProviderSessionStartInput = Schema.Struct({
   // See ProviderSession for the migration story.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   cwd: Schema.optional(TrimmedNonEmptyString),
+  // Extra agent-visible roots beyond `cwd` for multi-repo workspaces (D1).
+  // The session anchors at `cwd`; providers expose these natively (Claude
+  // `additionalDirectories`, Codex `skills/extraRoots/set`) and degrade to the
+  // anchor alone where unsupported.
+  additionalRoots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   modelSelection: Schema.optional(ModelSelection),
   resumeCursor: Schema.optional(Schema.Unknown),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),

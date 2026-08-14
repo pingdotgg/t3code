@@ -16,6 +16,9 @@ export type ProjectEntryKind = typeof ProjectEntryKind.Type;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  // Multi-repo workspaces (#923): search the union of these roots instead of
+  // just `cwd`. When omitted, falls back to a single-root search of `cwd`.
+  roots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   // An empty query is a bounded browse: the index returns frecency-ordered
   // entries, which the file picker uses for its initial results.
   query: TrimmedString.check(Schema.isMaxLength(256)),
@@ -28,6 +31,11 @@ export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: ProjectEntryKind,
+  parentPath: Schema.optional(TrimmedNonEmptyString),
+  // Absolute root this entry's `path` is relative to. Set when a list/search
+  // spans multiple repo roots so the caller can disambiguate same-named files
+  // and resolve previews against the owning root. Omitted in single-root mode.
+  root: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectEntry = typeof ProjectEntry.Type;
 
@@ -39,6 +47,7 @@ export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
 
 export const ProjectSearchContentsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  roots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   // Whitespace is significant in content queries (" foo", regex trailing
   // spaces), so the query is deliberately not trimmed on the wire.
   query: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)),
@@ -57,6 +66,7 @@ export type ProjectContentMatchRange = typeof ProjectContentMatchRange.Type;
 
 export const ProjectContentMatch = Schema.Struct({
   path: TrimmedNonEmptyString,
+  root: Schema.optional(TrimmedNonEmptyString),
   lineNumber: PositiveInt,
   lineContent: Schema.String,
   matchRanges: Schema.Array(ProjectContentMatchRange),
@@ -72,6 +82,9 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  // Multi-repo workspaces (#923): list the union of these roots instead of just
+  // `cwd`. When omitted, falls back to a single-root listing of `cwd`.
+  roots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 

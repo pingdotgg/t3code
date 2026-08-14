@@ -220,6 +220,22 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
+  it.effect("grants additional repositories to workspace-write turns", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "auto-accept-edits",
+        prompt: "Update both repositories",
+        additionalRoots: ["/work/frontend", "/work/shared"],
+      });
+
+      NodeAssert.deepStrictEqual(params.sandboxPolicy, {
+        type: "workspaceWrite",
+        writableRoots: ["/work/frontend", "/work/shared"],
+      });
+    }),
+  );
+
   it("omits collaboration mode when interaction mode is absent", () => {
     const params = Effect.runSync(
       buildTurnStartParams({

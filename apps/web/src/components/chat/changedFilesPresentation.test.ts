@@ -66,4 +66,54 @@ describe("changed-files presentation", () => {
     ]);
     expect(changedFileName("apps\\web\\src\\App.tsx")).toBe("App.tsx");
   });
+
+  it("uses repository scopes and keeps same-named files from different repositories", () => {
+    const files = [
+      {
+        path: "README.md",
+        repoRoot: "/workspace/frontend",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+      {
+        path: "README.md",
+        repoRoot: "/workspace/backend",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+    ];
+
+    expect(summarizeChangedFileScopes(files)).toEqual([
+      { label: "frontend", fileCount: 1 },
+      { label: "backend", fileCount: 1 },
+    ]);
+    expect(selectChangedFilePreview(files)).toEqual(files);
+  });
+
+  it("keeps repositories with matching basenames as distinct scopes", () => {
+    const files = [
+      {
+        path: "README.md",
+        repoRoot: "/clients/a/app",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+      {
+        path: "package.json",
+        repoRoot: "/clients/b/app",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+    ];
+
+    expect(summarizeChangedFileScopes(files)).toEqual([
+      { label: "a/app", fileCount: 1 },
+      { label: "b/app", fileCount: 1 },
+    ]);
+    expect(selectChangedFilePreview(files)).toEqual(files);
+  });
 });

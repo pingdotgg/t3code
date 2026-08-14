@@ -113,6 +113,35 @@ describe("buildTurnDiffTree", () => {
     ]);
   });
 
+  it("keeps identical relative paths in separate repository subtrees", () => {
+    const tree = buildTurnDiffTree([
+      {
+        path: "README.md",
+        repoRoot: "/workspace/frontend",
+        kind: "modified",
+        additions: 1,
+        deletions: 0,
+      },
+      {
+        path: "README.md",
+        repoRoot: "/workspace/backend",
+        kind: "modified",
+        additions: 2,
+        deletions: 0,
+      },
+    ]);
+
+    expect(tree.map((node) => node.name)).toEqual(["backend", "frontend"]);
+    expect(tree).toMatchObject([
+      {
+        children: [{ path: "README.md", repoRoot: "/workspace/backend" }],
+      },
+      {
+        children: [{ path: "README.md", repoRoot: "/workspace/frontend" }],
+      },
+    ]);
+  });
+
   it("compacts only single-directory chains and stops at branch points", () => {
     const tree = buildTurnDiffTree([
       { path: "apps/server/src/index.ts", kind: "modified", additions: 2, deletions: 1 },

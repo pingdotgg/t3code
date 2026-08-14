@@ -22,6 +22,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import GitActionsControl from "../GitActionsControl";
+import { MultiRepoGitControl, type MultiRepoGitGroup } from "./MultiRepoGitControl";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -56,6 +57,8 @@ interface ChatHeaderProps {
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
   openInCwd: string | null;
+  /** The project's `.code-workspace` file, when opening it makes sense (see {@link OpenInPicker}). */
+  openInWorkspaceFile: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
@@ -64,6 +67,12 @@ interface ChatHeaderProps {
   gitCwd: string | null;
   readonly onOpenPullRequest?: ((number: number) => void) | undefined;
   onNewThreadInProject: () => void;
+  /**
+   * Git repo roots to surface status/actions for. When more than one, render a
+   * single consolidated {@link MultiRepoGitControl} (multi-repo workspace);
+   * otherwise the single `gitCwd` control is shown unchanged.
+   */
+  repoStatusGroups: ReadonlyArray<MultiRepoGitGroup>;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -110,6 +119,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectCwd,
   activeProjectFaviconPath,
   openInCwd,
+  openInWorkspaceFile,
   activeProjectScripts,
   preferredScriptId,
   keybindings,
@@ -118,6 +128,7 @@ export const ChatHeader = memo(function ChatHeader({
   gitCwd,
   onOpenPullRequest,
   onNewThreadInProject,
+  repoStatusGroups,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -325,16 +336,25 @@ export const ChatHeader = memo(function ChatHeader({
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
+            openInWorkspaceFile={openInWorkspaceFile}
           />
         )}
-        {activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            onOpenPullRequest={onOpenPullRequest}
-            {...(draftId ? { draftId } : {})}
-          />
-        )}
+        {activeProjectName &&
+          (repoStatusGroups.length > 1 ? (
+            <MultiRepoGitControl
+              groups={repoStatusGroups}
+              environmentId={activeThreadEnvironmentId}
+              activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+              {...(draftId ? { draftId } : {})}
+            />
+          ) : (
+            <GitActionsControl
+              gitCwd={gitCwd}
+              activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
+              onOpenPullRequest={onOpenPullRequest}
+              {...(draftId ? { draftId } : {})}
+            />
+          ))}
       </div>
     </div>
   );

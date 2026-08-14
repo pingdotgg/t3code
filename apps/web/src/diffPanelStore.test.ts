@@ -72,12 +72,18 @@ describe("diffPanelStore", () => {
 
   it("increments the reveal request when opening the same turn file again", () => {
     const turnId = TurnId.make("turn-1");
-    useDiffPanelStore.getState().selectTurn(THREAD_REF, turnId, "src/app.ts");
-    useDiffPanelStore.getState().selectTurn(THREAD_REF, turnId, "src/app.ts");
+    useDiffPanelStore.getState().selectTurn(THREAD_REF, turnId, "src/app.ts", "/repo/web");
+    useDiffPanelStore.getState().selectTurn(THREAD_REF, turnId, "src/app.ts", "/repo/web");
 
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
-    ).toEqual({ kind: "turn", turnId, filePath: "src/app.ts", revealRequestId: 2 });
+    ).toEqual({
+      kind: "turn",
+      turnId,
+      filePath: "src/app.ts",
+      repoRoot: "/repo/web",
+      revealRequestId: 2,
+    });
   });
 
   it("restores the selected branch base after visiting another scope", () => {
@@ -102,6 +108,7 @@ describe("diffPanelStore", () => {
       kind: "turn",
       turnId: latestTurnId,
       filePath: "src/app.ts",
+      repoRoot: null,
       revealRequestId: 1,
     });
   });

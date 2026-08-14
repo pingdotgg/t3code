@@ -24,7 +24,14 @@ import type {
   ReviewDiffPreviewInput,
   ReviewDiffPreviewResult,
 } from "./review.ts";
-import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
+import type {
+  FilesystemBrowseInput,
+  FilesystemBrowseResult,
+  FilesystemScanGitReposInput,
+  FilesystemScanGitReposResult,
+  FilesystemReadWorkspaceFileInput,
+  FilesystemReadWorkspaceFileResult,
+} from "./filesystem.ts";
 import type { AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import type {
   ProjectListEntriesInput,
@@ -1235,6 +1242,10 @@ export interface EnvironmentApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+    scanGitRepos: (input: FilesystemScanGitReposInput) => Promise<FilesystemScanGitReposResult>;
+    readWorkspaceFile: (
+      input: FilesystemReadWorkspaceFileInput,
+    ) => Promise<FilesystemReadWorkspaceFileResult>;
   };
   assets: {
     createUrl: (input: AssetCreateUrlInput) => Promise<AssetCreateUrlResult>;

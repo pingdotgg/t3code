@@ -246,6 +246,69 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
+  it.effect("keeps the primary repository first across partial root updates", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const projectId = asProjectId("project-roots");
+      const readModel = yield* projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-roots"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-roots"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-roots"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Roots",
+          workspaceRoot: "/tmp/primary",
+          repoRoots: ["/tmp/primary", "/tmp/attached"],
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const rootsOnlyResult = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-update-roots-only"),
+          projectId,
+          repoRoots: ["/tmp/attached", "/tmp/extra"],
+        },
+        readModel,
+      });
+      const rootsOnlyEvent = Array.isArray(rootsOnlyResult) ? rootsOnlyResult[0] : rootsOnlyResult;
+      expect(rootsOnlyEvent.type).toBe("project.meta-updated");
+      expect((rootsOnlyEvent.payload as { repoRoots?: ReadonlyArray<string> }).repoRoots).toEqual([
+        "/tmp/primary",
+        "/tmp/attached",
+        "/tmp/extra",
+      ]);
+
+      const workspaceOnlyResult = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-update-workspace-only"),
+          projectId,
+          workspaceRoot: "/tmp/new-primary",
+        },
+        readModel,
+      });
+      const workspaceOnlyEvent = Array.isArray(workspaceOnlyResult)
+        ? workspaceOnlyResult[0]
+        : workspaceOnlyResult;
+      expect(workspaceOnlyEvent.type).toBe("project.meta-updated");
+      expect(
+        (workspaceOnlyEvent.payload as { repoRoots?: ReadonlyArray<string> }).repoRoots,
+      ).toEqual(["/tmp/new-primary", "/tmp/attached"]);
+    }),
+  );
+
   it.effect("emits user message and turn-start-requested events for thread.turn.start", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
@@ -294,6 +357,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          worktrees: [],
           createdAt: now,
           updatedAt: now,
         },
@@ -391,6 +455,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           runtimeMode: "full-access",
           branch: null,
           worktreePath: null,
+          worktrees: [],
           createdAt: now,
           updatedAt: now,
         },
@@ -469,6 +534,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
           runtimeMode: "approval-required",
           branch: null,
           worktreePath: null,
+          worktrees: [],
           createdAt: now,
           updatedAt: now,
         },

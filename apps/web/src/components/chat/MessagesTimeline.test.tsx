@@ -190,6 +190,7 @@ function buildProps() {
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
     markdownCwd: undefined,
+    markdownRepoRoots: undefined,
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,

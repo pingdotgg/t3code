@@ -212,14 +212,18 @@ export function buildProjectCreateCommand(input: {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
+  readonly repoRoots?: ReadonlyArray<string>;
   readonly createdAt: string;
+  readonly title?: string;
 }): Extract<OrchestrationCommand, { type: "project.create" }> {
+  const repoRoots = input.repoRoots && input.repoRoots.length > 0 ? input.repoRoots : undefined;
   return {
     type: "project.create",
     commandId: input.commandId,
     projectId: input.projectId,
-    title: inferProjectTitleFromPath(input.workspaceRoot),
+    title: input.title ?? inferProjectTitleFromPath(input.workspaceRoot),
     workspaceRoot: input.workspaceRoot,
+    ...(repoRoots ? { repoRoots } : {}),
     createWorkspaceRootIfMissing: true,
     defaultModelSelection: null,
     createdAt: input.createdAt,

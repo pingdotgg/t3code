@@ -74,7 +74,10 @@ import {
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
-import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import {
+  composerPathSearchEntryDescription,
+  useComposerPathSearch,
+} from "../../lib/composerPathSearchState";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -104,6 +107,7 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
+import { buildRepoRootLabels } from "../../lib/repoRootLabels";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 
@@ -557,6 +561,9 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  // Multi-repo workspaces (#923): roots to union for @-mention file search.
+  // Omitted/`null` for single-repo projects, which search `gitCwd` alone.
+  mentionRoots: ReadonlyArray<string> | null;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -643,6 +650,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    mentionRoots,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -1021,19 +1029,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
+    roots: isPathTrigger ? mentionRoots : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      const rootLabels = buildRepoRootLabels(
+        workspaceEntries.entries.flatMap((entry) => (entry.root ? [entry.root] : [])),
+      );
       return workspaceEntries.entries.map((entry) => ({
-        id: `path:${entry.kind}:${entry.path}`,
+        // Multi-repo entries can share a relative path across roots, so key the
+        // id (and disambiguate the description) by the owning root (#923).
+        id: `path:${entry.kind}:${entry.root ?? ""}:${entry.path}`,
         type: "path",
         path: entry.path,
         pathKind: entry.kind,
+        ...(entry.root ? { root: entry.root } : {}),
         label: basenameOfPath(entry.path),
-        description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
+        description: composerPathSearchEntryDescription(
+          entry,
+          entry.root ? rootLabels.get(entry.root) : undefined,
+        ),
       }));
     }
     if (composerTrigger.kind === "slash-command") {
@@ -1659,7 +1677,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
       if (item.type === "path") {
-        const replacement = `${serializeComposerFileLink(item.path)} `;
+        // For a multi-repo result, insert the absolute path so the agent and
+        // previews resolve it against the owning cousin repo (#923).
+        const linkPath = item.root ? `${item.root.replace(/[\\/]$/, "")}/${item.path}` : item.path;
+        const replacement = `${serializeComposerFileLink(linkPath)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,

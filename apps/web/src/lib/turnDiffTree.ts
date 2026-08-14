@@ -17,6 +17,7 @@ export interface TurnDiffTreeFileNode {
   kind: "file";
   name: string;
   path: string;
+  repoRoot?: string;
   stat: TurnDiffStat | null;
 }
 
@@ -37,6 +38,10 @@ function normalizePathSegments(pathValue: string): string[] {
     .replaceAll("\\", "/")
     .split("/")
     .filter((segment) => segment.length > 0);
+}
+
+function repoRootName(repoRoot: string): string {
+  return normalizePathSegments(repoRoot).at(-1) ?? repoRoot;
 }
 
 function compareByName(a: { name: string }, b: { name: string }): number {
@@ -134,6 +139,25 @@ export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): Tur
     const ancestors: MutableDirectoryNode[] = [root];
     let currentDirectory = root;
 
+    if (file.repoRoot) {
+      const repoDirectoryKey = `repo\0${file.repoRoot}`;
+      const existing = root.directories.get(repoDirectoryKey);
+      if (existing) {
+        currentDirectory = existing;
+      } else {
+        const created = {
+          name: repoRootName(file.repoRoot),
+          path: repoDirectoryKey,
+          stat: { additions: 0, deletions: 0 },
+          directories: new Map(),
+          files: [],
+        };
+        root.directories.set(repoDirectoryKey, created);
+        currentDirectory = created;
+      }
+      ancestors.push(currentDirectory);
+    }
+
     for (const segment of segments.slice(0, -1)) {
       const nextPath = currentDirectory.path ? `${currentDirectory.path}/${segment}` : segment;
       const existing = currentDirectory.directories.get(segment);
@@ -157,6 +181,7 @@ export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): Tur
       kind: "file",
       name: fileName,
       path: filePath,
+      ...(file.repoRoot ? { repoRoot: file.repoRoot } : {}),
       stat,
     });
 

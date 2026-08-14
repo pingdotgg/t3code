@@ -53,6 +53,7 @@ export function mergeEnvironmentThread(
     interactionMode: shell.interactionMode,
     branch: shell.branch,
     worktreePath: shell.worktreePath,
+    worktrees: shell.worktrees,
     latestTurn: shell.latestTurn,
     createdAt: shell.createdAt,
     updatedAt: shell.updatedAt,

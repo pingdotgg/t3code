@@ -11,10 +11,7 @@ import {
   sortAddProjectProviderSources,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
-import {
-  connectionStatusText,
-  type EnvironmentConnectionPhase,
-} from "@t3tools/client-runtime/connection";
+import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
@@ -55,17 +52,12 @@ import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { resolveAddProjectEnvironment } from "./AddProjectScreen.logic";
-
-interface EnvironmentOption {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly platform: string;
-  readonly baseDirectory: string | null;
-  readonly connectionState: EnvironmentConnectionPhase;
-  readonly connectionError: string | null;
-  readonly connectionErrorTraceId: string | null;
-}
+import {
+  addProjectPathActionLabel,
+  resolveAddProjectEnvironment,
+  type AddProjectEnvironmentOption as EnvironmentOption,
+} from "./AddProjectScreen.logic";
+import { SelectedRepositoryList } from "./SelectedRepositoryList";
 
 const environmentOptionOrder = Order.mapInput(
   Order.Struct({
@@ -485,6 +477,28 @@ export function AddProjectSourceScreen() {
         <>
           <ListSection>
             <ListRow
+              title="Multiple repositories"
+              subtitle="Choose a primary repository, then attach more"
+              icon={
+                <SymbolView
+                  name="square.stack.3d.up"
+                  size={17}
+                  tintColor={iconColor}
+                  type="monochrome"
+                />
+              }
+              isFirst
+              onPress={() =>
+                navigation.navigate("NewTaskSheet", {
+                  screen: "AddProjectLocal",
+                  params: {
+                    environmentId: selectedEnvironment.environmentId,
+                    multiple: "true",
+                  },
+                })
+              }
+            />
+            <ListRow
               title="Local folder"
               subtitle="Browse a folder on disk"
               icon={
@@ -495,7 +509,7 @@ export function AddProjectSourceScreen() {
                   type="monochrome"
                 />
               }
-              isFirst
+              isFirst={false}
               onPress={() =>
                 navigation.dispatch(
                   StackActions.push("AddProjectLocal", {
@@ -534,7 +548,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
   const projects = useProjects();
 
   return useCallback(
-    async (workspaceRoot: string) => {
+    async (workspaceRoot: string, repoRoots?: ReadonlyArray<string>) => {
       if (!environment || !canCreateProjectInEnvironment(environment.connectionState)) return;
 
       const existing = findExistingAddProject({
@@ -567,6 +581,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         commandId: CommandId.make(uuidv4()),
         projectId,
         workspaceRoot,
+        ...(repoRoots && repoRoots.length > 0 ? { repoRoots } : {}),
         createdAt: new Date().toISOString(),
       });
       const result = await createProject({
@@ -773,13 +788,21 @@ function FolderBrowser(props: {
   );
 }
 
-export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
+export function AddProjectLocalFolderScreen(props: {
+  readonly environmentId?: string | string[];
+  readonly multiple?: string | string[];
+}) {
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
+  const multiple = stringParam(props.multiple) === "true";
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
     useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repoRoots, setRepoRoots] = useState<ReadonlyArray<string>>([]);
+  const scanGitRepos = useAtomQueryRunner(filesystemEnvironment.scanGitRepos, {
+    reportFailure: false,
+  });
 
   const submitPath = useCallback(async () => {
     if (!environment || isBrowseNavigating || isSubmitting) return;
@@ -794,13 +817,53 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
       return;
     }
 
+    if (multiple) {
+      setIsSubmitting(true);
+      const scanResult = await scanGitRepos({
+        environmentId: environment.environmentId,
+        input: { parentPath: resolved.path },
+      });
+      setIsSubmitting(false);
+      if (scanResult._tag === "Failure" || !scanResult.value.parentHasGit) {
+        setError(
+          scanResult._tag === "Failure"
+            ? errorMessage(Cause.squash(scanResult.cause))
+            : "Choose a Git repository.",
+        );
+        return;
+      }
+      const root = scanResult.value.parentPath;
+      setRepoRoots((current) => (current.includes(root) ? current : [...current, root]));
+      setPathInput(getAddProjectInitialQuery(environment.baseDirectory));
+      return;
+    }
+
     setIsSubmitting(true);
     const result = await createProject(resolved.path);
     if (result && AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     }
     setIsSubmitting(false);
-  }, [createProject, environment, isBrowseNavigating, isSubmitting, pathInput]);
+  }, [
+    createProject,
+    environment,
+    isBrowseNavigating,
+    isSubmitting,
+    multiple,
+    pathInput,
+    scanGitRepos,
+    setPathInput,
+  ]);
+
+  const createMultipleRepositoriesProject = useCallback(async () => {
+    if (repoRoots.length < 2 || isSubmitting) return;
+    setIsSubmitting(true);
+    const result = await createProject(repoRoots[0]!, repoRoots);
+    if (result && AsyncResult.isFailure(result)) {
+      setError(errorMessage(Cause.squash(result.cause)));
+    }
+    setIsSubmitting(false);
+  }, [createProject, isSubmitting, repoRoots]);
 
   return (
     <AddProjectShell>
@@ -813,11 +876,27 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
             onSubmit={() => void submitPath()}
           />
           <PrimaryActionButton
-            label="Add project"
+            label={addProjectPathActionLabel(multiple, repoRoots.length)}
             disabled={isBrowseNavigating || isSubmitting}
             onPress={() => void submitPath()}
             loading={isSubmitting}
           />
+          {multiple ? (
+            <SelectedRepositoryList
+              repoRoots={repoRoots}
+              onRemove={(root) =>
+                setRepoRoots((current) => current.filter((candidate) => candidate !== root))
+              }
+            />
+          ) : null}
+          {multiple ? (
+            <PrimaryActionButton
+              label="Create project"
+              disabled={repoRoots.length < 2 || isSubmitting}
+              onPress={() => void createMultipleRepositoriesProject()}
+              loading={isSubmitting}
+            />
+          ) : null}
           <FolderBrowser
             environment={environment}
             navigateToBrowsePath={navigateToBrowsePath}

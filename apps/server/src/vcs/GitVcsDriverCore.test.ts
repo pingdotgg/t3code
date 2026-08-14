@@ -758,6 +758,20 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notInclude(error.detail, "Git command failed in");
       }),
     );
+
+    it.effect("deletes a local branch after worktree rollback", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createRef({ cwd, refName: "t3/rollback-branch" });
+
+        yield* driver.deleteBranch({ cwd, branch: "t3/rollback-branch" });
+
+        const branches = yield* driver.listLocalBranchNames(cwd);
+        assert.notInclude(branches, "t3/rollback-branch");
+      }),
+    );
   });
 
   describe("review diff previews", () => {
@@ -1378,6 +1392,30 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* driver.removeWorktree({ cwd, path: worktreePath });
         const fileSystem = yield* FileSystem.FileSystem;
         assert.equal(yield* fileSystem.exists(worktreePath), false);
+      }),
+    );
+
+    it.effect("creates a detached worktree from a branch checked out elsewhere", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-detached-"),
+          "detached-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          detach: true,
+        });
+
+        assert.equal(created.worktree.path, worktreePath);
+        assert.equal(yield* git(worktreePath, ["branch", "--show-current"]), "");
+        yield* driver.removeWorktree({ cwd, path: worktreePath });
       }),
     );
   });

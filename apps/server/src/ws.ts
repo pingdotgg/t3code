@@ -50,6 +50,8 @@ import {
   AssetWorkspaceContextResolutionError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  FilesystemScanGitReposError,
+  FilesystemReadWorkspaceFileError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -92,9 +94,13 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
+import * as WorkspaceFile from "./workspace/WorkspaceFile.ts";
+import * as WorkspaceGitScan from "./workspace/WorkspaceGitScan.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import { rollbackThreadWorktrees, type CreatedThreadWorktree } from "./vcs/WorktreeFanout.ts";
+import { prepareThreadWorktreeFanout } from "./vcs/ThreadWorktreeBootstrap.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -377,6 +383,8 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspaceGitScan = yield* WorkspaceGitScan.WorkspaceGitScan;
+      const workspaceFile = yield* WorkspaceFile.WorkspaceFile;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -762,20 +770,29 @@ const makeWsRpcLayer = (
           let targetProjectId = bootstrap?.createThread?.projectId;
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
           let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
+          let createdWorktrees: ReadonlyArray<CreatedThreadWorktree> = [];
 
-          const cleanupCreatedThread = () =>
-            createdThread
-              ? serverCommandId("bootstrap-thread-delete").pipe(
-                  Effect.flatMap((commandId) =>
-                    orchestrationEngine.dispatch({
-                      type: "thread.delete",
-                      commandId,
-                      threadId: command.threadId,
-                    }),
-                  ),
-                  Effect.ignoreCause({ log: true }),
-                )
-              : Effect.void;
+          const cleanupCreatedThread = () => {
+            const worktrees = createdWorktrees;
+            createdWorktrees = [];
+            return rollbackThreadWorktrees(worktrees).pipe(
+              Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
+              Effect.andThen(
+                createdThread
+                  ? serverCommandId("bootstrap-thread-delete").pipe(
+                      Effect.flatMap((commandId) =>
+                        orchestrationEngine.dispatch({
+                          type: "thread.delete",
+                          commandId,
+                          threadId: command.threadId,
+                        }),
+                      ),
+                      Effect.ignoreCause({ log: true }),
+                    )
+                  : Effect.void,
+              ),
+            );
+          };
 
           const recordSetupScriptLaunchFailure = (input: {
             readonly error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError;
@@ -911,44 +928,36 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
-              const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  fallbackRemoteName: "origin",
-                });
-                worktreeBaseRef = resolvedRemoteBase.commitSha;
-              }
-              const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
-                refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
-                path: null,
-              });
-              targetWorktreePath = worktree.worktree.path;
+              const prepare = bootstrap.prepareWorktree;
+              const prepared = yield* prepareThreadWorktreeFanout({
+                worktreesDir: config.worktreesDir,
+                projectId: targetProjectId,
+                threadId: command.threadId,
+                prepare,
+              }).pipe(
+                Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
+                Effect.provideService(
+                  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+                  projectionSnapshotQuery,
+                ),
+              );
+              createdWorktrees = prepared.created;
+              targetWorktreePath = prepared.worktreePath;
+
               yield* orchestrationEngine.dispatch({
                 type: "thread.meta.update",
                 commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
                 threadId: command.threadId,
-                branch: worktree.worktree.refName,
+                branch: prepared.branch,
                 worktreePath: targetWorktreePath,
+                worktrees: prepared.worktrees,
               });
-              yield* refreshGitStatus(targetWorktreePath);
+
+              yield* Effect.forEach(
+                prepared.created,
+                (entry) => refreshGitStatus(entry.worktreePath),
+                { discard: true },
+              );
             }
 
             yield* runSetupProgram();
@@ -958,11 +967,13 @@ const makeWsRpcLayer = (
 
           return yield* bootstrapProgram.pipe(
             Effect.catchCause((cause) => {
-              const dispatchError = toBootstrapDispatchCommandCauseError(cause);
               if (Cause.hasInterruptsOnly(cause)) {
-                return Effect.fail(dispatchError);
+                return Effect.interrupt;
               }
-              return cleanupCreatedThread().pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
+              const dispatchError = toBootstrapDispatchCommandCauseError(cause);
+              return Effect.uninterruptible(cleanupCreatedThread()).pipe(
+                Effect.flatMap(() => Effect.fail(dispatchError)),
+              );
             }),
           );
         });
@@ -1031,6 +1042,30 @@ const makeWsRpcLayer = (
         vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
+
+      // Multi-repo `.code-workspace` projects diff repos that live outside the
+      // server's configured workspace root, so surface every active project's
+      // repo + workspace roots as allowed diff cwds (mirrors how vcs status and
+      // asset previews already span repoRoots). Both review RPCs must agree on
+      // this set: the preview establishes the cwd a diff is rendered from, and
+      // file-contents expansion is then called back with that same cwd, so a
+      // root allowed by one and rejected by the other renders a diff whose
+      // files cannot be opened. A failed snapshot read falls back to the
+      // configured root only.
+      const resolveAllowedDiffRepoRoots = Effect.fn("ws.resolveAllowedDiffRepoRoots")(function* () {
+        const shell = yield* projectionSnapshotQuery
+          .getShellSnapshot()
+          .pipe(Effect.orElseSucceed(() => null));
+        if (!shell) return [];
+        return [
+          ...new Set(
+            shell.projects.flatMap((project) => [
+              project.workspaceRoot,
+              ...(project.repoRoots ?? []),
+            ]),
+          ),
+        ];
+      });
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
@@ -1902,11 +1937,78 @@ const makeWsRpcLayer = (
                   resource: input.resource,
                 });
               }
+              // Multi-repo workspaces (#923): a previewable file may live in any
+              // repo root, so offer every candidate root (worktree, repo roots,
+              // anchor) and let AssetAccess pick whichever contains the file.
+              const workspaceRoots = [
+                ...new Set(
+                  [
+                    thread.value.worktreePath ?? undefined,
+                    ...thread.value.worktrees.map((worktree) => worktree.worktreePath),
+                    ...(project.value.repoRoots ?? []),
+                    project.value.workspaceRoot,
+                  ].filter((root): root is string => typeof root === "string" && root.length > 0),
+                ),
+              ];
               return yield* issueAssetUrl({
                 resource: input.resource,
                 workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+                workspaceRoots,
               });
             }),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemScanGitRepos]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemScanGitRepos,
+            workspaceGitScan.scan(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemScanGitReposError({
+                    parentPath: cause.parentPath,
+                    normalizedParentPath: cause.normalizedParentPath,
+                    failure:
+                      cause._tag === "WorkspaceGitScanStatFailedError"
+                        ? "stat_failed"
+                        : cause._tag === "WorkspaceGitScanNotDirectoryError"
+                          ? "not_directory"
+                          : "read_directory_failed",
+                    ...(cause._tag === "WorkspaceGitScanNotDirectoryError" ? {} : { cause }),
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemReadWorkspaceFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemReadWorkspaceFile,
+            workspaceFile.read(input.workspaceFilePath).pipe(
+              Effect.map((resolved) => ({
+                workspaceFilePath: resolved.workspaceFilePath,
+                anchorDir: resolved.anchorDir,
+                folders: resolved.folders.map((folder) => ({
+                  rawPath: folder.rawPath,
+                  name: folder.name,
+                  absolutePath: folder.absolutePath,
+                  exists: folder.exists,
+                  isGit: folder.isGit,
+                })),
+                repoRoots: resolved.repoRoots,
+              })),
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemReadWorkspaceFileError({
+                    workspaceFilePath: cause.workspaceFilePath,
+                    failure:
+                      cause.operation === "read-file"
+                        ? "read_failed"
+                        : cause.operation === "parse-document"
+                          ? "parse_failed"
+                          : "folders_invalid",
+                    cause,
+                  }),
+              ),
+            ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
@@ -2015,13 +2117,23 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.reviewGetDiffPreview]: (input) =>
-          observeRpcEffect(WS_METHODS.reviewGetDiffPreview, review.getDiffPreview(input), {
-            "rpc.aggregate": "review",
-          }),
+          observeRpcEffect(
+            WS_METHODS.reviewGetDiffPreview,
+            Effect.gen(function* () {
+              const allowedRepoRoots = yield* resolveAllowedDiffRepoRoots();
+              return yield* review.getDiffPreview(input, allowedRepoRoots);
+            }),
+            {
+              "rpc.aggregate": "review",
+            },
+          ),
         [WS_METHODS.reviewGetDiffFileContents]: (input) =>
           observeRpcEffect(
             WS_METHODS.reviewGetDiffFileContents,
-            review.getDiffFileContents(input),
+            Effect.gen(function* () {
+              const allowedRepoRoots = yield* resolveAllowedDiffRepoRoots();
+              return yield* review.getDiffFileContents(input, allowedRepoRoots);
+            }),
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>

@@ -29,10 +29,6 @@ interface ProjectQueryState<A> {
   readonly refresh: () => void;
 }
 
-export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
-  return projectEnvironment.listEntries({ environmentId, input: { cwd } });
-}
-
 export function getProjectFileQueryAtom(
   environmentId: EnvironmentId,
   cwd: string,
@@ -124,8 +120,12 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
+  roots?: readonly string[],
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd);
+  const atom = projectEnvironment.listEntries({
+    environmentId,
+    input: { cwd, ...(roots && roots.length > 0 ? { roots } : {}) },
+  });
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
@@ -150,12 +150,13 @@ export function useProjectFilePickerQuery(
   cwd: string,
   query: string,
   limit: number,
-  options?: { readonly imageOnly?: boolean },
+  options?: { readonly imageOnly?: boolean; readonly roots?: ReadonlyArray<string> },
 ) {
   const search = useProjectPathSearch(
     {
       environmentId,
       cwd,
+      ...(options?.roots ? { roots: options.roots } : {}),
       query,
       kind: "file",
       ...(options?.imageOnly ? { imageOnly: true } : {}),

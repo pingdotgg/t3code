@@ -1,18 +1,13 @@
-import {
-  type ComposerPathSearchState,
-  type ComposerPathSearchTarget,
-} from "@t3tools/client-runtime/state/threads";
+import type { ComposerPathSearchEntry } from "@t3tools/client-runtime/state/threads";
 
-import { useComposerPathSearch as useComposerPathSearchQuery } from "../state/queries";
+export { useComposerPathSearch } from "../state/queries";
 
-export function useComposerPathSearch(target: ComposerPathSearchTarget): ComposerPathSearchState {
-  const state = useComposerPathSearchQuery(target);
-  return {
-    entries: state.entries.map((entry) => ({
-      path: entry.path,
-      kind: entry.kind,
-    })),
-    error: state.error,
-    isPending: state.isPending,
-  };
+export function composerPathSearchEntryDescription(
+  entry: ComposerPathSearchEntry,
+  rootLabel?: string,
+): string {
+  const parentPath =
+    entry.parentPath ?? entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/")));
+  if (!entry.root) return parentPath;
+  return `${rootLabel ?? entry.root}/${parentPath}`.replace(/\/$/, "");
 }

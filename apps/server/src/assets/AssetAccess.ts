@@ -170,6 +170,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
+  // Multi-repo workspaces (#923): ordered candidate roots a workspace-file may
+  // live under. The first root that actually contains the file wins, so a
+  // preview opens cross-root files. Falls back to `[workspaceRoot]`.
+  readonly workspaceRoots?: ReadonlyArray<string>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -181,57 +185,100 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 
   switch (input.resource._tag) {
     case "workspace-file": {
-      if (!input.workspaceRoot) {
+      // Multi-repo workspaces (#923): a workspace-file may live under any of the
+      // candidate roots. Resolve against each in order and keep the first root
+      // that actually contains the file. Falls back to `[workspaceRoot]`.
+      const candidateRoots =
+        input.workspaceRoots && input.workspaceRoots.length > 0
+          ? input.workspaceRoots
+          : input.workspaceRoot
+            ? [input.workspaceRoot]
+            : [];
+      if (candidateRoots.length === 0) {
         return yield* new AssetWorkspaceContextNotFoundError({
           resource: input.resource,
         });
       }
-      const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.workspaceRoot).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AssetWorkspaceRootNormalizationError({
+      // Resolve the file against whichever candidate root actually contains it,
+      // keeping main's normalize → resolve → canonicalize pipeline per root.
+      let matched: {
+        readonly workspaceRoot: string;
+        readonly relativePath: string;
+      } | null = null;
+      let normalizedAnyRoot = false;
+      let rootNormalizationError: AssetWorkspaceRootNormalizationError | null = null;
+      let resolvedWithinAnyRoot = false;
+      let pathValidationError: AssetWorkspacePathValidationError | null = null;
+      for (const candidate of candidateRoots) {
+        const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(candidate).pipe(
+          Effect.catch((cause) => {
+            rootNormalizationError ??= new AssetWorkspaceRootNormalizationError({
               resource: input.resource,
               cause,
+            });
+            return Effect.succeed(null);
+          }),
+        );
+        if (!workspaceRoot) continue;
+        normalizedAnyRoot = true;
+        const relativePath = path.isAbsolute(input.resource.path)
+          ? path.relative(workspaceRoot, input.resource.path)
+          : input.resource.path;
+        const resolved = yield* workspacePaths
+          .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
+          .pipe(
+            Effect.map(Option.some),
+            Effect.catchTags({
+              WorkspacePathOutsideRootError: (cause) => {
+                pathValidationError ??= new AssetWorkspacePathValidationError({
+                  resource: input.resource,
+                  cause,
+                });
+                return Effect.succeed(Option.none());
+              },
             }),
-        ),
-      );
-      const relativePath = path.isAbsolute(input.resource.path)
-        ? path.relative(workspaceRoot, input.resource.path)
-        : input.resource.path;
-      const resolved = yield* workspacePaths
-        .resolveRelativePathWithinRoot({ workspaceRoot, relativePath })
-        .pipe(
+          );
+        if (Option.isNone(resolved)) continue;
+        if (!isWorkspacePreviewEntryPath(resolved.value.relativePath)) {
+          return yield* new AssetPreviewTypeValidationError({
+            resource: input.resource,
+          });
+        }
+        resolvedWithinAnyRoot = true;
+        const canonicalFile = yield* resolveCanonicalWorkspaceFile({
+          workspaceRoot,
+          relativePath: resolved.value.relativePath,
+        }).pipe(
           Effect.mapError(
             (cause) =>
-              new AssetWorkspacePathValidationError({
+              new AssetWorkspaceAssetInspectionError({
                 resource: input.resource,
                 cause,
               }),
           ),
         );
-      if (!isWorkspacePreviewEntryPath(resolved.relativePath)) {
-        return yield* new AssetPreviewTypeValidationError({
-          resource: input.resource,
-        });
+        if (!canonicalFile) continue;
+        matched = { workspaceRoot, relativePath: resolved.value.relativePath };
+        break;
       }
-      const canonicalFile = yield* resolveCanonicalWorkspaceFile({
-        workspaceRoot,
-        relativePath: resolved.relativePath,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AssetWorkspaceAssetInspectionError({
-              resource: input.resource,
-              cause,
-            }),
-        ),
-      );
-      if (!canonicalFile) {
+      if (!matched) {
+        if (!normalizedAnyRoot && rootNormalizationError) {
+          return yield* Effect.fail<AssetWorkspaceRootNormalizationError>(rootNormalizationError);
+        }
+        // Path sat outside every candidate root → keep the precise reason;
+        // otherwise it resolved within a root but no file exists there.
+        if (!resolvedWithinAnyRoot && pathValidationError) {
+          // `pathValidationError` is assigned inside the `catchTag` closure above,
+          // so control-flow analysis narrows this read to `never`; without the
+          // explicit type argument `Effect.fail` would infer `unknown` for the
+          // error channel and collapse this Effect's whole error union.
+          return yield* Effect.fail<AssetWorkspacePathValidationError>(pathValidationError);
+        }
         return yield* new AssetWorkspaceAssetNotFoundError({
           resource: input.resource,
         });
       }
-      const canonicalWorkspaceRoot = yield* fileSystem.realPath(workspaceRoot).pipe(
+      const canonicalWorkspaceRoot = yield* fileSystem.realPath(matched.workspaceRoot).pipe(
         Effect.mapError(
           (cause) =>
             new AssetWorkspaceResolutionError({
@@ -240,22 +287,22 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
+      claims = isWorkspaceImagePreviewPath(matched.relativePath)
         ? {
             version: 1,
             kind: "workspace-file-exact",
             workspaceRoot: canonicalWorkspaceRoot,
-            relativePath: resolved.relativePath,
+            relativePath: matched.relativePath,
             expiresAt,
           }
         : {
             version: 1,
             kind: "workspace-file",
             workspaceRoot: canonicalWorkspaceRoot,
-            baseRelativePath: path.dirname(resolved.relativePath),
+            baseRelativePath: path.dirname(matched.relativePath),
             expiresAt,
           };
-      fileName = path.basename(resolved.relativePath);
+      fileName = path.basename(matched.relativePath);
       break;
     }
     case "attachment": {

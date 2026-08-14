@@ -249,6 +249,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
+          ...(command.workspaceFile !== undefined ? { workspaceFile: command.workspaceFile } : {}),
+          ...(command.repoRoots && command.repoRoots.length > 0
+            ? { repoRoots: command.repoRoots }
+            : {}),
           defaultModelSelection: command.defaultModelSelection ?? null,
           faviconPath: null,
           scripts: [],
@@ -259,7 +263,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
@@ -272,6 +276,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           exceptProjectId: command.projectId,
         });
       }
+      const nextWorkspaceRoot = command.workspaceRoot ?? project.workspaceRoot;
+      const nextRepoRoots =
+        command.repoRoots !== undefined
+          ? [...new Set([nextWorkspaceRoot, ...command.repoRoots])]
+          : command.workspaceRoot !== undefined
+            ? [
+                ...new Set([
+                  nextWorkspaceRoot,
+                  ...(project.repoRoots ?? [project.workspaceRoot]).filter(
+                    (root) => root !== project.workspaceRoot,
+                  ),
+                ]),
+              ]
+            : undefined;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -285,6 +303,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
+          ...(command.workspaceFile !== undefined ? { workspaceFile: command.workspaceFile } : {}),
+          ...(nextRepoRoots !== undefined ? { repoRoots: nextRepoRoots } : {}),
           ...(command.defaultModelSelection !== undefined
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),
@@ -377,6 +397,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          worktrees: command.worktrees ?? [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -835,6 +856,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.worktrees !== undefined ? { worktrees: command.worktrees } : {}),
           updatedAt: occurredAt,
         },
       };
@@ -1307,6 +1329,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           turnId: command.turnId,
           checkpointTurnCount: command.checkpointTurnCount,
           checkpointRef: command.checkpointRef,
+          ...(command.checkpointRefs !== undefined
+            ? { checkpointRefs: command.checkpointRefs }
+            : {}),
           status: command.status,
           files: command.files,
           assistantMessageId: command.assistantMessageId ?? null,

@@ -77,6 +77,7 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     target.cwd,
     query,
     PROJECT_FILE_PICKER_RESULT_LIMIT,
+    { roots: target.roots },
   );
   const { resolvedTheme } = useTheme();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -89,8 +90,8 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     () =>
       matches.map((match) => ({
         kind: "action",
-        value: `file:${match.path}`,
-        searchTerms: [match.name, match.path],
+        value: `file:${match.root ?? ""}:${match.path}`,
+        searchTerms: [match.name, match.path, match.root ?? ""],
         title: (
           <HighlightedFuzzyText
             active={hasMatchedQuery}
@@ -99,15 +100,24 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
           />
         ),
         description: (
-          <HighlightedFuzzyText
-            active={hasMatchedQuery}
-            value={match.path}
-            indices={match.pathMatchIndices}
-          />
+          <span className="flex min-w-0 gap-1.5">
+            {match.root ? (
+              <span className="shrink-0 text-muted-foreground">
+                {match.root.split(/[/\\]/).findLast(Boolean)} ·
+              </span>
+            ) : null}
+            <HighlightedFuzzyText
+              active={hasMatchedQuery}
+              value={match.path}
+              indices={match.pathMatchIndices}
+            />
+          </span>
         ),
         icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
         run: async () => {
-          useRightPanelStore.getState().openFile(target.threadRef, match.path);
+          useRightPanelStore
+            .getState()
+            .openFile(target.threadRef, match.path, undefined, match.root);
         },
       })),
     [hasMatchedQuery, matches, resolvedTheme, target.threadRef],

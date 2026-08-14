@@ -27,6 +27,7 @@ const VISIBLE_MATCH_WINDOW = 100;
 
 interface MatchGroup {
   readonly path: string;
+  readonly root?: string;
   readonly matches: ReadonlyArray<ProjectContentMatch & { readonly resultIndex: number }>;
 }
 
@@ -40,15 +41,20 @@ function splitPath(path: string): { readonly name: string; readonly directory: s
 function groupMatches(matches: ReadonlyArray<ProjectContentMatch>): MatchGroup[] {
   const groups = new Map<string, Array<ProjectContentMatch & { readonly resultIndex: number }>>();
   matches.forEach((match, resultIndex) => {
-    const group = groups.get(match.path);
+    const groupKey = `${match.root ?? ""}\0${match.path}`;
+    const group = groups.get(groupKey);
     const indexedMatch = { ...match, resultIndex };
     if (group) {
       group.push(indexedMatch);
     } else {
-      groups.set(match.path, [indexedMatch]);
+      groups.set(groupKey, [indexedMatch]);
     }
   });
-  return [...groups].map(([path, groupedMatches]) => ({ path, matches: groupedMatches }));
+  return [...groups.values()].map((groupedMatches) => ({
+    path: groupedMatches[0]!.path,
+    ...(groupedMatches[0]!.root ? { root: groupedMatches[0]!.root } : {}),
+    matches: groupedMatches,
+  }));
 }
 
 function SearchOptionButton(props: {
@@ -108,6 +114,7 @@ function OpenContentSearchDialog(props: {
   const search = useProjectContentSearch({
     environmentId: target.environmentId,
     cwd: target.cwd,
+    roots: target.roots,
     query,
     caseSensitive,
     wholeWord,
@@ -147,9 +154,14 @@ function OpenContentSearchDialog(props: {
   const openMatch = (match: ProjectContentMatch) => {
     if (!canOpenMatches) return;
     props.onOpenChange(false);
-    useRightPanelStore.getState().openFile(target.threadRef, match.path, match.lineNumber);
+    useRightPanelStore
+      .getState()
+      .openFile(target.threadRef, match.path, match.lineNumber, match.root);
   };
-  const fileCount = useMemo(() => new Set(matches.map((match) => match.path)).size, [matches]);
+  const fileCount = useMemo(
+    () => new Set(matches.map((match) => `${match.root ?? ""}\0${match.path}`)).size,
+    [matches],
+  );
   const showSearchStatus =
     search.hasQuery || search.isPending || search.error !== null || search.invalidRegex;
 
@@ -243,7 +255,7 @@ function OpenContentSearchDialog(props: {
             {groups.map((group) => {
               const path = splitPath(group.path);
               return (
-                <section className="pb-2" key={group.path}>
+                <section className="pb-2" key={`${group.root ?? ""}:${group.path}`}>
                   <div className="sticky top-0 z-10 flex h-8 items-center gap-2 bg-popover/95 px-3 text-xs backdrop-blur-sm">
                     <PierreEntryIcon
                       pathValue={group.path}
@@ -255,6 +267,11 @@ function OpenContentSearchDialog(props: {
                     {path.directory ? (
                       <span className="min-w-0 truncate text-muted-foreground">
                         {path.directory}
+                      </span>
+                    ) : null}
+                    {group.root ? (
+                      <span className="min-w-0 truncate text-muted-foreground">
+                        · {group.root.split(/[/\\]/).findLast(Boolean)}
                       </span>
                     ) : null}
                     <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-[10px] text-muted-foreground">

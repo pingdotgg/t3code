@@ -14,6 +14,7 @@ import {
   ExternalLauncherEditorSpawnError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
+  resolveEditorTarget,
   type EditorId,
   type LaunchEditorInput,
 } from "@t3tools/contracts";
@@ -359,6 +360,14 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
+  // A multi-repo project passes its `.code-workspace` alongside the anchor dir;
+  // only editors that understand workspace files get the file itself.
+  const target = resolveEditorTarget({
+    editor: editorDef,
+    cwd: input.cwd,
+    workspaceFile: input.workspaceFile,
+  });
+
   if (editorDef.commands) {
     const command = Option.getOrElse(
       yield* resolveAvailableCommand(editorDef.commands, env),
@@ -366,9 +375,9 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     );
     return {
       editor: editorDef.id,
-      target: input.cwd,
+      target,
       command,
-      args: resolveEditorArgs(editorDef, input.cwd),
+      args: resolveEditorArgs(editorDef, target),
     };
   }
 
@@ -378,9 +387,9 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target,
     command: fileManagerCommandForPlatform(platform),
-    args: [input.cwd],
+    args: [target],
   };
 });
 

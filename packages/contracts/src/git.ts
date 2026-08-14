@@ -139,6 +139,7 @@ export const VcsCreateWorktreeInput = Schema.Struct({
   refName: TrimmedNonEmptyStringSchema,
   newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
+  detach: Schema.optional(Schema.Boolean),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
 export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;

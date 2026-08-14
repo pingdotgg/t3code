@@ -8,8 +8,6 @@ import {
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import {
-  ArrowRightIcon,
-  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   ChevronsDownUpIcon,
@@ -18,7 +16,6 @@ import {
   PilcrowIcon,
   RefreshCwIcon,
   Rows3Icon,
-  SearchIcon,
   TextWrapIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -48,16 +45,6 @@ import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
 import { Button } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
-import { Switch } from "./ui/switch";
-import {
-  Combobox,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-  ComboboxPopup,
-  ComboboxTrigger,
-} from "./ui/combobox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -73,12 +60,18 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
-import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
+import { buildBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
+import { DiffPanelBaseRefPicker } from "./DiffPanelBaseRefPicker";
+import {
+  MultiRepoBranchDiff,
+  MultiRepoCheckpointDiff,
+  MultiRepoDiffContextControl,
+  useMultiRepoDiffState,
+  useRefreshOnReopen,
+} from "./DiffPanelMultiRepo";
 
 type DiffThemeType = "light" | "dark";
-const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
-
 interface CollapsedDiffFilesState {
   readonly scopeKey: string | null;
   readonly fileKeys: ReadonlySet<string>;
@@ -107,6 +100,7 @@ export default function DiffPanel({
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [baseRefQuery, setBaseRefQuery] = useState("");
+  const [branchRepoRefreshVersion, setBranchRepoRefreshVersion] = useState(0);
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
@@ -158,6 +152,24 @@ export default function DiffPanel({
     ),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const threadWorktrees = useMemo(
+    () => (activeThread?.worktrees ?? []).filter((entry) => entry.worktreePath.length > 0),
+    [activeThread?.worktrees],
+  );
+  const diffRepoTargets = useMemo(() => {
+    if (threadWorktrees.length > 0) {
+      return threadWorktrees.map((entry) => ({
+        repoRoot: entry.repoRoot,
+        cwd: entry.worktreePath,
+      }));
+    }
+    const repoRoots = activeProject?.repoRoots ?? [];
+    if (repoRoots.length > 1) {
+      return repoRoots.map((repoRoot) => ({ repoRoot, cwd: repoRoot }));
+    }
+    return [];
+  }, [threadWorktrees, activeProject?.repoRoots]);
+  const hasGitDiffTarget = isGitRepo || diffRepoTargets.length > 0;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -187,6 +199,7 @@ export default function DiffPanel({
   const selectedGitScope = diffSelection.kind === "unstaged" ? "unstaged" : "branch";
   const selectedBaseRef = diffSelection.kind === "branch" ? diffSelection.baseRef : null;
   const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
+  const selectedRepoRoot = diffSelection.kind === "turn" ? (diffSelection.repoRoot ?? null) : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
   const selectedTurn =
@@ -239,7 +252,7 @@ export default function DiffPanel({
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : null,
     },
-    { enabled: isGitRepo && selectedTurn !== undefined },
+    { enabled: hasGitDiffTarget && selectedTurn !== undefined },
   );
   const primaryBranchDiffPreview = useEnvironmentQuery(
     selectedTurnId === null && activeThread && activeCwd
@@ -274,18 +287,22 @@ export default function DiffPanel({
     ? fallbackBranchDiffPreview
     : primaryBranchDiffPreview;
   const refreshBranchDiffPreview = branchDiffPreview.refresh;
+  const refreshBranchDiffPreviews = useCallback(() => {
+    refreshBranchDiffPreview();
+    setBranchRepoRefreshVersion((version) => version + 1);
+  }, [refreshBranchDiffPreview]);
   const canRefreshGitDiff =
-    isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
+    hasGitDiffTarget && selectedTurnId === null && activeThread != null && activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
 
   useEffect(() => {
     if (!canRefreshGitDiff) return;
-    const refreshOnFocus = () => refreshBranchDiffPreview();
+    const refreshOnFocus = () => refreshBranchDiffPreviews();
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
-  }, [canRefreshGitDiff, refreshBranchDiffPreview]);
+  }, [canRefreshGitDiff, refreshBranchDiffPreviews]);
 
   useEffect(() => {
     const current = {
@@ -301,13 +318,40 @@ export default function DiffPanel({
       return;
     }
     if (previous.turnId === current.turnId) return;
-    refreshBranchDiffPreview();
+    refreshBranchDiffPreviews();
     lastCompletedTurnRefreshRef.current = current;
-  }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.turnId, refreshBranchDiffPreview]);
+  }, [activeThreadRefreshKey, canRefreshGitDiff, latestTurn?.turnId, refreshBranchDiffPreviews]);
+
+  // Refresh the active diff sources when the panel reopens so a stale cached
+  // patch never lingers (see useRefreshOnReopen). Covers the single-repo branch/
+  // working diff, the checkpoint/turn diff, and the git status banner; multi-repo
+  // branch sections refresh themselves in BranchDiffRepoSection.
+  useRefreshOnReopen(branchDiffPreview.refresh, branchDiffPreview.data !== null);
+  useRefreshOnReopen(activeCheckpointDiff.refresh, activeCheckpointDiff.data !== null);
+  useRefreshOnReopen(gitStatusQuery.refresh, gitStatusQuery.data !== null);
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
+
+  // Multi-repo workspaces run each repo in its own worktree under the thread's
+  // worktree container; `worktrees` maps each repo root to its worktree path.
+  // The single-cwd branch/working diff would only show one repo, so for these
+  // threads we fan a diff-preview out per repo (see BranchDiffRepoSection) and
+  // render every repo grouped, with a repo filter in the header.
+  // The repo roots the branch/working diff fans out over, each paired with the
+  // cwd to diff it in. Isolated runs create one worktree per repo, so diff those.
+  // A non-isolated multi-repo `.code-workspace` has no worktrees and a container
+  // `workspaceRoot` that isn't itself a git repo — so diff each repo root
+  // directly (mirrors ChatView's per-repo git status). Without this the
+  // single-cwd diff below runs `git diff` in the container and reports "no
+  // changes" even when the repos have changes.
+  const isMultiRepoBranchView = selectedTurnId === null && diffRepoTargets.length > 1;
+  // The diff reflects the thread's isolated worktree, not the user's own
+  // checkout of the same repo. Showing the worktree path explains why on-disk
+  // edits made elsewhere (e.g. a separate VS Code window) won't appear here.
+  const diffWorktreePath = activeThread?.worktreePath ?? null;
+
   const loadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     const preview = branchDiffPreview.data;
     if (selectedTurnId !== null || !activeThread || !preview || !selectedGitSource) {
@@ -367,16 +411,6 @@ export default function DiffPanel({
     localBranchRefs.data?.refs.filter((ref) => ref.name !== selectedGitSource?.headRef) ?? [],
     remoteBranchRefs.data?.refs ?? [],
   );
-  const matchingBaseRefChoices = filterBaseRefChoices(baseRefChoices, baseRefQuery);
-  const valueForBaseRefChoice = (choice: (typeof baseRefChoices)[number]) =>
-    selectedBaseRef && selectedBaseRef === choice.remote?.name
-      ? selectedBaseRef
-      : (choice.local?.name ?? choice.remote?.name ?? choice.id);
-  const baseRefItems = [AUTOMATIC_BASE_REF, ...baseRefChoices.map(valueForBaseRefChoice)];
-  const filteredBaseRefItems = [
-    ...(baseRefQuery.trim().length === 0 ? [AUTOMATIC_BASE_REF] : []),
-    ...matchingBaseRefChoices.map(valueForBaseRefChoice),
-  ];
   const gitDiff = selectedGitSource?.diff;
 
   const selectedPatch = selectedTurn ? activeCheckpointDiff.data?.diff : gitDiff;
@@ -426,11 +460,24 @@ export default function DiffPanel({
     [collapsedDiffFileKeys, renderableFileEntries],
   );
   const diffFileKeys = useMemo(() => codeViewFiles.map((file) => file.fileKey), [codeViewFiles]);
-  const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
   const diffLineStat = useMemo(() => getDiffLineStat(renderableFiles), [renderableFiles]);
   const selectedDiffFileKey = selectedFilePath
     ? (codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath)?.fileKey ?? null)
     : null;
+
+  const multiRepoDiff = useMultiRepoDiffState({
+    isMultiRepoBranchView,
+    diffRepoTargets,
+    checkpointGroups: activeCheckpointDiff.data?.groups,
+    resolvedTheme,
+    selectedFilePath,
+    selectedRepoRoot,
+    selectedFileRevealRequestId,
+  });
+  const activeDiffFileKeys = multiRepoDiff.isGroupedDiffView
+    ? multiRepoDiff.groupedDiffFileKeys
+    : diffFileKeys;
+  const allDiffFilesCollapsed = areAllDiffFilesCollapsed(activeDiffFileKeys, collapsedDiffFileKeys);
 
   useEffect(() => {
     if (!selectedDiffFileKey) return;
@@ -438,11 +485,14 @@ export default function DiffPanel({
   }, [codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
 
   const openDiffFile = useCallback(
-    (filePath: string) => {
+    (filePath: string, repoRoot?: string) => {
       openDiffFilePrimaryAction({
         threadRef: routeThreadRef,
         filePath,
-        activeCwd,
+        // In a multi-repo diff each file belongs to a specific repo root; resolve
+        // open-file against it so the path isn't mistakenly joined to the anchor.
+        activeCwd: repoRoot ?? activeCwd,
+        repoRoot,
         openInEditor: (targetPath) => {
           void (async () => {
             const result = await openInPreferredEditor(targetPath);
@@ -487,10 +537,10 @@ export default function DiffPanel({
 
       return {
         scopeKey: collapseScopeKey,
-        fileKeys: toggleAllDiffFiles(diffFileKeys, currentKeys),
+        fileKeys: toggleAllDiffFiles(activeDiffFileKeys, currentKeys),
       };
     });
-  }, [collapseScopeKey, diffFileKeys]);
+  }, [activeDiffFileKeys, collapseScopeKey]);
 
   const selectTurn = (turnId: TurnId) => {
     if (!routeThreadRef) return;
@@ -576,122 +626,31 @@ export default function DiffPanel({
             </DropdownMenuSub>
           </DropdownMenuContent>
         </DropdownMenu>
-        {selectedTurnId === null && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
-          <div
-            className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-            title={`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
-            aria-label={`Comparing ${selectedGitSource.headRef ?? "HEAD"} against ${selectedGitSource.baseRef}`}
-          >
-            <span className="min-w-0 max-w-48 truncate">{selectedGitSource.headRef ?? "HEAD"}</span>
-            <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
-            <Combobox
-              items={baseRefItems}
-              filteredItems={filteredBaseRefItems}
-              value={selectedBaseRef ?? AUTOMATIC_BASE_REF}
-              onOpenChange={(open) => {
-                if (!open) setBaseRefQuery("");
-              }}
-              onValueChange={(value) => {
-                if (!value) return;
-                selectBranchBaseRef(value === AUTOMATIC_BASE_REF ? null : value);
-              }}
-            >
-              <ComboboxTrigger
-                className="inline-flex min-w-0 max-w-48 items-center gap-1 overflow-hidden rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label={`Change comparison target. Currently ${selectedGitSource.baseRef}`}
-              >
-                <span className="min-w-0 truncate">{selectedGitSource.baseRef}</span>
-                <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
-              </ComboboxTrigger>
-              <ComboboxPopup
-                align="start"
-                className="w-72 min-w-0 max-w-[calc(100vw-1rem)] overflow-hidden [&>[data-slot=combobox-popup]]:min-w-0 [&>[data-slot=combobox-popup]]:overflow-hidden"
-              >
-                <div className="min-w-0 shrink-0 px-3 pt-2.5">
-                  <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
-                    <SearchIcon
-                      aria-hidden="true"
-                      className="pointer-events-none absolute top-1.5 left-0 size-4 shrink-0 text-muted-foreground/55"
-                    />
-                    <ComboboxInput
-                      className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
-                      inputClassName="rounded-none bg-transparent text-sm"
-                      placeholder="Search refs..."
-                      showTrigger={false}
-                      size="sm"
-                      unstyled
-                      value={baseRefQuery}
-                      onChange={(event) => setBaseRefQuery(event.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border/70 ps-3 pe-6.5 pt-2 pb-1.5 font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
-                  <span aria-hidden="true" />
-                  <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
-                    <span>Branch</span>
-                    <span className="text-right">Remote</span>
-                  </div>
-                </div>
-                <ComboboxEmpty>No matching refs.</ComboboxEmpty>
-                <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
-                  <ComboboxItem
-                    className="h-8 w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)] py-0"
-                    contentClassName="w-full min-w-0 overflow-hidden"
-                    value={AUTOMATIC_BASE_REF}
-                  >
-                    <span className="block min-w-0 truncate">Automatic</span>
-                  </ComboboxItem>
-                  {baseRefChoices.map((choice) => {
-                    const item = valueForBaseRefChoice(choice);
-                    const hasBoth = choice.local !== null && choice.remote !== null;
-                    const useRemote = choice.remote?.name === item;
-                    return (
-                      <ComboboxItem
-                        key={choice.id}
-                        className="h-8 w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)] py-0"
-                        contentClassName="w-full min-w-0 overflow-hidden"
-                        value={item}
-                      >
-                        <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center overflow-hidden">
-                          <span className="block min-w-0 truncate pe-2">{choice.label}</span>
-                          {hasBoth ? (
-                            <div
-                              className="flex justify-end"
-                              onClick={(event) => event.stopPropagation()}
-                              onPointerDown={(event) => event.stopPropagation()}
-                            >
-                              <Switch
-                                aria-label={`Use remote version of ${choice.label}`}
-                                checked={useRemote}
-                                className="[--thumb-size:--spacing(3)]"
-                                onCheckedChange={(checked) => {
-                                  const nextRef = checked
-                                    ? choice.remote?.name
-                                    : choice.local?.name;
-                                  if (nextRef) selectBranchBaseRef(nextRef);
-                                }}
-                              />
-                            </div>
-                          ) : choice.remote ? (
-                            <span
-                              className="flex justify-end text-muted-foreground"
-                              title="Remote only"
-                            >
-                              <CheckIcon aria-hidden="true" className="size-3" />
-                            </span>
-                          ) : null}
-                        </div>
-                      </ComboboxItem>
-                    );
-                  })}
-                </ComboboxList>
-              </ComboboxPopup>
-            </Combobox>
-          </div>
-        )}
+        <MultiRepoDiffContextControl
+          showRepoFilter={multiRepoDiff.showRepoFilter}
+          repoFilterOptions={multiRepoDiff.repoFilterOptions}
+          effectiveRepoFilter={multiRepoDiff.effectiveRepoFilter}
+          effectiveRepoFilterLabel={multiRepoDiff.effectiveRepoFilterLabel}
+          worktreePath={diffWorktreePath}
+          setRepoFilter={multiRepoDiff.setRepoFilter}
+        />
+        {selectedTurnId === null &&
+          selectedGitScope === "branch" &&
+          !isMultiRepoBranchView &&
+          selectedGitSource?.baseRef && (
+            <DiffPanelBaseRefPicker
+              headRef={selectedGitSource.headRef}
+              baseRef={selectedGitSource.baseRef}
+              selectedBaseRef={selectedBaseRef}
+              choices={baseRefChoices}
+              query={baseRefQuery}
+              setQuery={setBaseRefQuery}
+              selectBaseRef={selectBranchBaseRef}
+            />
+          )}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
-        {codeViewFiles.length > 0 && (
+        {!isMultiRepoBranchView && codeViewFiles.length > 0 && (
           <DiffStatLabel
             additions={diffLineStat.additions}
             deletions={diffLineStat.deletions}
@@ -708,7 +667,7 @@ export default function DiffPanel({
                   size="icon-sm"
                   variant="ghost"
                   aria-label={branchDiffPreview.isPending ? "Refreshing diff" : "Refresh diff"}
-                  onClick={refreshBranchDiffPreview}
+                  onClick={refreshBranchDiffPreviews}
                 />
               }
             >
@@ -721,7 +680,7 @@ export default function DiffPanel({
             </TooltipPopup>
           </Tooltip>
         )}
-        {codeViewFiles.length > 0 && (
+        {!isMultiRepoBranchView && activeDiffFileKeys.length > 0 && (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -815,7 +774,7 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : !isGitRepo ? (
+      ) : !hasGitDiffTarget ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Turn diffs are unavailable because this project is not a git repository.
         </div>
@@ -826,18 +785,33 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="diff-panel-viewport flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {isSelectedPatchTruncated && (
+            {!isMultiRepoBranchView && isSelectedPatchTruncated && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
                 This diff was truncated because it exceeded the preview limit. The changes shown are
                 incomplete.
               </p>
             )}
-            {selectedPatchError && !renderablePatch && (
+            {!isMultiRepoBranchView && selectedPatchError && !renderablePatch && (
               <div className="px-3">
                 <p className="mb-2 text-[11px] text-error/80">{selectedPatchError}</p>
               </div>
             )}
-            {!renderablePatch ? (
+            {isMultiRepoBranchView ? (
+              <MultiRepoBranchDiff
+                environmentId={activeThread.environmentId}
+                targets={multiRepoDiff.visibleDiffTargets}
+                scope={selectedGitScope}
+                baseRef={selectedBaseRef}
+                ignoreWhitespace={diffIgnoreWhitespace}
+                refreshVersion={branchRepoRefreshVersion}
+                resolvedTheme={resolvedTheme}
+                collapsedDiffFileKeys={collapsedDiffFileKeys}
+                diffRenderMode={diffRenderMode}
+                wordWrap={wordWrap}
+                openDiffFile={openDiffFile}
+                toggleDiffFileCollapsed={toggleDiffFileCollapsed}
+              />
+            ) : !renderablePatch && !multiRepoDiff.isGroupedDiffView ? (
               isLoadingSelectedPatch ? (
                 <DiffPanelLoadingState
                   label={
@@ -857,7 +831,7 @@ export default function DiffPanel({
                   </p>
                 </div>
               )
-            ) : renderablePatch.kind === "files" ? (
+            ) : multiRepoDiff.isGroupedDiffView || renderablePatch?.kind === "files" ? (
               <div
                 className="min-h-0 flex-1"
                 onClickCapture={(event) => {
@@ -870,6 +844,11 @@ export default function DiffPanel({
                       return;
                     }
                   }
+                  const header = composedPath.find(
+                    (node): node is HTMLElement =>
+                      node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
+                  );
+                  const repoMarker = header?.querySelector<HTMLElement>("[data-diff-repo-root]");
                   const title = composedPath.find(
                     (node): node is HTMLElement =>
                       node instanceof HTMLElement && node.hasAttribute("data-title"),
@@ -877,75 +856,93 @@ export default function DiffPanel({
                   const filePath = title?.textContent?.trim();
                   // The filename remains the explicit "open in editor" affordance.
                   if (filePath) {
-                    openDiffFile(filePath);
+                    openDiffFile(filePath, repoMarker?.dataset.diffRepoRoot);
                     return;
                   }
-                  const header = composedPath.find(
-                    (node): node is HTMLElement =>
-                      node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
-                  );
                   const headerFilePath = header?.querySelector("[data-title]")?.textContent?.trim();
                   if (!headerFilePath) return;
+                  const encodedCollapseKey = repoMarker?.dataset.diffCollapseKey;
+                  if (encodedCollapseKey) {
+                    toggleDiffFileCollapsed(decodeURIComponent(encodedCollapseKey));
+                    return;
+                  }
                   const file = codeViewFiles.find(
                     (candidate) => candidate.filePath === headerFilePath,
                   );
                   if (file) toggleDiffFileCollapsed(file.fileKey);
                 }}
               >
-                <AnnotatableCodeView
-                  key={collapseScopeKey ?? reviewSectionId}
-                  viewerRef={codeViewRef}
-                  codeViewKey={codeViewMountKey}
-                  className="h-full min-h-0 overflow-auto"
-                  files={codeViewFiles}
-                  sectionId={reviewSectionId}
-                  sectionTitle={reviewSectionTitle}
-                  composerDraftTarget={composerDraftTarget}
-                  renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
-                    const filePath = resolveFileDiffPath(fileDiff);
-                    return (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <button
-                              type="button"
-                              className={cn(
-                                "-ms-0.5 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
-                                getDiffCollapseIconClassName(fileDiff),
-                              )}
-                              aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
-                              aria-expanded={!collapsed}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                toggleDiffFileCollapsed(fileKey);
-                              }}
-                            />
-                          }
-                        >
-                          {collapsed ? (
-                            <ChevronRightIcon className="size-4" />
-                          ) : (
-                            <ChevronDownIcon className="size-4" />
-                          )}
-                        </TooltipTrigger>
-                        <TooltipPopup side="top">
-                          {collapsed ? "Expand diff" : "Collapse diff"}
-                        </TooltipPopup>
-                      </Tooltip>
-                    );
-                  }}
-                  options={{
-                    diffStyle: diffRenderMode === "split" ? "split" : "unified",
-                    lineDiffType: "none",
-                    overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
-                    themeType: resolvedTheme as DiffThemeType,
-                    stickyHeaders: true,
-                    ...(loadDiffFiles ? { loadDiffFiles } : {}),
-                  }}
-                />
+                {multiRepoDiff.isGroupedDiffView ? (
+                  <MultiRepoCheckpointDiff
+                    groups={multiRepoDiff.visibleGroups}
+                    resolvedTheme={resolvedTheme}
+                    collapsedDiffFileKeys={collapsedDiffFileKeys}
+                    diffRenderMode={diffRenderMode}
+                    wordWrap={wordWrap}
+                    openDiffFile={openDiffFile}
+                    toggleDiffFileCollapsed={toggleDiffFileCollapsed}
+                    composerDraftTarget={composerDraftTarget}
+                    sectionId={reviewSectionId}
+                    sectionTitle={reviewSectionTitle}
+                  />
+                ) : (
+                  <AnnotatableCodeView
+                    key={collapseScopeKey ?? reviewSectionId}
+                    viewerRef={codeViewRef}
+                    codeViewKey={codeViewMountKey}
+                    className="h-full min-h-0 overflow-auto"
+                    files={codeViewFiles}
+                    sectionId={reviewSectionId}
+                    sectionTitle={reviewSectionTitle}
+                    composerDraftTarget={composerDraftTarget}
+                    renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
+                      const filePath = resolveFileDiffPath(fileDiff);
+                      return (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <button
+                                type="button"
+                                className={cn(
+                                  "-ms-0.5 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
+                                  getDiffCollapseIconClassName(fileDiff),
+                                )}
+                                aria-label={
+                                  collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`
+                                }
+                                aria-expanded={!collapsed}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  toggleDiffFileCollapsed(fileKey);
+                                }}
+                              />
+                            }
+                          >
+                            {collapsed ? (
+                              <ChevronRightIcon className="size-4" />
+                            ) : (
+                              <ChevronDownIcon className="size-4" />
+                            )}
+                          </TooltipTrigger>
+                          <TooltipPopup side="top">
+                            {collapsed ? "Expand diff" : "Collapse diff"}
+                          </TooltipPopup>
+                        </Tooltip>
+                      );
+                    }}
+                    options={{
+                      diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                      lineDiffType: "none",
+                      overflow: wordWrap ? "wrap" : "scroll",
+                      theme: resolveDiffThemeName(resolvedTheme),
+                      themeType: resolvedTheme as DiffThemeType,
+                      stickyHeaders: true,
+                      ...(loadDiffFiles ? { loadDiffFiles } : {}),
+                    }}
+                  />
+                )}
               </div>
-            ) : (
+            ) : renderablePatch?.kind === "raw" ? (
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 <div className="space-y-2">
                   <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
@@ -961,7 +958,7 @@ export default function DiffPanel({
                   </pre>
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         </>
       )}

@@ -16,10 +16,12 @@ import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
+import { buildRepoRootLabels } from "~/lib/repoRootLabels";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import { type FileTreeSelectionEntry, resolveFileTreeSelectionPath } from "./fileTreeSelection";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
@@ -28,9 +30,18 @@ interface FileBrowserPanelProps {
   projectName: string;
   /** File currently open in the preview pane; revealed and selected in the tree. */
   selectedPath: string | null;
+  selectedRoot: string | null;
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
-  onOpenFile: (relativePath: string) => void;
+  // Multi-repo workspaces (#923): when set, list the union of these repo roots
+  // and group the tree by repo. Omitted/single-entry keeps single-root behavior.
+  repoRoots?: readonly string[] | undefined;
+  onOpenFile: (relativePath: string, root?: string) => void;
+}
+
+interface TreeEntryInfo {
+  readonly relativePath: string;
+  readonly root?: string;
 }
 
 const TREE_UNSAFE_CSS = `
@@ -44,10 +55,6 @@ const TREE_UNSAFE_CSS = `
   }
   button[data-type='item'] { border-radius: 5px; }
 `;
-
-function treePath(entry: ProjectEntry): string {
-  return entry.kind === "directory" ? `${entry.path}/` : entry.path;
-}
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
@@ -103,19 +110,52 @@ export default function FileBrowserPanel({
   cwd,
   projectName,
   selectedPath,
+  selectedRoot,
   selectedPathRevealId,
+  repoRoots,
   onOpenFile,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
-  const entriesQuery = useProjectEntriesQuery(environmentId, cwd);
+  const entriesQuery = useProjectEntriesQuery(environmentId, cwd, repoRoots);
   const entries = entriesQuery.data?.entries ?? [];
-  const entryKinds = useMemo(
-    () => new Map(entries.map((entry) => [entry.path, entry.kind] as const)),
-    [entries],
-  );
+
+  // Build the tree paths and a lookup from each path back to its repo-relative
+  // path + owning root. In multi-repo mode every entry is prefixed with its
+  // repo label so same-named files across repos don't collide and each repo
+  // renders as its own top-level node.
+  const { treePaths, entryKinds, entryInfo, selectionEntries } = useMemo(() => {
+    const distinctRoots = [
+      ...new Set(
+        entries.map((entry) => entry.root).filter((root): root is string => Boolean(root)),
+      ),
+    ];
+    const labels = distinctRoots.length > 0 ? buildRepoRootLabels(distinctRoots) : null;
+
+    const treePaths: string[] = [];
+    const entryKinds = new Map<string, ProjectEntry["kind"]>();
+    const entryInfo = new Map<string, TreeEntryInfo>();
+    const selectionEntries: FileTreeSelectionEntry[] = [];
+    for (const entry of entries) {
+      const prefix = entry.root && labels ? `${labels.get(entry.root)}/` : "";
+      const treeRelativePath = `${prefix}${entry.path}`;
+      entryKinds.set(treeRelativePath, entry.kind);
+      entryInfo.set(treeRelativePath, {
+        relativePath: entry.path,
+        ...(entry.root ? { root: entry.root } : {}),
+      });
+      selectionEntries.push({
+        treePath: treeRelativePath,
+        relativePath: entry.path,
+        ...(entry.root ? { root: entry.root } : {}),
+      });
+      treePaths.push(entry.kind === "directory" ? `${treeRelativePath}/` : treeRelativePath);
+    }
+    return { treePaths, entryKinds, entryInfo, selectionEntries };
+  }, [entries]);
+
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectEntry["kind"]>>(entryKinds);
-  const treePaths = useMemo(() => entries.map(treePath), [entries]);
+  const entryInfoRef = useRef<ReadonlyMap<string, TreeEntryInfo>>(entryInfo);
   const previousTreePathsRef = useRef<readonly string[]>([]);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
@@ -237,9 +277,13 @@ export default function FileBrowserPanel({
         return;
       }
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
-      if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
-        treeSelectionPathRef.current = selectedPath;
-        onOpenFile(selectedPath);
+      if (!selectedPath || entryKindsRef.current.get(selectedPath) !== "file") {
+        return;
+      }
+      treeSelectionPathRef.current = selectedPath;
+      const info = entryInfoRef.current.get(selectedPath);
+      if (info) {
+        onOpenFile(info.relativePath, info.root);
       }
     },
     paths: [],
@@ -258,16 +302,23 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (previousTreePathsRef.current === treePaths) return;
     entryKindsRef.current = entryKinds;
+    entryInfoRef.current = entryInfo;
     previousTreePathsRef.current = treePaths;
     model.resetPaths(treePaths);
-  }, [entryKinds, model, treePaths]);
+  }, [entryInfo, entryKinds, model, treePaths]);
 
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
       return;
     }
-    const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
+    const selectedTreePath = resolveFileTreeSelectionPath(selectionEntries, {
+      relativePath: selectedPath,
+      root: selectedRoot,
+      primaryRoot: cwd,
+    });
+    if (!selectedTreePath) return;
+    const revealRequest = { path: selectedTreePath, revealId: selectedPathRevealId };
     const handledReveal = handledRevealRef.current;
     // Entry refreshes rebuild treePaths while the same preview stays open.
     // Replaying a handled reveal would close an active tree search and steal focus.
@@ -277,8 +328,8 @@ export default function FileBrowserPanel({
     ) {
       return;
     }
-    if (entryKinds.get(selectedPath) !== "file") return;
-    const selectedItem = model.getItem(selectedPath);
+    if (entryKinds.get(selectedTreePath) !== "file") return;
+    const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
 
     // A selection that originated inside the tree (clicking a row, possibly
@@ -287,8 +338,8 @@ export default function FileBrowserPanel({
     // opens (file picker, content search, chat links).
     const selectedInTree = model
       .getSelectedPaths()
-      .some((path) => path.replace(/\/$/, "") === selectedPath);
-    if (selectedInTree && treeSelectionPathRef.current === selectedPath) {
+      .some((path) => path.replace(/\/$/, "") === selectedTreePath);
+    if (selectedInTree && treeSelectionPathRef.current === selectedTreePath) {
       treeSelectionPathRef.current = null;
       handledRevealRef.current = revealRequest;
       return;
@@ -304,7 +355,7 @@ export default function FileBrowserPanel({
 
     // Directory rows are registered with a trailing slash (see treePath), so
     // ancestor lookups must use the same form to expand them.
-    const segments = selectedPath.split("/");
+    const segments = selectedTreePath.split("/");
     let ancestorPath = "";
     for (const segment of segments.slice(0, -1)) {
       ancestorPath = ancestorPath ? `${ancestorPath}/${segment}` : segment;
@@ -313,11 +364,11 @@ export default function FileBrowserPanel({
     }
 
     selectedItem.select();
-    model.scrollToPath(selectedPath, { focus: true, offset: "center" });
+    model.scrollToPath(selectedTreePath, { focus: true, offset: "center" });
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
-  }, [entryKinds, model, selectedPath, selectedPathRevealId, treePaths]);
+  }, [cwd, entryKinds, model, selectedPath, selectedPathRevealId, selectedRoot, selectionEntries]);
 
   // Tag tree drags with the composer mention payload. The row is read from
   // the composed event path (the tree's shadow root is open), so this does

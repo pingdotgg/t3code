@@ -132,11 +132,94 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    worktrees: [],
     checkpoints: [],
     activities: [],
     ...overrides,
   };
 }
+
+describe("buildBrowseGroups", () => {
+  const baseInput = {
+    browseQuery: "/work/",
+    canBrowseUp: false,
+    upIcon: null,
+    directoryIcon: null,
+    workspaceFileIcon: null,
+    browseUp: () => {},
+    browseTo: () => {},
+    openWorkspaceFile: () => {},
+  };
+
+  it("navigates into directories but opens workspace files", async () => {
+    const browseTo = vi.fn();
+    const openWorkspaceFile = vi.fn();
+
+    const [group] = buildBrowseGroups({
+      ...baseInput,
+      browseTo,
+      openWorkspaceFile,
+      browseEntries: [
+        { name: "backend", fullPath: "/work/backend", kind: "directory" },
+        {
+          name: "feature.code-workspace",
+          fullPath: "/work/feature.code-workspace",
+          kind: "workspaceFile",
+        },
+      ],
+    });
+
+    const [dirItem, wsItem] = group!.items;
+    if (dirItem?.kind !== "action" || wsItem?.kind !== "action") {
+      throw new Error("expected action items");
+    }
+
+    // Directory entry keeps the palette open and navigates in.
+    expect(dirItem.keepOpen).toBe(true);
+    await dirItem.run();
+    expect(browseTo).toHaveBeenCalledWith("backend");
+    expect(openWorkspaceFile).not.toHaveBeenCalled();
+
+    // Workspace-file entry keeps the palette mounted until its async project
+    // setup flow explicitly closes it.
+    expect(wsItem.keepOpen).toBe(true);
+    await wsItem.run();
+    expect(openWorkspaceFile).toHaveBeenCalledWith("/work/feature.code-workspace");
+  });
+
+  it("treats an entry with no kind as a directory", async () => {
+    const browseTo = vi.fn();
+    const [group] = buildBrowseGroups({
+      ...baseInput,
+      browseTo,
+      browseEntries: [{ name: "legacy", fullPath: "/work/legacy" }],
+    });
+
+    const item = group!.items[0];
+    if (item?.kind !== "action") {
+      throw new Error("expected action item");
+    }
+    await item.run();
+    expect(browseTo).toHaveBeenCalledWith("legacy");
+  });
+
+  it("can hide workspace files while another folder-selection flow is active", () => {
+    const [group] = buildBrowseGroups({
+      ...baseInput,
+      includeWorkspaceFiles: false,
+      browseEntries: [
+        { name: "backend", fullPath: "/work/backend", kind: "directory" },
+        {
+          name: "feature.code-workspace",
+          fullPath: "/work/feature.code-workspace",
+          kind: "workspaceFile",
+        },
+      ],
+    });
+
+    expect(group?.items.map((item) => item.value)).toEqual(["browse:/work/backend"]);
+  });
+});
 
 describe("buildThreadActionItems", () => {
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {
@@ -319,8 +402,10 @@ describe("buildBrowseGroups", () => {
       canBrowseUp: false,
       upIcon: null,
       directoryIcon: null,
+      workspaceFileIcon: null,
       browseUp: vi.fn(),
       browseTo,
+      openWorkspaceFile: vi.fn(),
     });
     const item = groups[0]?.items[0];
     if (!item || item.kind !== "action") {
@@ -337,6 +422,51 @@ describe("buildBrowseGroups", () => {
     expect(actionSettled).toBe(false);
 
     finishNavigation?.();
+    await action;
+    expect(actionSettled).toBe(true);
+  });
+
+  it("keeps the palette mounted while opening a workspace file", async () => {
+    let finishOpen: (() => void) | undefined;
+    const openWorkspaceFile = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    const groups = buildBrowseGroups({
+      browseEntries: [
+        {
+          kind: "workspaceFile",
+          name: "project.code-workspace",
+          fullPath: "/Users/test/project.code-workspace",
+        },
+      ],
+      browseQuery: "project",
+      canBrowseUp: false,
+      upIcon: null,
+      directoryIcon: null,
+      workspaceFileIcon: null,
+      browseUp: vi.fn(),
+      browseTo: vi.fn(),
+      openWorkspaceFile,
+    });
+    const item = groups[0]?.items[0];
+    if (!item || item.kind !== "action") {
+      throw new Error("Expected a workspace file action");
+    }
+
+    expect(item.keepOpen).toBe(true);
+    let actionSettled = false;
+    const action = item.run().then(() => {
+      actionSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(openWorkspaceFile).toHaveBeenCalledWith("/Users/test/project.code-workspace");
+    expect(actionSettled).toBe(false);
+
+    finishOpen?.();
     await action;
     expect(actionSettled).toBe(true);
   });

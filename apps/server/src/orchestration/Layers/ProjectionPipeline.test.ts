@@ -241,6 +241,213 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-checkpoint-refs-backfill-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect(
+      "backfills checkpoint refs with an independent cursor and clears explicit empties",
+      () =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const now = "2026-01-01T00:00:00.000Z";
+          const threadId = ThreadId.make("thread-checkpoint-refs");
+          const projectId = ProjectId.make("project-checkpoint-refs");
+
+          yield* eventStore.append({
+            type: "project.created",
+            eventId: EventId.make("evt-checkpoint-refs-project"),
+            aggregateKind: "project",
+            aggregateId: projectId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-checkpoint-refs-project"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-checkpoint-refs-project"),
+            metadata: {},
+            payload: {
+              projectId,
+              title: "Checkpoint Refs",
+              workspaceRoot: "/tmp/checkpoint-refs-primary",
+              repoRoots: ["/tmp/checkpoint-refs-primary", "/tmp/checkpoint-refs-attached"],
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.created",
+            eventId: EventId.make("evt-checkpoint-refs-thread"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-checkpoint-refs-thread"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-checkpoint-refs-thread"),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId,
+              title: "Checkpoint Refs Thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: "/tmp/checkpoint-refs-original-worktree",
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.turn-diff-completed",
+            eventId: EventId.make("evt-checkpoint-refs-diff"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-checkpoint-refs-diff"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-checkpoint-refs-diff"),
+            metadata: {},
+            payload: {
+              threadId,
+              turnId: TurnId.make("turn-checkpoint-refs"),
+              checkpointTurnCount: 1,
+              checkpointRef: CheckpointRef.make(
+                "refs/t3/checkpoints/thread-checkpoint-refs/turn/1",
+              ),
+              checkpointRefs: [
+                {
+                  repoRoot: "/tmp/checkpoint-refs-primary",
+                  checkpointRef: CheckpointRef.make(
+                    "refs/t3/checkpoints/thread-checkpoint-refs/turn/1",
+                  ),
+                },
+                {
+                  repoRoot: "/tmp/checkpoint-refs-attached",
+                  checkpointRef: CheckpointRef.make(
+                    "refs/t3/checkpoints/thread-checkpoint-refs/turn/1",
+                  ),
+                },
+              ],
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: now,
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.turn-diff-completed",
+            eventId: EventId.make("evt-checkpoint-refs-legacy-diff"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-checkpoint-refs-legacy-diff"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-checkpoint-refs-legacy-diff"),
+            metadata: {},
+            payload: {
+              threadId,
+              turnId: TurnId.make("turn-checkpoint-refs-legacy"),
+              checkpointTurnCount: 2,
+              checkpointRef: CheckpointRef.make(
+                "refs/t3/checkpoints/thread-checkpoint-refs/turn/2",
+              ),
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: now,
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.meta-updated",
+            eventId: EventId.make("evt-checkpoint-refs-later-worktree"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-checkpoint-refs-later-worktree"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-checkpoint-refs-later-worktree"),
+            metadata: {},
+            payload: {
+              threadId,
+              worktreePath: "/tmp/checkpoint-refs-later-worktree",
+              updatedAt: now,
+            },
+          });
+
+          // Simulate an upgraded database whose existing turn projector has
+          // already consumed the historical diff event.
+          yield* sql`
+          INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+          VALUES (${ORCHESTRATION_PROJECTOR_NAMES.threadTurns}, 5, ${now})
+        `;
+          yield* projectionPipeline.bootstrap;
+
+          const backfilled = yield* sql<{
+            readonly repoRoot: string;
+          }>`
+          SELECT repo_root AS "repoRoot"
+          FROM projection_checkpoint_refs
+          WHERE thread_id = ${threadId}
+            AND checkpoint_turn_count = 1
+          ORDER BY repo_root ASC
+        `;
+          assert.deepEqual(
+            backfilled.map((row) => row.repoRoot),
+            ["/tmp/checkpoint-refs-attached", "/tmp/checkpoint-refs-primary"],
+          );
+
+          const legacyBackfill = yield* sql<{ readonly repoRoot: string }>`
+          SELECT repo_root AS "repoRoot"
+          FROM projection_checkpoint_refs
+          WHERE thread_id = ${threadId}
+            AND checkpoint_turn_count = 2
+        `;
+          assert.deepEqual(legacyBackfill, [
+            { repoRoot: "/tmp/checkpoint-refs-original-worktree" },
+          ]);
+
+          const clearedEvent = yield* eventStore.append({
+            type: "thread.turn-diff-completed",
+            eventId: EventId.make("evt-checkpoint-refs-clear"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make("cmd-checkpoint-refs-clear"),
+            causationEventId: null,
+            correlationId: CommandId.make("cmd-checkpoint-refs-clear"),
+            metadata: {},
+            payload: {
+              threadId,
+              turnId: TurnId.make("turn-checkpoint-refs"),
+              checkpointTurnCount: 1,
+              checkpointRef: CheckpointRef.make(
+                "refs/t3/checkpoints/thread-checkpoint-refs/turn/1",
+              ),
+              checkpointRefs: [],
+              status: "ready",
+              files: [],
+              assistantMessageId: null,
+              completedAt: now,
+            },
+          });
+          yield* projectionPipeline.projectEvent(clearedEvent);
+
+          const afterClear = yield* sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS "count"
+          FROM projection_checkpoint_refs
+          WHERE thread_id = ${threadId}
+            AND checkpoint_turn_count = 1
+        `;
+          assert.equal(afterClear[0]?.count ?? -1, 0);
+        }),
+    );
+  },
+);
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",
   (it) => {

@@ -221,7 +221,10 @@ export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  workspaceFile: Schema.optional(TrimmedNonEmptyString),
+  repoRoots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  repositoryIdentities: Schema.optional(Schema.Array(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to t3.json, then the global setting.
@@ -296,6 +299,9 @@ export type OrchestrationSession = typeof OrchestrationSession.Type;
 
 export const OrchestrationCheckpointFile = Schema.Struct({
   path: TrimmedNonEmptyString,
+  // Present for multi-repo checkpoints so identical relative paths remain
+  // distinguishable in summaries and can open the matching repo's diff.
+  repoRoot: Schema.optional(TrimmedNonEmptyString),
   kind: TrimmedNonEmptyString,
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
@@ -361,6 +367,23 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+/**
+ * One isolated-run worktree, keyed by the repo root it was created from.
+ *
+ * A multi-repo thread fans an isolated run out to one worktree per repo root.
+ * The thread carries the full per-root map; the legacy singular `worktreePath`
+ * is kept alongside as a single-root compatibility shim.
+ */
+export const OrchestrationThreadWorktree = Schema.Struct({
+  repoRoot: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+});
+export type OrchestrationThreadWorktree = typeof OrchestrationThreadWorktree.Type;
+
+const ThreadWorktrees = Schema.Array(OrchestrationThreadWorktree).pipe(
+  Schema.withDecodingDefault(Effect.succeed([])),
+);
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -372,6 +395,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  worktrees: ThreadWorktrees,
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -420,7 +444,10 @@ export const OrchestrationProjectShell = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  workspaceFile: Schema.optional(TrimmedNonEmptyString),
+  repoRoots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  repositoryIdentities: Schema.optional(Schema.Array(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Optional on the wire so cached snapshots from older servers still decode.
@@ -442,6 +469,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  worktrees: ThreadWorktrees,
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -625,6 +653,8 @@ export const ProjectCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  workspaceFile: Schema.optional(TrimmedNonEmptyString),
+  repoRoots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   createdAt: IsoDateTime,
@@ -636,6 +666,8 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  workspaceFile: Schema.optional(TrimmedNonEmptyString),
+  repoRoots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
@@ -663,6 +695,7 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  worktrees: Schema.optional(Schema.Array(OrchestrationThreadWorktree)),
   createdAt: IsoDateTime,
 });
 
@@ -758,6 +791,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktrees: Schema.optional(Schema.Array(OrchestrationThreadWorktree)),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -790,6 +824,7 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  worktrees: Schema.optional(Schema.Array(OrchestrationThreadWorktree)),
   createdAt: IsoDateTime,
 });
 
@@ -985,6 +1020,17 @@ const ThreadProposedPlanUpsertCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/**
+ * One repo root's checkpoint ref within a multi-repo checkpoint (D2). The ref
+ * name is uniform across repos; `repoRoot` records which repo it was captured
+ * in so diff/restore can fan out over exactly the captured roots.
+ */
+export const CheckpointRepoRef = Schema.Struct({
+  repoRoot: Schema.String,
+  checkpointRef: CheckpointRef,
+});
+export type CheckpointRepoRef = typeof CheckpointRepoRef.Type;
+
 const ThreadTurnDiffCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.diff.complete"),
   commandId: CommandId,
@@ -992,6 +1038,10 @@ const ThreadTurnDiffCompleteCommand = Schema.Struct({
   turnId: TurnId,
   completedAt: IsoDateTime,
   checkpointRef: CheckpointRef,
+  // Per-root refs captured this turn (multi-repo). Single-root threads carry one
+  // entry; absent on placeholder checkpoints. The legacy `checkpointRef` above
+  // remains the uniform ref name.
+  checkpointRefs: Schema.optional(Schema.Array(CheckpointRepoRef)),
   status: OrchestrationCheckpointStatus,
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.optional(MessageId),
@@ -1082,6 +1132,8 @@ export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  workspaceFile: Schema.optional(TrimmedNonEmptyString),
+  repoRoots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Optional so persisted events from older servers still decode.
@@ -1095,6 +1147,8 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  workspaceFile: Schema.optional(TrimmedNonEmptyString),
+  repoRoots: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
@@ -1119,6 +1173,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  worktrees: ThreadWorktrees,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1201,6 +1256,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktrees: Schema.optional(Schema.Array(OrchestrationThreadWorktree)),
   updatedAt: IsoDateTime,
 });
 
@@ -1294,6 +1350,7 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
   turnId: TurnId,
   checkpointTurnCount: NonNegativeInt,
   checkpointRef: CheckpointRef,
+  checkpointRefs: Schema.optional(Schema.Array(CheckpointRepoRef)),
   status: OrchestrationCheckpointStatus,
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
@@ -1507,10 +1564,28 @@ export const TurnCountRange = Schema.Struct({
   ),
 );
 
+/**
+ * One repo root's slice of a multi-repo turn diff. `diff` is that root's
+ * unified patch; `repoRoot` is its absolute path (lets the web resolve
+ * open-file against the right repo); `displayName` is a short label for the
+ * section header (the root's basename).
+ */
+export const ThreadTurnDiffGroup = Schema.Struct({
+  repoRoot: Schema.String,
+  displayName: Schema.String,
+  diff: Schema.String,
+});
+export type ThreadTurnDiffGroup = typeof ThreadTurnDiffGroup.Type;
+
 export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
+    // Concatenation of every root's patch (back-compat: single-root consumers
+    // keep reading this flat string).
     diff: Schema.String,
+    // Per-repo-root grouping for multi-repo threads. Present whenever the diff
+    // was computed; single-root threads carry one group.
+    groups: Schema.optional(Schema.Array(ThreadTurnDiffGroup)),
   }),
   { unsafePreserveChecks: true },
 );

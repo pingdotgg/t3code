@@ -753,6 +753,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
+            ...(input.additionalRoots && input.additionalRoots.length > 0
+              ? { additionalRoots: input.additionalRoots }
+              : {}),
             ...(boundModelId ? { model: resolveGrokAcpBaseModelId(boundModelId) } : {}),
             threadId: input.threadId,
             resumeCursor: {

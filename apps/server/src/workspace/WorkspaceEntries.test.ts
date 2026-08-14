@@ -74,6 +74,7 @@ const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) 
 
 const searchWorkspaceEntries = (input: {
   cwd: string;
+  roots?: ReadonlyArray<string>;
   query: string;
   limit: number;
   kind?: "file" | "directory";
@@ -119,6 +120,49 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         );
         expect(result.entries.some((entry) => entry.path.startsWith("node_modules"))).toBe(false);
         expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("hides bare-repo directories whose name ends in .git", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* writeTextFile(cwd, ".git/HEAD");
+        yield* writeTextFile(cwd, ".frontend-origin.git/HEAD");
+        yield* writeTextFile(cwd, "nested/origin.git/HEAD");
+        yield* writeTextFile(cwd, "docs/config.git");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src/index.ts");
+        expect(paths.some((entryPath) => entryPath.startsWith(".git"))).toBe(false);
+        expect(paths.some((entryPath) => entryPath.includes(".frontend-origin.git"))).toBe(false);
+        expect(paths.some((entryPath) => entryPath.includes("origin.git"))).toBe(false);
+        expect(paths).toContain("docs/config.git");
+      }),
+    );
+
+    it.effect("unions multiple roots and tags each entry with its owning root", () =>
+      Effect.gen(function* () {
+        const backend = yield* makeTempDir({ prefix: "t3code-ws-list-backend-" });
+        const frontend = yield* makeTempDir({ prefix: "t3code-ws-list-frontend-" });
+        yield* writeTextFile(backend, "src/server.ts");
+        yield* writeTextFile(frontend, "src/app.tsx");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({
+          cwd: backend,
+          roots: [backend, frontend],
+        });
+
+        expect(result.entries).toEqual(
+          expect.arrayContaining([
+            { path: "src/server.ts", kind: "file", parentPath: "src", root: backend },
+            { path: "src/app.tsx", kind: "file", parentPath: "src", root: frontend },
+          ]),
+        );
       }),
     );
   });
@@ -223,6 +267,39 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("filters ignored directories before applying the search limit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-ignore-limit-" });
+        yield* writeTextFile(cwd, "a-origin.git/match.ts");
+        yield* writeTextFile(cwd, "z-source/match.ts");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd,
+          query: "match",
+          limit: 1,
+          kind: "file",
+        });
+
+        expect(result.entries).toEqual([{ path: "z-source/match.ts", kind: "file" }]);
+      }),
+    );
+
+    it.effect("keeps files whose final name ends in .git", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-dot-git-file-" });
+        yield* writeTextFile(cwd, "docs/config.git");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd,
+          query: "config",
+          limit: 10,
+          kind: "file",
+        });
+
+        expect(result.entries).toEqual([{ path: "docs/config.git", kind: "file" }]);
+      }),
+    );
+
     it.effect("answers an empty file-filtered query with a bounded file listing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-empty-query-" });
@@ -258,6 +335,62 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(result.entries).toEqual([{ path: "src", kind: "directory" }]);
         expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("finds matches across cousin roots and tags them with their root", () =>
+      Effect.gen(function* () {
+        const backend = yield* makeTempDir({ prefix: "t3code-ws-search-backend-" });
+        const frontend = yield* makeTempDir({ prefix: "t3code-ws-search-frontend-" });
+        yield* writeTextFile(backend, "src/widget.server.ts");
+        yield* writeTextFile(frontend, "src/widget.client.tsx");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd: backend,
+          roots: [backend, frontend],
+          query: "widget",
+          limit: 10,
+        });
+
+        const byPath = new Map(result.entries.map((entry) => [entry.path, entry.root]));
+        expect(byPath.get("src/widget.server.ts")).toBe(backend);
+        expect(byPath.get("src/widget.client.tsx")).toBe(frontend);
+      }),
+    );
+
+    it.effect("does not let the primary root starve secondary-root results", () =>
+      Effect.gen(function* () {
+        const backend = yield* makeTempDir({ prefix: "t3code-ws-search-fair-backend-" });
+        const frontend = yield* makeTempDir({ prefix: "t3code-ws-search-fair-frontend-" });
+        yield* writeTextFile(backend, "src/widget-a.ts");
+        yield* writeTextFile(backend, "src/widget-b.ts");
+        yield* writeTextFile(frontend, "src/widget-ui.tsx");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd: backend,
+          roots: [backend, frontend],
+          query: "widget",
+          limit: 2,
+        });
+
+        expect(result.entries.map((entry) => entry.root)).toEqual([backend, frontend]);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("skips a missing root instead of failing the whole search", () =>
+      Effect.gen(function* () {
+        const backend = yield* makeTempDir({ prefix: "t3code-ws-search-skip-" });
+        yield* writeTextFile(backend, "src/keep.ts");
+
+        const result = yield* searchWorkspaceEntries({
+          cwd: backend,
+          roots: [backend, "/nonexistent/cousin/repo"],
+          query: "keep",
+          limit: 10,
+        });
+
+        expect(result.entries.map((entry) => entry.path)).toContain("src/keep.ts");
       }),
     );
 
@@ -380,6 +513,29 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         ]);
         expect(result.matches[0]?.matchRanges).toEqual([{ start: 13, end: 19 }]);
         expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("searches content across repositories and tags the owning root", () =>
+      Effect.gen(function* () {
+        const backend = yield* makeTempDir({ prefix: "t3code-content-backend-" });
+        const frontend = yield* makeTempDir({ prefix: "t3code-content-frontend-" });
+        yield* writeTextFile(backend, "src/server.ts", "sharedToken\nsharedToken\n");
+        yield* writeTextFile(frontend, "src/app.tsx", "sharedToken\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd: backend,
+          roots: [backend, frontend],
+          query: "sharedToken",
+          limit: 2,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        });
+
+        expect(result.matches.map((match) => match.root)).toEqual([backend, frontend]);
+        expect(result.truncated).toBe(true);
       }),
     );
 
@@ -651,10 +807,40 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result).toEqual({
           parentPath: cwd,
           entries: [
-            { name: "alpha", fullPath: path.join(cwd, "alpha") },
-            { name: "alpine", fullPath: path.join(cwd, "alpine") },
+            { name: "alpha", fullPath: path.join(cwd, "alpha"), kind: "directory" },
+            { name: "alpine", fullPath: path.join(cwd, "alpine"), kind: "directory" },
           ],
         });
+      }),
+    );
+
+    it.effect("includes .code-workspace files only when includeWorkspaceFiles is set", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-wsfiles-" });
+        yield* writeTextFile(cwd, "backend/index.ts", "export {};\n");
+        yield* writeTextFile(cwd, "notes.txt", "ignore me");
+        yield* writeTextFile(cwd, "feature.code-workspace", '{ "folders": [] }');
+        const cwdWithSeparator = yield* appendSeparator(cwd);
+
+        // Without the flag, files (including .code-workspace) are excluded.
+        const withoutFlag = yield* workspaceEntries.browse({ partialPath: cwdWithSeparator });
+        expect(withoutFlag.entries.map((entry) => entry.name)).toEqual(["backend"]);
+
+        // With the flag, .code-workspace files are listed after directories.
+        const withFlag = yield* workspaceEntries.browse({
+          partialPath: cwdWithSeparator,
+          includeWorkspaceFiles: true,
+        });
+        expect(withFlag.entries).toEqual([
+          { name: "backend", fullPath: path.join(cwd, "backend"), kind: "directory" },
+          {
+            name: "feature.code-workspace",
+            fullPath: path.join(cwd, "feature.code-workspace"),
+            kind: "workspaceFile",
+          },
+        ]);
       }),
     );
 
@@ -677,7 +863,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(directoryResult.entries.map((entry) => entry.name)).toEqual([".config", "config"]);
         expect(hiddenPrefixResult).toEqual({
           parentPath: cwd,
-          entries: [{ name: ".config", fullPath: path.join(cwd, ".config") }],
+          entries: [{ name: ".config", fullPath: path.join(cwd, ".config"), kind: "directory" }],
         });
       }),
     );
@@ -696,7 +882,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
 
         expect(result).toEqual({
           parentPath: cwd,
-          entries: [{ name: "packages", fullPath: path.join(cwd, "packages") }],
+          entries: [{ name: "packages", fullPath: path.join(cwd, "packages"), kind: "directory" }],
         });
       }),
     );

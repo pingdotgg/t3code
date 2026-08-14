@@ -54,6 +54,7 @@ function threadDetailToShell(
     interactionMode: thread.interactionMode,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    worktrees: thread.worktrees,
     latestTurn: thread.latestTurn,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,

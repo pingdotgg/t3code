@@ -18,7 +18,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 
 #### Project
 
-The top-level workspace record in the app. In [the orchestration contracts][1], a project has a `workspaceRoot` and a title. It does not contain threads: `OrchestrationProject` and `OrchestrationThread` are separate arrays on the read model, and a project can have zero threads. See [workspace-layout.md][2].
+The top-level workspace record in the app. In [the orchestration contracts][1], `workspaceRoot` is the primary repository and `repoRoots` is the ordered set of repositories available to every thread. The primary repository supplies the default provider cwd and project-level Git target; secondary repositories remain available for files, provider access, diffs, checkpoints, and worktree fan-out. A project does not contain threads: `OrchestrationProject` and `OrchestrationThread` are separate arrays on the read model, and a project can have zero threads. See [workspace-layout.md][2].
 
 #### Workspace root
 

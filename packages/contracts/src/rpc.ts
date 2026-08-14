@@ -17,6 +17,12 @@ import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
+  FilesystemScanGitReposInput,
+  FilesystemScanGitReposResult,
+  FilesystemScanGitReposError,
+  FilesystemReadWorkspaceFileInput,
+  FilesystemReadWorkspaceFileResult,
+  FilesystemReadWorkspaceFileError,
 } from "./filesystem.ts";
 import { AssetAccessError, AssetCreateUrlInput, AssetCreateUrlResult } from "./assets.ts";
 import {
@@ -207,6 +213,8 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesystemScanGitRepos: "filesystem.scanGitRepos",
+  filesystemReadWorkspaceFile: "filesystem.readWorkspaceFile",
   assetsCreateUrl: "assets.createUrl",
 
   // VCS methods
@@ -656,6 +664,18 @@ export const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
+export const WsFilesystemScanGitReposRpc = Rpc.make(WS_METHODS.filesystemScanGitRepos, {
+  payload: FilesystemScanGitReposInput,
+  success: FilesystemScanGitReposResult,
+  error: Schema.Union([FilesystemScanGitReposError, EnvironmentAuthorizationError]),
+});
+
+export const WsFilesystemReadWorkspaceFileRpc = Rpc.make(WS_METHODS.filesystemReadWorkspaceFile, {
+  payload: FilesystemReadWorkspaceFileInput,
+  success: FilesystemReadWorkspaceFileResult,
+  error: Schema.Union([FilesystemReadWorkspaceFileError, EnvironmentAuthorizationError]),
+});
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1023,6 +1043,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsFilesystemScanGitReposRpc,
+  WsFilesystemReadWorkspaceFileRpc,
   WsAssetsCreateUrlRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,

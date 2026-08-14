@@ -25,7 +25,7 @@ import type {
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
-const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
+export const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
@@ -115,7 +115,7 @@ export class WorkspaceSearchIndex extends Context.Service<
       imageOnly?: boolean,
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceSearchIndexSearchFailed>;
     readonly searchContents: (
-      input: Omit<ProjectSearchContentsInput, "cwd">,
+      input: Omit<ProjectSearchContentsInput, "cwd" | "roots">,
     ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceSearchIndexSearchFailed>;
     readonly refresh: () => Effect.Effect<
       void,

@@ -109,6 +109,23 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
 }
 
 /**
+ * The repo root that stands in for the project as a whole in single-repo git
+ * flows: branch listing, checkout, and the base ref an isolated run branches
+ * from.
+ *
+ * `workspaceRoot` is the primary repository for current projects. The fallback
+ * to the first `repoRoots` entry keeps older workspace-file records usable.
+ */
+export function resolveAnchorRepoRoot(input: {
+  readonly workspaceRoot: string;
+  readonly repoRoots?: ReadonlyArray<string> | undefined;
+}): string {
+  const repoRoots = input.repoRoots ?? [];
+  const anchorRoot = repoRoots.find((repoRoot) => repoRoot === input.workspaceRoot);
+  return anchorRoot ?? repoRoots[0] ?? input.workspaceRoot;
+}
+
+/**
  * Normalize a git remote URL into a stable comparison key.
  */
 export function normalizeGitRemoteUrl(value: string): string {

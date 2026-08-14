@@ -36,7 +36,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   resolvedTheme: "light" | "dark";
   onExpandedChange: (expanded: boolean) => void;
   onToggleAllDirectories: () => void;
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string, repoRoot?: string) => void;
 }) {
   const {
     turnId,
@@ -137,7 +137,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   size="xs"
                   variant="outline"
                   aria-label="Open diff"
-                  onClick={() => onOpenTurnDiff(turnId, files[0]?.path)}
+                  onClick={() => onOpenTurnDiff(turnId, files[0]?.path, files[0]?.repoRoot)}
                 />
               }
             >
@@ -173,11 +173,11 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {previewFiles.map((file) => (
               <button
-                key={file.path}
+                key={`${file.repoRoot ?? ""}:${file.path}`}
                 type="button"
                 title={file.path}
                 className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => onOpenTurnDiff(turnId, file.path)}
+                onClick={() => onOpenTurnDiff(turnId, file.path, file.repoRoot)}
               >
                 <PierreEntryIcon
                   pathValue={file.path}
@@ -207,7 +207,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string, repoRoot?: string) => void;
 }) {
   const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
@@ -245,12 +245,12 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     [allDirectoriesExpanded, expansionStateKey],
   );
 
-  const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
+  const renderTreeNode = (node: TurnDiffTreeNode, depth: number, nodeKey: string) => {
     const leftPadding = 8 + depth * 14;
     if (node.kind === "directory") {
       const isExpanded = expandedDirectories[node.path] ?? allDirectoriesExpanded;
       return (
-        <div key={`dir:${node.path}`}>
+        <div key={`dir:${node.path}:${nodeKey}`}>
           <button
             type="button"
             data-scroll-anchor-ignore
@@ -281,7 +281,9 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           </button>
           {isExpanded && (
             <div className="space-y-0.5">
-              {node.children.map((childNode) => renderTreeNode(childNode, depth + 1))}
+              {node.children.map((childNode, index) =>
+                renderTreeNode(childNode, depth + 1, `${nodeKey}.${index}`),
+              )}
             </div>
           )}
         </div>
@@ -290,11 +292,11 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
 
     return (
       <button
-        key={`file:${node.path}`}
+        key={`file:${node.repoRoot ?? ""}:${node.path}:${nodeKey}`}
         type="button"
         className="group flex w-full items-center gap-1.5 rounded-xl py-1 pr-3 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onClick={() => onOpenTurnDiff(turnId, node.path, node.repoRoot)}
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />
@@ -317,7 +319,11 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     );
   };
 
-  return <div className="space-y-0.5">{treeNodes.map((node) => renderTreeNode(node, 0))}</div>;
+  return (
+    <div className="space-y-0.5">
+      {treeNodes.map((node, index) => renderTreeNode(node, 0, String(index)))}
+    </div>
+  );
 });
 
 function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[] {
