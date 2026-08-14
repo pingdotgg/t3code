@@ -129,6 +129,147 @@ describe("mergeBackgroundIngestion", () => {
     }
   });
 
+  it("preserves activity and max-merges a later sparse usage update", () => {
+    const taskId = RuntimeTaskId.make("agent-later-usage");
+    const activityUpdate = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.progress",
+        eventId: EventId.make("evt-earlier-activity"),
+        payload: {
+          taskId,
+          description: "Agent later usage",
+          summary: "Running tests",
+          lastToolName: "exec_command",
+          typedUsage: {
+            totalTokens: 100,
+            inputTokens: 80,
+            cachedInputTokens: 30,
+            outputTokens: 20,
+            reasoningOutputTokens: 10,
+            toolUses: 3,
+            durationMs: 1_000,
+          },
+        },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+    const usageUpdate = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.progress",
+        eventId: EventId.make("evt-later-usage"),
+        payload: {
+          taskId,
+          description: "Agent later usage",
+          typedUsage: {
+            totalTokens: 200,
+            inputTokens: 70,
+            outputTokens: 40,
+            durationMs: 900,
+          },
+        },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+
+    const merged = mergeBackgroundIngestion([activityUpdate], [usageUpdate]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.event.type).toBe("task.progress");
+    if (merged[0]?.event.type === "task.progress") {
+      expect(merged[0].event.payload).toEqual({
+        taskId,
+        description: "Agent later usage",
+        summary: "Running tests",
+        lastToolName: "exec_command",
+        typedUsage: {
+          totalTokens: 200,
+          inputTokens: 80,
+          cachedInputTokens: 30,
+          outputTokens: 40,
+          reasoningOutputTokens: 10,
+          toolUses: 3,
+          durationMs: 1_000,
+        },
+      });
+    }
+  });
+
+  it("replaces stale activity fields while preserving the last usage snapshot", () => {
+    const taskId = RuntimeTaskId.make("agent-replaced-progress");
+    const previous = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.progress",
+        eventId: EventId.make("evt-previous-progress"),
+        payload: {
+          taskId,
+          description: "Agent replaced progress",
+          summary: "Old summary",
+          lastToolName: "old_tool",
+          error: "Old error",
+          phases: [{ index: 0, title: "Old phase" }],
+          typedUsage: { totalTokens: 4_200 },
+        },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+    const next = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.progress",
+        eventId: EventId.make("evt-next-progress"),
+        payload: {
+          taskId,
+          description: "Agent replaced progress",
+          phases: [{ index: 1, title: "New phase" }],
+          typedUsage: { totalTokens: 5_000 },
+        },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+
+    const merged = mergeBackgroundIngestion([previous], [next]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.event.type).toBe("task.progress");
+    if (merged[0]?.event.type === "task.progress") {
+      expect(merged[0].event.payload).toEqual({
+        taskId,
+        description: "Agent replaced progress",
+        phases: [{ index: 1, title: "New phase" }],
+        typedUsage: { totalTokens: 5_000 },
+      });
+    }
+  });
+
+  it("preserves explicit task reactivation order", () => {
+    const taskId = RuntimeTaskId.make("agent-reactivated");
+    const completed = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.completed",
+        eventId: EventId.make("evt-task-completed"),
+        payload: { taskId, status: "completed" },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+    const reactivated = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.updated",
+        eventId: EventId.make("evt-task-reactivated"),
+        payload: { taskId, status: "running" },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+
+    const merged = mergeBackgroundIngestion([completed], [reactivated]);
+
+    expect(merged.map((input) => input.event.type)).toEqual(["task.completed", "task.updated"]);
+  });
+
   it("preserves fields from partial task status patches", () => {
     const taskId = RuntimeTaskId.make("agent-partial-update");
     const statusUpdate = {

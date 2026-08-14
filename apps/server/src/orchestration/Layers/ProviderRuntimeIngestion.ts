@@ -18,6 +18,8 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  type RuntimeTaskUsage,
+  type TaskProgressPayload,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -135,6 +137,52 @@ function isTaskLifecycleInput(input: RuntimeIngestionInput): input is Extract<
   );
 }
 
+function hasTaskProgressActivityState(payload: TaskProgressPayload): boolean {
+  return (
+    payload.typedUsage === undefined ||
+    payload.summary !== undefined ||
+    payload.lastToolName !== undefined ||
+    payload.status !== undefined ||
+    payload.error !== undefined ||
+    payload.phases !== undefined
+  );
+}
+
+function mergeTaskUsage(
+  previous: RuntimeTaskUsage | undefined,
+  next: RuntimeTaskUsage | undefined,
+): RuntimeTaskUsage | undefined {
+  if (!previous) return next;
+  if (!next) return previous;
+
+  const max = (a: number | undefined, b: number | undefined): number | undefined =>
+    a === undefined ? b : b === undefined ? a : Math.max(a, b);
+  const inputTokens = max(previous.inputTokens, next.inputTokens);
+  const cachedInputTokens = max(previous.cachedInputTokens, next.cachedInputTokens);
+  const outputTokens = max(previous.outputTokens, next.outputTokens);
+  const reasoningOutputTokens = max(previous.reasoningOutputTokens, next.reasoningOutputTokens);
+  const toolUses = max(previous.toolUses, next.toolUses);
+  const durationMs = max(previous.durationMs, next.durationMs);
+  return {
+    totalTokens: Math.max(previous.totalTokens, next.totalTokens),
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(reasoningOutputTokens === undefined ? {} : { reasoningOutputTokens }),
+    ...(toolUses === undefined ? {} : { toolUses }),
+    ...(durationMs === undefined ? {} : { durationMs }),
+  };
+}
+
+function mergeTaskProgressPayload(
+  previous: TaskProgressPayload,
+  next: TaskProgressPayload,
+): TaskProgressPayload {
+  const payload = hasTaskProgressActivityState(next) ? next : { ...previous, ...next };
+  const typedUsage = mergeTaskUsage(previous.typedUsage, next.typedUsage);
+  return typedUsage === undefined ? payload : { ...payload, typedUsage };
+}
+
 export function mergeBackgroundIngestion(
   current: RuntimeIngestionBatch,
   next: RuntimeIngestionBatch,
@@ -145,6 +193,8 @@ export function mergeBackgroundIngestion(
   }
 
   const latestByType = new Map<(typeof TASK_LIFECYCLE_ORDER)[number], RuntimeIngestionInput>();
+  // Reinsert replacements so different lifecycle types keep their latest arrival order.
+  // Explicit running updates can reactivate a task after a completed attempt.
   for (const input of combined) {
     const previous = latestByType.get(input.event.type);
     if (
@@ -152,14 +202,12 @@ export function mergeBackgroundIngestion(
       previous?.source === "runtime" &&
       previous.event.type === "task.progress"
     ) {
+      latestByType.delete(input.event.type);
       latestByType.set(input.event.type, {
         ...input,
         event: {
           ...input.event,
-          payload: {
-            ...previous.event.payload,
-            ...input.event.payload,
-          },
+          payload: mergeTaskProgressPayload(previous.event.payload, input.event.payload),
         },
       });
       continue;
@@ -169,6 +217,7 @@ export function mergeBackgroundIngestion(
       previous?.source === "runtime" &&
       previous.event.type === "task.updated"
     ) {
+      latestByType.delete(input.event.type);
       latestByType.set(input.event.type, {
         ...input,
         event: {
@@ -181,12 +230,10 @@ export function mergeBackgroundIngestion(
       });
       continue;
     }
+    latestByType.delete(input.event.type);
     latestByType.set(input.event.type, input);
   }
-  return TASK_LIFECYCLE_ORDER.flatMap((eventType) => {
-    const input = latestByType.get(eventType);
-    return input === undefined ? [] : [input];
-  });
+  return Array.from(latestByType.values());
 }
 
 function backgroundIngestionKey(input: RuntimeIngestionInput): string | undefined {
@@ -678,12 +725,7 @@ export function runtimeEventToActivities(
         event.payload.description.trim().length > 0
           ? { title: truncateDetail(event.payload.description, 120) }
           : {};
-      const hasProgressState =
-        event.payload.typedUsage === undefined ||
-        event.payload.summary !== undefined ||
-        event.payload.lastToolName !== undefined ||
-        event.payload.status !== undefined ||
-        event.payload.error !== undefined;
+      const hasProgressState = hasTaskProgressActivityState(event.payload);
       return [
         ...(hasProgressState
           ? [
