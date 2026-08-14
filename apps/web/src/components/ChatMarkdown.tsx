@@ -73,6 +73,7 @@ import {
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
+import { rehypeAutoTextDirection } from "../markdown-text-direction";
 import {
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
@@ -180,6 +181,8 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+  // After the sanitizer: `dir` is ours, not the message's, and the schema stays untouched.
+  rehypeAutoTextDirection,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
