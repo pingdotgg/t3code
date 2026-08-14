@@ -3,6 +3,7 @@ import {
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
+  buildSidebarEnvironmentFilterOptions,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -14,7 +15,10 @@ import {
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
+  filterSidebarProjectsByEnvironmentScope,
   orderItemsByPreferredIds,
+  planPinnedReorder,
+  projectScopeKeptUnderEnvironmentScope,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -25,10 +29,10 @@ import {
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  shouldResetEnvironmentScope,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
   pinOrderKeyBetween,
-  planPinnedReorder,
   sortPinnedThreadsForSidebar,
   sortThreadsForSidebar,
   sortProjectsForSidebar,
@@ -1653,5 +1657,164 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("buildSidebarEnvironmentFilterOptions", () => {
+  it("sorts environments by label and flags the primary one", () => {
+    const primaryEnvironmentId = EnvironmentId.make("environment-local");
+    const options = buildSidebarEnvironmentFilterOptions({
+      environments: [
+        { environmentId: EnvironmentId.make("environment-remote"), label: "Mac Mini" },
+        { environmentId: primaryEnvironmentId, label: "This Mac" },
+        { environmentId: EnvironmentId.make("environment-relay"), label: "Tailscale" },
+      ],
+      primaryEnvironmentId,
+    });
+    expect(options).toEqual([
+      {
+        environmentId: EnvironmentId.make("environment-remote"),
+        label: "Mac Mini",
+        isPrimary: false,
+      },
+      {
+        environmentId: EnvironmentId.make("environment-relay"),
+        label: "Tailscale",
+        isPrimary: false,
+      },
+      { environmentId: primaryEnvironmentId, label: "This Mac", isPrimary: true },
+    ]);
+  });
+
+  it("marks nothing primary when there is no primary environment", () => {
+    const options = buildSidebarEnvironmentFilterOptions({
+      environments: [{ environmentId: EnvironmentId.make("environment-remote"), label: "Remote" }],
+      primaryEnvironmentId: null,
+    });
+    expect(options[0]).toMatchObject({ isPrimary: false });
+  });
+});
+
+describe("projectScopeKeptUnderEnvironmentScope", () => {
+  const localEnvironmentId = EnvironmentId.make("environment-local");
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const projectId = ProjectId.make("project-1");
+
+  it("keeps the project filter when no environment is scoped", () => {
+    expect(
+      projectScopeKeptUnderEnvironmentScope({
+        memberProjectRefs: [{ environmentId: remoteEnvironmentId, projectId }],
+        environmentScopeId: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the project filter when the group spans the selected environment", () => {
+    expect(
+      projectScopeKeptUnderEnvironmentScope({
+        memberProjectRefs: [
+          { environmentId: localEnvironmentId, projectId },
+          { environmentId: remoteEnvironmentId, projectId },
+        ],
+        environmentScopeId: remoteEnvironmentId,
+      }),
+    ).toBe(true);
+  });
+
+  it("resets the project filter when the group has no member on the selected environment", () => {
+    expect(
+      projectScopeKeptUnderEnvironmentScope({
+        memberProjectRefs: [
+          { environmentId: localEnvironmentId, projectId },
+          { environmentId: remoteEnvironmentId, projectId },
+        ],
+        environmentScopeId: EnvironmentId.make("environment-other"),
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("filterSidebarProjectsByEnvironmentScope", () => {
+  const localEnvironmentId = EnvironmentId.make("environment-local");
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const projectId = ProjectId.make("project-1");
+  const localGroup = {
+    projectKey: "local-project",
+    memberProjectRefs: [{ environmentId: localEnvironmentId, projectId }],
+  };
+  const remoteGroup = {
+    projectKey: "remote-project",
+    memberProjectRefs: [{ environmentId: remoteEnvironmentId, projectId }],
+  };
+  const spanningGroup = {
+    projectKey: "spanning-project",
+    memberProjectRefs: [
+      { environmentId: localEnvironmentId, projectId },
+      { environmentId: remoteEnvironmentId, projectId },
+    ],
+  };
+
+  it("keeps every group in the menu when no environment is scoped", () => {
+    expect(
+      filterSidebarProjectsByEnvironmentScope([localGroup, remoteGroup, spanningGroup], null),
+    ).toEqual([localGroup, remoteGroup, spanningGroup]);
+  });
+
+  it("keeps only groups with a member on the scoped environment", () => {
+    expect(
+      filterSidebarProjectsByEnvironmentScope(
+        [localGroup, remoteGroup, spanningGroup],
+        remoteEnvironmentId,
+      ),
+    ).toEqual([remoteGroup, spanningGroup]);
+  });
+});
+
+describe("shouldResetEnvironmentScope", () => {
+  const localEnvironmentId = EnvironmentId.make("environment-local");
+  const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+  const environmentLabelById = new Map<string, string>([
+    [localEnvironmentId, "This Mac"],
+    [remoteEnvironmentId, "Mac Mini"],
+  ]);
+
+  it("keeps the scope while several environments are connected", () => {
+    expect(
+      shouldResetEnvironmentScope({
+        environmentScopeId: remoteEnvironmentId,
+        environmentCount: 2,
+        environmentLabelById,
+      }),
+    ).toBe(false);
+  });
+
+  it("resets when the scoped environment leaves the catalog", () => {
+    expect(
+      shouldResetEnvironmentScope({
+        environmentScopeId: EnvironmentId.make("environment-gone"),
+        environmentCount: 2,
+        environmentLabelById,
+      }),
+    ).toBe(true);
+  });
+
+  it("resets when a disconnect hides the filter menu behind a single environment", () => {
+    expect(
+      shouldResetEnvironmentScope({
+        environmentScopeId: remoteEnvironmentId,
+        environmentCount: 1,
+        environmentLabelById,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a null scope", () => {
+    expect(
+      shouldResetEnvironmentScope({
+        environmentScopeId: null,
+        environmentCount: 2,
+        environmentLabelById,
+      }),
+    ).toBe(false);
   });
 });
