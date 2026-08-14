@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
+import { writeFileAtomically } from "../lib/atomic-file";
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
@@ -188,10 +189,7 @@ async function writePersistedComposerDrafts(drafts: Record<string, ComposerDraft
     } as const;
     const encoded = JSON.stringify(document);
     operation = "write";
-    if (!file.exists) {
-      file.create({ intermediates: true, overwrite: true });
-    }
-    file.write(encoded);
+    await writeFileAtomically(file, encoded);
   } catch (cause) {
     throw new ComposerDraftPersistenceError({
       operation,
@@ -209,6 +207,26 @@ async function savePersistedComposerDrafts(drafts: Record<string, ComposerDraft>
     console.warn("[composer-drafts] failed to persist drafts", error);
     // Draft persistence is best-effort; in-memory drafts still keep working.
   }
+}
+
+/**
+ * Lands any debounced or in-flight draft write before the JS runtime is torn
+ * down (app update restart), so the freshest draft state survives it. A write
+ * failure propagates so the caller can decide whether the restart may proceed.
+ */
+export async function flushComposerDrafts(): Promise<void> {
+  // An edit during an awaited write schedules another debounced write, so
+  // keep landing snapshots until no debounce is pending after a queue drain.
+  do {
+    while (persistTimer !== null) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+      await persistenceQueue.run(() =>
+        writePersistedComposerDrafts(appAtomRegistry.get(composerDraftsAtom)),
+      );
+    }
+    await persistenceQueue.run(() => Promise.resolve());
+  } while (persistTimer !== null);
 }
 
 function schedulePersistComposerDrafts(drafts: Record<string, ComposerDraft>): void {
@@ -627,7 +645,7 @@ export async function clearComposerDraftsEnvironment(environmentId: EnvironmentI
     persistTimer = null;
   }
   appAtomRegistry.set(composerDraftsAtom, next);
-  await writePersistedComposerDrafts(next);
+  await persistenceQueue.run(() => writePersistedComposerDrafts(next));
 }
 
 export function useComposerDraft(draftKey: string | null): ComposerDraft {
