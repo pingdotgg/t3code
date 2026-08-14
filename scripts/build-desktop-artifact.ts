@@ -1718,7 +1718,9 @@ const stageDesktopMcpRust = Effect.fn("stageDesktopMcpRust")(function* (input: {
       });
     }
     yield* fs.copyFile(binaryPath, destinationPath);
-    yield* fs.chmod(destinationPath, 0o755);
+    if (input.platform !== "win") {
+      yield* fs.chmod(destinationPath, 0o755);
+    }
   }
 });
 

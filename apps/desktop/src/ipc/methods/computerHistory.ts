@@ -27,26 +27,16 @@ const readHistorySettings = Effect.fn("desktop.computerHistory.readSettings")(fu
   return decoded.computerHistory;
 });
 
-const withStateDir = <A, E, R>(
-  body: (stateDir: string) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R | DesktopEnvironment.DesktopEnvironment> =>
-  Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    return yield* body(environment.stateDir);
-  });
-
 export const getComputerHistoryStatus = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_COMPUTER_HISTORY_STATUS_CHANNEL,
   payload: Schema.Undefined,
   result: ComputerHistoryStatusSchema,
   handler: Effect.fn("desktop.ipc.computerHistory.getStatus")(function* () {
     const settings = yield* readHistorySettings();
-    return yield* withStateDir((stateDir) =>
-      Effect.gen(function* () {
-        yield* Effect.promise(() => ComputerHistoryManager.ensureDaemon(stateDir, settings));
-        return yield* Effect.promise(() => ComputerHistoryManager.getStatus(stateDir, settings));
-      }),
-    );
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
+    yield* manager.ensureDaemon(environment.stateDir, settings);
+    return yield* manager.getStatus(environment.stateDir, settings);
   }),
 });
 
@@ -55,9 +45,9 @@ export const getComputerHistoryTimeline = DesktopIpc.makeIpcMethod({
   payload: Schema.Undefined,
   result: ComputerHistoryTimelineSchema,
   handler: Effect.fn("desktop.ipc.computerHistory.getTimeline")(function* () {
-    return yield* withStateDir((stateDir) =>
-      Effect.promise(() => ComputerHistoryManager.getTimeline(stateDir)),
-    );
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
+    return yield* manager.getTimeline(environment.stateDir);
   }),
 });
 
@@ -76,6 +66,7 @@ export const patchComputerHistorySettings = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.computerHistory.patchSettings")(function* (patch) {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const fileSystem = yield* FileSystem.FileSystem;
+    const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
     const exists = yield* fileSystem.exists(environment.serverSettingsPath);
     const current = exists
       ? yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
@@ -98,12 +89,8 @@ export const patchComputerHistorySettings = DesktopIpc.makeIpcMethod({
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ServerSettings))(next);
     yield* fileSystem.writeFileString(environment.serverSettingsPath, `${encoded}\n`);
     const settings = next.computerHistory;
-    yield* Effect.promise(() =>
-      ComputerHistoryManager.ensureDaemon(environment.stateDir, settings),
-    );
-    return yield* Effect.promise(() =>
-      ComputerHistoryManager.getStatus(environment.stateDir, settings),
-    );
+    yield* manager.ensureDaemon(environment.stateDir, settings);
+    return yield* manager.getStatus(environment.stateDir, settings);
   }),
 });
 
@@ -113,9 +100,9 @@ export const clearComputerHistory = DesktopIpc.makeIpcMethod({
   result: ComputerHistoryTimelineSchema,
   handler: Effect.fn("desktop.ipc.computerHistory.clear")(function* (scope) {
     const settings = yield* readHistorySettings();
-    return yield* withStateDir((stateDir) =>
-      Effect.promise(() => ComputerHistoryManager.clear(stateDir, scope, settings)),
-    );
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
+    return yield* manager.clear(environment.stateDir, scope, settings);
   }),
 });
 
@@ -124,7 +111,8 @@ export const revealComputerHistoryMemory = DesktopIpc.makeIpcMethod({
   payload: Schema.String,
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.computerHistory.reveal")(function* (path) {
-    return yield* Effect.promise(() => ComputerHistoryManager.revealMemory(path));
+    const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
+    return yield* manager.revealMemory(path);
   }),
 });
 
@@ -134,8 +122,8 @@ export const deleteComputerHistoryMemory = DesktopIpc.makeIpcMethod({
   result: ComputerHistoryTimelineSchema,
   handler: Effect.fn("desktop.ipc.computerHistory.delete")(function* (path) {
     const settings = yield* readHistorySettings();
-    return yield* withStateDir((stateDir) =>
-      Effect.promise(() => ComputerHistoryManager.removeMemory(stateDir, path, settings)),
-    );
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const manager = yield* ComputerHistoryManager.ComputerHistoryManager;
+    return yield* manager.removeMemory(environment.stateDir, path, settings);
   }),
 });

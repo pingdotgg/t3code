@@ -206,8 +206,17 @@ private final class DaemonState {
     var context = BrowserContext()
     let ax = AXUIElementCreateApplication(app.processIdentifier)
     if let focused = chAxElement(ax, kAXFocusedUIElementAttribute as String) {
-      if let url = chAxString(focused, "AXURL"), !url.isEmpty { context.url = url }
-      else if let doc = chAxString(focused, "AXDocument"), !doc.isEmpty { context.url = doc }
+      // Prefer document/window URL over the focused element's AXURL — links
+      // expose their target as AXURL and would bypass website privacy filters.
+      if let doc = chAxString(focused, "AXDocument"), !doc.isEmpty {
+        context.url = doc
+      } else if let window = chAxElement(focused, kAXWindowAttribute as String) {
+        if let doc = chAxString(window, "AXDocument"), !doc.isEmpty {
+          context.url = doc
+        } else if let url = chAxString(window, "AXURL"), !url.isEmpty {
+          context.url = url
+        }
+      }
       if let title = chAxString(focused, kAXTitleAttribute as String), !title.isEmpty {
         context.privateSignal = title
       }
@@ -224,8 +233,8 @@ private final class DaemonState {
     // from that same window — never borrow another window's title.
     if context.url == nil, let windows = chAxCopy(ax, kAXWindowsAttribute as String) as? [AXUIElement] {
       for window in windows.prefix(4) {
-        let url = chAxString(window, "AXURL").flatMap { $0.isEmpty ? nil : $0 }
-          ?? chAxString(window, "AXDocument").flatMap { $0.isEmpty ? nil : $0 }
+        let url = chAxString(window, "AXDocument").flatMap { $0.isEmpty ? nil : $0 }
+          ?? chAxString(window, "AXURL").flatMap { $0.isEmpty ? nil : $0 }
         guard let url else { continue }
         context.url = url
         if let title = chAxString(window, kAXTitleAttribute as String), !title.isEmpty {
