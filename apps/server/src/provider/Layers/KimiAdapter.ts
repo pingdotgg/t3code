@@ -74,6 +74,7 @@ const KimiResumeCursor = Schema.Struct({
   schemaVersion: Schema.Literal(KIMI_RESUME_VERSION),
   sessionId: Schema.String,
 });
+const isKimiResumeCursor = Schema.is(KimiResumeCursor);
 
 export interface KimiAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
@@ -107,7 +108,7 @@ interface KimiSessionContext {
 }
 
 function parseKimiResume(raw: unknown): { readonly sessionId: string } | undefined {
-  if (!Schema.is(KimiResumeCursor)(raw) || !raw.sessionId.trim()) {
+  if (!isKimiResumeCursor(raw) || !raw.sessionId.trim()) {
     return undefined;
   }
   return { sessionId: raw.sessionId.trim() };

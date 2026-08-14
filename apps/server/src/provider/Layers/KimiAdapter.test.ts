@@ -6,6 +6,7 @@ import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -27,27 +28,33 @@ import { ServerConfig } from "../../config.ts";
 import { makeKimiAdapter } from "./KimiAdapter.ts";
 
 const decodeKimiSettings = Schema.decodeSync(KimiSettings);
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 
-async function makeKimiWrapper(extraEnv?: Record<string, string>, version = "0.29.0") {
-  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-acp-mock-"));
-  const windows = process.platform === "win32";
-  const wrapperPath = NodePath.join(directory, windows ? "kimi.cmd" : "fake-kimi.sh");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) =>
-      windows
-        ? `set "${key}=${value.replaceAll('"', '\\"')}"`
-        : `export ${key}=${JSON.stringify(value)}`,
-    )
-    .join("\n");
-  const script = windows
-    ? `@echo off\r\nif "%~1"=="--version" (\r\n  echo kimi ${version}\r\n  exit /b 0\r\n)\r\n${envExports}\r\n${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)} %*\r\n`
-    : `#!/bin/sh\nif [ "$1" = "--version" ]; then\n  printf 'kimi ${version}\\n'\n  exit 0\nfi\n${envExports}\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)} "$@"\n`;
-  await NodeFSP.writeFile(wrapperPath, script, "utf8");
-  if (!windows) await NodeFSP.chmod(wrapperPath, 0o755);
-  return wrapperPath;
-}
+const makeKimiWrapper = Effect.fn("makeKimiWrapper")(function* (
+  extraEnv?: Record<string, string>,
+  version = "0.29.0",
+) {
+  const windows = (yield* HostProcessPlatform) === "win32";
+  return yield* Effect.promise(async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-acp-mock-"));
+    const wrapperPath = NodePath.join(directory, windows ? "kimi.cmd" : "fake-kimi.sh");
+    const envExports = Object.entries(extraEnv ?? {})
+      .map(([key, value]) =>
+        windows
+          ? `set "${key}=${value.replaceAll('"', '\\"')}"`
+          : `export ${key}=${encodeJsonString(value)}`,
+      )
+      .join("\n");
+    const script = windows
+      ? `@echo off\r\nif "%~1"=="--version" (\r\n  echo kimi ${version}\r\n  exit /b 0\r\n)\r\n${envExports}\r\n${encodeJsonString(process.execPath)} ${encodeJsonString(mockAgentPath)} %*\r\n`
+      : `#!/bin/sh\nif [ "$1" = "--version" ]; then\n  printf 'kimi ${version}\\n'\n  exit 0\nfi\n${envExports}\nexec ${encodeJsonString(process.execPath)} ${encodeJsonString(mockAgentPath)} "$@"\n`;
+    await NodeFSP.writeFile(wrapperPath, script, "utf8");
+    if (!windows) await NodeFSP.chmod(wrapperPath, 0o755);
+    return wrapperPath;
+  });
+});
 
 async function readRequests(requestLogPath: string) {
   const raw = await NodeFSP.readFile(requestLogPath, "utf8");
@@ -76,9 +83,7 @@ const makeTestAdapter = (binaryPath: string, instanceId = ProviderInstanceId.mak
 it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
   it.effect("rejects an incompatible Kimi CLI before starting ACP", () =>
     Effect.gen(function* () {
-      const adapter = yield* makeTestAdapter(
-        yield* Effect.promise(() => makeKimiWrapper(undefined, "0.28.1")),
-      );
+      const adapter = yield* makeTestAdapter(yield* makeKimiWrapper(undefined, "0.28.1"));
       const threadId = ThreadId.make("kimi-old-version");
       const result = yield* Effect.result(
         adapter.startSession({
@@ -105,7 +110,7 @@ it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
       );
       const requestLogPath = NodePath.join(directory, "requests.ndjson");
       const adapter = yield* makeTestAdapter(
-        yield* Effect.promise(() => makeKimiWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath })),
+        yield* makeKimiWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
       );
       const threadId = ThreadId.make("kimi-lifecycle");
       const events: ProviderRuntimeEvent[] = [];
@@ -183,12 +188,10 @@ it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
       );
       const requestLogPath = NodePath.join(directory, "requests.ndjson");
       const adapter = yield* makeTestAdapter(
-        yield* Effect.promise(() =>
-          makeKimiWrapper({
-            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-            T3_ACP_SET_CONFIG_OPTION_DELAY_MS: "100",
-          }),
-        ),
+        yield* makeKimiWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_SET_CONFIG_OPTION_DELAY_MS: "100",
+        }),
       );
       const threadId = ThreadId.make("kimi-interrupt-setup");
       const started = yield* Deferred.make<TurnId>();
@@ -241,12 +244,10 @@ it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
       );
       const requestLogPath = NodePath.join(directory, "requests.ndjson");
       const adapter = yield* makeTestAdapter(
-        yield* Effect.promise(() =>
-          makeKimiWrapper({
-            T3_ACP_OMIT_CODE_MODE: "1",
-            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-          }),
-        ),
+        yield* makeKimiWrapper({
+          T3_ACP_OMIT_CODE_MODE: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
       );
       const threadId = ThreadId.make("kimi-mode-fallback");
       yield* adapter.startSession({
@@ -281,16 +282,14 @@ it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
       );
       const requestLogPath = NodePath.join(directory, "requests.ndjson");
       const first = yield* makeTestAdapter(
-        yield* Effect.promise(() =>
-          makeKimiWrapper({
-            T3_ACP_ADVERTISE_RESUME: "1",
-            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-          }),
-        ),
+        yield* makeKimiWrapper({
+          T3_ACP_ADVERTISE_RESUME: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
         ProviderInstanceId.make("kimi-work"),
       );
       const second = yield* makeTestAdapter(
-        yield* Effect.promise(() => makeKimiWrapper()),
+        yield* makeKimiWrapper(),
         ProviderInstanceId.make("kimi-personal"),
       );
       const resumedThread = ThreadId.make("kimi-resumed");

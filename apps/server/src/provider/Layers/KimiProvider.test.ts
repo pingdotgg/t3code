@@ -1,14 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type { KimiSettings } from "@t3tools/contracts";
@@ -21,13 +23,14 @@ import {
   kimiModelStateFromSessionSetup,
 } from "./KimiProvider.ts";
 
-const runNode = <A, E>(
+const withNodeServices = <A, E>(
   effect: Effect.Effect<
     A,
     E,
     ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
   >,
-): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+) => effect.pipe(Effect.provide(NodeServices.layer));
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 const kimiSettings = (overrides: Partial<KimiSettings> = {}): KimiSettings => ({
   enabled: true,
@@ -40,13 +43,18 @@ const kimiSettings = (overrides: Partial<KimiSettings> = {}): KimiSettings => ({
 
 type KimiFixtureMode = "ready" | "unsupported" | "unauthenticated" | "failure";
 
-async function makeKimiFixture(mode: KimiFixtureMode, version = "1.2.3"): Promise<string> {
-  const directory = await NodeFS.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kimi-provider-"));
-  const agentPath = NodePath.join(directory, "kimi-acp-fixture.mjs");
-  const binaryPath = NodePath.join(directory, process.platform === "win32" ? "kimi.cmd" : "kimi");
-  await NodeFS.writeFile(
-    agentPath,
-    `import * as readline from "node:readline";
+const makeKimiFixture = Effect.fn("makeKimiFixture")(function* (
+  mode: KimiFixtureMode,
+  version = "1.2.3",
+) {
+  const platform = yield* HostProcessPlatform;
+  return yield* Effect.promise(async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kimi-provider-"));
+    const agentPath = NodePath.join(directory, "kimi-acp-fixture.mjs");
+    const binaryPath = NodePath.join(directory, platform === "win32" ? "kimi.cmd" : "kimi");
+    await NodeFSP.writeFile(
+      agentPath,
+      `import * as readline from "node:readline";
 
 const mode = process.env.T3_KIMI_FIXTURE_MODE;
 let currentModel = "kimi-code/kimi-for-coding";
@@ -105,28 +113,29 @@ for await (const line of readline.createInterface({ input: process.stdin })) {
   }
 }
 `,
-    "utf8",
-  );
-  const binary =
-    process.platform === "win32"
-      ? `@echo off
+      "utf8",
+    );
+    const binary =
+      platform === "win32"
+        ? `@echo off
 if "%~1"=="--version" (
   echo kimi ${version}
   exit /b 0
 )
 "${process.execPath}" "${agentPath}" %*
 `
-      : `#!/bin/sh
+        : `#!/bin/sh
 if [ "$1" = "--version" ]; then
   printf 'kimi ${version}\\n'
   exit 0
 fi
-exec ${JSON.stringify(process.execPath)} ${JSON.stringify(agentPath)} "$@"
+exec ${encodeJsonString(process.execPath)} ${encodeJsonString(agentPath)} "$@"
 `;
-  await NodeFS.writeFile(binaryPath, binary, "utf8");
-  await NodeFS.chmod(binaryPath, 0o755);
-  return binaryPath;
-}
+    await NodeFSP.writeFile(binaryPath, binary, "utf8");
+    await NodeFSP.chmod(binaryPath, 0o755);
+    return binaryPath;
+  });
+});
 
 describe("buildInitialKimiProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when Kimi is disabled", () =>
@@ -242,154 +251,170 @@ describe("kimiModelStateFromSessionSetup", () => {
 });
 
 describe("checkKimiProviderStatus", () => {
-  it("reports a missing Kimi binary", async () => {
-    const snapshot = await runNode(
-      checkKimiProviderStatus(kimiSettings({ binaryPath: "/definitely/not/installed/kimi" })),
-    );
+  it.effect("reports a missing Kimi binary", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(kimiSettings({ binaryPath: "/definitely/not/installed/kimi" })),
+      );
 
-    expect(snapshot.installed).toBe(false);
-    expect(snapshot.message).toContain("not installed");
-  });
+      expect(snapshot.installed).toBe(false);
+      expect(snapshot.message).toContain("not installed");
+    }),
+  );
 
-  it("reports ACP protocol support separately from a missing binary", async () => {
-    const binaryPath = await makeKimiFixture("unsupported");
-    const snapshot = await runNode(
-      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
-        ...process.env,
-        T3_KIMI_FIXTURE_MODE: "unsupported",
-      }),
-    );
-
-    expect(snapshot.installed).toBe(true);
-    expect(snapshot.message).toContain("ACP");
-  });
-
-  it("rejects Kimi versions that cannot expose selectable thinking levels", async () => {
-    const binaryPath = await makeKimiFixture("ready", "0.28.1");
-    const snapshot = await runNode(
-      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
-        ...process.env,
-        T3_KIMI_FIXTURE_MODE: "ready",
-      }),
-    );
-
-    expect(snapshot.status).toBe("error");
-    expect(snapshot.version).toBe("0.28.1");
-    expect(snapshot.message).toContain("0.29.0");
-    expect(snapshot.message).toContain("thinking levels");
-  });
-
-  it("rejects prereleases older than the minimum stable Kimi version", async () => {
-    const binaryPath = await makeKimiFixture("ready", "0.29.0-beta.1");
-    const snapshot = await runNode(
-      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
-        ...process.env,
-        T3_KIMI_FIXTURE_MODE: "ready",
-      }),
-    );
-
-    expect(snapshot.status).toBe("error");
-    expect(snapshot.version).toBe("0.29.0-beta.1");
-  });
-
-  it("rejects Kimi output whose version cannot be verified", async () => {
-    const binaryPath = await makeKimiFixture("ready", "unknown");
-    const snapshot = await runNode(
-      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
-        ...process.env,
-        T3_KIMI_FIXTURE_MODE: "ready",
-      }),
-    );
-
-    expect(snapshot.status).toBe("error");
-    expect(snapshot.version).toBeNull();
-    expect(snapshot.message).toContain("Unable to determine Kimi version");
-    expect(snapshot.message).toContain("0.29.0");
-  });
-
-  it("reports authentication requirements with the Kimi login command", async () => {
-    const binaryPath = await makeKimiFixture("unauthenticated");
-    const snapshot = await runNode(
-      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
-        ...process.env,
-        T3_KIMI_FIXTURE_MODE: "unauthenticated",
-      }),
-    );
-
-    expect(snapshot.auth.status).toBe("unauthenticated");
-    expect(snapshot.message).toContain("kimi login");
-  });
-
-  it("reports unexpected ACP startup failures without treating Kimi as missing", async () => {
-    const binaryPath = await makeKimiFixture("failure");
-    const snapshot = await runNode(
-      checkKimiProviderStatus(kimiSettings({ binaryPath }), {
-        ...process.env,
-        T3_KIMI_FIXTURE_MODE: "failure",
-      }),
-    );
-
-    expect(snapshot.installed).toBe(true);
-    expect(snapshot.auth.status).toBe("unknown");
-    expect(snapshot.message).toContain("ACP startup failed");
-  });
-
-  it("discovers models, options, modes, and commands without prompting", async () => {
-    const binaryPath = await makeKimiFixture("ready", "0.29.0");
-    const snapshot = await runNode(
-      checkKimiProviderStatus(
-        kimiSettings({
-          binaryPath,
-          customModels: ["custom-kimi", "custom-kimi", "kimi-code/k3"],
+  it.effect("reports ACP protocol support separately from a missing binary", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* makeKimiFixture("unsupported");
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+          ...process.env,
+          T3_KIMI_FIXTURE_MODE: "unsupported",
         }),
-        { ...process.env, T3_KIMI_FIXTURE_MODE: "ready" },
-      ),
-    );
+      );
 
-    expect(snapshot.status).toBe("ready");
-    expect(snapshot.badgeLabel).toBe("Early Access");
-    expect(snapshot.models.map((model) => model.slug)).toEqual([
-      "kimi-code/kimi-for-coding",
-      "kimi-code/kimi-for-coding-highspeed",
-      "kimi-code/k3",
-      "kimi-code/k3-256k",
-      "custom-kimi",
-    ]);
-    expect(snapshot.models[0]).toMatchObject({ isDefault: true, isCustom: false });
-    expect(snapshot.models[0]?.capabilities).toEqual({
-      optionDescriptors: [
-        {
-          id: "thinking",
-          label: "Thinking",
-          type: "select",
-          currentValue: "on",
-          options: [{ id: "on", label: "On", isDefault: true }],
-        },
-      ],
-    });
-    expect(snapshot.models[1]).toMatchObject({
-      slug: "kimi-code/kimi-for-coding-highspeed",
-      name: "K2.7 Coding Highspeed",
-      isCustom: false,
-    });
-    expect(snapshot.models[2]?.capabilities).toEqual({
-      optionDescriptors: [
-        {
-          id: "thinking",
-          label: "Thinking",
-          type: "select",
-          currentValue: "high",
-          options: [
-            { id: "low", label: "Low" },
-            { id: "high", label: "High", isDefault: true },
-            { id: "max", label: "Max" },
-          ],
-        },
-      ],
-    });
-    expect(snapshot.slashCommands).toEqual([
-      { name: "review", description: "Review the current change", input: { hint: "scope" } },
-      { name: "ship", description: "Prepare the current change" },
-    ]);
-  });
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.message).toContain("ACP");
+    }),
+  );
+
+  it.effect("rejects Kimi versions that cannot expose selectable thinking levels", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* makeKimiFixture("ready", "0.28.1");
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+          ...process.env,
+          T3_KIMI_FIXTURE_MODE: "ready",
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.version).toBe("0.28.1");
+      expect(snapshot.message).toContain("0.29.0");
+      expect(snapshot.message).toContain("thinking levels");
+    }),
+  );
+
+  it.effect("rejects prereleases older than the minimum stable Kimi version", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* makeKimiFixture("ready", "0.29.0-beta.1");
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+          ...process.env,
+          T3_KIMI_FIXTURE_MODE: "ready",
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.version).toBe("0.29.0-beta.1");
+    }),
+  );
+
+  it.effect("rejects Kimi output whose version cannot be verified", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* makeKimiFixture("ready", "unknown");
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+          ...process.env,
+          T3_KIMI_FIXTURE_MODE: "ready",
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.version).toBeNull();
+      expect(snapshot.message).toContain("Unable to determine Kimi version");
+      expect(snapshot.message).toContain("0.29.0");
+    }),
+  );
+
+  it.effect("reports authentication requirements with the Kimi login command", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* makeKimiFixture("unauthenticated");
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+          ...process.env,
+          T3_KIMI_FIXTURE_MODE: "unauthenticated",
+        }),
+      );
+
+      expect(snapshot.auth.status).toBe("unauthenticated");
+      expect(snapshot.message).toContain("kimi login");
+    }),
+  );
+
+  it.effect("reports unexpected ACP startup failures without treating Kimi as missing", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* makeKimiFixture("failure");
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(kimiSettings({ binaryPath }), {
+          ...process.env,
+          T3_KIMI_FIXTURE_MODE: "failure",
+        }),
+      );
+
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.auth.status).toBe("unknown");
+      expect(snapshot.message).toContain("ACP startup failed");
+    }),
+  );
+
+  it.effect("discovers models, options, modes, and commands without prompting", () =>
+    Effect.gen(function* () {
+      const binaryPath = yield* makeKimiFixture("ready", "0.29.0");
+      const snapshot = yield* withNodeServices(
+        checkKimiProviderStatus(
+          kimiSettings({
+            binaryPath,
+            customModels: ["custom-kimi", "custom-kimi", "kimi-code/k3"],
+          }),
+          { ...process.env, T3_KIMI_FIXTURE_MODE: "ready" },
+        ),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.badgeLabel).toBe("Early Access");
+      expect(snapshot.models.map((model) => model.slug)).toEqual([
+        "kimi-code/kimi-for-coding",
+        "kimi-code/kimi-for-coding-highspeed",
+        "kimi-code/k3",
+        "kimi-code/k3-256k",
+        "custom-kimi",
+      ]);
+      expect(snapshot.models[0]).toMatchObject({ isDefault: true, isCustom: false });
+      expect(snapshot.models[0]?.capabilities).toEqual({
+        optionDescriptors: [
+          {
+            id: "thinking",
+            label: "Thinking",
+            type: "select",
+            currentValue: "on",
+            options: [{ id: "on", label: "On", isDefault: true }],
+          },
+        ],
+      });
+      expect(snapshot.models[1]).toMatchObject({
+        slug: "kimi-code/kimi-for-coding-highspeed",
+        name: "K2.7 Coding Highspeed",
+        isCustom: false,
+      });
+      expect(snapshot.models[2]?.capabilities).toEqual({
+        optionDescriptors: [
+          {
+            id: "thinking",
+            label: "Thinking",
+            type: "select",
+            currentValue: "high",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High", isDefault: true },
+              { id: "max", label: "Max" },
+            ],
+          },
+        ],
+      });
+      expect(snapshot.slashCommands).toEqual([
+        { name: "review", description: "Review the current change", input: { hint: "scope" } },
+        { name: "ship", description: "Prepare the current change" },
+      ]);
+    }),
+  );
 });
