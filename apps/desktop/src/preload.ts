@@ -110,6 +110,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.GET_COMPUTER_USE_PERMISSIONS_CHANNEL, undefined),
   openComputerUsePrivacySettings: (pane) =>
     ipcRenderer.invoke(IpcChannels.OPEN_COMPUTER_USE_PRIVACY_SETTINGS_CHANNEL, pane),
+  getComputerHistoryStatus: () =>
+    ipcRenderer.invoke(IpcChannels.GET_COMPUTER_HISTORY_STATUS_CHANNEL, undefined),
+  getComputerHistoryTimeline: () =>
+    ipcRenderer.invoke(IpcChannels.GET_COMPUTER_HISTORY_TIMELINE_CHANNEL, undefined),
+  patchComputerHistorySettings: (patch) =>
+    ipcRenderer.invoke(IpcChannels.PATCH_COMPUTER_HISTORY_SETTINGS_CHANNEL, patch),
+  clearComputerHistory: (scope) =>
+    ipcRenderer.invoke(IpcChannels.CLEAR_COMPUTER_HISTORY_CHANNEL, scope),
+  revealComputerHistoryMemory: (path) =>
+    ipcRenderer.invoke(IpcChannels.REVEAL_COMPUTER_HISTORY_MEMORY_CHANNEL, path),
+  deleteComputerHistoryMemory: (path) =>
+    ipcRenderer.invoke(IpcChannels.DELETE_COMPUTER_HISTORY_MEMORY_CHANNEL, path),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

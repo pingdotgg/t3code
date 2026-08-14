@@ -7,6 +7,12 @@ export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
 export const GET_COMPUTER_USE_PERMISSIONS_CHANNEL = "desktop:get-computer-use-permissions";
 export const OPEN_COMPUTER_USE_PRIVACY_SETTINGS_CHANNEL =
   "desktop:open-computer-use-privacy-settings";
+export const GET_COMPUTER_HISTORY_STATUS_CHANNEL = "desktop:get-computer-history-status";
+export const GET_COMPUTER_HISTORY_TIMELINE_CHANNEL = "desktop:get-computer-history-timeline";
+export const PATCH_COMPUTER_HISTORY_SETTINGS_CHANNEL = "desktop:patch-computer-history-settings";
+export const CLEAR_COMPUTER_HISTORY_CHANNEL = "desktop:clear-computer-history";
+export const REVEAL_COMPUTER_HISTORY_MEMORY_CHANNEL = "desktop:reveal-computer-history-memory";
+export const DELETE_COMPUTER_HISTORY_MEMORY_CHANNEL = "desktop:delete-computer-history-memory";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";
 export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state";

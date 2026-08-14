@@ -18,6 +18,14 @@ import {
   openComputerUsePrivacySettings,
 } from "./methods/computerUse.ts";
 import {
+  clearComputerHistory,
+  deleteComputerHistoryMemory,
+  getComputerHistoryStatus,
+  getComputerHistoryTimeline,
+  patchComputerHistorySettings,
+  revealComputerHistoryMemory,
+} from "./methods/computerHistory.ts";
+import {
   bootstrapSshBearerSession,
   disconnectSshEnvironment,
   discoverSshHosts,
@@ -91,6 +99,12 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getComputerUsePermissions);
   yield* ipc.handle(openComputerUsePrivacySettings);
+  yield* ipc.handle(getComputerHistoryStatus);
+  yield* ipc.handle(getComputerHistoryTimeline);
+  yield* ipc.handle(patchComputerHistorySettings);
+  yield* ipc.handle(clearComputerHistory);
+  yield* ipc.handle(revealComputerHistoryMemory);
+  yield* ipc.handle(deleteComputerHistoryMemory);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);
   yield* ipc.handle(downloadUpdate);

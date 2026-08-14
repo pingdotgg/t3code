@@ -23,7 +23,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FiberRef from "effect/FiberRef";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -393,6 +392,7 @@ function buildCodexCollaborationMode(input: {
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly computerHistoryContext?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   if (input.interactionMode === undefined) {
     return undefined;
@@ -404,10 +404,16 @@ function buildCodexCollaborationMode(input: {
     settings: {
       model,
       reasoning_effort: reasoningEffort,
-      developer_instructions: buildCodexDeveloperInstructions(input.interactionMode, {
-        model,
-        reasoningEffort,
-      }),
+      developer_instructions: buildCodexDeveloperInstructions(
+        input.interactionMode,
+        {
+          model,
+          reasoningEffort,
+        },
+        input.computerHistoryContext
+          ? { computerHistoryContext: input.computerHistoryContext }
+          : undefined,
+      ),
     },
   };
 }
@@ -424,6 +430,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly computerHistoryContext?: string;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -444,6 +451,9 @@ export function buildTurnStartParams(input: {
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.computerHistoryContext
+      ? { computerHistoryContext: input.computerHistoryContext }
+      : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -1672,7 +1682,7 @@ export const makeCodexSessionRuntime = (
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
         // Concurrent elicitations share a serverName; correlate by the JSON-RPC
         // request id (fiber-local) so serverRequest/resolved cannot collide.
-        const incomingRequestId = yield* FiberRef.get(CodexClient.CurrentServerRequestId);
+        const incomingRequestId = yield* CodexClient.CurrentServerRequestId;
         const correlationKey =
           incomingRequestId !== undefined ? String(incomingRequestId) : String(requestId);
 
@@ -1936,6 +1946,22 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          const computerHistoryContext = yield* Effect.tryPromise({
+            try: async () => {
+              const { loadRecentContextMarkdown, resolveComputerHistoryRoot } =
+                await import("@t3tools/shared/computerHistory");
+              const stateDir =
+                process.env.T3CODE_STATE_DIR ?? process.env.T3_STATE_DIR ?? undefined;
+              if (!stateDir) return undefined;
+              return loadRecentContextMarkdown(resolveComputerHistoryRoot(stateDir));
+            },
+            catch: () => undefined,
+          }).pipe(
+            Effect.orElseSucceed(() => undefined),
+            Effect.map((markdown) =>
+              markdown ? `<computer_history>\n${markdown}\n</computer_history>` : undefined,
+            ),
+          );
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
@@ -1945,6 +1971,7 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(computerHistoryContext ? { computerHistoryContext } : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

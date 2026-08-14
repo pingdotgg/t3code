@@ -524,6 +524,14 @@ impl Desktop for LinuxDesktop {
         // Window enumeration needs EWMH properties that minimal window managers
         // (WSLg included) do not publish, and the accessibility bus is the more
         // relevant view here anyway: an app absent from it cannot be driven.
+        let focused = apps::list_apps()
+            .ok()
+            .and_then(|apps| {
+                apps.into_iter()
+                    .find(|app| app.frontmost)
+                    .map(|app| app.name.to_lowercase())
+            })
+            .unwrap_or_default();
         if let Ok(applications) = self.applications()
             && !applications.is_empty()
         {
@@ -531,15 +539,27 @@ impl Desktop for LinuxDesktop {
                 .into_iter()
                 .filter(|(_, name, _)| !name.is_empty())
                 .map(|(_, name, pid)| {
+                    let is_frontmost = !focused.is_empty()
+                        && (name.to_lowercase() == focused
+                            || name.to_lowercase().contains(&focused)
+                            || focused.contains(&name.to_lowercase()));
+                    let marker = if is_frontmost { "  FRONTMOST" } else { "" };
                     if pid == 0 {
-                        format!("{name}  [a11y]")
+                        format!("{name}  [a11y]{marker}")
                     } else {
-                        format!("{name}  [a11y]  pid={pid}")
+                        format!("{name}  [a11y]  pid={pid}{marker}")
                     }
                 })
                 .collect();
             if !lines.is_empty() {
-                lines.sort_by_key(|line| line.to_lowercase());
+                // If nothing matched the compositor focus, mark the first app so
+                // Computer History still has a frontmost sample target.
+                if !lines.iter().any(|line| line.contains("FRONTMOST")) {
+                    if let Some(first) = lines.first_mut() {
+                        first.push_str("  FRONTMOST");
+                    }
+                }
+                lines.sort_by_key(|line| (!line.contains("FRONTMOST"), line.to_lowercase()));
                 return Ok(lines.join("\n"));
             }
         }

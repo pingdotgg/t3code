@@ -9,6 +9,7 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
+import * as ComputerHistoryService from "./computerHistory/service.ts";
 import * as ServerConfig from "./config.ts";
 import {
   otlpTracesProxyRouteLayer,
@@ -161,6 +162,11 @@ const HostPowerMonitorLayerLive = HostPowerMonitor.layer.pipe(
 const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
   Layer.provide(HostPowerMonitorLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),
+  Layer.provideMerge(
+    ComputerHistoryService.ComputerHistoryRuntimeLive.pipe(
+      Layer.provideMerge(ServerSettingsLayerLive),
+    ),
+  ),
 );
 
 const UsageLayerLive = UsageService.layer.pipe(Layer.provide(ServerSettingsLayerLive));
