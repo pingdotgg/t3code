@@ -6,12 +6,34 @@ import * as Path from "effect/Path";
 
 import { expandHomePath } from "../../pathExpansion.ts";
 
+export interface ClaudeHome {
+  readonly path: string;
+  /**
+   * False when the path was defaulted to the OS home because no home was
+   * configured. The two cases resolve to the same path for a user who points a
+   * profile at their OS home, but they mean different things: a configured
+   * home *is* the config dir, while the default install keeps its config in
+   * `.claude` below the OS home.
+   */
+  readonly configured: boolean;
+}
+
+export const resolveClaudeHome = Effect.fn("resolveClaudeHome")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+): Effect.fn.Return<ClaudeHome, never, Path.Path> {
+  const path = yield* Path.Path;
+  const homePath = config.homePath.trim();
+  const configured = homePath.length > 0;
+  return {
+    path: path.resolve(configured ? expandHomePath(homePath) : NodeOS.homedir()),
+    configured,
+  };
+});
+
 export const resolveClaudeHomePath = Effect.fn("resolveClaudeHomePath")(function* (
   config: Pick<ClaudeSettings, "homePath">,
 ): Effect.fn.Return<string, never, Path.Path> {
-  const path = yield* Path.Path;
-  const homePath = config.homePath.trim();
-  return path.resolve(homePath.length > 0 ? expandHomePath(homePath) : NodeOS.homedir());
+  return (yield* resolveClaudeHome(config)).path;
 });
 
 export const makeClaudeEnvironment = Effect.fn("makeClaudeEnvironment")(function* (

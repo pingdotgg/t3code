@@ -23,12 +23,11 @@ import {
   type UsageProviderKind,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
+import { resolveClaudeHome, type ClaudeHome } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 
 export interface UsageTranscriptDir {
@@ -70,20 +69,17 @@ function collectDriverConfigs<A>(
 }
 
 /**
- * Claude's config dir is the home itself when overridden, but a default
- * install nests transcripts under `~/.claude/projects`. Probe both.
+ * A configured Claude home *is* the config dir, so its transcripts sit
+ * directly below it; only a default install nests them under
+ * `~/.claude/projects`.
+ *
+ * Which layout applies follows the home's provenance rather than what happens
+ * to exist on disk. Probing cannot tell the two apart: a profile configured at
+ * the OS home would find the default profile's `.claude/projects` and scan
+ * that instead of its own transcripts.
  */
-const resolveClaudeTranscriptDir = Effect.fn("resolveClaudeTranscriptDir")(function* (
-  homePath: string,
-): Effect.fn.Return<string, never, FileSystem.FileSystem | Path.Path> {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const nested = path.join(homePath, ".claude", "projects");
-  const nestedExists = yield* fileSystem
-    .exists(nested)
-    .pipe(Effect.catchCause(() => Effect.succeed(false)));
-  return nestedExists ? nested : path.join(homePath, "projects");
-});
+const claudeTranscriptDir = (path: Path.Path, home: ClaudeHome): string =>
+  home.configured ? path.join(home.path, "projects") : path.join(home.path, ".claude", "projects");
 
 /**
  * Transcript directory for every configured provider profile, de-duplicated by
@@ -93,7 +89,7 @@ const resolveClaudeTranscriptDir = Effect.fn("resolveClaudeTranscriptDir")(funct
  */
 export const resolveUsageTranscriptDirs = Effect.fn("resolveUsageTranscriptDirs")(function* (
   settings: ServerSettings,
-): Effect.fn.Return<readonly UsageTranscriptDir[], never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<readonly UsageTranscriptDir[], never, Path.Path> {
   const path = yield* Path.Path;
 
   const dirs: UsageTranscriptDir[] = [];
@@ -112,8 +108,8 @@ export const resolveUsageTranscriptDirs = Effect.fn("resolveUsageTranscriptDirs"
     decodeClaudeSettings,
   );
   for (const config of claudeConfigs) {
-    const homePath = yield* resolveClaudeHomePath(config);
-    add("claude", yield* resolveClaudeTranscriptDir(homePath));
+    const home = yield* resolveClaudeHome(config);
+    add("claude", claudeTranscriptDir(path, home));
   }
 
   const codexConfigs = collectDriverConfigs(

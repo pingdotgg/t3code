@@ -306,13 +306,9 @@ export const make = Effect.gen(function* () {
     yield* ensureScanCacheLoaded;
 
     const hostId = NodeOS.hostname();
-    // The home resolvers ask for `Path` and `FileSystem` themselves; satisfy
-    // them from the instances we already hold so `readSummary` stays
-    // context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-    );
+    // The home resolvers ask for `Path` themselves; satisfy them from the
+    // instance we already hold so `readSummary` stays context-free.
+    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({

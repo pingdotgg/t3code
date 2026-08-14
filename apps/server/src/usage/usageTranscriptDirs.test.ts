@@ -9,13 +9,9 @@ import {
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
+import { expandHomePath } from "../pathExpansion.ts";
 import { resolveUsageTranscriptDirs } from "./usageTranscriptDirs.ts";
 
-/**
- * Homes that do not exist on disk, so the `~/.claude/projects` probe always
- * takes the "config dir is the home itself" branch and the expectations below
- * hold on any machine.
- */
 const fixtureHomes = Effect.gen(function* () {
   const path = yield* Path.Path;
   const root = path.resolve("/tmp/t3-usage-test");
@@ -68,6 +64,28 @@ it.layer(NodeServices.layer)("resolveUsageTranscriptDirs", (it) => {
       expect(dirs).toEqual([
         { provider: "claude", dir: homes.claudeProjects(homes.claudeDefault) },
         { provider: "codex", dir: homes.codexSessions(homes.codexDefault) },
+      ]);
+    }),
+  );
+
+  it.effect("nests transcripts under .claude only for an unconfigured home", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const homes = yield* fixtureHomes;
+      const osHome = expandHomePath("~");
+      const dirs = yield* resolveUsageTranscriptDirs(
+        settingsWith({
+          claudeHomePath: "",
+          codexHomePath: homes.codexDefault,
+          // A profile pointed at the OS home resolves to the same path as the
+          // default profile, but keeps its transcripts directly below it.
+          providerInstances: { claude_home: claudeInstance("~") },
+        }),
+      );
+
+      expect(dirs.filter((entry) => entry.provider === "claude")).toEqual([
+        { provider: "claude", dir: path.join(osHome, ".claude", "projects") },
+        { provider: "claude", dir: path.join(osHome, "projects") },
       ]);
     }),
   );
