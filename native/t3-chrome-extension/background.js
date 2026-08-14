@@ -92,14 +92,15 @@ function connect() {
     port = null;
     return;
   }
+  const sessionPort = port;
   connectedAt = Date.now();
   hadLiveSession = false;
-  port.onMessage.addListener((msg) => {
+  sessionPort.onMessage.addListener((msg) => {
     // A command proves the MCP bridge is up.
     hadLiveSession = true;
-    handleCommand(msg);
+    void handleCommand(msg, sessionPort);
   });
-  port.onDisconnect.addListener(() => {
+  sessionPort.onDisconnect.addListener(() => {
     // Reading lastError here keeps "Native host has exited" out of the error
     // list while the desktop app simply is not running yet.
     void chrome.runtime.lastError;
@@ -108,10 +109,14 @@ function connect() {
     // host stayed up long enough that this was not a connectNative race.
     // Immediate disconnects (MCP pipe not bound yet) keep restored tabs.
     const wasLive = hadLiveSession || livedMs >= LIVE_SESSION_DWELL_MS;
-    port = null;
-    hadLiveSession = false;
-    connectedAt = 0;
-    if (wasLive && ownedTabs.size) void closeAllTabs();
+    const tabsToClose = wasLive ? Array.from(ownedTabs) : [];
+    const groupToClear = wasLive ? groupId : null;
+    if (port === sessionPort) {
+      port = null;
+      hadLiveSession = false;
+      connectedAt = 0;
+    }
+    if (tabsToClose.length) void closeOwnedTabs(tabsToClose, groupToClear);
   });
 }
 
@@ -133,12 +138,20 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 connect();
 
-function reply(id, result) {
-  if (port) port.postMessage({ id, ok: true, result });
+function reply(portRef, id, result) {
+  try {
+    portRef?.postMessage({ id, ok: true, result });
+  } catch {
+    // Port went away mid-command; drop the reply.
+  }
 }
 
-function replyError(id, message) {
-  if (port) port.postMessage({ id, ok: false, error: String(message) });
+function replyError(portRef, id, message) {
+  try {
+    portRef?.postMessage({ id, ok: false, error: String(message) });
+  } catch {
+    // Port went away mid-command; drop the reply.
+  }
 }
 
 // ── tab + group management ──────────────────────────────────────────────────
@@ -212,32 +225,34 @@ async function listTabs() {
   return { groupId, tabs: out };
 }
 
-/// Close everything the agent opened. Chrome deletes a tab group once its last
-/// tab is gone, so this also clears the "T3 Code" group rather than leaving an
-/// empty label behind in the user's tab strip.
-async function closeAllTabs() {
-  const ids = [...ownedTabs];
+/// Close a captured set of agent tabs from a past session. Only mutates
+/// `ownedTabs` / `groupId` for those ids so a newer reconnect's tabs survive.
+async function closeOwnedTabs(ids, expectedGroupId) {
   for (const id of ids) {
+    ownedTabs.delete(id);
+    attached.delete(id);
     try {
       await chrome.tabs.remove(id);
     } catch {
       // Already closed by the user; nothing to do.
     }
   }
-  ownedTabs.clear();
-  attached.clear();
-  if (groupId !== null) {
+  if (expectedGroupId !== null && groupId === expectedGroupId) {
     try {
-      // Belt and braces: if any tab survived, ungroup it so the label goes.
-      const remaining = await chrome.tabs.query({ groupId });
-      if (remaining.length) await chrome.tabs.ungroup(remaining.map((t) => t.id));
+      const remaining = await chrome.tabs.query({ groupId: expectedGroupId });
+      const leftover = remaining.filter((t) => !ownedTabs.has(t.id));
+      if (leftover.length) await chrome.tabs.ungroup(leftover.map((t) => t.id));
     } catch {
       // The group is already gone.
     }
-    groupId = null;
+    if (groupId === expectedGroupId) groupId = null;
   }
   await persistOwnedState();
   return { closed: ids.length };
+}
+
+async function closeAllTabs() {
+  return closeOwnedTabs(Array.from(ownedTabs), groupId);
 }
 
 function assertOwned(tabId) {
@@ -553,15 +568,15 @@ const handlers = {
   },
 };
 
-async function handleCommand(msg) {
+async function handleCommand(msg, replyPort = port) {
   await ensureStateReady();
   const { id, command, params } = msg || {};
   const handler = handlers[command];
-  if (!handler) return replyError(id, `unknown command: ${command}`);
+  if (!handler) return replyError(replyPort, id, `unknown command: ${command}`);
   try {
-    reply(id, await handler(params || {}));
+    reply(replyPort, id, await handler(params || {}));
   } catch (e) {
-    replyError(id, e && e.message ? e.message : e);
+    replyError(replyPort, id, e && e.message ? e.message : e);
   }
 }
 
