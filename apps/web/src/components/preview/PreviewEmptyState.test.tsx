@@ -12,7 +12,6 @@ const mocks = vi.hoisted(() => ({
     pid: number | null;
     terminal: null;
     source: "scanner";
-    listening: boolean;
   }>,
 }));
 
@@ -38,7 +37,6 @@ function server(port: number) {
     pid: 1,
     terminal: null,
     source: "scanner" as const,
-    listening: true,
   };
 }
 
