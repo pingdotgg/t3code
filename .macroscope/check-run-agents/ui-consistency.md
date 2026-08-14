@@ -63,7 +63,7 @@ The goal is not to minimize CSS or class counts at any cost. The goal is to put 
 ## Visual and layout preservation
 
 - Preserve responsive geometry, titlebar insets, panel and inline-preview modes, desktop Electron layout, light and dark contrast, clipping, radius, and composable shadows.
-- For meaningful visual changes, require verification in the real app using the actual component and state. A mock recreation is not evidence. Light and dark checks are expected when theme-sensitive styles change.
+- For meaningful visual changes, prefer available real-app evidence using the actual component and state. A mock recreation does not validate the real component. Light and dark evidence is useful when theme-sensitive styles change, but missing or inaccessible evidence alone is not a finding; report only a concrete regression supported by the diff, code, or available artifacts.
 - Do not treat a screenshot as proof of keyboard, overflow, scrollbar, responsive, or runtime-theme behavior. Pair visual evidence with source, computed-style, emitted-CSS, or interaction checks as appropriate.
 - Be alert to shared primitive color indirection. When a primitive routes icon color through a CSS variable, ensure migrated contextual icons retain their intended tone, including pressed and disabled states.
 
@@ -73,10 +73,10 @@ The goal is not to minimize CSS or class counts at any cost. The goal is to put 
 - Prefer the smallest durable contract over a component-specific workaround or a broad abstraction with one consumer.
 - Preserve intentional exceptions and comments that explain browser, virtualizer, theme, or Electron constraints.
 - If a proposed cleanup cannot prove ownership or semantic equivalence, ask for evidence or leave it unchanged rather than guessing.
-- Treat typecheck, focused tests, production build, emitted-CSS inspection, and relevant real-app evidence as complementary gates. Passing one does not replace the others.
+- Select verification gates according to the changed behavior: typecheck or focused tests for typing and interaction contracts, production build and emitted-CSS inspection for Tailwind or selector transformations, and real-app evidence for meaningful visual behavior when available. These gates are complementary when applicable, but do not require every gate for tiny visual-only migrations or fail solely because an artifact the configured tools cannot produce is absent.
 
 ## Reporting
 
-Report only concrete violations introduced or retained in the pull request's changed scope. Prefer precise inline comments on the smallest relevant line range. Explain the broken behavior or ownership rule, not merely the preferred syntax, and state the smallest expected fix. A clear consistency or regression risk may fail the check. Do not fail for optional aesthetic preferences, harmless class ordering, or unrelated legacy code.
+Report only concrete violations introduced by changed lines or behavior, plus pre-existing behavior that the patch directly makes relevant or worsens. Touching a large file does not make unrelated retained issues reportable. Prefer precise inline comments on the smallest relevant line range. Explain the broken behavior or ownership rule, not merely the preferred syntax, and state the smallest expected fix. A clear consistency or regression risk may fail the check. Do not fail for optional aesthetic preferences, harmless class ordering, or unrelated legacy code.
 
 This check defaults to failure. When there are no findings, stop immediately and make the entire final response exactly `All clear` on one line. Do not add a title, explanation, punctuation, Markdown, JSON, or trailing analysis, and do not continue reasoning after deciding the review is clean.
