@@ -205,7 +205,7 @@ function parseThemeCollection(value: unknown): ThemeCollection | undefined {
     : undefined;
 }
 
-const MAX_THEME_TOKEN_COLOR_RULES = 4_096;
+export const MAX_THEME_TOKEN_COLOR_RULES = 4_096;
 const MAX_THEME_TOKEN_SCOPES_PER_RULE = 64;
 const MAX_THEME_TOKEN_SCOPE_LENGTH = 512;
 const MAX_THEME_TOKEN_RULE_NAME_LENGTH = 256;

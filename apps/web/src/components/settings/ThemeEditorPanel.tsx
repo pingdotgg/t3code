@@ -718,7 +718,16 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               [activeAppearance]: colorsForSave[activeAppearance],
             },
-            ...(mergeTarget.syntax ? { syntax: mergeTarget.syntax } : {}),
+            ...(mergeTarget.syntax || seedTheme?.syntax?.[activeAppearance]
+              ? {
+                  syntax: {
+                    ...mergeTarget.syntax,
+                    ...(seedTheme?.syntax?.[activeAppearance]
+                      ? { [activeAppearance]: seedTheme.syntax[activeAppearance] }
+                      : {}),
+                  },
+                }
+              : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),

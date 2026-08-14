@@ -289,6 +289,8 @@ export function ThemeImportDialog({
       if (files.length === 0) return;
       const oversized = describeOversizedThemeBatch(files);
       if (oversized) {
+        importRequestRef.current += 1;
+        setIsReading(false);
         setError(oversized);
         return;
       }

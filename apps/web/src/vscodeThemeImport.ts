@@ -1,6 +1,7 @@
 import {
   createVividThemeColors,
   getThemeModes,
+  MAX_THEME_TOKEN_COLOR_RULES,
   normalizeThemeTokenColors,
   parseThemeFile,
   themeColorToHex,
@@ -322,6 +323,9 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
 
   // Reuse the theme-file parser so ids, names, and color values go through the
   // same validation as a hand-written file.
+  if (Array.isArray(value.tokenColors) && value.tokenColors.length > MAX_THEME_TOKEN_COLOR_RULES) {
+    throw new Error("VS Code themes may contain at most 4,096 syntax rules.");
+  }
   const syntax = normalizeThemeTokenColors(value.tokenColors);
   return parseThemeFile({
     version: THEME_FILE_VERSION,

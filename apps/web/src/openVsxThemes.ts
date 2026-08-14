@@ -2,7 +2,11 @@ import { sha256 } from "@noble/hashes/sha2";
 import JSZip from "jszip";
 import { parse, type ParseError } from "jsonc-parser";
 
-import { normalizeThemeTokenColors, type ThemeDefinition } from "./themePalette";
+import {
+  MAX_THEME_TOKEN_COLOR_RULES,
+  normalizeThemeTokenColors,
+  type ThemeDefinition,
+} from "./themePalette";
 import {
   isVsCodeThemeFile,
   pairVsCodeThemes,
@@ -341,6 +345,9 @@ function sanitizeThemeObject(value: Record<string, unknown>): Record<string, unk
         colors[key] = color;
       }
     }
+  }
+  if (Array.isArray(value.tokenColors) && value.tokenColors.length > MAX_THEME_TOKEN_COLOR_RULES) {
+    throw new Error("That extension theme contains too many syntax rules.");
   }
   const syntax = normalizeThemeTokenColors(value.tokenColors);
   return {

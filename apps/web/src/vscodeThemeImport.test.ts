@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { getThemeColorsForMode, themeColorToHex, THEME_FILE_VERSION } from "./themePalette";
+import {
+  getThemeColorsForMode,
+  MAX_THEME_TOKEN_COLOR_RULES,
+  themeColorToHex,
+  THEME_FILE_VERSION,
+} from "./themePalette";
 import {
   isVsCodeThemeFile,
   pairVsCodeThemes,
@@ -93,6 +98,15 @@ describe("VS Code theme import", () => {
     const theme = parseVsCodeThemeFile({ ...VSCODE_DARK, tokenColors: [] });
 
     expect(theme.syntax?.dark?.tokenColors).toEqual([]);
+  });
+
+  it("rejects oversized TextMate rule sets instead of silently dropping them", () => {
+    expect(() =>
+      parseVsCodeThemeFile({
+        ...VSCODE_DARK,
+        tokenColors: Array.from({ length: MAX_THEME_TOKEN_COLOR_RULES + 1 }, () => ({})),
+      }),
+    ).toThrow("VS Code themes may contain at most 4,096 syntax rules.");
   });
 
   it("normalizes compact TextMate colors for Shiki", () => {
