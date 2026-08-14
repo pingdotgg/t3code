@@ -44,7 +44,6 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
-  UsageReadError,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -107,6 +106,7 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import { resolveUsageWorkspaceCwds } from "./usage/usageWorkspaceCwds.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
@@ -1568,32 +1568,17 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.serverGetUsageSummary,
             Effect.gen(function* () {
-              const [active, archived] = yield* Effect.all(
-                [
-                  projectionSnapshotQuery.getShellSnapshot(),
-                  projectionSnapshotQuery.getArchivedShellSnapshot(),
-                ],
-                { concurrency: "unbounded" },
-              ).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new UsageReadError({
-                      reason: "scanFailed",
-                      detail: "Project workspaces could not be read.",
-                      cause,
-                    }),
+              const workspaceCwds = yield* resolveUsageWorkspaceCwds(
+                config.cwd,
+                Effect.all(
+                  [
+                    projectionSnapshotQuery.getShellSnapshot(),
+                    projectionSnapshotQuery.getArchivedShellSnapshot(),
+                  ],
+                  { concurrency: "unbounded" },
                 ),
               );
-              const workspaceCwds = new Set([config.cwd]);
-              for (const snapshot of [active, archived]) {
-                for (const project of snapshot.projects) {
-                  workspaceCwds.add(project.workspaceRoot);
-                }
-                for (const thread of snapshot.threads) {
-                  if (thread.worktreePath !== null) workspaceCwds.add(thread.worktreePath);
-                }
-              }
-              return yield* usage.readSummary(input, [...workspaceCwds]);
+              return yield* usage.readSummary(input, workspaceCwds);
             }),
             { "rpc.aggregate": "server" },
           ),
