@@ -107,6 +107,11 @@ export function shouldRefreshOnInterval(input: {
  * pruned; there is one per view the session ever read.
  */
 const lastRefreshedAtByView = new Map<string, number>();
+interface SharedRefreshGroup {
+  readonly subscribers: Set<{ readonly current: (() => void) | null }>;
+  readonly stop: () => void;
+}
+const sharedRefreshGroups = new Map<string, SharedRefreshGroup>();
 
 /**
  * When the reader last did anything. Shared rather than per view: a person is present in the
@@ -157,9 +162,21 @@ export function useLiveRefresh(
 
   useEffect(() => {
     if (!enabled) return;
+    const groupKey = JSON.stringify([viewId, intervalMs, minimumIntervalMs]);
+    const existingGroup = sharedRefreshGroups.get(groupKey);
+    if (existingGroup) {
+      existingGroup.subscribers.add(latest);
+      return () => {
+        existingGroup.subscribers.delete(latest);
+        if (existingGroup.subscribers.size > 0) return;
+        existingGroup.stop();
+        sharedRefreshGroups.delete(groupKey);
+      };
+    }
+    const subscribers = new Set([latest]);
     const read = (now: number) => {
       lastRefreshedAtByView.set(viewId, now);
-      latest.current?.();
+      subscribers.values().next().value?.current?.();
     };
     const visible = () => document.visibilityState === "visible";
     const onArrival = () => {
@@ -215,11 +232,19 @@ export function useLiveRefresh(
     syncTimer();
     window.addEventListener("focus", onArrival);
     document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
+    const stop = () => {
       clearInterval(timer);
       window.removeEventListener("focus", onArrival);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       stopWatchingInteraction();
+    };
+    const group = { subscribers, stop } satisfies SharedRefreshGroup;
+    sharedRefreshGroups.set(groupKey, group);
+    return () => {
+      group.subscribers.delete(latest);
+      if (group.subscribers.size > 0) return;
+      group.stop();
+      sharedRefreshGroups.delete(groupKey);
     };
   }, [enabled, intervalMs, minimumIntervalMs, viewId]);
 }

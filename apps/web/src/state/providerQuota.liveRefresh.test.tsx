@@ -111,7 +111,7 @@ describe("provider quota live recovery", () => {
         { value: registry },
         createElement(() => {
           usePrimaryProviderQuota();
-          usePrimaryProviderQuota({ liveRefresh: false });
+          usePrimaryProviderQuota();
           return null;
         }),
       ),

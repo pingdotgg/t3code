@@ -149,6 +149,39 @@ describe("useLiveRefresh", () => {
     await mounted.unmount();
     dom.cleanup();
   });
+
+  it("shares one keyed timer and transfers ownership when the first consumer unmounts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const dom = installReactHookTestDom();
+    const firstRefresh = vi.fn();
+    const secondRefresh = vi.fn();
+    const mount = (refresh: () => void) =>
+      mountReactHookTestComponent(
+        createElement(() => {
+          useLiveRefresh(refresh, {
+            key: "shared-quota-cadence",
+            intervalMs: 30_000,
+            minimumIntervalMs: 10_000,
+          });
+          return null;
+        }),
+        dom.document,
+      );
+    const first = await mount(firstRefresh);
+    const second = await mount(secondRefresh);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(firstRefresh).toHaveBeenCalledTimes(1);
+    expect(secondRefresh).not.toHaveBeenCalled();
+
+    await first.unmount();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(secondRefresh).toHaveBeenCalledTimes(1);
+
+    await second.unmount();
+    dom.cleanup();
+  });
 });
 
 describe("shouldRefreshOnArrival", () => {
