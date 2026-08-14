@@ -159,9 +159,9 @@ pub fn run(root: PathBuf) -> Result<(), String> {
 
         match sample_frontmost(&mut *desktop) {
             Ok(sample) => {
-                let allowed = app_allowed(&sample.app_id, &sample.app_name, &control)
+                    let allowed = app_allowed(&sample.app_id, &sample.app_name, &control)
                     && website_allowed(
-                        sample.window_title.as_deref(),
+                        website_haystack(&sample).as_deref(),
                         &sample.app_name,
                         &control,
                     );
@@ -249,10 +249,9 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
         Ok(text) => (text, true),
         Err(_) => (String::new(), false),
     };
-    let window_title = outline
-        .lines()
-        .find(|line| !line.is_empty())
-        .map(str::to_string);
+    // get_app_state prefixes the outline with the application name; that is not
+    // a window title and would make website filters never see URL-like text.
+    let window_title = window_title_from_outline(&outline, &app_name);
     let ax = if outline.is_empty() {
         None
     } else {
@@ -288,6 +287,61 @@ fn parse_app_line(line: &str) -> Option<(String, String)> {
         None
     } else {
         Some((name, id))
+    }
+}
+
+/// Prefer a URL-like outline line, else the first non-app-header line.
+fn window_title_from_outline(outline: &str, app_name: &str) -> Option<String> {
+    let lines: Vec<&str> = outline
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let body: Vec<&str> = if lines[0].eq_ignore_ascii_case(app_name.trim()) {
+        lines[1..].to_vec()
+    } else {
+        lines
+    };
+    if body.is_empty() {
+        return None;
+    }
+    let urlish = body.iter().find(|line| {
+        let lowered = line.to_lowercase();
+        lowered.contains("://")
+            || lowered.starts_with("about:")
+            || lowered.starts_with("chrome:")
+            || lowered.starts_with("edge:")
+            || lowered.starts_with("brave:")
+    });
+    urlish.or(body.first()).map(|line| {
+        // Outline rows are often "  [e12] role  Name" — strip the leading id marker.
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix('[') {
+            if let Some(idx) = rest.find(']') {
+                return rest[idx + 1..].trim().to_string();
+            }
+        }
+        trimmed.to_string()
+    })
+}
+
+fn website_haystack(sample: &Sample) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(title) = &sample.window_title {
+        parts.push(title.clone());
+    }
+    if let Some(ax) = &sample.ax
+        && let Some(description) = ax.get("description").and_then(|value| value.as_str())
+    {
+        parts.push(description.to_string());
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
     }
 }
 
@@ -547,7 +601,7 @@ fn uuid_like() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_app_line;
+    use super::{parse_app_line, window_title_from_outline};
 
     #[test]
     fn parses_frontmost_app_line() {
@@ -557,5 +611,19 @@ mod tests {
         .expect("parse");
         assert_eq!(name, "Windows Explorer");
         assert_eq!(id, "explorer.exe");
+    }
+
+    #[test]
+    fn window_title_skips_app_header_and_prefers_url() {
+        let outline = "Firefox\n[e1] frame  Example - Mozilla Firefox\n[e2] link  https://blocked.example/path";
+        let title = window_title_from_outline(outline, "Firefox").expect("title");
+        assert!(title.contains("https://blocked.example/path"));
+    }
+
+    #[test]
+    fn window_title_falls_back_to_first_non_header_line() {
+        let outline = "Firefox\n[e1] frame  Example - Mozilla Firefox";
+        let title = window_title_from_outline(outline, "Firefox").expect("title");
+        assert_eq!(title, "frame  Example - Mozilla Firefox");
     }
 }

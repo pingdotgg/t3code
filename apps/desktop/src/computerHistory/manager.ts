@@ -137,18 +137,7 @@ const make = Effect.gen(function* () {
     await stopping;
   };
 
-  yield* Effect.addFinalizer(() =>
-    Effect.promise(async () => {
-      const current = await Effect.runPromise(Ref.get(stateRef));
-      if (current.child && !current.child.killed) {
-        try {
-          current.child.kill("SIGTERM");
-        } catch {
-          // ignore
-        }
-      }
-    }),
-  );
+  yield* Effect.addFinalizer(() => Effect.promise(() => stopDaemonImpl()));
 
   const ensureDaemonImpl = async (
     stateDir: string,

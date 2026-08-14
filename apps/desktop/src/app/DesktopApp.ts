@@ -329,6 +329,11 @@ const scopedProgram = Effect.scoped(
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
+        // electronApp.quit() can race ahead of the layer-scope cascade — stop
+        // Computer History here the same way we stop backends, so the recorder
+        // receives SIGTERM instead of surviving or being hard-killed.
+        const history = yield* ComputerHistoryManager.ComputerHistoryManager;
+        yield* history.stopDaemon().pipe(Effect.ignore);
         const pool = yield* DesktopBackendPool.DesktopBackendPool;
         // Stop every backend in the pool, not just the primary. The
         // electronApp.quit() path can race ahead of the layer-scope
