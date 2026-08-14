@@ -38,6 +38,13 @@ export interface AppUpdateEnvironment {
   readonly confirmInstallNow: () => Promise<boolean>;
   /** Lands best-effort persisted state (drafts, outbox) before the restart. */
   readonly flushPendingWrites: () => Promise<void>;
+  /**
+   * Whether a deferred restart may fire right now: the app must still be
+   * backgrounded (flush latency or an iOS suspend can push the continuation
+   * into the next foreground session) and not merely paused behind an
+   * app-initiated handoff like the Android image picker.
+   */
+  readonly isSafeToRestartInBackground: () => Promise<boolean>;
   /** Runs `apply` the next time the app leaves the foreground. */
   readonly onNextBackground: (apply: () => void) => void;
 }
@@ -246,7 +253,9 @@ async function performAppUpdateCheck(
     return;
   }
 
-  if (options.applyMode === "immediate") {
+  // A rollback directive exists to pull a broken bundle; never hold it
+  // behind a prompt or a deferred install.
+  if (options.applyMode === "immediate" || fetched.value.isRollBackToEmbedded) {
     await installAppUpdate(client, environment, options);
     return;
   }
@@ -289,11 +298,37 @@ function armDeferredAppUpdateInstall(
 ): void {
   if (deferral.pendingInstall) return;
   deferral.pendingInstall = true;
+  scheduleDeferredAppUpdateInstall(client, environment, deferral);
+}
+
+function scheduleDeferredAppUpdateInstall(
+  client: AppUpdateClient,
+  environment: AppUpdateEnvironment,
+  deferral: AppUpdateDeferral,
+): void {
   environment.onNextBackground(() => {
-    // One-shot: if the reload fails, the downloaded update still applies at
-    // the next cold start.
-    void installAppUpdate(client, environment, {});
+    void applyDeferredAppUpdateInstall(client, environment, deferral);
   });
+}
+
+async function applyDeferredAppUpdateInstall(
+  client: AppUpdateClient,
+  environment: AppUpdateEnvironment,
+  deferral: AppUpdateDeferral,
+): Promise<void> {
+  await settlePromise(() => environment.flushPendingWrites());
+  const safe = await settlePromise(() => environment.isSafeToRestartInBackground());
+  if (safe._tag !== "Success" || !safe.value) {
+    scheduleDeferredAppUpdateInstall(client, environment, deferral);
+    return;
+  }
+  const reloaded = await settlePromise(() => client.reloadAsync());
+  if (reloaded._tag === "Failure") {
+    reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", undefined);
+    // Give later checks their prompt back; the downloaded update still
+    // applies at the next cold start regardless.
+    deferral.pendingInstall = false;
+  }
 }
 
 async function defaultConfirmInstallNow(): Promise<boolean> {
@@ -318,6 +353,13 @@ async function defaultFlushPendingWrites(): Promise<void> {
   ]);
 }
 
+async function defaultIsSafeToRestartInBackground(): Promise<boolean> {
+  const { isForegroundHandoffActive } = await import("../../lib/foreground-handoff");
+  if (isForegroundHandoffActive()) return false;
+  const { AppState } = await import("react-native");
+  return AppState.currentState === "background";
+}
+
 function defaultOnNextBackground(apply: () => void): void {
   void import("react-native").then(({ AppState }) => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -331,6 +373,7 @@ function defaultOnNextBackground(apply: () => void): void {
 const defaultAppUpdateEnvironment: AppUpdateEnvironment = {
   confirmInstallNow: defaultConfirmInstallNow,
   flushPendingWrites: defaultFlushPendingWrites,
+  isSafeToRestartInBackground: defaultIsSafeToRestartInBackground,
   onNextBackground: defaultOnNextBackground,
 };
 

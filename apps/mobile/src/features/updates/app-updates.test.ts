@@ -45,6 +45,7 @@ function makeUpdateEnvironment(overrides: Partial<AppUpdateEnvironment> = {}): {
     environment: {
       confirmInstallNow: vi.fn(async () => true),
       flushPendingWrites: vi.fn(async () => {}),
+      isSafeToRestartInBackground: vi.fn(async () => true),
       onNextBackground: vi.fn((apply: () => void) => {
         backgroundCallbacks.push(apply);
       }),
@@ -132,6 +133,47 @@ describe("runAppUpdateCheck", () => {
     expect(environment.flushPendingWrites).toHaveBeenCalled();
   });
 
+  it("re-arms instead of restarting when the app is no longer safely backgrounded", async () => {
+    const client = makeAvailableUpdateClient();
+    const safe = vi.fn(async () => false);
+    const { backgroundCallbacks, environment } = makeUpdateEnvironment({
+      confirmInstallNow: vi.fn(async () => false),
+      isSafeToRestartInBackground: safe,
+    });
+    const deferral = createAppUpdateDeferral();
+
+    await runAppUpdateCheck({ client, deferral, environment });
+    expect(backgroundCallbacks).toHaveLength(1);
+
+    backgroundCallbacks[0]!();
+    await vi.waitFor(() => expect(backgroundCallbacks).toHaveLength(2));
+    expect(client.reloadAsync).not.toHaveBeenCalled();
+    expect(deferral.pendingInstall).toBe(true);
+
+    safe.mockResolvedValue(true);
+    backgroundCallbacks[1]!();
+    await vi.waitFor(() => expect(client.reloadAsync).toHaveBeenCalledOnce());
+  });
+
+  it("returns the prompt to later checks when the deferred restart fails", async () => {
+    const reportError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = makeAvailableUpdateClient({
+      reloadAsync: vi.fn(async () => {
+        throw new Error("reload rejected");
+      }),
+    });
+    const { backgroundCallbacks, environment } = makeUpdateEnvironment({
+      confirmInstallNow: vi.fn(async () => false),
+    });
+    const deferral = createAppUpdateDeferral();
+
+    await runAppUpdateCheck({ client, deferral, environment });
+    backgroundCallbacks[0]!();
+
+    await vi.waitFor(() => expect(deferral.pendingInstall).toBe(false));
+    reportError.mockRestore();
+  });
+
   it("arms the deferred install once across repeated declines", async () => {
     const client = makeAvailableUpdateClient();
     const { environment } = makeUpdateEnvironment({
@@ -179,6 +221,8 @@ describe("runAppUpdateCheck", () => {
     await runAppUpdateCheck({ client, deferral: createAppUpdateDeferral(), environment });
 
     expect(client.fetchUpdateAsync).toHaveBeenCalledOnce();
+    // A rollback pulls a broken bundle, so it never waits on the prompt.
+    expect(environment.confirmInstallNow).not.toHaveBeenCalled();
     expect(client.reloadAsync).toHaveBeenCalledOnce();
   });
 

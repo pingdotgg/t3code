@@ -634,11 +634,15 @@ function AppSettingsSection() {
       ? "Checking…"
       : updateState === "downloading"
         ? "Downloading…"
-        : updateState === "restarting"
-          ? "Restarting…"
-          : updateState === "current"
-            ? "Up to date"
-            : null;
+        : // "ready" appears only when this check joined an in-flight prompt-mode
+          // check; the install alert is on screen and holds the answer.
+          updateState === "ready"
+          ? "Update ready"
+          : updateState === "restarting"
+            ? "Restarting…"
+            : updateState === "current"
+              ? "Up to date"
+              : null;
 
   const versionRow = (
     <View className="flex-row items-center gap-4 p-4">
