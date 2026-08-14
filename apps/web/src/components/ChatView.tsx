@@ -219,6 +219,7 @@ import {
 } from "../lib/elementContext";
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
+import { buildAssistantResponseQuoteInsertion } from "../assistantResponseQuote";
 import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -2795,6 +2796,21 @@ function ChatViewContent(props: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
+  const onReplyToAssistantSelection = useCallback(
+    (text: string) => {
+      const composer = composerRef.current;
+      const snapshot = composer?.readSnapshot();
+      const insertion = buildAssistantResponseQuoteInsertion(snapshot?.value ?? "", text);
+      if (!composer || !insertion || !composer.insertTextAtEnd(insertion)) {
+        toastManager.add({
+          type: "info",
+          title: "Reply unavailable",
+          description: "Finish the active composer request before attaching this quote.",
+        });
+      }
+    },
+    [composerRef],
+  );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       composerRef.current?.addTerminalContext(selection);
@@ -6247,6 +6263,7 @@ function ChatViewContent(props: ChatViewProps) {
                 activeThreadEnvironmentId={activeThread.environmentId}
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
+                onReplyToAssistantSelection={onReplyToAssistantSelection}
                 revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
                 onRevertUserMessage={onRevertUserMessage}
                 isRevertingCheckpoint={isRevertingCheckpoint}
