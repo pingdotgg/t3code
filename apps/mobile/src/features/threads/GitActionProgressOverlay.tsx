@@ -7,11 +7,13 @@ import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanim
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
+import { APP_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useThemeColor } from "../../lib/useThemeColor";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 
 const OVERLAY_LAYOUT_TRANSITION = LinearTransition.duration(220);
+const OVERLAY_TOP_GAP = 8;
 const AnimatedLiquidGlassView = Animated.createAnimatedComponent(LiquidGlassView);
 
 export function GitActionProgressOverlay(props: {
@@ -52,7 +54,7 @@ export function GitActionProgressOverlay(props: {
       entering={isLiquidGlassSupported ? undefined : FadeIn.duration(200)}
       exiting={FadeOut.duration(150)}
       className="absolute inset-x-3 z-[100]"
-      style={{ top: insets.top + 48 }}
+      style={{ top: insets.top + APP_BAR_HEIGHT + OVERLAY_TOP_GAP }}
       pointerEvents="box-none"
     >
       <Pressable onPress={handlePress}>
