@@ -19,7 +19,6 @@ import {
   type UsageProviderKind,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -62,46 +61,58 @@ function configuredUsageInstances(settings: ServerSettings): readonly ProviderIn
 }
 
 /**
- * An explicit homePath wins because makeClaudeEnvironment exports it over any
- * existing CLAUDE_CONFIG_DIR. Otherwise use the merged per-instance/process
- * environment seen by the Claude subprocess, then the normal OS home.
+ * Match the config-dir precedence seen by the Claude subprocess. Explicit and
+ * environment config dirs store transcripts directly under `projects`; only
+ * the default installation nests them under `~/.claude/projects`.
  */
-const resolveClaudeInstanceHome = Effect.fn("UsageTranscriptSources.resolveClaudeInstanceHome")(
+const resolveClaudeInstanceTranscriptDir = Effect.fn(
+  "UsageTranscriptSources.resolveClaudeInstanceTranscriptDir",
+)(function* (
+  config: ClaudeSettings,
+  instance: ProviderInstanceConfig,
+  baseEnvironment: NodeJS.ProcessEnv,
+) {
+  const path = yield* Path.Path;
+  if (config.homePath.trim().length > 0) {
+    return path.join(yield* resolveClaudeHomePath(config), "projects");
+  }
+
+  const environment = mergeProviderInstanceEnvironment(instance.environment, baseEnvironment);
+  const environmentHome = environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+  if (environmentHome.length > 0) {
+    // Environment variables are passed directly to the subprocess and do
+    // not receive shell-style tilde expansion.
+    return path.join(path.resolve(environmentHome), "projects");
+  }
+
+  return path.join(NodeOS.homedir(), ".claude", "projects");
+});
+
+/**
+ * Match the direct-home precedence seen by the Codex subprocess: an explicit
+ * homePath wins, otherwise CODEX_HOME comes from the merged instance/process
+ * environment. A shadow home keeps the configured shared-home layout because
+ * CodexDriver materializes that layout and passes the shadow path explicitly.
+ */
+const resolveCodexInstanceLayout = Effect.fn("UsageTranscriptSources.resolveCodexInstanceLayout")(
   function* (
-    config: ClaudeSettings,
+    config: CodexSettings,
     instance: ProviderInstanceConfig,
     baseEnvironment: NodeJS.ProcessEnv,
   ) {
     const path = yield* Path.Path;
-    if (config.homePath.trim().length > 0) {
-      return yield* resolveClaudeHomePath(config);
+    if (config.homePath.trim().length > 0 || config.shadowHomePath.trim().length > 0) {
+      return yield* resolveCodexHomeLayout(config);
     }
 
     const environment = mergeProviderInstanceEnvironment(instance.environment, baseEnvironment);
-    const environmentHome = environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
-    if (environmentHome.length > 0) {
-      // Environment variables are passed directly to the subprocess and do
-      // not receive shell-style tilde expansion.
-      return path.resolve(environmentHome);
-    }
-
-    return path.resolve(NodeOS.homedir());
-  },
-);
-
-/**
- * Claude's config dir is the home itself when overridden, but older/default
- * layouts nest transcripts under `<home>/.claude/projects`. Probe both.
- */
-const resolveClaudeTranscriptDir = Effect.fn("UsageTranscriptSources.resolveClaudeTranscriptDir")(
-  function* (homePath: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const nested = path.join(homePath, ".claude", "projects");
-    const nestedExists = yield* fileSystem
-      .exists(nested)
-      .pipe(Effect.catchCause(() => Effect.succeed(false)));
-    return nestedExists ? nested : path.join(homePath, "projects");
+    const environmentHome = environment.CODEX_HOME?.trim() ?? "";
+    return yield* resolveCodexHomeLayout({
+      ...config,
+      // Environment variables are not shell-expanded. Resolve the value first
+      // so resolveCodexHomeLayout does not treat a literal `~` as config syntax.
+      homePath: environmentHome.length > 0 ? path.resolve(environmentHome) : "",
+    });
   },
 );
 
@@ -124,10 +135,9 @@ export const resolveUsageTranscriptSources = Effect.fn(
     if (instance.driver === CLAUDE_DRIVER) {
       const decoded = decodeClaudeSettings(instance.config ?? {});
       if (Option.isNone(decoded)) continue;
-      const homePath = yield* resolveClaudeInstanceHome(decoded.value, instance, baseEnvironment);
       append({
         provider: "claude",
-        dir: yield* resolveClaudeTranscriptDir(homePath),
+        dir: yield* resolveClaudeInstanceTranscriptDir(decoded.value, instance, baseEnvironment),
       });
       continue;
     }
@@ -135,7 +145,7 @@ export const resolveUsageTranscriptSources = Effect.fn(
     if (instance.driver === CODEX_DRIVER) {
       const decoded = decodeCodexSettings(instance.config ?? {});
       if (Option.isNone(decoded)) continue;
-      const layout = yield* resolveCodexHomeLayout(decoded.value);
+      const layout = yield* resolveCodexInstanceLayout(decoded.value, instance, baseEnvironment);
       append({ provider: "codex", dir: path.join(layout.sharedHomePath, "sessions") });
     }
   }

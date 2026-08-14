@@ -63,6 +63,13 @@ it.layer(NodeServices.layer)("resolveUsageTranscriptSources", (it) => {
       assert.ok(
         sources.some(
           (source) =>
+            source.provider === "claude" &&
+            source.dir === path.join(NodeOS.homedir(), ".claude", "projects"),
+        ),
+      );
+      assert.ok(
+        sources.some(
+          (source) =>
             source.provider === "codex" &&
             source.dir === path.join(NodeOS.homedir(), ".codex", "sessions"),
         ),
@@ -96,6 +103,84 @@ it.layer(NodeServices.layer)("resolveUsageTranscriptSources", (it) => {
     }),
   );
 
+  it.effect("honors per-instance CODEX_HOME when homePath is empty", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const settings = decodeSettings({
+        providerInstances: {
+          claudeAgent: { driver: "claudeAgent", config: {} },
+          codex: {
+            driver: "codex",
+            config: {},
+            environment: [{ name: "CODEX_HOME", value: "/tmp/codex-from-instance" }],
+          },
+        },
+      });
+
+      const sources = yield* resolveUsageTranscriptSources(settings, {
+        CODEX_HOME: "/tmp/codex-from-process",
+      });
+
+      assert.ok(
+        sources.some(
+          (source) =>
+            source.provider === "codex" &&
+            source.dir === path.resolve("/tmp/codex-from-instance/sessions"),
+        ),
+      );
+    }),
+  );
+
+  it.effect("honors process CODEX_HOME when the instance does not override it", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const settings = decodeSettings({
+        providerInstances: {
+          claudeAgent: { driver: "claudeAgent", config: {} },
+          codex: { driver: "codex", config: {} },
+        },
+      });
+
+      const sources = yield* resolveUsageTranscriptSources(settings, {
+        CODEX_HOME: "/tmp/codex-from-process",
+      });
+
+      assert.ok(
+        sources.some(
+          (source) =>
+            source.provider === "codex" &&
+            source.dir === path.resolve("/tmp/codex-from-process/sessions"),
+        ),
+      );
+    }),
+  );
+
+  it.effect("keeps explicit Codex homePath ahead of CODEX_HOME", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const settings = decodeSettings({
+        providerInstances: {
+          claudeAgent: { driver: "claudeAgent", config: {} },
+          codex: {
+            driver: "codex",
+            config: { homePath: "/tmp/codex-explicit" },
+            environment: [{ name: "CODEX_HOME", value: "/tmp/codex-from-instance" }],
+          },
+        },
+      });
+
+      const sources = yield* resolveUsageTranscriptSources(settings, {});
+
+      assert.ok(
+        sources.some(
+          (source) =>
+            source.provider === "codex" &&
+            source.dir === path.resolve("/tmp/codex-explicit/sessions"),
+        ),
+      );
+    }),
+  );
+
   it.effect("deduplicates instances that share a transcript directory", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -116,7 +201,7 @@ it.layer(NodeServices.layer)("resolveUsageTranscriptSources", (it) => {
     }),
   );
 
-  it.effect("preserves the nested legacy Claude transcript layout when it exists", () =>
+  it.effect("uses the explicit Claude config dir even when a nested path exists", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -134,8 +219,9 @@ it.layer(NodeServices.layer)("resolveUsageTranscriptSources", (it) => {
 
       const sources = yield* resolveUsageTranscriptSources(settings, {});
 
-      assert.ok(
-        sources.some((source) => source.provider === "claude" && source.dir === nestedProjects),
+      assert.deepEqual(
+        sources.filter((source) => source.provider === "claude"),
+        [{ provider: "claude", dir: path.join(tempDir, "projects") }],
       );
     }),
   );

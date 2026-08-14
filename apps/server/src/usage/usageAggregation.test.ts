@@ -90,6 +90,23 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
   });
 
+  it("deduplicates records across transcript sources in the same scan", () => {
+    const seenDedupeKeys = new Set<string>();
+    const options = {
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    };
+    const first = new UsageAggregator({ ...options, sourceIndex: 0 }, seenDedupeKeys);
+    const second = new UsageAggregator({ ...options, sourceIndex: 1 }, seenDedupeKeys);
+
+    expect(first.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
+    expect(second.add(record({ dedupeKey: "msg_1:" }))).toBe(false);
+    expect(first.finish().buckets[0]?.records).toBe(1);
+    expect(second.finish()).toMatchObject({ buckets: [], duplicatesDropped: 1 });
+  });
+
   it("still sums records that carry no dedupe key", () => {
     const result = aggregate([record(), record()]);
 

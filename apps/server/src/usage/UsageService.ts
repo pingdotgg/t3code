@@ -306,12 +306,9 @@ export const make = Effect.gen(function* () {
     yield* ensureScanCacheLoaded;
 
     const hostId = NodeOS.hostname();
-    // The source resolvers ask for filesystem services themselves; satisfy
-    // them from the instances we already hold so readSummary stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-    );
+    // The source resolvers ask for Path themselves; satisfy them from the
+    // instance we already hold so readSummary stays context-free.
+    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
     const windowStart = DateTime.make(`${input.sinceDay}T00:00:00Z`);
     if (Option.isNone(windowStart)) {
       return yield* new UsageReadError({
@@ -326,18 +323,22 @@ export const make = Effect.gen(function* () {
     const buckets: UsageSummary["buckets"][number][] = [];
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
+    const seenDedupeKeys = new Set<string>();
 
     for (const { provider, dir } of dirs) {
       const sourceIndex = sources.length;
-      const aggregator = new UsageAggregator({
-        sourceIndex,
-        timeZone: input.timeZone,
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        resolution: input.resolution ?? "day",
-        ...hourlyWindow,
-        rates,
-      });
+      const aggregator = new UsageAggregator(
+        {
+          sourceIndex,
+          timeZone: input.timeZone,
+          sinceDay: input.sinceDay,
+          untilDay: input.untilDay,
+          resolution: input.resolution ?? "day",
+          ...hourlyWindow,
+          rates,
+        },
+        seenDedupeKeys,
+      );
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
