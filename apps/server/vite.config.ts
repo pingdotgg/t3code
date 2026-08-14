@@ -5,53 +5,20 @@ import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import packageJson from "./package.json" with { type: "json" };
 
-const bundledPackagePrefixes = [
-  "@pierre/diffs",
-  "@t3tools/",
-  "effect-acp",
-  "effect-codex-app-server",
-];
+// The bundle used to inline only workspace packages, leaving every third-party
+// runtime dep external. External deps must exist on the real filesystem (the WSL
+// backend runs plain `wsl.exe -- node`, which cannot read inside an asar), so the
+// desktop build unpacked `**\/node_modules\/**` wholesale: 13,875 loose files to
+// support 20 native binaries. NSIS install time tracks file count, not bytes.
+//
+// Inverted here — bundle everything except the packages that genuinely cannot be
+// inlined. See scripts/lib/cli-external-packages.ts for what earns an exemption.
+import {
+  isExternalCliDependency,
+  shouldBundleCliDependency,
+} from "../../scripts/lib/cli-external-packages.ts";
 
-// WSL loads the packaged CLI through a Windows filesystem mount resolved by
-// wslpath (commonly /mnt/c). Resolving a large dependency graph there is
-// substantially slower than reading a few bundled chunks. Bundle direct runtime
-// dependencies by default so adding a normal JS dependency cannot silently
-// regress startup. Exceptions own native binaries, target another runtime, or
-// resolve package assets at runtime and must stay in node_modules.
-const externalRuntimePackageNames = new Set([
-  // Resolves its CLI and other files from the installed package.
-  "@anthropic-ai/claude-agent-sdk",
-
-  // Loaded only when the server runs under Bun.
-  "@effect/platform-bun",
-  "@effect/sql-sqlite-bun",
-
-  // Load platform-specific native binaries from node_modules.
-  "@ff-labs/fff-node",
-  "node-pty",
-]);
-const runtimePackageNames = new Set(Object.keys(packageJson.dependencies));
-
-function packageNameFromId(id: string): string {
-  if (id.startsWith("@")) {
-    const [scope, name] = id.split("/");
-    return scope && name ? `${scope}/${name}` : id;
-  }
-
-  return id.split("/")[0] ?? id;
-}
-
-export function shouldBundleCliDependency(id: string): boolean {
-  const packageName = packageNameFromId(id);
-  if (externalRuntimePackageNames.has(packageName)) {
-    return false;
-  }
-
-  return (
-    runtimePackageNames.has(packageName) ||
-    bundledPackagePrefixes.some((prefix) => id.startsWith(prefix))
-  );
-}
+export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
 const cliBuildChannel = packageJson.version.includes("-nightly.") ? "nightly" : "latest";
@@ -74,7 +41,14 @@ export default mergeConfig(
       sourcemap: true,
       clean: true,
       deps: {
+        // Both halves are required. `alwaysBundle` forces the JS dependencies in
+        // (declared deps are external by default, which is what this change is
+        // undoing). `neverBundle` forces the native packages out: returning
+        // false from `alwaysBundle` only means "no opinion", so a transitive
+        // dependency would still be bundled — which silently inlined
+        // msgpackr-extract and its loader, losing native acceleration.
         alwaysBundle: shouldBundleCliDependency,
+        neverBundle: (id: string) => isExternalCliDependency(id),
         onlyBundle: false,
       },
       banner: {

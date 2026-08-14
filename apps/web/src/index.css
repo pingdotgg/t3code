@@ -266,8 +266,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @layer base {
   :root {
-    /* Dev artwork defaults. Built-in themes override these seven pigments in
-       the components layer; Nightly derives a darker matching palette. */
+    /* Keep the original T3 Code artwork palettes as the defaults. Built-in
+       themes override them with their own pigments in the components layer. */
     --stage-art-top: oklch(0.782169 0.123386 240.226);
     --stage-art-mid: oklch(0.616111 0.195824 259.735);
     --stage-art-bottom: oklch(0.441553 0.232394 265.474);
@@ -275,33 +275,23 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-art-secondary: oklch(0.794668 0.12136 235.46);
     --stage-art-tertiary: oklch(0.678991 0.170261 275.365);
     --stage-art-line: oklch(0.959666 0.029238 218.179);
-    --stage-night-top: color-mix(
-      in oklch,
-      var(--stage-art-top) 38%,
-      oklch(0.283792 0.117327 297.201)
-    );
-    --stage-night-mid: color-mix(
-      in oklch,
-      var(--stage-art-mid) 38%,
-      oklch(0.227147 0.086086 277.99)
-    );
-    --stage-night-bottom: color-mix(
-      in oklch,
-      var(--stage-art-bottom) 38%,
-      oklch(0.200528 0.055699 261.216)
-    );
-    --stage-night-highlight: var(--stage-art-highlight);
-    --stage-night-secondary: color-mix(
-      in oklch,
-      var(--stage-art-secondary) 55%,
-      var(--stage-night-mid)
-    );
-    --stage-night-tertiary: color-mix(
-      in oklch,
-      var(--stage-art-tertiary) 60%,
-      var(--stage-night-top)
-    );
-    --stage-night-line: color-mix(in oklch, var(--stage-art-line) 82%, oklch(1 0 0));
+    --stage-art-celeste-highlight: oklch(0.968763 0.045822 196.42);
+    --stage-art-celeste-secondary: oklch(0.827395 0.126071 211.26);
+    --stage-art-violet-highlight: oklch(0.895381 0.053248 286.447);
+    --stage-art-grid-line: oklch(0.966822 0.01757 239.99);
+    --stage-night-base-top: oklch(0.283792 0.117327 297.201);
+    --stage-night-base-mid: oklch(0.227147 0.086086 277.99);
+    --stage-night-base-bottom: oklch(0.200528 0.055699 261.216);
+    --stage-night-top: var(--stage-night-base-top);
+    --stage-night-mid: var(--stage-night-base-mid);
+    --stage-night-bottom: var(--stage-night-base-bottom);
+    --stage-night-highlight: oklch(0.707246 0.157418 252.091);
+    --stage-night-secondary: oklch(0.600473 0.182225 277.296);
+    --stage-night-tertiary: oklch(0.62583 0.210886 305.994);
+    --stage-night-line: oklch(0.938794 0.029114 273.103);
+    --stage-night-glow-highlight: oklch(0.553749 0.176543 271.958);
+    --stage-night-glow-secondary: oklch(0.345571 0.117466 273.568);
+    --stage-night-sparkle: oklch(0.880867 0.057747 269.011);
   }
 
   .dark {
@@ -508,6 +498,44 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --stage-art-secondary: oklch(0.670994 0.13095 296.689);
     --stage-art-tertiary: oklch(0.679357 0.165376 340.439);
     --stage-art-line: oklch(0.940582 0.032921 299.076);
+  }
+
+  :is(html[data-theme-id="t3-chat"], html[data-theme-id="ocean"], html[data-theme-id="iris"]) {
+    --stage-night-top: color-mix(in oklch, var(--stage-art-top) 38%, var(--stage-night-base-top));
+    --stage-night-mid: color-mix(in oklch, var(--stage-art-mid) 38%, var(--stage-night-base-mid));
+    --stage-night-bottom: color-mix(
+      in oklch,
+      var(--stage-art-bottom) 38%,
+      var(--stage-night-base-bottom)
+    );
+    --stage-night-highlight: var(--stage-art-highlight);
+    --stage-night-secondary: color-mix(
+      in oklch,
+      var(--stage-art-secondary) 55%,
+      var(--stage-night-mid)
+    );
+    --stage-night-tertiary: color-mix(
+      in oklch,
+      var(--stage-art-tertiary) 60%,
+      var(--stage-night-top)
+    );
+    --stage-night-line: color-mix(in oklch, var(--stage-art-line) 82%, oklch(1 0 0));
+  }
+
+  :is(
+    html[data-theme-id="t3-chat"],
+    html[data-theme-id="grove"],
+    html[data-theme-id="ocean"],
+    html[data-theme-id="ember"],
+    html[data-theme-id="iris"]
+  ) {
+    --stage-art-celeste-highlight: var(--stage-art-highlight);
+    --stage-art-celeste-secondary: var(--stage-art-secondary);
+    --stage-art-violet-highlight: var(--stage-art-highlight);
+    --stage-art-grid-line: var(--stage-art-line);
+    --stage-night-glow-highlight: var(--stage-night-highlight);
+    --stage-night-glow-secondary: var(--stage-night-secondary);
+    --stage-night-sparkle: var(--stage-night-line);
   }
 
   .workspace-topbar {
