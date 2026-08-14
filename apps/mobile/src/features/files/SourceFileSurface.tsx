@@ -2,7 +2,14 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import type { ComponentType } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, ScrollView, Text as NativeText, useWindowDimensions, View } from "react-native";
+import {
+  FlatList,
+  RefreshControl,
+  ScrollView,
+  Text as NativeText,
+  useWindowDimensions,
+  View,
+} from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { LoadingStrip } from "../../components/LoadingStrip";
@@ -216,9 +223,22 @@ function NativeSourceFileSurface(
 }
 
 function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
+  const { onRefresh } = props;
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
   const { lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const listRef = useRef<FlatList<string>>(null);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const handlePullToRefresh = useCallback(async () => {
+    if (!onRefresh) {
+      return;
+    }
+    setIsPullRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setIsPullRefreshing(false);
+    }
+  }, [onRefresh]);
 
   useEffect(() => {
     if (targetIndex === null) {
@@ -267,6 +287,14 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         paddingTop: 8,
       }}
       renderItem={renderLine}
+      refreshControl={
+        onRefresh ? (
+          <RefreshControl
+            refreshing={isPullRefreshing}
+            onRefresh={() => void handlePullToRefresh()}
+          />
+        ) : undefined
+      }
     />
   );
 
