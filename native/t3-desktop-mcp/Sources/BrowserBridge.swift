@@ -16,7 +16,8 @@ import Foundation
 // later ones simply fall back to the accessibility path.
 
 let bridgeSocketPath: String = {
-    let shortFallback = "/tmp/t3-desktop-mcp-bridge.sock"
+    // Per-uid so concurrent users never share a world-writable /tmp socket.
+    let shortFallback = "/tmp/t3-desktop-mcp-bridge-\(getuid()).sock"
     let preferred = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         ?? URL(fileURLWithPath: NSTemporaryDirectory())
     let dir = preferred.appendingPathComponent("t3-desktop-mcp", isDirectory: true)
