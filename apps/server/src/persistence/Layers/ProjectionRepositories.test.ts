@@ -1,4 +1,11 @@
-import { ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -96,6 +103,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        usageLimitWait: null,
         pinnedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -138,6 +146,19 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
   it.effect("round-trips non-null settlement values through the thread row", () =>
     Effect.gen(function* () {
       const threads = yield* ProjectionThreadRepository;
+      const usageLimitWait = {
+        waitId: CommandId.make("wait-settled"),
+        blockedTurnId: TurnId.make("turn-settled"),
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        resumeAt: "2026-03-26T10:00:00.000Z",
+        isEstimated: false,
+        createdAt: "2026-03-25T00:00:00.000Z",
+      };
 
       yield* threads.upsert({
         threadId: ThreadId.make("thread-settled"),
@@ -159,6 +180,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: "2026-03-25T00:00:00.000Z",
         snoozedUntil: "2026-03-26T09:00:00.000Z",
         snoozedAt: "2026-03-25T00:00:00.000Z",
+        usageLimitWait,
         pinnedAt: "2026-03-25T00:00:00.000Z",
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
@@ -179,6 +201,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.strictEqual(row.snoozedUntil, "2026-03-26T09:00:00.000Z");
       assert.strictEqual(row.snoozedAt, "2026-03-25T00:00:00.000Z");
       assert.strictEqual(row.pinnedAt, "2026-03-25T00:00:00.000Z");
+      assert.deepStrictEqual(row.usageLimitWait, usageLimitWait);
 
       // Un-settle to the keep-active pin and wake the snooze; confirm the
       // flips persist.
@@ -188,6 +211,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
+        usageLimitWait: null,
         pinnedAt: null,
       });
       const repersisted = yield* threads.getById({
@@ -198,6 +222,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.strictEqual(updated?.settledAt, null);
       assert.strictEqual(updated?.snoozedUntil, null);
       assert.strictEqual(updated?.snoozedAt, null);
+      assert.strictEqual(updated?.usageLimitWait, null);
       assert.strictEqual(updated?.pinnedAt, null);
     }),
   );

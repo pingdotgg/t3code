@@ -22,6 +22,7 @@ import {
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1638,6 +1639,46 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+
+          if (
+            event.type === "turn.completed" &&
+            event.payload.state === "failed" &&
+            event.payload.usageLimit !== undefined &&
+            eventTurnId !== undefined &&
+            (yield* serverSettingsService.getSettings).autoContinueAfterUsageLimitReset
+          ) {
+            const resetAtMs = Date.parse(event.payload.usageLimit.resetsAt);
+            const detectedAtMs = Date.parse(now);
+            const resumeAtMs = Math.max(
+              Number.isFinite(resetAtMs) ? resetAtMs : detectedAtMs + 5 * 60 * 1_000,
+              detectedAtMs + 5_000,
+            );
+            const resumeAt = DateTime.formatIso(
+              DateTime.makeUnsafe(resumeAtMs + (event.payload.usageLimit.isEstimated ? 0 : 30_000)),
+            );
+            const waitId = CommandId.make(`provider:${event.eventId}:usage-limit-wait`);
+            yield* orchestrationEngine.dispatch({
+              type: "thread.usage-limit-wait.schedule",
+              commandId: waitId,
+              threadId: thread.id,
+              wait: {
+                waitId,
+                blockedTurnId: eventTurnId,
+                provider: event.provider,
+                ...(event.providerInstanceId !== undefined
+                  ? { providerInstanceId: event.providerInstanceId }
+                  : {}),
+                modelSelection: thread.modelSelection,
+                resumeAt,
+                ...(event.payload.usageLimit.limitType !== undefined
+                  ? { limitType: event.payload.usageLimit.limitType }
+                  : {}),
+                isEstimated: event.payload.usageLimit.isEstimated,
+                createdAt: now,
+              },
+              createdAt: now,
+            });
+          }
         }
       }
 

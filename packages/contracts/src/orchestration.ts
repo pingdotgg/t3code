@@ -21,7 +21,7 @@ import {
   TrimmedString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -361,6 +361,19 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+export const OrchestrationUsageLimitWait = Schema.Struct({
+  waitId: CommandId,
+  blockedTurnId: TurnId,
+  provider: ProviderDriverKind,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+  modelSelection: ModelSelection,
+  resumeAt: IsoDateTime,
+  limitType: Schema.optional(TrimmedNonEmptyString),
+  isEstimated: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  createdAt: IsoDateTime,
+});
+export type OrchestrationUsageLimitWait = typeof OrchestrationUsageLimitWait.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -397,6 +410,7 @@ export const OrchestrationThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  usageLimitWait: Schema.optional(Schema.NullOr(OrchestrationUsageLimitWait)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -455,6 +469,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  usageLimitWait: Schema.optional(Schema.NullOr(OrchestrationUsageLimitWait)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -856,6 +871,15 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadUsageLimitWaitCancelCommand = Schema.Struct({
+  type: Schema.Literal("thread.usage-limit-wait.cancel"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  waitId: CommandId,
+  reason: Schema.optional(Schema.Literal("disabled")),
+  createdAt: IsoDateTime,
+});
+
 const ThreadApprovalRespondCommand = Schema.Struct({
   type: Schema.Literal("thread.approval.respond"),
   commandId: CommandId,
@@ -915,6 +939,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadUsageLimitWaitCancelCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -943,6 +968,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadUsageLimitWaitCancelCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
@@ -1023,6 +1049,22 @@ const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
 });
 
+const ThreadUsageLimitWaitScheduleCommand = Schema.Struct({
+  type: Schema.Literal("thread.usage-limit-wait.schedule"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  wait: OrchestrationUsageLimitWait,
+  createdAt: IsoDateTime,
+});
+
+const ThreadUsageLimitWaitResumeCommand = Schema.Struct({
+  type: Schema.Literal("thread.usage-limit-wait.resume"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  waitId: CommandId,
+  createdAt: IsoDateTime,
+});
+
 const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
@@ -1032,6 +1074,8 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  ThreadUsageLimitWaitScheduleCommand,
+  ThreadUsageLimitWaitResumeCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1059,6 +1103,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
+  "thread.usage-limit-wait-scheduled",
+  "thread.usage-limit-wait-cleared",
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
@@ -1218,6 +1264,19 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ThreadUsageLimitWaitScheduledPayload = Schema.Struct({
+  threadId: ThreadId,
+  wait: OrchestrationUsageLimitWait,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadUsageLimitWaitClearedPayload = Schema.Struct({
+  threadId: ThreadId,
+  waitId: CommandId,
+  reason: Schema.Literals(["user", "superseded", "resumed", "disabled", "stale"]),
+  updatedAt: IsoDateTime,
+});
+
 export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
@@ -1240,6 +1299,8 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  origin: Schema.optional(Schema.Literal("usage-limit-auto-resume")),
+  promptOverride: Schema.optional(Schema.String),
   createdAt: IsoDateTime,
 });
 
@@ -1411,6 +1472,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.interaction-mode-set"),
     payload: ThreadInteractionModeSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.usage-limit-wait-scheduled"),
+    payload: ThreadUsageLimitWaitScheduledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.usage-limit-wait-cleared"),
+    payload: ThreadUsageLimitWaitClearedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

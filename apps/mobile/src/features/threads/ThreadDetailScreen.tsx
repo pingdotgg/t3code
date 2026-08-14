@@ -30,8 +30,10 @@ import {
 import { isLiquidGlassSupported, LiquidGlassView } from "@callstack/liquid-glass";
 import {
   AppState,
+  Alert,
   Keyboard,
   Platform,
+  Pressable,
   useColorScheme,
   useWindowDimensions,
   View,
@@ -53,6 +55,7 @@ import Animated, {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ControlPill";
+import { AppText as Text } from "../../components/AppText";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
@@ -115,6 +118,7 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  readonly onCancelUsageLimitWait: () => void | Promise<unknown>;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
@@ -261,6 +265,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
+  const [isCancellingUsageLimitWait, setIsCancellingUsageLimitWait] = useState(false);
+  const usageLimitWait = props.selectedThread.usageLimitWait ?? null;
+  useEffect(() => {
+    setIsCancellingUsageLimitWait(false);
+  }, [usageLimitWait?.waitId]);
   // Android keys the safe-area padding on keyboard visibility (#5988): the
   // back gesture closes the keyboard while the editor stays focused, and a
   // focus-keyed inset would leave the toolbar under the gesture bar. iOS must
@@ -624,6 +633,50 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               list's bottom inset, so any padding above the pill/composer
               pushes the resting content floor up by the same amount. */}
           <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+            {usageLimitWait ? (
+              <View className="mx-3 mb-2 flex-row items-center gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5">
+                <View className="min-w-0 flex-1">
+                  <Text className="font-t3-medium text-sm text-foreground">
+                    {usageLimitWait.provider === "codex" ? "Codex" : "Claude"} usage limit reached
+                  </Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {usageLimitWait.isEstimated
+                      ? "Automatically tries again"
+                      : "Automatically continues"}{" "}
+                    at{" "}
+                    {new Date(usageLimitWait.resumeAt).toLocaleTimeString(undefined, {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                    .
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isCancellingUsageLimitWait}
+                  hitSlop={8}
+                  onPress={() => {
+                    setIsCancellingUsageLimitWait(true);
+                    void Promise.resolve()
+                      .then(() => props.onCancelUsageLimitWait())
+                      .catch(() => {
+                        Alert.alert(
+                          "Could not cancel automatic continuation",
+                          "Try again, or stop the thread before it resumes.",
+                        );
+                      })
+                      .finally(() => {
+                        setIsCancellingUsageLimitWait(false);
+                      });
+                  }}
+                  className="min-h-11 justify-center px-2"
+                >
+                  <Text className="font-t3-medium text-sm text-amber-700 dark:text-amber-300">
+                    {isCancellingUsageLimitWait ? "Cancelling..." : "Cancel"}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
             {showScrollToEndButton ? (
               <Animated.View
                 pointerEvents="box-none"

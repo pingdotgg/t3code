@@ -273,6 +273,65 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("turns a rejected subscription rate event into a resumable failed turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "continue the task",
+        attachments: [],
+      });
+      harness.query.emit({
+        type: "rate_limit_event",
+        session_id: "sdk-session-rate-limit",
+        uuid: "rate-limit-1",
+        rate_limit_info: {
+          status: "rejected",
+          resetsAt: 1_767_243_600,
+          rateLimitType: "five_hour",
+          utilization: 1,
+        },
+      } as unknown as SDKMessage);
+      // Claude can report this result shape after the typed rejection. The
+      // rate-limit event remains authoritative for the turn outcome.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        errors: [],
+        session_id: "sdk-session-rate-limit",
+        uuid: "result-rate-limit",
+      } as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const completed = events.find((event) => event.type === "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+        assert.deepEqual(completed.payload.usageLimit, {
+          resetsAt: "2026-01-01T05:00:00.000Z",
+          limitType: "five_hour",
+          isEstimated: false,
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

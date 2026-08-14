@@ -166,6 +166,7 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
+import { formatShortTimestamp } from "../timestampFormat";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -1224,6 +1225,9 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
+  const cancelUsageLimitWait = useAtomCommand(threadEnvironment.cancelUsageLimitWait, {
     reportFailure: false,
   });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -4431,6 +4435,61 @@ function ChatViewContent(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
+  const [isCancellingUsageLimitWait, setIsCancellingUsageLimitWait] = useState(false);
+  const usageLimitWait = activeThread?.usageLimitWait ?? null;
+  useEffect(() => {
+    setIsCancellingUsageLimitWait(false);
+  }, [usageLimitWait?.waitId]);
+  const handleCancelUsageLimitWait = useCallback(async () => {
+    if (!activeThread || !usageLimitWait) return;
+    setIsCancellingUsageLimitWait(true);
+    const result = await cancelUsageLimitWait({
+      environmentId,
+      input: { threadId: activeThread.id, waitId: usageLimitWait.waitId },
+    });
+    if (result._tag === "Failure") {
+      setIsCancellingUsageLimitWait(false);
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to cancel automatic continuation.",
+        );
+      }
+    }
+  }, [activeThread, cancelUsageLimitWait, environmentId, setThreadError, usageLimitWait]);
+  const usageLimitWaitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!usageLimitWait) return null;
+    const providerLabel = usageLimitWait.provider === "codex" ? "Codex" : "Claude";
+    const resumeDate = new Date(usageLimitWait.resumeAt);
+    const sameDay = resumeDate.toDateString() === new Date().toDateString();
+    const time = formatShortTimestamp(usageLimitWait.resumeAt, timestampFormat);
+    const resumeLabel = sameDay
+      ? time
+      : `${resumeDate.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        })} at ${time}`;
+    return {
+      id: `usage-limit-wait:${usageLimitWait.waitId}`,
+      variant: "warning",
+      icon: <AlarmClockIcon />,
+      title: `${providerLabel} usage limit reached`,
+      description: usageLimitWait.isEstimated
+        ? `Automatically tries again at ${resumeLabel}.`
+        : `Automatically continues at ${resumeLabel}.`,
+      actions: (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isCancellingUsageLimitWait}
+          onClick={() => void handleCancelUsageLimitWait()}
+        >
+          {isCancellingUsageLimitWait ? "Cancelling..." : "Cancel"}
+        </Button>
+      ),
+    };
+  }, [handleCancelUsageLimitWait, isCancellingUsageLimitWait, timestampFormat, usageLimitWait]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.
@@ -4510,11 +4569,13 @@ function ChatViewContent(props: ChatViewProps) {
     const calmSystemItems = systemComposerBannerItems.filter((item) => !isUrgentSystemItem(item));
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
+    const usageLimitWaitItems = usageLimitWaitBannerItem === null ? [] : [usageLimitWaitBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...urgentSystemItems,
+        ...usageLimitWaitItems,
         ...backgroundLivenessItems,
         ...calmSystemItems,
         ...wokeThreadItems,
@@ -4523,6 +4584,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [
       ...urgentSystemItems,
+      ...usageLimitWaitItems,
       ...backgroundLivenessItems,
       ...calmSystemItems,
       ...wokeThreadItems,
@@ -4576,6 +4638,7 @@ function ChatViewContent(props: ChatViewProps) {
     parkedThreadBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
+    usageLimitWaitBannerItem,
     wokeThreadBannerItem,
   ]);
 

@@ -506,6 +506,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
         ? ["Provider update checks"]
         : []),
+      ...(settings.autoContinueAfterUsageLimitReset !==
+      DEFAULT_UNIFIED_SETTINGS.autoContinueAfterUsageLimitReset
+        ? ["Automatically continue after usage limits reset"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -550,6 +554,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
+      settings.autoContinueAfterUsageLimitReset,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
@@ -634,6 +639,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      autoContinueAfterUsageLimitReset: DEFAULT_UNIFIED_SETTINGS.autoContinueAfterUsageLimitReset,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -1965,6 +1971,34 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("auto-continue-usage-limits")}
+          description="Resume interrupted Codex and Claude subscription turns when their limits reset."
+          resetAction={
+            settings.autoContinueAfterUsageLimitReset !==
+            DEFAULT_UNIFIED_SETTINGS.autoContinueAfterUsageLimitReset ? (
+              <SettingResetButton
+                label="automatic continuation after usage limits"
+                onClick={() =>
+                  updateSettings({
+                    autoContinueAfterUsageLimitReset:
+                      DEFAULT_UNIFIED_SETTINGS.autoContinueAfterUsageLimitReset,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.autoContinueAfterUsageLimitReset}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoContinueAfterUsageLimitReset: Boolean(checked) })
+              }
+              aria-label="Automatically continue after usage limits reset"
             />
           }
         />

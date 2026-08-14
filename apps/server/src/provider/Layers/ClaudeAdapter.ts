@@ -16,6 +16,7 @@ import {
   type SDKMessage,
   type SDKControlGetContextUsageResponse,
   type SDKResultMessage,
+  type SDKRateLimitInfo,
   type SettingSource,
   type SDKUserMessage,
   type ModelUsage,
@@ -33,6 +34,7 @@ import {
   type ModelSelection,
   ProviderItemId,
   type ProviderRuntimeEvent,
+  type ProviderUsageLimit,
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
   type ProviderSession,
@@ -243,6 +245,7 @@ interface ClaudeSessionContext {
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   lastKnownTotalProcessedTokens: number | undefined;
+  lastRejectedUsageLimit: ProviderUsageLimit | undefined;
   lastAssistantUuid: string | undefined;
   lastThreadStartedId: string | undefined;
   stopped: boolean;
@@ -1296,6 +1299,33 @@ function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStat
   return "failed";
 }
 
+function claudeUsageLimit(
+  info: SDKRateLimitInfo,
+  createdAt: string,
+): ProviderUsageLimit | undefined {
+  if (info.status !== "rejected" || info.rateLimitType === "overage") {
+    return undefined;
+  }
+  const createdAtMs = Date.parse(createdAt);
+  const fallbackBase = Number.isFinite(createdAtMs) ? createdAtMs : 0;
+  const rawReset = info.resetsAt;
+  const resetAtMs =
+    rawReset !== undefined && Number.isFinite(rawReset) && rawReset > 0
+      ? rawReset < 10_000_000_000
+        ? rawReset * 1_000
+        : rawReset
+      : undefined;
+  const exactResetAtMs =
+    resetAtMs !== undefined && resetAtMs > fallbackBase ? resetAtMs : undefined;
+  return {
+    resetsAt: DateTime.formatIso(
+      DateTime.makeUnsafe(exactResetAtMs ?? fallbackBase + 5 * 60 * 1_000),
+    ),
+    ...(info.rateLimitType ? { limitType: info.rateLimitType } : {}),
+    isEstimated: exactResetAtMs === undefined,
+  };
+}
+
 function streamKindFromDeltaType(deltaType: string): ClaudeTextStreamKind {
   return deltaType.includes("thinking") ? "reasoning_text" : "assistant_text";
 }
@@ -1674,7 +1704,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
   const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-    Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
+    Queue.offer(runtimeEventQueue, {
+      ...event,
+      providerInstanceId: event.providerInstanceId ?? boundInstanceId,
+    }).pipe(Effect.asVoid);
 
   const logNativeSdkMessage = Effect.fnUntraced(function* (
     context: ClaudeSessionContext,
@@ -2339,12 +2372,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { totalCostUsd: result.total_cost_usd }
           : {}),
         ...(errorMessage ? { errorMessage } : {}),
+        ...(status === "failed" && context.lastRejectedUsageLimit
+          ? { usageLimit: context.lastRejectedUsageLimit }
+          : {}),
       },
       providerRefs: nativeProviderRefs(context),
     });
 
     const updatedAt = yield* nowIso;
     context.turnState = undefined;
+    context.lastRejectedUsageLimit = undefined;
     context.session = {
       ...context.session,
       status: "ready",
@@ -2941,8 +2978,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const status = turnStatusFromResult(message);
-    const errorMessage = resultUserFacingError(message);
+    const status = context.lastRejectedUsageLimit ? "failed" : turnStatusFromResult(message);
+    const errorMessage =
+      resultUserFacingError(message) ??
+      (context.lastRejectedUsageLimit ? "Claude usage limit reached." : undefined);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -3472,6 +3511,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      const usageLimit = claudeUsageLimit(message.rate_limit_info, base.createdAt);
+      if (context.turnState && usageLimit) {
+        context.lastRejectedUsageLimit = usageLimit;
+      }
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
@@ -4219,6 +4262,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         lastKnownContextWindow: initialContextWindow,
         lastKnownTokenUsage: undefined,
         lastKnownTotalProcessedTokens: undefined,
+        lastRejectedUsageLimit: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,
         stopped: false,
@@ -4358,6 +4402,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
     if (steeringTurnState === null) {
+      context.lastRejectedUsageLimit = undefined;
       const turnState: ClaudeTurnState = {
         turnId,
         startedAt: yield* nowIso,
