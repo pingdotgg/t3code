@@ -74,7 +74,9 @@ private final class DaemonState {
   private static func segmentName(for date: Date) -> String {
     let f = ISO8601DateFormatter()
     f.formatOptions = [.withInternetDateTime]
-    return f.string(from: date).replacingOccurrences(of: ":", with: "-")
+    let stamp = f.string(from: date).replacingOccurrences(of: ":", with: "-")
+    // Unique suffix so concurrent/restarted daemons never share a segment dir.
+    return "\(stamp)-\(UUID().uuidString.prefix(8))"
   }
 
   private var segmentDir: URL {
@@ -225,8 +227,12 @@ private final class DaemonState {
           var line = String(data: data, encoding: .utf8)
     else { return }
     line.append("\n")
-    if let bytes = line.data(using: .utf8) {
-      try? eventsHandle.write(contentsOf: bytes)
+    guard let bytes = line.data(using: .utf8) else { return }
+    do {
+      try eventsHandle.write(contentsOf: bytes)
+    } catch {
+      // Do not bump counters / rewrite metadata for a line that never landed.
+      return
     }
     eventCount += 1
     writeMetadata(endedAt: nil, endReason: nil)

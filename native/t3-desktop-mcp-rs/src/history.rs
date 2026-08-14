@@ -218,12 +218,11 @@ struct Sample {
 
 fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
     let listing = desktop.list_apps()?;
-    // Prefer an explicit FRONTMOST marker (Windows / xcap). Linux AT-SPI lists
-    // may omit it — fall back to the first listed app so history still records.
+    // Require an explicit FRONTMOST marker. Guessing the first listed app when
+    // focus is unknown would attribute activity to an arbitrary process.
     let front = listing
         .lines()
         .find(|line| line.contains("FRONTMOST"))
-        .or_else(|| listing.lines().find(|line| !line.trim().is_empty()))
         .ok_or_else(|| DesktopError::new("no frontmost app"))?;
     let (app_name, app_id) = parse_app_line(front)
         .ok_or_else(|| DesktopError::new(format!("could not parse frontmost app line: {front}")))?;
@@ -239,17 +238,13 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
             "description": outline.chars().take(240).collect::<String>(),
         }))
     };
+    // Deduplicate on the full outline so tab/focus changes inside one app still
+    // emit events (a short prefix of get_app_state is often stable).
     let key = format!(
         "{}|{}|{}",
         app_name,
         window_title.clone().unwrap_or_default(),
-        ax.as_ref()
-            .and_then(|v| v.get("description"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .chars()
-            .take(40)
-            .collect::<String>()
+        outline
     );
     Ok(Sample {
         app_id,
@@ -479,7 +474,8 @@ fn iso_now() -> String {
 }
 
 fn segment_name(secs: u64) -> String {
-    secs_to_iso(secs).replace(':', "-")
+    // Unique suffix so concurrent/restarted daemons never share a segment dir.
+    format!("{}-{}", secs_to_iso(secs).replace(':', "-"), uuid_like())
 }
 
 fn chrono_lite(secs: u64) -> String {

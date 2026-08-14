@@ -76,12 +76,16 @@ export const patchComputerHistorySettings = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.computerHistory.patchSettings")(function* (patch) {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const fileSystem = yield* FileSystem.FileSystem;
-    const raw = yield* fileSystem
-      .readFileString(environment.serverSettingsPath)
-      .pipe(Effect.orElseSucceed(() => "{}"));
-    const current = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))(
-      raw,
-    ).pipe(Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS));
+    const exists = yield* fileSystem.exists(environment.serverSettingsPath);
+    const current = exists
+      ? yield* fileSystem.readFileString(environment.serverSettingsPath).pipe(
+          Effect.flatMap((raw) =>
+            Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))(raw),
+          ),
+          // Malformed/partial settings must fail the patch — never replace the
+          // whole document with defaults and erase unrelated server config.
+        )
+      : DEFAULT_SERVER_SETTINGS;
     const next = {
       ...current,
       computerHistory: {

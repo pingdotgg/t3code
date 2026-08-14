@@ -16,15 +16,21 @@ import Foundation
 // later ones simply fall back to the accessibility path.
 
 let bridgeSocketPath: String = {
+    let shortFallback = "/tmp/t3-desktop-mcp-bridge.sock"
     let preferred = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         ?? URL(fileURLWithPath: NSTemporaryDirectory())
     let dir = preferred.appendingPathComponent("t3-desktop-mcp", isDirectory: true)
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    do {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    } catch {
+        // Unusable Application Support — bind under /tmp so the Chrome bridge still works.
+        return shortFallback
+    }
     let candidate = dir.appendingPathComponent("bridge.sock").path
     // sockaddr_un.sun_path is ~104 bytes; fall back to a short /tmp path when Application
     // Support is nested too deep for bind()/connect() to succeed.
     if candidate.utf8.count > 100 {
-        return "/tmp/t3-desktop-mcp-bridge.sock"
+        return shortFallback
     }
     return candidate
 }()

@@ -1700,10 +1700,25 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           );
         }
         if (desktopMcp) {
-          // Quote like the bearer_token override so paths with spaces survive `-c`.
-          appServerArgs.push("-c", `mcp_servers.t3-desktop.command="${desktopMcp.path}"`);
+          // Prefer TOML literal strings so Windows paths keep backslashes;
+          // fall back to escaped basic strings when a value contains `'`.
+          const quoteToml = (value: string): string => {
+            if (!value.includes("'") && !value.includes("\n") && !value.includes("\r")) {
+              return `'${value}'`;
+            }
+            return `"${value
+              .replace(/\\/g, "\\\\")
+              .replace(/"/g, '\\"')
+              .replace(/\n/g, "\\n")
+              .replace(/\r/g, "\\r")
+              .replace(/\t/g, "\\t")}"`;
+          };
+          appServerArgs.push("-c", `mcp_servers.t3-desktop.command=${quoteToml(desktopMcp.path)}`);
           for (const entry of desktopMcp.env) {
-            appServerArgs.push("-c", `mcp_servers.t3-desktop.env.${entry.name}="${entry.value}"`);
+            appServerArgs.push(
+              "-c",
+              `mcp_servers.t3-desktop.env.${entry.name}=${quoteToml(entry.value)}`,
+            );
           }
         }
         const runtimeInput: CodexSessionRuntimeOptions = {
