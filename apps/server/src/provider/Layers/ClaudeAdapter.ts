@@ -575,46 +575,6 @@ function compactBoundaryTokenUsageSnapshot(
   });
 }
 
-function normalizeClaudeTaskProgressTokenUsage(
-  value: unknown,
-  context: ClaudeSessionContext,
-): ThreadTokenUsageSnapshot | undefined {
-  const totalTokens = claudeTotalProcessedTokens(value);
-  if (totalTokens === undefined || totalTokens <= 0) {
-    return undefined;
-  }
-
-  const lastUsedTokens = context.lastKnownTokenUsage?.usedTokens;
-  const activeTokens =
-    lastUsedTokens !== undefined ? Math.max(totalTokens, lastUsedTokens) : totalTokens;
-  if (lastUsedTokens !== undefined && activeTokens === lastUsedTokens) {
-    return undefined;
-  }
-
-  const usage = value as Record<string, unknown>;
-  const snapshot = makeClaudeTokenUsageSnapshot({
-    activeTokens,
-    ...(context.lastKnownContextWindow !== undefined
-      ? { contextWindow: context.lastKnownContextWindow }
-      : {}),
-    totalProcessedTokens: Math.max(
-      totalTokens,
-      context.lastKnownTotalProcessedTokens ?? totalTokens,
-    ),
-  });
-  if (!snapshot) {
-    return undefined;
-  }
-
-  const toolUses = finiteNonNegativeInteger(usage.tool_uses);
-  const durationMs = finiteNonNegativeInteger(usage.duration_ms);
-  return {
-    ...snapshot,
-    ...(toolUses !== undefined ? { toolUses } : {}),
-    ...(durationMs !== undefined ? { durationMs } : {}),
-  };
-}
-
 function asCanonicalTurnId(value: TurnId): TurnId {
   return value;
 }
@@ -2200,13 +2160,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       resultUsageRecord !== undefined &&
       !resultHasActiveUsage &&
       claudeTotalProcessedTokens(resultUsageRecord) !== undefined;
-    const resultIterationSnapshot = resultUsageRecord
-      ? normalizeClaudeActiveTokenUsage(
-          resultUsageRecord,
-          maxTokens,
-          accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
-        )
-      : undefined;
+    // `total_tokens` alone is cumulative processed work, not the active
+    // parent context. Only input/output or an iteration can measure usage.
+    const resultIterationSnapshot =
+      resultHasActiveUsage && resultUsageRecord
+        ? normalizeClaudeActiveTokenUsage(
+            resultUsageRecord,
+            maxTokens,
+            accumulatedTotalProcessedTokens ?? context.lastKnownTotalProcessedTokens,
+          )
+        : undefined;
     const lastGoodUsage = context.lastKnownTokenUsage;
     const usageSnapshot: ThreadTokenUsageSnapshot | undefined =
       contextUsageSnapshot ??
@@ -3207,15 +3170,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       }
       case "task_progress": {
-        yield* emitThreadTokenUsage(
-          context,
-          normalizeClaudeTaskProgressTokenUsage(message.usage, context),
-          {
-            rawMethod: "claude/system/task_progress",
-            rawPayload: message,
-          },
-        );
         const linkage = taskLinkageFor(context.taskAgents, message.task_id);
+        // Task usage includes child agents and whole workflows. Keep it on
+        // the task row; promoting it to the parent context makes the meter
+        // appear full as soon as cumulative child work exceeds the window.
         const typedUsage = normalizeTaskUsage(message.usage);
         // Phases ride on the coordinator's ONE progress row per tick. A
         // separate phases-only row shared the stable ingestion activity id
@@ -3274,14 +3232,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       case "task_notification": {
         context.liveTaskIds.delete(message.task_id);
-        yield* emitThreadTokenUsage(
-          context,
-          normalizeClaudeTaskProgressTokenUsage(message.usage, context),
-          {
-            rawMethod: "claude/system/task_notification",
-            rawPayload: message,
-          },
-        );
+        // Terminal task usage is still child-task usage, not parent context.
         const typedUsage = normalizeTaskUsage(message.usage);
         yield* offerRuntimeEvent({
           ...base,
