@@ -7,6 +7,7 @@
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Notifications](./user/notifications.md)
 - [Organizing threads](./user/thread-sidebar.md)
+- [Automatic continuation after usage limits](./user/automatic-usage-limit-resume.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
 - [Remote access](./user/remote-access.md)

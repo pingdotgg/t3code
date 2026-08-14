@@ -94,6 +94,7 @@ export function applyThreadDetailEvent(
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          usageLimitWait: null,
           deletedAt: null,
           messages: [],
           proposedPlans: [],
@@ -241,6 +242,31 @@ export function applyThreadDetailEvent(
           updatedAt: event.payload.updatedAt,
         },
       };
+
+    case "thread.usage-limit-wait-scheduled":
+      return event.payload.threadId === thread.id
+        ? {
+            kind: "updated",
+            thread: {
+              ...thread,
+              usageLimitWait: event.payload.wait,
+              updatedAt: event.payload.updatedAt,
+            },
+          }
+        : { kind: "unchanged" };
+
+    case "thread.usage-limit-wait-cleared":
+      return event.payload.threadId === thread.id &&
+        thread.usageLimitWait?.waitId === event.payload.waitId
+        ? {
+            kind: "updated",
+            thread: {
+              ...thread,
+              usageLimitWait: null,
+              updatedAt: event.payload.updatedAt,
+            },
+          }
+        : { kind: "unchanged" };
 
     // ── Turn lifecycle ──────────────────────────────────────────────
     case "thread.turn-start-requested":

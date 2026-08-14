@@ -1106,6 +1106,7 @@ const make = Effect.gen(function* () {
     }
 
     const isFirstUserMessageTurn =
+      event.payload.origin !== "usage-limit-auto-resume" &&
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
       const project = yield* resolveProject(thread.projectId);
@@ -1174,8 +1175,10 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      messageText: event.payload.promptOverride ?? message.text,
+      ...(event.payload.promptOverride === undefined && message.attachments !== undefined
+        ? { attachments: message.attachments }
+        : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
         : {}),

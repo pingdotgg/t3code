@@ -26,8 +26,9 @@ import {
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -204,6 +205,54 @@ function toTurnStatus(
     default:
       return "completed";
   }
+}
+
+type CodexRateLimitSnapshot =
+  EffectCodexSchema.V2AccountRateLimitsUpdatedNotification["rateLimits"];
+
+const USAGE_LIMIT_RESET_FALLBACK_MS = 5 * 60 * 1_000;
+
+function normalizeEpochMilliseconds(value: number | null | undefined): number | undefined {
+  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return value < 10_000_000_000 ? value * 1_000 : value;
+}
+
+function codexUsageLimit(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  createdAt: string,
+): NonNullable<Extract<ProviderRuntimeEvent, { type: "turn.completed" }>["payload"]["usageLimit"]> {
+  const createdAtMs = Date.parse(createdAt);
+  const fallbackBase = Number.isFinite(createdAtMs) ? createdAtMs : 0;
+  const windows = [snapshot?.primary, snapshot?.secondary].filter(
+    (window): window is NonNullable<CodexRateLimitSnapshot["primary"]> => window != null,
+  );
+  const exhaustedWindows = windows.filter((window) => window.usedPercent >= 100);
+  const highestUsedPercent = windows.reduce(
+    (highest, window) => Math.max(highest, window.usedPercent),
+    Number.NEGATIVE_INFINITY,
+  );
+  const candidateWindows =
+    exhaustedWindows.length > 0
+      ? exhaustedWindows
+      : windows.filter(
+          (window) => window.usedPercent >= 95 && window.usedPercent === highestUsedPercent,
+        );
+  const resetAtMs = candidateWindows
+    .map((window) => normalizeEpochMilliseconds(window.resetsAt))
+    .filter((value): value is number => value !== undefined && value > fallbackBase)
+    .reduce<number | undefined>(
+      (latest, value) => (latest === undefined || value > latest ? value : latest),
+      undefined,
+    );
+  return {
+    resetsAt: DateTime.formatIso(
+      DateTime.makeUnsafe(resetAtMs ?? fallbackBase + USAGE_LIMIT_RESET_FALLBACK_MS),
+    ),
+    ...(trimText(snapshot?.limitName) ? { limitType: trimText(snapshot?.limitName)! } : {}),
+    isEstimated: resetAtMs === undefined,
+  };
 }
 
 function normalizeItemType(raw: string | undefined | null): string {
@@ -445,6 +494,7 @@ function runtimeEventBase(
     eventId: event.id,
     provider: event.provider,
     threadId: canonicalThreadId,
+    ...(event.providerInstanceId ? { providerInstanceId: event.providerInstanceId } : {}),
     createdAt: event.createdAt,
     ...(event.turnId ? { turnId: event.turnId } : {}),
     ...(event.itemId ? { itemId: asRuntimeItemId(event.itemId) } : {}),
@@ -762,6 +812,7 @@ function mapCollabAgentEvent(
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  latestRateLimits?: CodexRateLimitSnapshot,
 ): ReadonlyArray<ProviderRuntimeEvent> {
   if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
     return mapCollabAgentEvent(event, canonicalThreadId);
@@ -1041,6 +1092,15 @@ function mapToRuntimeEvents(
       return [];
     }
     const errorMessage = trimText(payload.turn.error?.message);
+    const reachedSubscriptionLimit =
+      latestRateLimits?.rateLimitReachedType == null ||
+      latestRateLimits.rateLimitReachedType === "rate_limit_reached";
+    const usageLimit =
+      payload.turn.error?.codexErrorInfo === "usageLimitExceeded" &&
+      reachedSubscriptionLimit &&
+      latestRateLimits?.spendControlReached !== true
+        ? codexUsageLimit(latestRateLimits, event.createdAt)
+        : undefined;
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
@@ -1048,6 +1108,7 @@ function mapToRuntimeEvents(
         payload: {
           state: toTurnStatus(payload.turn.status),
           ...(errorMessage ? { errorMessage } : {}),
+          ...(usageLimit ? { usageLimit } : {}),
         },
       },
     ];
@@ -1715,10 +1776,20 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
+        let latestRateLimits: CodexRateLimitSnapshot | undefined;
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            if (event.method === "account/rateLimits/updated") {
+              const update = readPayload(
+                EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+                event.payload,
+              );
+              if (update) {
+                latestRateLimits = { ...latestRateLimits, ...update.rateLimits };
+              }
+            }
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId, latestRateLimits);
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

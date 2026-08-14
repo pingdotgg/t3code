@@ -364,6 +364,97 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("persists a usage-limit wait with provider reset grace", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-usage-limit-started"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-usage-limit"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-usage-limit",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-usage-limit-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-usage-limit"),
+      payload: {
+        state: "failed",
+        errorMessage: "Usage limit reached",
+        usageLimit: {
+          resetsAt: "2026-01-01T05:00:00.000Z",
+          limitType: "five-hour",
+          isEstimated: false,
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.usageLimitWait?.blockedTurnId === "turn-usage-limit",
+    );
+    expect(thread.usageLimitWait).toMatchObject({
+      waitId: "provider:evt-usage-limit-completed:usage-limit-wait",
+      provider: "codex",
+      providerInstanceId: "codex",
+      resumeAt: "2026-01-01T05:00:30.000Z",
+      limitType: "five-hour",
+      isEstimated: false,
+    });
+  });
+
+  it("does not schedule usage-limit continuation when the setting is disabled", async () => {
+    const harness = await createHarness({
+      serverSettings: { autoContinueAfterUsageLimitReset: false },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-disabled-usage-limit-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-disabled-usage-limit"),
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-disabled-usage-limit",
+    );
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-disabled-usage-limit-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-disabled-usage-limit"),
+      payload: {
+        state: "failed",
+        errorMessage: "Usage limit reached",
+        usageLimit: {
+          resetsAt: "2026-01-01T05:00:00.000Z",
+          isEstimated: false,
+        },
+      },
+    });
+
+    await harness.drain();
+    const snapshot = await harness.readModel();
+    expect(snapshot.threads[0]?.usageLimitWait ?? null).toBeNull();
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = "2026-01-01T00:00:00.000Z";
