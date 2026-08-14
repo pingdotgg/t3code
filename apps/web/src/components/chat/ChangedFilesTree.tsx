@@ -150,14 +150,13 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           onOpenTurnDiff={onOpenTurnDiff}
         />
       ) : compactPreviewVisible ? (
-        <div className="px-1.5 pb-1 pt-0.5" data-changed-file-preview="">
+        <div className="px-1.5 pb-1 pt-0.5">
           <div className="flex min-w-0 items-center gap-x-3 overflow-hidden">
             {previewFiles.map((file) => (
               <button
                 key={file.path}
                 type="button"
                 title={file.path}
-                data-changed-file-preview-item=""
                 className="group flex min-h-6 min-w-0 max-w-72 shrink items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-accent/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => onOpenTurnDiff(turnId, file.path)}
               >

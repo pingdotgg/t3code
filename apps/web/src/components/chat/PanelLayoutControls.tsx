@@ -2,7 +2,6 @@ import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "l
 import { memo } from "react";
 
 import { cn } from "../../lib/utils";
-import { ButtonGroup } from "../ui/group";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -35,8 +34,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
   return (
-    <ButtonGroup
-      className="h-full shrink-0 items-center [-webkit-app-region:no-drag]"
+    <div
+      className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
       {showTerminalControl ? (
@@ -106,7 +105,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             : rightPanelUnavailableLabel}
         </TooltipPopup>
       </Tooltip>
-    </ButtonGroup>
+    </div>
   );
 });
 

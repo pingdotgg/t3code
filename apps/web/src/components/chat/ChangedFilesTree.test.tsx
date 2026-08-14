@@ -71,8 +71,6 @@ describe("ChangedFilesCard", () => {
     expect(markup).toContain("App.tsx");
     expect(markup).toContain("git.ts");
     expect(markup).toContain("README.md");
-    expect(markup).toContain('data-changed-file-preview=""');
-    expect(markup).toContain('data-changed-file-preview-item=""');
     expect(markup).not.toContain("basis-0");
     expect(markup).not.toContain("+1 more");
     expect(markup).not.toContain("Show files");

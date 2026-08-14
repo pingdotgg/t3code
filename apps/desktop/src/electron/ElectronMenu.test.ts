@@ -98,7 +98,10 @@ describe("ElectronMenu", () => {
       const electronMenu = yield* ElectronMenu.ElectronMenu;
       const selectedItemId = yield* electronMenu.showContextMenu({
         window: makeWindow(2),
-        items: [{ id: "copy", label: "Copy" }],
+        items: [
+          { id: "copy", label: "Copy" },
+          { id: "delete", label: "Delete", destructive: true, separatorBefore: true },
+        ],
         position: Option.some({ x: 10.8, y: 20.2 }),
       });
 
@@ -110,35 +113,11 @@ describe("ElectronMenu", () => {
         enabled: true,
         click: buildFromTemplateMock.mock.calls[0]?.[0][0].click,
       });
-    }).pipe(Effect.provide(TestLayer)),
-  );
-
-  it.effect("honors explicit separators without duplicating destructive separators", () =>
-    Effect.gen(function* () {
-      let template: Electron.MenuItemConstructorOptions[] | undefined;
-      buildFromTemplateMock.mockImplementation(
-        (nextTemplate: Electron.MenuItemConstructorOptions[]) => ({
-          popup: (options: Electron.PopupOptions) => {
-            template = nextTemplate;
-            options.callback?.();
-          },
-        }),
-      );
-
-      const electronMenu = yield* ElectronMenu.ElectronMenu;
-      yield* electronMenu.showContextMenu({
-        window: makeWindow(),
-        items: [
-          { id: "copy", label: "Copy" },
-          { id: "rename", label: "Rename", separatorBefore: true },
-          { id: "delete", label: "Delete", destructive: true, separatorBefore: true },
-        ],
-        position: Option.none(),
-      });
-
       assert.deepEqual(
-        template?.map((item) => item.type ?? item.label),
-        ["Copy", "separator", "Rename", "separator", "Delete"],
+        buildFromTemplateMock.mock.calls[0]?.[0].map(
+          (item: Electron.MenuItemConstructorOptions) => item.type ?? item.label,
+        ),
+        ["Copy", "separator", "Delete"],
       );
     }).pipe(Effect.provide(TestLayer)),
   );

@@ -2335,10 +2335,7 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
       : "Completed";
 
   return (
-    <div
-      className="-mx-1 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32"
-      data-agent-spawn-state={live ? "live" : failed > 0 ? "failed" : "completed"}
-    >
+    <div className="-mx-1 rounded-2xl border border-border/70 bg-secondary p-2 dark:border-transparent dark:bg-input/32">
       <div className="flex items-center justify-between gap-2 rounded-xl px-1">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1 py-1.5 text-left text-xs leading-4">
           <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />

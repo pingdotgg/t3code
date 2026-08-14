@@ -118,7 +118,7 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
 
 function createIconElement(name: string, tone: "neutral" | "destructive"): SVGSVGElement | null {
   const paths = ICON_PATHS[name];
-  if (!paths) {
+  if (!paths || typeof document.createElementNS !== "function") {
     return null;
   }
   const svg = document.createElementNS(SVG_NS, "svg");

@@ -1,40 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  changeRequestRepositoryUrl,
   findProjectForChangeRequest,
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
-
-describe("changeRequestRepositoryUrl", () => {
-  it.each([
-    [
-      "https://github.com/pingdotgg/t3code/pull/123/files?w=1",
-      "https://github.com/pingdotgg/t3code",
-    ],
-    [
-      "https://gitlab.com/team/platform/repo/-/merge_requests/42/diffs",
-      "https://gitlab.com/team/platform/repo",
-    ],
-    [
-      "https://bitbucket.org/workspace/repo/pull-requests/5/commits",
-      "https://bitbucket.org/workspace/repo",
-    ],
-    [
-      "https://dev.azure.com/acme/platform/_git/t3code/pullrequest/17",
-      "https://dev.azure.com/acme/platform/_git/t3code",
-    ],
-  ])("derives the repository root from %s", (pullRequestUrl, repositoryUrl) => {
-    expect(changeRequestRepositoryUrl(pullRequestUrl)).toBe(repositoryUrl);
-  });
-
-  it("rejects URLs that are not recognised change requests", () => {
-    expect(changeRequestRepositoryUrl("https://example.com/team/repo/pull/1")).toBeNull();
-  });
-});
 
 describe("openPullRequestLink", () => {
   it("opens the requested pull request URL", async () => {

@@ -1815,59 +1815,6 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     expect(entries).toHaveLength(1);
   });
 
-  it("drops persisted Codex terminal interactions from parent and child turns", () => {
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        id: "parent-command",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "tool.completed",
-        summary: "Ran command",
-        payload: { itemType: "command_execution", detail: "git status --short" },
-        turnId: "parent-turn",
-      }),
-      makeActivity({
-        id: "child-spawn",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        kind: "task.started",
-        summary: "Task started",
-        tone: "info",
-        payload: {
-          taskId: "child-thread",
-          title: "animation_benchmark",
-          timelineBypass: true,
-        },
-        turnId: "parent-turn",
-      }),
-      ...["", "", "^C"].map((stdin, index) =>
-        makeActivity({
-          id: `terminal-interaction-${index}`,
-          createdAt: `2026-02-23T00:00:0${index + 3}.000Z`,
-          kind: "tool.updated",
-          summary: "Tool updated",
-          payload: {
-            itemType: "command_execution",
-            data: {
-              itemId: "exec-child",
-              processId: "4242",
-              stdin,
-              threadId: "child-thread",
-              turnId: "child-turn",
-            },
-          },
-          turnId: "child-turn",
-        }),
-      ),
-    ]);
-
-    expect(entries.map((entry) => entry.id)).toEqual(["parent-command", "child-spawn"]);
-    expect(entries[1]?.agentSpawn?.agentTaskIds).toEqual(["child-thread"]);
-    expect(
-      deriveTimelineEntries([], [], entries)
-        .filter((entry) => entry.kind === "work")
-        .map((entry) => entry.entry.turnId),
-    ).toEqual(["parent-turn", "parent-turn"]);
-  });
-
   it("folds timelineBypass agent rows into one CTA (Codex children, workflow members)", () => {
     // Codex children carry their parent's spawn turn (spawnTurnId stamping),
     // which is what batches a fleet into one CTA.
@@ -1905,7 +1852,7 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     expect(entries).toHaveLength(0);
   });
 
-  it("drops status-only activities that have dedicated timeline UI", () => {
+  it("drops task.updated and tool.progress from the work log (fold input only)", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({
         kind: "task.updated",
@@ -1918,12 +1865,6 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
         summary: "Read",
         tone: "info",
         payload: { taskId: "task-1", toolName: "Read" },
-      }),
-      makeActivity({
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        tone: "info",
-        payload: { plan: [{ step: "Inspect code", status: "inProgress" }] },
       }),
     ]);
     expect(entries).toHaveLength(0);

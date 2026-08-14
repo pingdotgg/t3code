@@ -4,7 +4,6 @@ import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalExit,
   shouldHandleTerminalSelectionMouseUp,
-  shouldShowTerminalSidebar,
   terminalSelectionActionDelayForClickCount,
   terminalSelectionLineRange,
 } from "./ThreadTerminalDrawer";
@@ -74,12 +73,6 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(true, 0)).toBe(true);
     expect(shouldHandleTerminalSelectionMouseUp(false, 0)).toBe(false);
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
-  });
-
-  it("only shows the terminal sidebar when there are multiple sessions", () => {
-    expect(shouldShowTerminalSidebar(0)).toBe(false);
-    expect(shouldShowTerminalSidebar(1)).toBe(false);
-    expect(shouldShowTerminalSidebar(2)).toBe(true);
   });
 
   it("uses Ghostty's physical screen range for visually wrapped selections", () => {

@@ -68,7 +68,6 @@ export function PullRequestDetailGhost() {
       role="status"
       aria-label="Loading pull request"
       className="animate-ghost-pulse flex h-full min-h-0 flex-col overflow-hidden bg-background"
-      data-pull-request-detail-ghost=""
     >
       <div className="shrink-0 border-b border-border/60">
         <div className="flex h-7 items-center justify-between gap-3 px-4">
@@ -110,7 +109,7 @@ export function PullRequestDetailGhost() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <section className="px-4 py-3" data-pull-request-detail-ghost-meta="">
+        <section className="px-4 py-3">
           <div className="grid min-h-8 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2">
             <div className="flex items-center gap-1.5">
               <GhostBar className="size-3.5 rounded-full" />
