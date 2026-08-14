@@ -94,6 +94,12 @@ describe("buildCopilotAcpSpawnInput", () => {
         "NEVER run `git worktree add` or `git worktree move`",
       );
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`git worktree remove` is allowed");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`t3-code`");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`t3-tools`");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`preview_open`");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`preview_snapshot`");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("Restart the chat/session");
+      expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`www-authenticate: Bearer`");
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`create_isolated_workspace`");
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain("`switch_workspace`");
       expect(COPILOT_WORKSPACE_INSTRUCTIONS).toContain(
@@ -154,6 +160,43 @@ describe("buildCopilotAcpSpawnInput", () => {
           headers: [{ name: "Authorization", value: "Bearer secret" }],
         },
       ]);
+    });
+
+    it("keeps legacy t3-tools preview stubs out of the default Copilot MCP toolsets", () => {
+      expect(
+        buildCopilotMcpServerOptions(
+          "/tmp/project",
+          "thread-1",
+          ProviderInstanceId.make("copilot-team"),
+          "/tmp/t3-dev",
+          "approval-required",
+          {
+            T3_COPILOT_ACP_ENABLE_MCP: "1",
+          },
+          {
+            execPath: "/usr/bin/node",
+            entryPath: "/app/bin.mjs",
+          },
+        ).toolsets,
+      ).toEqual(
+        new Set([
+          "terminal",
+          "read_file",
+          "write_file",
+          "search_files",
+          "skill_view",
+          "skills_list",
+          "skill_manage",
+          "web_search",
+          "web_extract",
+          "memory",
+          "create_isolated_workspace",
+          "switch_workspace",
+          "associate_pull_request",
+          "create_nested_thread",
+          "send_to_thread",
+        ]),
+      );
     });
 
     it("builds env-gated T3 MCP HTTP server options", () => {
