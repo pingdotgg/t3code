@@ -84,6 +84,51 @@ describe("runtimeEventToActivities task progress", () => {
 });
 
 describe("mergeBackgroundIngestion", () => {
+  it("preserves usage when a later task progress tick only updates activity", () => {
+    const taskId = RuntimeTaskId.make("agent-partial-progress");
+    const usageUpdate = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.progress",
+        eventId: EventId.make("evt-task-usage"),
+        payload: {
+          taskId,
+          description: "Agent partial progress",
+          typedUsage: { totalTokens: 4_200 },
+        },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+    const activityUpdate = {
+      source: "runtime",
+      event: {
+        ...base,
+        type: "task.progress",
+        eventId: EventId.make("evt-task-activity"),
+        payload: {
+          taskId,
+          description: "Agent partial progress",
+          summary: "Running tests",
+          lastToolName: "exec_command",
+        },
+      } satisfies ProviderRuntimeEvent,
+    } as const;
+
+    const merged = mergeBackgroundIngestion([usageUpdate], [activityUpdate]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.event.type).toBe("task.progress");
+    if (merged[0]?.event.type === "task.progress") {
+      expect(merged[0].event.payload).toEqual({
+        taskId,
+        description: "Agent partial progress",
+        typedUsage: { totalTokens: 4_200 },
+        summary: "Running tests",
+        lastToolName: "exec_command",
+      });
+    }
+  });
+
   it("preserves fields from partial task status patches", () => {
     const taskId = RuntimeTaskId.make("agent-partial-update");
     const statusUpdate = {

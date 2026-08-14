@@ -148,6 +148,23 @@ export function mergeBackgroundIngestion(
   for (const input of combined) {
     const previous = latestByType.get(input.event.type);
     if (
+      input.event.type === "task.progress" &&
+      previous?.source === "runtime" &&
+      previous.event.type === "task.progress"
+    ) {
+      latestByType.set(input.event.type, {
+        ...input,
+        event: {
+          ...input.event,
+          payload: {
+            ...previous.event.payload,
+            ...input.event.payload,
+          },
+        },
+      });
+      continue;
+    }
+    if (
       input.event.type === "task.updated" &&
       previous?.source === "runtime" &&
       previous.event.type === "task.updated"
