@@ -105,7 +105,6 @@ export interface ThreadComposerProps {
   readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
-  readonly activeThreadBusy: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
@@ -327,9 +326,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.selectedThread.session?.status === "starting";
 
   const sendLabel =
-    props.connectionState !== "connected" || props.activeThreadBusy || props.queueCount > 0
-      ? "Queue"
-      : "Send";
+    props.connectionState !== "connected" || props.queueCount > 0 ? "Queue" : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const connectionStatus = composerConnectionStatus({
