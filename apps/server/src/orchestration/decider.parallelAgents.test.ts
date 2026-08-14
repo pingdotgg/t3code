@@ -540,6 +540,69 @@ it.layer(NodeServices.layer)("parallel agent decider", (it) => {
       }),
   );
 
+  it.effect(
+    "also corrects a never-started spawn on an interrupted settle, but not a completed one",
+    () =>
+      Effect.gen(function* () {
+        // The child was stopped/interrupted before its session ever reached
+        // "running" (e.g. the user hit Stop right after spawning).
+        const neverStartedChild = makeThread({
+          id: CHILD_THREAD_ID,
+          title: "Fix the flaky tests",
+          parentThreadId: PARENT_THREAD_ID,
+          latestTurn: null,
+          messages: [],
+        });
+        const interruptedDecision = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-session-set-never-started-interrupted"),
+            threadId: CHILD_THREAD_ID,
+            session: makeChildSession("stopped"),
+            createdAt: NOW,
+          },
+          readModel: makeReadModel([makeThread(), neverStartedChild]),
+        });
+        const interruptedEvents = Array.isArray(interruptedDecision)
+          ? interruptedDecision
+          : [interruptedDecision];
+        expect(interruptedEvents.map((event) => event.type)).toEqual([
+          "thread.activity-appended",
+          "thread.session-set",
+        ]);
+        const [interruptedActivityEvent] = interruptedEvents;
+        if (interruptedActivityEvent?.type !== "thread.activity-appended") {
+          throw new Error("expected a failed-to-start activity");
+        }
+        expect(interruptedActivityEvent.payload.activity.id).toBe(
+          `parallel-agent:started:${CHILD_THREAD_ID}`,
+        );
+        // Correcting a never-started spawn follows the same outcome mapping
+        // as any other settle: "interrupted" state, not "failed".
+        expect(interruptedActivityEvent.payload.activity.kind).toBe("parallel-agent.interrupted");
+        expect(interruptedActivityEvent.payload.activity.payload).toMatchObject({
+          state: "interrupted",
+        });
+
+        // A "completed" settle (idle/ready) with no turn and no messages is
+        // not a real outcome to report — left alone defensively.
+        const completedDecision = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-session-set-never-started-completed"),
+            threadId: CHILD_THREAD_ID,
+            session: makeChildSession("idle"),
+            createdAt: NOW,
+          },
+          readModel: makeReadModel([makeThread(), neverStartedChild]),
+        });
+        const completedEvents = Array.isArray(completedDecision)
+          ? completedDecision
+          : [completedDecision];
+        expect(completedEvents.map((event) => event.type)).toEqual(["thread.session-set"]);
+      }),
+  );
+
   it.effect("truncates the result preview without splitting a surrogate pair", () =>
     Effect.gen(function* () {
       const settlingChild = makeThread({

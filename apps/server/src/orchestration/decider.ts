@@ -181,9 +181,38 @@ const PARALLEL_AGENT_RESULT_PREVIEW_MAX_CHARS = 4_000;
 
 // The parent's spawn activity and a no-turn spawn failure share this id so a
 // bootstrap failure (ws.ts) or an immediate provider-connect failure (below)
-// correct the same row in place instead of leaving it orphaned.
-function parallelAgentSpawnActivityId(childThreadId: string): string {
+// correct the same row in place instead of leaving it orphaned. Exported so
+// ws.ts's bootstrap-failure correction builds the identical id and payload
+// shape instead of hand-duplicating it.
+export function parallelAgentSpawnActivityId(childThreadId: string): string {
   return `parallel-agent:started:${childThreadId}`;
+}
+
+/**
+ * The `parallel-agent.failed` activity payload for a spawn ws.ts's bootstrap
+ * gave up on before a session ever existed (worktree/setup/turn-start
+ * failure or interrupt) — always "error", since there is no session status
+ * to distinguish an outright failure from an interruption at that point.
+ * Kept in the shape `buildParallelAgentActivityEvent` below produces for the
+ * equivalent decider-side no-turn correction, so a consumer reading
+ * `payload.state`/`payload.turnId` sees the same fields regardless of which
+ * of the two sources corrected the activity.
+ */
+export function parallelAgentSpawnFailedActivityPayload(input: {
+  readonly childThreadId: string;
+  readonly childTitle: string;
+}): {
+  readonly childThreadId: string;
+  readonly childTitle: string;
+  readonly turnId: null;
+  readonly state: "error";
+} {
+  return {
+    childThreadId: input.childThreadId,
+    childTitle: input.childTitle,
+    turnId: null,
+    state: "error",
+  };
 }
 
 function parallelAgentFinishedActivityId(childThreadId: string, turnId: string): string {
@@ -335,8 +364,14 @@ function parallelAgentFinishedActivityEvent(input: {
     const finishedTurn = thread.latestTurn;
     if (finishedTurn === null) {
       // No turn ever reached "running": only a spawn that never got going at
-      // all is worth correcting the "started" row for.
-      if (settledState !== "error" || thread.messages.length > 0) {
+      // all is worth correcting the "started" row for. Covers both an
+      // outright provider error and a stop/interrupt landing before the
+      // session ever ran (settledState "interrupted"); a "completed" settle
+      // with no turn and no messages should not occur, so it's left alone.
+      if (
+        thread.messages.length > 0 ||
+        (settledState !== "error" && settledState !== "interrupted")
+      ) {
         return null;
       }
       return yield* buildParallelAgentActivityEvent({

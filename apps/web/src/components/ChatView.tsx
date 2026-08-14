@@ -4874,13 +4874,25 @@ function ChatViewContent(props: ChatViewProps) {
   const spawnParallelAgent = async (subtaskPrompt: string): Promise<boolean> => {
     if (
       !activeThread ||
-      !activeProject ||
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     ) {
+      return false;
+    }
+    // Matches onSend's "Choose a project first" guard: silently no-op-ing
+    // here left /parallel with no feedback at all when the draft's project
+    // had gone missing.
+    if (!activeProject) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Choose a project first",
+          description: "This draft no longer points to an available project.",
+        }),
+      );
       return false;
     }
     const sendCtx = composerRef.current?.getSendContext();

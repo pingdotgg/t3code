@@ -70,6 +70,10 @@ import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
+import {
+  parallelAgentSpawnActivityId,
+  parallelAgentSpawnFailedActivityPayload,
+} from "./orchestration/decider.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -785,14 +789,14 @@ const makeWsRpcLayer = (
                   commandId,
                   threadId: parentThreadId,
                   activity: {
-                    id: EventId.make(`parallel-agent:started:${command.threadId}`),
+                    id: EventId.make(parallelAgentSpawnActivityId(command.threadId)),
                     tone: "error",
                     kind: "parallel-agent.failed",
                     summary: `Parallel agent failed to start: ${childTitle}`,
-                    payload: {
+                    payload: parallelAgentSpawnFailedActivityPayload({
                       childThreadId: command.threadId,
                       childTitle,
-                    },
+                    }),
                     turnId: null,
                     createdAt: failedAt,
                   },
@@ -1002,7 +1006,16 @@ const makeWsRpcLayer = (
             Effect.catchCause((cause) => {
               const dispatchError = toBootstrapDispatchCommandCauseError(cause);
               if (Cause.hasInterruptsOnly(cause)) {
-                return Effect.fail(dispatchError);
+                // A pure interrupt (stop, disconnect, shutdown) leaves the
+                // created child thread in place rather than deleting it —
+                // unlike a genuine failure — but the parent's "started"
+                // activity is still stuck and worth correcting. Uninterruptible
+                // so this small dispatch survives the fiber unwind it's
+                // running inside.
+                const notifyParent = createdThread
+                  ? Effect.uninterruptible(recordParallelAgentSpawnFailure())
+                  : Effect.void;
+                return notifyParent.pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
               }
               return cleanupCreatedThread().pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
             }),
