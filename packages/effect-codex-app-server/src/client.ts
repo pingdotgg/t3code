@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FiberRef from "effect/FiberRef";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -17,6 +18,15 @@ import {
   runHandler,
 } from "./_internal/shared.ts";
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
+
+/**
+ * JSON-RPC id of the Codex server request currently being handled on this
+ * fiber. Handlers that need a stable correlation key (for example concurrent
+ * MCP elicitations that share a `serverName`) should read this instead of a
+ * non-unique payload field.
+ */
+export const CurrentServerRequestId: FiberRef.FiberRef<string | number | undefined> =
+  FiberRef.unsafeMake(undefined);
 
 export interface CodexAppServerClientOptions {
   readonly logIncoming?: boolean;
@@ -173,9 +183,14 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
       const responseSchema = getServerRequestResponseSchema(method);
       const handler = requestHandlers.get(method);
 
-      return decodeOptionalPayload(method, payloadSchema, request.params).pipe(
-        Effect.flatMap((decoded) => runHandler(handler, decoded, method)),
-        Effect.flatMap((result) => encodeOptionalPayload(method, responseSchema, result)),
+      return FiberRef.locally(
+        CurrentServerRequestId,
+        request.id,
+      )(
+        decodeOptionalPayload(method, payloadSchema, request.params).pipe(
+          Effect.flatMap((decoded) => runHandler(handler, decoded, method)),
+          Effect.flatMap((result) => encodeOptionalPayload(method, responseSchema, result)),
+        ),
       );
     }
 
