@@ -824,6 +824,8 @@ export const ThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
+    // Filled by normalizeDispatchCommand. Absent from ClientThreadTurnStartCommand
+    // so a client payload cannot supply a filesystem path.
     resolvedSkills: Schema.optional(Schema.Array(ResolvedSkillReference)),
   }),
   modelSelection: Schema.optional(ModelSelection),

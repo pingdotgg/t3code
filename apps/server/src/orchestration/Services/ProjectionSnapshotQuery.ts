@@ -160,9 +160,14 @@ export interface ProjectionSnapshotQueryShape {
 
   /**
    * Read a single active thread shell row by id.
+   *
+   * Pass `{ includeArchived: true }` for a non-deleted archived thread. Live
+   * shell streams must keep the default so archived threads stay out of
+   * navigation state.
    */
   readonly getThreadShellById: (
     threadId: ThreadId,
+    options?: { readonly includeArchived?: boolean },
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
   /** Read one projected message without hydrating the rest of its thread. */

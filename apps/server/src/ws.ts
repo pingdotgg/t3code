@@ -444,6 +444,26 @@ const makeWsRpcLayer = (
           ...(message.value.resolvedSkills ? { resolvedSkills: message.value.resolvedSkills } : {}),
         };
       });
+      const resolveLegacyInvokedSkill = Effect.fn("WsRpc.resolveLegacyInvokedSkill")(
+        function* (input: {
+          readonly threadId: ThreadId;
+          readonly skillName: string;
+          readonly text: string;
+        }) {
+          if (!collectSubmittedSkillNames(input.text).includes(input.skillName)) {
+            return undefined as { readonly name: string; readonly path: string } | undefined;
+          }
+          const thread = yield* projectionSnapshotQuery.getThreadShellById(input.threadId, {
+            includeArchived: true,
+          });
+          if (Option.isNone(thread)) {
+            return undefined;
+          }
+          return (yield* providerRegistry.getProviders)
+            .find((provider) => provider.instanceId === thread.value.modelSelection.instanceId)
+            ?.skills.find((skill) => skill.enabled && skill.name === input.skillName);
+        },
+      );
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1872,30 +1892,23 @@ const makeWsRpcLayer = (
               const recorded = message.resolvedSkills?.find(
                 (candidate) => candidate.name === input.skillName,
               );
-              let legacy: { readonly name: string; readonly path: string } | undefined;
-              if (!recorded && collectSubmittedSkillNames(message.text).includes(input.skillName)) {
-                const thread = yield* projectionSnapshotQuery
-                  .getThreadShellById(input.threadId)
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new SkillReadFileError({
-                          skillName: input.skillName,
-                          relativePath: input.relativePath,
-                          failure: "operation_failed",
-                          cause,
-                        }),
-                    ),
-                  );
-                if (Option.isSome(thread)) {
-                  legacy = (yield* providerRegistry.getProviders)
-                    .find(
-                      (provider) => provider.instanceId === thread.value.modelSelection.instanceId,
-                    )
-                    ?.skills.find((skill) => skill.enabled && skill.name === input.skillName);
-                }
-              }
-              const skill = recorded ?? legacy;
+              const skill =
+                recorded ??
+                (yield* resolveLegacyInvokedSkill({
+                  threadId: input.threadId,
+                  skillName: input.skillName,
+                  text: message.text,
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new SkillReadFileError({
+                        skillName: input.skillName,
+                        relativePath: input.relativePath,
+                        failure: "operation_failed",
+                        cause,
+                      }),
+                  ),
+                ));
               if (!skill) {
                 return yield* new SkillReadFileError({
                   skillName: input.skillName,
@@ -1970,35 +1983,23 @@ const makeWsRpcLayer = (
                 const recordedSkill = message?.resolvedSkills?.find(
                   (candidate) => candidate.name === skillResource.skillName,
                 );
-                let legacySkill: { readonly name: string; readonly path: string } | undefined;
-                if (
-                  !recordedSkill &&
-                  message &&
-                  collectSubmittedSkillNames(message.text).includes(skillResource.skillName)
-                ) {
-                  const thread = yield* projectionSnapshotQuery
-                    .getThreadShellById(skillResource.threadId)
-                    .pipe(
-                      Effect.mapError(
-                        (cause) =>
-                          new AssetWorkspaceContextResolutionError({
-                            resource: skillResource,
-                            cause,
-                          }),
-                      ),
-                    );
-                  if (Option.isSome(thread)) {
-                    legacySkill = (yield* providerRegistry.getProviders)
-                      .find(
-                        (provider) =>
-                          provider.instanceId === thread.value.modelSelection.instanceId,
+                const skill =
+                  recordedSkill ??
+                  (message
+                    ? yield* resolveLegacyInvokedSkill({
+                        threadId: skillResource.threadId,
+                        skillName: skillResource.skillName,
+                        text: message.text,
+                      }).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new AssetWorkspaceContextResolutionError({
+                              resource: skillResource,
+                              cause,
+                            }),
+                        ),
                       )
-                      ?.skills.find(
-                        (skill) => skill.enabled && skill.name === skillResource.skillName,
-                      );
-                  }
-                }
-                const skill = recordedSkill ?? legacySkill;
+                    : undefined);
                 if (!skill) {
                   return yield* new AssetWorkspaceContextNotFoundError({
                     resource: skillResource,
