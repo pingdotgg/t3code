@@ -275,6 +275,13 @@ export function ComposerEditor({
           event.nativeEvent.selection,
         );
         if (acknowledgedEventCount === false) return;
+        // A selection change that raced a text mutation can carry post-edit
+        // text. It must reach the parent alongside the acknowledged revision,
+        // or the next render stamps the stale draft at that revision and can
+        // re-apply it over the newer native text.
+        if (event.nativeEvent.value !== props.value) {
+          onChangeText(event.nativeEvent.value);
+        }
         onSelectionChange?.(event.nativeEvent.selection);
         setMostRecentEventCount(acknowledgedEventCount);
         forceNativeEventRender((sequence) => sequence + 1);

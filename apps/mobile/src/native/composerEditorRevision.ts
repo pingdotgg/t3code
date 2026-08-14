@@ -48,8 +48,11 @@ export function resolveComposerControlledEventCount(
 
 // A snapshot without a selection describes a state the editor applied itself
 // (an assumed controlled document, where the native side may have bounded the
-// caret). It matches any controlled selection: such matches only ever produce
-// echoes, and echo payloads never control the caret.
+// caret). Revision stamping treats it as matching any controlled selection so
+// a parent caret move on the assumed value stays at the assumed revision and
+// passes the editor's staleness guard. Echo detection must not reuse this
+// wildcard: an echo payload serializes `selection: null`, which would drop
+// that caret move instead of applying it.
 function snapshotSelectionMatches(
   snapshot: ComposerNativeEventSnapshot,
   selection: ComposerEditorSelection,
@@ -70,7 +73,10 @@ export function isComposerNativeEcho(
       snapshot !== undefined &&
       snapshot.eventCount === eventCount &&
       snapshot.value === value &&
-      (selection === null || snapshotSelectionMatches(snapshot, selection))
+      (selection === null ||
+        (snapshot.selection !== null &&
+          snapshot.selection.start === selection.start &&
+          snapshot.selection.end === selection.end))
     ) {
       return true;
     }

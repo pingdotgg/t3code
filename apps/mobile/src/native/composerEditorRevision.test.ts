@@ -44,10 +44,17 @@ describe("isComposerNativeEcho", () => {
     expect(isComposerNativeEcho("native", null, 3, snapshots)).toBe(true);
   });
 
-  it("matches any controlled selection against an assumed state without one", () => {
+  it("does not claim a controlled selection against an assumed state without one", () => {
+    // An echo payload serializes `selection: null`; classifying a controlled
+    // selection as an echo of an assumed state would drop a parent caret move.
     const assumed = [{ eventCount: 3, value: "native", selection: null }];
-    expect(isComposerNativeEcho("native", { start: 0, end: 0 }, 3, assumed)).toBe(true);
+    expect(isComposerNativeEcho("native", { start: 0, end: 0 }, 3, assumed)).toBe(false);
     expect(isComposerNativeEcho("other", { start: 0, end: 0 }, 3, assumed)).toBe(false);
+  });
+
+  it("matches an assumed state when selection is uncontrolled", () => {
+    const assumed = [{ eventCount: 3, value: "native", selection: null }];
+    expect(isComposerNativeEcho("native", null, 3, assumed)).toBe(true);
   });
 });
 
@@ -155,6 +162,17 @@ describe("assumeComposerControlledState", () => {
       { eventCount: 3, value: "", selection: null },
       snapshots[1],
     ]);
+  });
+
+  it("applies a parent caret move on the assumed value at the assumed revision", () => {
+    // Same value, new caret: not an echo (so the selection is serialized) but
+    // still stamped at the assumed revision so the editor accepts it.
+    const snapshots = assumeComposerControlledState([], 3, "typed");
+
+    expect(isComposerNativeEcho("typed", { start: 2, end: 2 }, 3, snapshots)).toBe(false);
+    expect(resolveComposerControlledEventCount("typed", { start: 2, end: 2 }, 3, snapshots)).toBe(
+      3,
+    );
   });
 
   it("re-applies a parent value that round-trips back to an acknowledged state", () => {
