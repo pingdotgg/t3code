@@ -95,6 +95,11 @@ interface PendingUserInput {
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
 }
 
+interface ThreadLockEntry {
+  readonly semaphore: Semaphore.Semaphore;
+  readonly users: number;
+}
+
 interface KimiSessionContext {
   readonly threadId: ThreadId;
   readonly acpSessionId: string;
@@ -199,7 +204,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
     const adapterScope = yield* Scope.Scope;
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
     const sessions = new Map<ThreadId, KimiSessionContext>();
-    const threadLocks = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+    const threadLocks = yield* SynchronizedRef.make(new Map<string, ThreadLockEntry>());
     const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     const ensureSupportedKimiVersion = (threadId: ThreadId) =>
@@ -276,15 +281,34 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
     const getThreadLock = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocks, (current) => {
         const existing = current.get(threadId);
-        if (existing) return Effect.succeed([existing, current] as const);
+        if (existing) {
+          return Effect.succeed([
+            existing.semaphore,
+            new Map(current).set(threadId, { ...existing, users: existing.users + 1 }),
+          ] as const);
+        }
         return Semaphore.make(1).pipe(
           Effect.map(
-            (semaphore) => [semaphore, new Map(current).set(threadId, semaphore)] as const,
+            (semaphore) =>
+              [semaphore, new Map(current).set(threadId, { semaphore, users: 1 })] as const,
           ),
         );
       });
     const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(getThreadLock(threadId), (lock) => lock.withPermit(effect));
+      Effect.flatMap(getThreadLock(threadId), (lock) =>
+        lock.withPermit(effect).pipe(
+          Effect.ensuring(
+            SynchronizedRef.update(threadLocks, (current) => {
+              const entry = current.get(threadId);
+              if (entry?.semaphore !== lock) return current;
+              const next = new Map(current);
+              if (entry.users === 1) next.delete(threadId);
+              else next.set(threadId, { ...entry, users: entry.users - 1 });
+              return next;
+            }),
+          ),
+        ),
+      );
     const requireSession = (threadId: ThreadId) => {
       const context = sessions.get(threadId);
       return context && !context.stopped
