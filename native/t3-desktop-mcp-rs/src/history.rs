@@ -201,7 +201,7 @@ pub fn run(root: PathBuf) -> Result<(), String> {
                 write_status(
                     &root,
                     "running",
-                    true,
+                    sample.accessibility_granted,
                     Some(&segment_id),
                     event_count,
                     None,
@@ -231,6 +231,7 @@ struct Sample {
     window_title: Option<String>,
     ax: Option<Value>,
     key: String,
+    accessibility_granted: bool,
 }
 
 fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
@@ -243,7 +244,11 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
         .ok_or_else(|| DesktopError::new("no frontmost app"))?;
     let (app_name, app_id) = parse_app_line(front)
         .ok_or_else(|| DesktopError::new(format!("could not parse frontmost app line: {front}")))?;
-    let outline = desktop.get_app_state(&app_name, 4, 40).unwrap_or_default();
+    // Only report accessibility granted when AT-SPI actually answered.
+    let (outline, accessibility_granted) = match desktop.get_app_state(&app_name, 4, 40) {
+        Ok(text) => (text, true),
+        Err(_) => (String::new(), false),
+    };
     let window_title = outline
         .lines()
         .find(|line| !line.is_empty())
@@ -269,6 +274,7 @@ fn sample_frontmost(desktop: &mut dyn Desktop) -> Result<Sample, DesktopError> {
         window_title,
         ax,
         key,
+        accessibility_granted,
     })
 }
 
