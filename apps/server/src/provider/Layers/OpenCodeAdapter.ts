@@ -61,6 +61,7 @@ const PROVIDER = ProviderDriverKind.make("opencode");
  * rather than misread (mirrors GROK_RESUME_VERSION / CURSOR_RESUME_VERSION).
  */
 const OPENCODE_RESUME_VERSION = 1 as const;
+const MAX_PENDING_ACTUAL_MODEL_TURNS = 16;
 
 /**
  * Decode a persisted resume cursor into the upstream `ses_…` id. Anything
@@ -246,6 +247,22 @@ interface OpenCodeSessionContext {
    *   - tears down the OpenCode server process for scope-owned servers.
    */
   readonly sessionScope: Scope.Closeable;
+}
+
+export function rememberCompletedTurnWithoutModel(
+  pendingTurns: Map<TurnId, "completed" | "failed">,
+  turnId: TurnId,
+  state: "completed" | "failed",
+): void {
+  pendingTurns.delete(turnId);
+  pendingTurns.set(turnId, state);
+  if (pendingTurns.size <= MAX_PENDING_ACTUAL_MODEL_TURNS) {
+    return;
+  }
+  const oldestTurnId = pendingTurns.keys().next().value;
+  if (oldestTurnId !== undefined) {
+    pendingTurns.delete(oldestTurnId);
+  }
 }
 
 export interface OpenCodeAdapterLiveOptions {
@@ -1119,7 +1136,11 @@ export function makeOpenCodeAdapter(
             if (actualModel) {
               context.completedTurnsWithoutModel.delete(turnId);
             } else {
-              context.completedTurnsWithoutModel.set(turnId, "completed");
+              rememberCompletedTurnWithoutModel(
+                context.completedTurnsWithoutModel,
+                turnId,
+                "completed",
+              );
             }
             yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
@@ -1148,7 +1169,11 @@ export function makeOpenCodeAdapter(
             if (actualModel) {
               context.completedTurnsWithoutModel.delete(activeTurnId);
             } else {
-              context.completedTurnsWithoutModel.set(activeTurnId, "failed");
+              rememberCompletedTurnWithoutModel(
+                context.completedTurnsWithoutModel,
+                activeTurnId,
+                "failed",
+              );
             }
           }
           yield* updateProviderSession(

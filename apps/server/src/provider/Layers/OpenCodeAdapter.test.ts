@@ -20,6 +20,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
@@ -37,6 +38,7 @@ import {
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  rememberCompletedTurnWithoutModel,
 } from "./OpenCodeAdapter.ts";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
@@ -1059,6 +1061,23 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(yield* sameDirectory(link, path.join(base, "other")), false);
     }).pipe(Effect.scoped),
   );
+
+  it("bounds completed turns waiting for actual model metadata", () => {
+    const pendingTurns = new Map<ReturnType<typeof TurnId.make>, "completed" | "failed">();
+    for (let index = 0; index < 20; index += 1) {
+      rememberCompletedTurnWithoutModel(
+        pendingTurns,
+        TurnId.make(`turn-pending-model-${index}`),
+        "completed",
+      );
+    }
+
+    NodeAssert.equal(pendingTurns.size, 16);
+    NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-0")), false);
+    NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-3")), false);
+    NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-4")), true);
+    NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-19")), true);
+  });
 
   it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>
     Effect.sync(() => {
