@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   acknowledgeComposerNativeEvent,
+  assumeComposerControlledState,
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
   resolveComposerControlledEventCount,
@@ -41,6 +42,19 @@ describe("isComposerNativeEcho", () => {
 
   it("matches value and revision when selection is uncontrolled", () => {
     expect(isComposerNativeEcho("native", null, 3, snapshots)).toBe(true);
+  });
+
+  it("does not claim a controlled selection against an assumed state without one", () => {
+    // An echo payload serializes `selection: null`; classifying a controlled
+    // selection as an echo of an assumed state would drop a parent caret move.
+    const assumed = [{ eventCount: 3, value: "native", selection: null }];
+    expect(isComposerNativeEcho("native", { start: 0, end: 0 }, 3, assumed)).toBe(false);
+    expect(isComposerNativeEcho("other", { start: 0, end: 0 }, 3, assumed)).toBe(false);
+  });
+
+  it("matches an assumed state when selection is uncontrolled", () => {
+    const assumed = [{ eventCount: 3, value: "native", selection: null }];
+    expect(isComposerNativeEcho("native", null, 3, assumed)).toBe(true);
   });
 });
 
@@ -95,7 +109,7 @@ describe("pruneAcknowledgedComposerNativeEvents", () => {
       selection: { start: eventCount, end: eventCount },
     }));
 
-    expect(pruneAcknowledgedComposerNativeEvents(snapshots, 999)).toEqual([]);
+    expect(pruneAcknowledgedComposerNativeEvents(snapshots, 999)).toEqual([snapshots[999]]);
   });
 
   it("retains native events that arrive after the acknowledged render", () => {
@@ -104,6 +118,77 @@ describe("pruneAcknowledgedComposerNativeEvents", () => {
       { eventCount: 41, value: "ab", selection: { start: 2, end: 2 } },
     ];
 
-    expect(pruneAcknowledgedComposerNativeEvents(snapshots, 40)).toEqual([snapshots[1]]);
+    expect(pruneAcknowledgedComposerNativeEvents(snapshots, 40)).toEqual(snapshots);
+  });
+
+  it("retains the newest acknowledged snapshot so settled re-renders stay echoes", () => {
+    const snapshots = [
+      { eventCount: 40, value: "a", selection: { start: 1, end: 1 } },
+      { eventCount: 41, value: "ab", selection: { start: 2, end: 2 } },
+      { eventCount: 42, value: "abc", selection: { start: 3, end: 3 } },
+    ];
+
+    const pruned = pruneAcknowledgedComposerNativeEvents(snapshots, 42);
+    expect(pruned).toEqual([snapshots[2]]);
+    expect(isComposerNativeEcho("abc", { start: 3, end: 3 }, 42, pruned)).toBe(true);
+  });
+
+  it("keeps the newest of several snapshots sharing the acknowledged revision", () => {
+    const snapshots = [
+      { eventCount: 41, value: "ab", selection: { start: 2, end: 2 } },
+      { eventCount: 41, value: "ab", selection: { start: 1, end: 1 } },
+    ];
+
+    expect(pruneAcknowledgedComposerNativeEvents(snapshots, 41)).toEqual([snapshots[1]]);
+  });
+});
+
+describe("assumeComposerControlledState", () => {
+  it("replaces the acknowledged history with the applied controlled state", () => {
+    const snapshots = [{ eventCount: 3, value: "typed", selection: { start: 5, end: 5 } }];
+
+    expect(assumeComposerControlledState(snapshots, 3, "")).toEqual([
+      { eventCount: 3, value: "", selection: null },
+    ]);
+  });
+
+  it("keeps native events that raced past the controlled revision", () => {
+    const snapshots = [
+      { eventCount: 3, value: "typed", selection: { start: 5, end: 5 } },
+      { eventCount: 4, value: "typed!", selection: { start: 6, end: 6 } },
+    ];
+
+    expect(assumeComposerControlledState(snapshots, 3, "")).toEqual([
+      { eventCount: 3, value: "", selection: null },
+      snapshots[1],
+    ]);
+  });
+
+  it("applies a parent caret move on the assumed value at the assumed revision", () => {
+    // Same value, new caret: not an echo (so the selection is serialized) but
+    // still stamped at the assumed revision so the editor accepts it.
+    const snapshots = assumeComposerControlledState([], 3, "typed");
+
+    expect(isComposerNativeEcho("typed", { start: 2, end: 2 }, 3, snapshots)).toBe(false);
+    expect(resolveComposerControlledEventCount("typed", { start: 2, end: 2 }, 3, snapshots)).toBe(
+      3,
+    );
+  });
+
+  it("re-applies a parent value that round-trips back to an acknowledged state", () => {
+    // Native acknowledged "typed", the parent then controlled the editor to ""
+    // (a send clearing the draft) and back to "typed" (the send failed and the
+    // draft was restored). The restore must be a fresh non-echo edit stamped at
+    // the current revision, not an echo the editor would drop.
+    const snapshots = assumeComposerControlledState(
+      [{ eventCount: 3, value: "typed", selection: { start: 5, end: 5 } }],
+      3,
+      "",
+    );
+
+    expect(isComposerNativeEcho("typed", { start: 5, end: 5 }, 3, snapshots)).toBe(false);
+    expect(resolveComposerControlledEventCount("typed", { start: 5, end: 5 }, 3, snapshots)).toBe(
+      3,
+    );
   });
 });

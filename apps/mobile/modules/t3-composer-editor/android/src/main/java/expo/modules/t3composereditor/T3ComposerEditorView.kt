@@ -252,6 +252,9 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     val textLength = editor.text?.length ?: 0
     val safeStart = start.coerceIn(0, textLength)
     val safeEnd = end.coerceIn(0, textLength)
+    // Re-applying an unchanged selection resets the keyboard's suggestion
+    // state, so a no-op assignment must be skipped.
+    if (editor.selectionStart == safeStart && editor.selectionEnd == safeEnd) return
     editor.setSelection(safeStart, safeEnd)
   }
 
@@ -281,6 +284,10 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     )
 
   private fun emitSelectionChange(start: Int, end: Int) {
+    // Caret moves advance the revision counter like text edits do: a
+    // controlled payload computed before this move is stale and must fail the
+    // revision guard instead of yanking the caret back mid-typing.
+    nativeEventCount += 1
     onComposerSelectionChange(
       mapOf(
         "value" to editor.text.toString(),

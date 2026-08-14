@@ -489,6 +489,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       return
     }
     restoreBaseTypingAttributes()
+    // UIKit moves the selection before textViewDidChange runs. Emitting here
+    // would pair the post-edit text with a pre-edit revision counter, so let
+    // the change event that follows carry both; only pure caret moves emit.
+    guard self.textView.serializedText() == value else {
+      return
+    }
     emitSelection()
   }
 
@@ -774,8 +780,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func emitSelection() {
+    // Caret moves advance the revision counter like text edits do: a
+    // controlled payload computed before this move is stale and must fail the
+    // revision guard instead of yanking the caret back mid-typing.
     let currentValue = textView.serializedText()
     let selection = sourceSelection()
+    nativeEventCount += 1
     onComposerSelectionChange([
       "value": currentValue,
       "selection": ["start": selection.start, "end": selection.end],
@@ -817,10 +827,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
           NSMaxRange(nextRange) <= textView.attributedText.length else {
       return
     }
+    self.requestedSelection = nil
+    // Programmatically assigning selectedRange resets the keyboard's
+    // autocorrect and predictive-text context even when the range is
+    // unchanged, so a no-op assignment must be skipped.
+    guard !NSEqualRanges(nextRange, textView.selectedRange) else {
+      return
+    }
     isApplyingControlledValue = true
     textView.selectedRange = nextRange
     isApplyingControlledValue = false
-    self.requestedSelection = nil
   }
 
   private func updatePlaceholderVisibility() {
