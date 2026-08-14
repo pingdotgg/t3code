@@ -122,10 +122,10 @@ const UNFILTERED_VALUE = "all";
  * A project's own radio value, carrying the server along with the id: the id alone is only
  * unique within its own server, so two rows sharing one would otherwise both read as checked.
  */
-const projectMenuValue = (project: {
+export const pullRequestProjectKey = (project: {
   readonly id: ProjectId;
   readonly environmentId: EnvironmentId;
-}) => `${project.environmentId} ${project.id}`;
+}) => JSON.stringify([project.environmentId, project.id]);
 
 const DRAFT_OPTIONS = [
   { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
@@ -247,7 +247,7 @@ export function PullRequestFiltersMenu({
    * the reader is already choosing between projects, rather than as a count above the list
    * that says something is missing without saying which.
    */
-  unavailable: ReadonlyMap<ProjectId, string>;
+  unavailable: ReadonlyMap<string, string>;
   /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
   onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
 }) {
@@ -350,7 +350,7 @@ export function PullRequestFiltersMenu({
           value={
             projectId === undefined || projectEnvironmentId === undefined
               ? ALL_PROJECTS_VALUE
-              : projectMenuValue({ id: projectId, environmentId: projectEnvironmentId })
+              : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId })
           }
           onValueChange={(next) => {
             if (next === ALL_PROJECTS_VALUE) {
@@ -359,7 +359,7 @@ export function PullRequestFiltersMenu({
             }
             // The value carries both halves, since the id alone cannot tell two servers' rows
             // apart once they share one.
-            const project = projects.find((candidate) => projectMenuValue(candidate) === next);
+            const project = projects.find((candidate) => pullRequestProjectKey(candidate) === next);
             if (
               project !== undefined &&
               (project.id !== projectId || project.environmentId !== projectEnvironmentId)
@@ -379,14 +379,16 @@ export function PullRequestFiltersMenu({
               as a broken menu rather than as a workspace with three unreadable repositories. */}
           {projects
             .toSorted(
-              (left, right) => Number(unavailable.has(left.id)) - Number(unavailable.has(right.id)),
+              (left, right) =>
+                Number(unavailable.has(pullRequestProjectKey(left))) -
+                Number(unavailable.has(pullRequestProjectKey(right))),
             )
             .map((project) => {
-              const reason = unavailable.get(project.id);
+              const reason = unavailable.get(pullRequestProjectKey(project));
               return (
                 <MenuRadioItem
-                  key={projectMenuValue(project)}
-                  value={projectMenuValue(project)}
+                  key={pullRequestProjectKey(project)}
+                  value={pullRequestProjectKey(project)}
                   disabled={reason !== undefined}
                   title={reason}
                 >
