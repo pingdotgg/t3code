@@ -346,6 +346,8 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
     "outputFile",
     "agentPath",
     "timelineBypass",
+    "agentSource",
+    "cancellationOwner",
     "typedUsage",
     "status",
     "error",
@@ -642,9 +644,16 @@ export function runtimeEventToActivities(
     }
 
     case "task.updated": {
+      const activityId =
+        event.raw?.method === "collabAgent/metadata"
+          ? EventId.make(`task-identity:${event.threadId}:${event.payload.taskId}`)
+          : event.eventId;
       return [
         {
-          id: event.eventId,
+          // Provider spawn metadata may arrive after terminal lifecycle and
+          // may be repeated by item/started + item/completed. Keep one
+          // independently retained identity snapshot per native child.
+          id: activityId,
           createdAt: event.createdAt,
           tone: event.payload.status === "failed" ? "error" : "info",
           kind: "task.updated",
@@ -2062,6 +2071,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     drain: worker.drain,
+    ingestRuntimeEvent: (event) => worker.enqueue({ source: "runtime", event }),
   } satisfies ProviderRuntimeIngestionShape;
 });
 

@@ -65,6 +65,11 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationRpcSchemas,
   OrchestrationGetWorkflowScriptError,
+  ManagedCodexExecLaunchInput,
+  ManagedCodexExecLaunchResult,
+  ManagedAgentCancelInput,
+  ManagedAgentCancelResult,
+  ManagedAgentRunError,
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
@@ -868,6 +873,24 @@ export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationLaunchManagedCodexExecRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.launchManagedCodexExec,
+  {
+    payload: ManagedCodexExecLaunchInput,
+    success: ManagedCodexExecLaunchResult,
+    error: Schema.Union([ManagedAgentRunError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsOrchestrationCancelManagedAgentRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.cancelManagedAgent,
+  {
+    payload: ManagedAgentCancelInput,
+    success: ManagedAgentCancelResult,
+    error: Schema.Union([ManagedAgentRunError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationGetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.getWorkflowScript,
   {
@@ -1065,6 +1088,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
   WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationLaunchManagedCodexExecRpc,
+  WsOrchestrationCancelManagedAgentRpc,
   WsOrchestrationGetWorkflowScriptRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

@@ -52,6 +52,46 @@ describe("runtimeEventToActivities task progress", () => {
     expect(usagePayload?.usageSnapshot).toBe(true);
   });
 
+  it("upserts late Codex child identity separately from lifecycle state", () => {
+    const event = {
+      ...base,
+      type: "task.updated",
+      eventId: EventId.make("evt-late-metadata"),
+      payload: {
+        taskId: RuntimeTaskId.make("native-child"),
+        parentAgentId: "native-parent",
+        model: "gpt-5.6-luna",
+        effort: "low",
+        timelineBypass: true,
+        agentSource: "provider",
+        cancellationOwner: "provider",
+      },
+      raw: {
+        source: "codex.app-server.notification",
+        method: "collabAgent/metadata",
+        payload: {},
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const [activity] = runtimeEventToActivities(event);
+    const [duplicateActivity] = runtimeEventToActivities({
+      ...event,
+      eventId: EventId.make("evt-late-metadata-duplicate"),
+      createdAt: "2026-08-06T00:00:01.000Z",
+    });
+
+    expect(activity?.id).toBe("task-identity:thread-1:native-child");
+    expect(duplicateActivity?.id).toBe(activity?.id);
+    expect(activity?.kind).toBe("task.updated");
+    expect(activity?.payload).toMatchObject({
+      taskId: "native-child",
+      parentAgentId: "native-parent",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+    expect(activity?.payload).not.toHaveProperty("status");
+  });
+
   it("splits combined progress and usage into their independent snapshots", () => {
     const event = {
       ...base,

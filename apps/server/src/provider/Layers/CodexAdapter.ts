@@ -523,6 +523,10 @@ function mapCollabAgentEvent(
   const nickname = typeof payload.nickname === "string" ? payload.nickname : undefined;
   const role =
     (typeof payload.role === "string" ? payload.role : undefined) ?? pathLeaf ?? "general-purpose";
+  const model = typeof payload.model === "string" ? payload.model : undefined;
+  const effort = typeof payload.effort === "string" ? payload.effort : undefined;
+  const parentAgentId =
+    typeof payload.parentThreadId === "string" ? payload.parentThreadId : undefined;
   // A bare thread id is not a name. Omitting the title lets the client fold
   // keep the real one from task.started instead of clobbering it (probe
   // finding: progress rows renamed math_one to its UUID).
@@ -535,10 +539,37 @@ function mapCollabAgentEvent(
     role,
     ...(knownName ? { title: knownName } : {}),
     ...(agentPath ? { agentPath } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+    ...(parentAgentId ? { parentAgentId } : {}),
     timelineBypass: true,
+    agentSource: "provider" as const,
+    cancellationOwner: "provider" as const,
   } as const;
 
   switch (event.method) {
+    case "collabAgent/metadata":
+      // Late spawn metadata is an identity-only patch. Do not synthesize a
+      // status (which could reopen a terminal child), or fallback identity
+      // fields that the correlated spawn call did not actually provide.
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: {
+            taskId,
+            ...(nickname ? { title: nickname } : pathLeaf ? { title: pathLeaf } : {}),
+            ...(typeof payload.role === "string" ? { role: payload.role } : {}),
+            ...(agentPath ? { agentPath } : {}),
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+            ...(parentAgentId ? { parentAgentId } : {}),
+            timelineBypass: true,
+            agentSource: "provider",
+            cancellationOwner: "provider",
+          },
+        },
+      ];
     case "collabAgent/started":
       return [
         {
@@ -548,12 +579,7 @@ function mapCollabAgentEvent(
             taskId,
             description: title,
             title,
-            role,
-            ...(agentPath ? { agentPath } : {}),
-            ...(typeof payload.parentThreadId === "string"
-              ? { parentAgentId: payload.parentThreadId }
-              : {}),
-            timelineBypass: true,
+            ...statusLinkage,
           },
         },
       ];
@@ -581,9 +607,7 @@ function mapCollabAgentEvent(
               taskId,
               description: title,
               title,
-              role,
-              ...(agentPath ? { agentPath } : {}),
-              timelineBypass: true,
+              ...statusLinkage,
             },
           },
         ];
@@ -707,9 +731,8 @@ function mapCollabAgentEvent(
           payload: {
             taskId,
             description: title,
-            ...(knownName ? { title: knownName } : {}),
+            ...statusLinkage,
             typedUsage,
-            timelineBypass: true,
           },
         },
       ];
@@ -739,9 +762,8 @@ function mapCollabAgentEvent(
           payload: {
             taskId,
             description: title,
-            ...(knownName ? { title: knownName } : {}),
+            ...statusLinkage,
             summary,
-            timelineBypass: true,
           },
         },
       ];

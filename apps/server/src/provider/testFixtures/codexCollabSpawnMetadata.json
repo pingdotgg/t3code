@@ -1,0 +1,20 @@
+{
+  "method": "item/completed",
+  "params": {
+    "item": {
+      "type": "collabAgentToolCall",
+      "id": "call_fixture_spawn_alpha",
+      "tool": "spawnAgent",
+      "status": "completed",
+      "senderThreadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+      "receiverThreadIds": ["019fcfd6-2883-77e0-9013-4410ede70371"],
+      "prompt": "Solve the alpha subtask",
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "low",
+      "agentsStates": {}
+    },
+    "threadId": "019fcfd6-17bb-72f0-ae12-a1f2dee6e3e5",
+    "turnId": "019fcfd6-1806-7de1-8564-de69fd55bffb",
+    "completedAtMs": 1785898346000
+  }
+}

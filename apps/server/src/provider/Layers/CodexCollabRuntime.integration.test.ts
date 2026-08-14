@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { assert, describe } from "vite-plus/test";
 
 import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
+import spawnMetadataFixture from "../testFixtures/codexCollabSpawnMetadata.json" with { type: "json" };
 import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 
 const ROOT = wireFixture.rootThreadId;
@@ -66,7 +67,12 @@ function buildScript() {
   ];
   return {
     rootThreadId: ROOT,
-    notifications: [...captured.filter((entry) => entry.method !== "turn/completed"), ...extras],
+    notifications: [
+      ...captured.filter((entry) => entry.method !== "turn/completed"),
+      ...extras,
+      // Actual spawn metadata can trail the child's terminal lifecycle.
+      spawnMetadataFixture,
+    ],
   };
 }
 
@@ -115,6 +121,32 @@ describe("CodexSessionRuntime collab integration", () => {
           (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
       );
       assert.isDefined(childTurnCompleted, "child A's turn completion becomes an agent event");
+      assert.deepInclude(childTurnCompleted.payload, { agentThreadId: CHILD_A });
+      assert.notProperty(
+        childTurnCompleted.payload as Record<string, unknown>,
+        "model",
+        "terminal lifecycle must not invent metadata that has not arrived yet",
+      );
+
+      const metadataEnrichment = events.find(
+        (event) =>
+          event.method === "collabAgent/metadata" &&
+          (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+      );
+      assert.isDefined(metadataEnrichment, "late spawn metadata becomes an emitted event");
+      assert.deepInclude(metadataEnrichment.payload, {
+        agentThreadId: CHILD_A,
+        parentThreadId: ROOT,
+        model: "gpt-5.6-luna",
+        effort: "low",
+      });
+      assert.equal(metadataEnrichment.turnId, spawnMetadataFixture.params.turnId);
+      assert.equal(metadataEnrichment.itemId, spawnMetadataFixture.params.item.id);
+      assert.isAbove(
+        events.indexOf(metadataEnrichment),
+        events.indexOf(childTurnCompleted),
+        "metadata enrichment preserves its actual after-terminal wire ordering",
+      );
 
       const childClosed = events.find(
         (event) =>
@@ -122,6 +154,11 @@ describe("CodexSessionRuntime collab integration", () => {
           (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_B,
       );
       assert.isDefined(childClosed, "child B's close becomes an agent event");
+      assert.equal(
+        (childClosed.payload as { parentThreadId?: string }).parentThreadId,
+        ROOT,
+        "retained terminal lifecycle keeps the native parent identity",
+      );
 
       // Parent-owned resolution passes through — not swallowed, not
       // re-labelled as an agent event.

@@ -25,6 +25,8 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  launchManagedCodexExec: "orchestration.launchManagedCodexExec",
+  cancelManagedAgent: "orchestration.cancelManagedAgent",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
@@ -33,6 +35,45 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
+
+export const ManagedCodexExecLaunchInput = Schema.Struct({
+  threadId: ThreadId,
+  prompt: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  model: Schema.optional(TrimmedNonEmptyString),
+  effort: Schema.optional(TrimmedNonEmptyString),
+  sandbox: Schema.optional(Schema.Literals(["read-only", "workspace-write", "danger-full-access"])),
+  parentAgentId: Schema.optional(TrimmedNonEmptyString),
+});
+export type ManagedCodexExecLaunchInput = typeof ManagedCodexExecLaunchInput.Type;
+
+export const ManagedCodexExecLaunchResult = Schema.Struct({
+  agentId: TrimmedNonEmptyString,
+});
+export type ManagedCodexExecLaunchResult = typeof ManagedCodexExecLaunchResult.Type;
+
+export const ManagedAgentCancelInput = Schema.Struct({
+  threadId: ThreadId,
+  agentId: TrimmedNonEmptyString,
+});
+export type ManagedAgentCancelInput = typeof ManagedAgentCancelInput.Type;
+
+export const ManagedAgentCancelResult = Schema.Struct({ cancelled: Schema.Boolean });
+export type ManagedAgentCancelResult = typeof ManagedAgentCancelResult.Type;
+
+export class ManagedAgentRunError extends Schema.TaggedErrorClass<ManagedAgentRunError>()(
+  "ManagedAgentRunError",
+  {
+    reason: Schema.Literals(["thread-not-found", "spawn-failed", "run-not-found", "not-owned"]),
+    threadId: Schema.optional(ThreadId),
+    agentId: Schema.optional(TrimmedNonEmptyString),
+  },
+) {
+  override get message(): string {
+    const target = this.agentId ?? this.threadId ?? "managed agent";
+    return `Managed agent run failed (${this.reason}): ${target}`;
+  }
+}
 
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
