@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { PlusIcon, XIcon } from "lucide-react";
 import type {
   ComputerHistoryClearScope,
   ComputerHistoryStatus,
@@ -7,7 +8,19 @@ import type {
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import {
   SettingResetButton,
@@ -25,6 +38,194 @@ function RowTitle({ children }: { children: ReactNode }) {
   return <span className="inline-flex items-center gap-2">{children}</span>;
 }
 
+function normalizeEntry(value: string): string {
+  return value.trim();
+}
+
+function ExclusionList({
+  title,
+  addLabel,
+  placeholder,
+  items,
+  onChange,
+  disabled,
+}: {
+  title: string;
+  addLabel: string;
+  placeholder: string;
+  items: ReadonlyArray<string>;
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+}) {
+  const [draft, setDraft] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const commit = () => {
+    const next = normalizeEntry(draft);
+    if (!next) {
+      setAdding(false);
+      setDraft("");
+      return;
+    }
+    const lowered = next.toLowerCase();
+    if (items.some((item) => item.toLowerCase() === lowered)) {
+      setDraft("");
+      setAdding(false);
+      return;
+    }
+    onChange([...items, next]);
+    setDraft("");
+    setAdding(false);
+  };
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+      <h3 className="text-sm font-medium text-foreground">{title}</h3>
+      <div className="bg-muted/40 flex min-h-48 flex-col gap-2 rounded-xl border border-border/60 p-3">
+        {adding ? (
+          <form
+            className="flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              commit();
+            }}
+          >
+            <Input
+              autoFocus
+              value={draft}
+              disabled={disabled}
+              placeholder={placeholder}
+              onValueChange={(value) => setDraft(value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setAdding(false);
+                  setDraft("");
+                }
+              }}
+            />
+            <Button type="submit" size="sm" disabled={disabled || !normalizeEntry(draft)}>
+              Add
+            </Button>
+          </form>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="justify-start gap-1.5"
+            disabled={disabled}
+            onClick={() => setAdding(true)}
+          >
+            <PlusIcon className="size-3.5" />
+            {addLabel}
+          </Button>
+        )}
+
+        {items.length === 0 ? (
+          <p className="text-muted-foreground px-0.5 text-xs">None excluded</p>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {items.map((item) => (
+              <li key={item}>
+                <Badge
+                  variant="outline"
+                  className="h-auto max-w-full justify-between gap-2 px-2 py-1 text-left font-normal"
+                >
+                  <span className="min-w-0 truncate">{item}</span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-foreground shrink-0 rounded-sm p-0.5"
+                    disabled={disabled}
+                    aria-label={`Remove ${item}`}
+                    onClick={() => onChange(items.filter((entry) => entry !== item))}
+                  >
+                    <XIcon className="size-3.5" />
+                  </button>
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ComputerHistoryPrivacyDialog({
+  open,
+  onOpenChange,
+  apps,
+  websites,
+  disabled,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  apps: ReadonlyArray<string>;
+  websites: ReadonlyArray<string>;
+  disabled?: boolean;
+  onSave: (next: { apps: string[]; websites: string[] }) => void;
+}) {
+  const [draftApps, setDraftApps] = useState<string[]>([...apps]);
+  const [draftWebsites, setDraftWebsites] = useState<string[]>([...websites]);
+
+  useEffect(() => {
+    if (!open) return;
+    setDraftApps([...apps]);
+    setDraftWebsites([...websites]);
+  }, [open, apps, websites]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPopup className="sm:max-w-2xl" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Computer History privacy</DialogTitle>
+          <DialogDescription>
+            Choose apps and websites that should never be recorded. Everything else is included when
+            Computer History is on.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <ExclusionList
+              title="Exclude these apps"
+              addLabel="Add app"
+              placeholder="App name or bundle id"
+              items={draftApps}
+              onChange={setDraftApps}
+              disabled={disabled}
+            />
+            <ExclusionList
+              title="Exclude these websites"
+              addLabel="Add website"
+              placeholder="Hostname or URL fragment"
+              items={draftWebsites}
+              onChange={setDraftWebsites}
+              disabled={disabled}
+            />
+          </div>
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            Private-mode web browsing activity is never included in computer history.
+          </p>
+        </DialogPanel>
+        <DialogFooter>
+          <DialogClose render={<Button type="button" variant="ghost" />}>Cancel</DialogClose>
+          <Button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              onSave({ apps: draftApps, websites: draftWebsites });
+              onOpenChange(false);
+            }}
+          >
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 export function ComputerHistorySettings() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -34,6 +235,7 @@ export function ComputerHistorySettings() {
   const [status, setStatus] = useState<ComputerHistoryStatus | null>(null);
   const [items, setItems] = useState<ComputerHistoryTimelineItem[]>([]);
   const [busy, setBusy] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const bridge = window.desktopBridge;
@@ -65,12 +267,28 @@ export function ComputerHistorySettings() {
         ...(partial.enabled === undefined ? {} : { enabled: partial.enabled }),
         ...(partial.paused === undefined ? {} : { paused: partial.paused }),
         ...(partial.mirrorToCodex === undefined ? {} : { mirrorToCodex: partial.mirrorToCodex }),
+        ...(partial.appFilterMode === undefined ? {} : { appFilterMode: partial.appFilterMode }),
+        ...(partial.apps === undefined ? {} : { apps: [...partial.apps] }),
+        ...(partial.websiteFilterMode === undefined
+          ? {}
+          : { websiteFilterMode: partial.websiteFilterMode }),
+        ...(partial.websites === undefined ? {} : { websites: [...partial.websites] }),
       });
       setStatus(nextStatus);
       const timeline = await bridge.getComputerHistoryTimeline?.();
       if (timeline) setItems([...timeline.items]);
     })();
   };
+
+  const exclusionSummary = (() => {
+    const appCount = history.apps.length;
+    const siteCount = history.websites.length;
+    if (appCount === 0 && siteCount === 0) return "No apps or websites excluded";
+    const parts: string[] = [];
+    if (appCount > 0) parts.push(`${appCount} app${appCount === 1 ? "" : "s"}`);
+    if (siteCount > 0) parts.push(`${siteCount} website${siteCount === 1 ? "" : "s"}`);
+    return `Excluding ${parts.join(" · ")}`;
+  })();
 
   return (
     <SettingsPageContainer>
@@ -146,6 +364,44 @@ export function ComputerHistorySettings() {
               </Button>
             }
           />
+        ) : null}
+      </SettingsSection>
+
+      <SettingsSection {...searchableSetting("computer-history-privacy")} title="Privacy">
+        <p className="text-muted-foreground mb-3 px-3 text-sm sm:px-4">
+          Exclude sensitive apps and websites from Computer History. Private browsing is never
+          recorded.
+        </p>
+        <SettingsRow
+          title={<RowTitle>Excluded apps &amp; websites</RowTitle>}
+          description={exclusionSummary}
+          control={
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!onDesktop}
+              onClick={() => setPrivacyOpen(true)}
+            >
+              Manage
+            </Button>
+          }
+        />
+        {(history.apps.length > 0 || history.websites.length > 0) &&
+        (history.apps.length !== defaults.apps.length ||
+          history.websites.length !== defaults.websites.length) ? (
+          <div className="flex justify-end px-3 pb-2 sm:px-4">
+            <SettingResetButton
+              label="exclusions"
+              onClick={() =>
+                patch({
+                  apps: [...defaults.apps],
+                  websites: [...defaults.websites],
+                  appFilterMode: "exclude",
+                  websiteFilterMode: "exclude",
+                })
+              }
+            />
+          </div>
         ) : null}
       </SettingsSection>
 
@@ -236,6 +492,22 @@ export function ComputerHistorySettings() {
           </ul>
         )}
       </SettingsSection>
+
+      <ComputerHistoryPrivacyDialog
+        open={privacyOpen}
+        onOpenChange={setPrivacyOpen}
+        apps={history.apps}
+        websites={history.websites}
+        disabled={!onDesktop}
+        onSave={({ apps, websites }) =>
+          patch({
+            apps,
+            websites,
+            appFilterMode: "exclude",
+            websiteFilterMode: "exclude",
+          })
+        }
+      />
     </SettingsPageContainer>
   );
 }

@@ -1156,6 +1156,10 @@ export interface DesktopBridge {
     enabled?: boolean;
     paused?: boolean;
     mirrorToCodex?: boolean;
+    appFilterMode?: "exclude" | "includeOnly";
+    apps?: ReadonlyArray<string>;
+    websiteFilterMode?: "exclude" | "includeOnly";
+    websites?: ReadonlyArray<string>;
   }) => Promise<ComputerHistoryStatus>;
   /** Delete history (events + derived memories) for a time scope. */
   clearComputerHistory?: (scope: ComputerHistoryClearScope) => Promise<ComputerHistoryTimeline>;

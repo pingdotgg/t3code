@@ -170,7 +170,7 @@ private final class DaemonState {
 
     if let url {
       let lowered = url.lowercased()
-      if lowered.contains("chrome://newtab") || lowered.hasPrefix("about:privatebrowsing") {
+      if Self.isPrivateBrowsing(url: lowered) {
         return false
       }
       let siteNeedles = websites.map { $0.lowercased() }
@@ -181,6 +181,21 @@ private final class DaemonState {
       return websiteFilterMode == "exclude" ? !siteHit : siteHit
     }
     return true
+  }
+
+  private static func isPrivateBrowsing(url: String) -> Bool {
+    url.contains("chrome://newtab")
+      || url.contains("chrome://private")
+      || url.contains("chrome-search://local-ntp")
+      || url.hasPrefix("about:privatebrowsing")
+      || url.contains("about:privatebrowsing")
+      || url.contains("edge://newtab")
+      || url.contains("edge://private")
+      || url.contains("brave://newtab")
+      || url.contains("opera://private")
+      || url.contains("(private)")
+      || url.contains("incognito")
+      || url.contains("inprivate")
   }
 
   private func append(_ record: [String: Any]) {

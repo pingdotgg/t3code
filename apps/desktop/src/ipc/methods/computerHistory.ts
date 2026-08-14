@@ -67,6 +67,10 @@ export const patchComputerHistorySettings = DesktopIpc.makeIpcMethod({
     enabled: Schema.optionalKey(Schema.Boolean),
     paused: Schema.optionalKey(Schema.Boolean),
     mirrorToCodex: Schema.optionalKey(Schema.Boolean),
+    appFilterMode: Schema.optionalKey(Schema.Literals(["exclude", "includeOnly"])),
+    apps: Schema.optionalKey(Schema.Array(Schema.String)),
+    websiteFilterMode: Schema.optionalKey(Schema.Literals(["exclude", "includeOnly"])),
+    websites: Schema.optionalKey(Schema.Array(Schema.String)),
   }),
   result: ComputerHistoryStatusSchema,
   handler: Effect.fn("desktop.ipc.computerHistory.patchSettings")(function* (patch) {
@@ -80,7 +84,12 @@ export const patchComputerHistorySettings = DesktopIpc.makeIpcMethod({
     ).pipe(Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS));
     const next = {
       ...current,
-      computerHistory: { ...current.computerHistory, ...patch },
+      computerHistory: {
+        ...current.computerHistory,
+        ...patch,
+        ...(patch.apps === undefined ? {} : { apps: [...patch.apps] }),
+        ...(patch.websites === undefined ? {} : { websites: [...patch.websites] }),
+      },
     };
     const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ServerSettings))(next);
     yield* fileSystem.writeFileString(environment.serverSettingsPath, `${encoded}\n`);
