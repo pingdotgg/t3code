@@ -162,11 +162,17 @@
      setting rather than a derived size so metadata can stay visibly quieter
      than chat titles at any sidebar font size. */
   --app-sidebar-meta-font-size: 10px;
-  /* Sidebar row rhythm, driven by the Sidebar row spacing setting. The gap
-     between rows must beat the gap between a row's own lines or three-line
-     cards read as one loose list instead of discrete threads. */
-  --app-sidebar-row-gap: 0.25rem;
-  --app-sidebar-row-padding-y: 0.5rem;
+  /* Sidebar row rhythm tracks the sidebar font size. Spacing preferences
+     adjust these ratios, so denser/lighter rows stay proportional at every
+     font size. */
+  --app-sidebar-row-gap: calc(var(--app-sidebar-font-size) * 0.363636);
+  --app-sidebar-row-padding-x: calc(var(--app-sidebar-font-size) * 0.909091);
+  --app-sidebar-row-padding-y: calc(var(--app-sidebar-font-size) * 0.727273);
+  --app-sidebar-row-inline-gap: calc(var(--app-sidebar-font-size) * 0.545455);
+  --app-sidebar-row-line-gap: calc(var(--app-sidebar-font-size) * 0.363636);
+  --app-sidebar-slim-row-line-gap: calc(var(--app-sidebar-font-size) * 0.181818);
+  --app-sidebar-legacy-row-height: calc(var(--app-sidebar-font-size) * 2.545455);
+  --app-sidebar-legacy-row-padding-x: calc(var(--app-sidebar-font-size) * 0.545455);
   --app-tool-font-size: 12px;
   --app-input-font-size: 14px;
   --sidebar-translucency-alpha: 100%;
@@ -385,13 +391,13 @@ html[data-ui-density="spacious"] {
 
 /* ── Sidebar row spacing ─────────────────────────────────────── */
 html[data-sidebar-row-spacing="compact"] {
-  --app-sidebar-row-gap: 0.125rem;
-  --app-sidebar-row-padding-y: 0.3125rem;
+  --app-sidebar-row-gap: calc(var(--app-sidebar-font-size) * 0.181818);
+  --app-sidebar-row-padding-y: calc(var(--app-sidebar-font-size) * 0.454545);
 }
 
 html[data-sidebar-row-spacing="relaxed"] {
-  --app-sidebar-row-gap: 0.5rem;
-  --app-sidebar-row-padding-y: 0.75rem;
+  --app-sidebar-row-gap: calc(var(--app-sidebar-font-size) * 0.727273);
+  --app-sidebar-row-padding-y: calc(var(--app-sidebar-font-size) * 1.090909);
 }
 
 body {

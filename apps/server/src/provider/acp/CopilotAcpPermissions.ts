@@ -55,7 +55,13 @@ function getPermissionText(params: EffectAcpSchema.RequestPermissionRequest): st
     .toLowerCase();
 }
 
-function isRawGitWorktreeMutation(params: EffectAcpSchema.RequestPermissionRequest): boolean {
+function isRawGitWorktreeMutation(
+  params: EffectAcpSchema.RequestPermissionRequest,
+  permissionRequest: AcpPermissionRequest,
+): boolean {
+  if (permissionRequest.toolCall?.itemType !== "command_execution") {
+    return false;
+  }
   const text = getPermissionText(params);
   // Block only add/move. Agents may run `git worktree remove` for cleanup; create/switch
   // still go through workspace handoff tools so thread cwd/checkpoints stay aligned.
@@ -119,7 +125,7 @@ export function selectCopilotPermissionForRuntimeMode(input: {
   readonly params: EffectAcpSchema.RequestPermissionRequest;
   readonly permissionRequest: AcpPermissionRequest;
 }): CopilotPermissionSelection {
-  if (isRawGitWorktreeMutation(input.params)) {
+  if (isRawGitWorktreeMutation(input.params, input.permissionRequest)) {
     return { _tag: "cancel", reason: "workspace_handoff_required" };
   }
   if (isQuestionLikePermissionRequest(input.params)) {

@@ -378,7 +378,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
           <TooltipTrigger
             render={
               <SidebarMenuButton
-                className="h-auto min-h-0 items-start px-2.5 py-[calc(var(--app-sidebar-row-padding-y)*0.75)] text-[length:var(--app-sidebar-font-size)] transition-none"
+                className="h-auto min-h-0 items-start px-[var(--app-sidebar-row-padding-x)] py-[calc(var(--app-sidebar-row-padding-y)*0.75)] text-[length:var(--app-sidebar-font-size)] transition-none"
                 isActive={active}
                 onClick={handleOpen}
                 onKeyDown={handleRowKeyDown}
@@ -388,8 +388,8 @@ export const SidebarV2Row = memo(function SidebarV2Row({
               />
             }
           >
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5 leading-snug">
-              <span className="flex min-w-0 items-center gap-1.5">
+            <span className="flex min-w-0 flex-1 flex-col gap-[var(--app-sidebar-slim-row-line-gap)] leading-snug">
+              <span className="flex min-w-0 items-center gap-[var(--app-sidebar-row-inline-gap)]">
                 {expandToggle}
                 {pill ? (
                   <ThreadStatusLabel compact status={pill} />
@@ -404,7 +404,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                   threadId={thread.id}
                 />
               </span>
-              <span className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-sidebar-meta-font-size)] font-normal text-muted-foreground">
+              <span className="flex min-w-0 items-center gap-[var(--app-sidebar-row-inline-gap)] text-[length:var(--app-sidebar-meta-font-size)] font-normal text-muted-foreground">
                 <span className="truncate">{projectName}</span>
                 <span className="shrink-0 tabular-nums">
                   {compactSidebarTimeLabel(
@@ -451,7 +451,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
               // Height is padding-driven rather than fixed so the row tracks
               // the UI density scale and the sidebar font-size setting instead
               // of locking every user to one hard-coded card height.
-              className="h-auto min-h-0 items-stretch gap-0 px-2.5 py-[var(--app-sidebar-row-padding-y)] text-[length:var(--app-sidebar-font-size)] transition-none"
+              className="h-auto min-h-0 items-stretch gap-0 px-[var(--app-sidebar-row-padding-x)] py-[var(--app-sidebar-row-padding-y)] text-[length:var(--app-sidebar-font-size)] transition-none"
               isActive={active}
               onClick={handleOpen}
               onKeyDown={handleRowKeyDown}
@@ -464,8 +464,8 @@ export const SidebarV2Row = memo(function SidebarV2Row({
         >
           {/* One wrapper child: SidebarMenuButton truncates its LAST direct
               child, which would clip the metadata line's flex row. */}
-          <span className="flex w-full min-w-0 flex-col justify-center gap-1 leading-snug">
-            <span className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-sidebar-meta-font-size)] font-normal">
+          <span className="flex w-full min-w-0 flex-col justify-center gap-[var(--app-sidebar-row-line-gap)] leading-snug">
+            <span className="flex min-w-0 items-center gap-[var(--app-sidebar-row-inline-gap)] text-[length:var(--app-sidebar-meta-font-size)] font-normal">
               <ProjectFavicon
                 className="size-3 shrink-0"
                 cwd={projectCwd ?? ""}
@@ -504,7 +504,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                 )}
               </span>
             </span>
-            <span className="flex min-w-0 items-center gap-1.5">
+            <span className="flex min-w-0 items-center gap-[var(--app-sidebar-row-inline-gap)]">
               {expandToggle}
               <span className="min-w-0 flex-1 truncate text-[length:var(--app-sidebar-title-font-size)] font-medium text-foreground">
                 {thread.title}
@@ -515,7 +515,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                 say: a branchless thread with no PR or terminal would otherwise
                 reserve blank height on every card. */}
             {hasMetadataLine ? (
-              <span className="flex min-w-0 items-center gap-1.5 text-[length:var(--app-sidebar-meta-font-size)] font-normal text-muted-foreground/75">
+              <span className="flex min-w-0 items-center gap-[var(--app-sidebar-row-inline-gap)] text-[length:var(--app-sidebar-meta-font-size)] font-normal text-muted-foreground/75">
                 {thread.branch ? (
                   <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
                 ) : (

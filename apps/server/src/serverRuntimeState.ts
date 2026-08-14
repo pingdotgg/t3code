@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Schema } from "effect";
+import { Effect, Exit, FileSystem, Option, Schema } from "effect";
 import { randomUUID } from "node:crypto";
 import { link, readFile, rename, rm } from "node:fs/promises";
 
@@ -55,22 +55,45 @@ export const persistServerRuntimeState = (input: {
     contents: `${JSON.stringify(input.state)}\n`,
   });
 
-export const readPersistedServerRuntimeState = (path: string) =>
+export type PersistedServerRuntimeStateInspection =
+  | { readonly _tag: "Missing" }
+  | { readonly _tag: "Invalid"; readonly cause: unknown }
+  | { readonly _tag: "Found"; readonly state: PersistedServerRuntimeState };
+
+export const inspectPersistedServerRuntimeState = (path: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const exists = yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false));
-    if (!exists) {
-      return Option.none<PersistedServerRuntimeState>();
+    const exists = yield* Effect.exit(fs.exists(path));
+    if (Exit.isFailure(exists)) {
+      return { _tag: "Invalid", cause: exists.cause } as const;
+    }
+    if (!exists.value) {
+      return { _tag: "Missing" } as const;
     }
 
-    const raw = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
-    const trimmed = raw.trim();
+    const raw = yield* Effect.exit(fs.readFileString(path));
+    if (Exit.isFailure(raw)) {
+      return { _tag: "Invalid", cause: raw.cause } as const;
+    }
+    const trimmed = raw.value.trim();
     if (trimmed.length === 0) {
-      return Option.none<PersistedServerRuntimeState>();
+      return { _tag: "Invalid", cause: new Error("Runtime state file is empty.") } as const;
     }
 
-    return yield* decodePersistedServerRuntimeState(trimmed).pipe(Effect.option);
+    const decoded = yield* Effect.exit(decodePersistedServerRuntimeState(trimmed));
+    return Exit.isSuccess(decoded)
+      ? ({ _tag: "Found", state: decoded.value } as const)
+      : ({ _tag: "Invalid", cause: decoded.cause } as const);
   });
+
+export const readPersistedServerRuntimeState = (path: string) =>
+  inspectPersistedServerRuntimeState(path).pipe(
+    Effect.map((result) =>
+      result._tag === "Found"
+        ? Option.some(result.state)
+        : Option.none<PersistedServerRuntimeState>(),
+    ),
+  );
 
 const fileErrorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"

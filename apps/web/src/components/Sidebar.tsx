@@ -716,7 +716,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     [props.isExpanded, threadKey, toggleThreadExpanded],
   );
   const rowButtonRender = useMemo(() => <div role="button" tabIndex={0} />, []);
-  const threadIndent = props.depth > 0 ? props.depth * 18 : 0;
+  const threadIndent = props.depth > 0 ? `${(props.depth * 18) / 11}em` : undefined;
   const canArchive = virtualAgentRun ? virtualAgentRun.status !== "running" : !isThreadRunning;
 
   // A running agent run can neither be pinned, opened as a PR, nor archived, so
@@ -785,14 +785,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} relative isolate px-1.5`}
+        })} relative isolate h-[var(--app-sidebar-legacy-row-height)] px-[var(--app-sidebar-legacy-row-padding-x)]`}
         onClick={handleRowClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
         <span
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left leading-tight"
-          style={threadIndent > 0 ? { paddingLeft: threadIndent } : undefined}
+          className="flex min-w-0 flex-1 items-center gap-[var(--app-sidebar-row-inline-gap)] text-left leading-tight"
+          style={threadIndent ? { paddingLeft: threadIndent } : undefined}
         >
           {/* Every row reserves the same leading slot so titles share one left
               edge whether or not the thread currently has a status. */}
@@ -817,7 +817,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             // Title + optional PR share one flex-1 slot so the #N mark sits
             // immediately after the truncated title instead of drifting to the
             // trailing icon cluster.
-            <span className="flex min-w-0 flex-1 items-center gap-1">
+            <span className="flex min-w-0 flex-1 items-center gap-[var(--app-sidebar-row-line-gap)]">
               <Tooltip>
                 <TooltipTrigger
                   render={

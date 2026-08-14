@@ -313,6 +313,7 @@ describe("CopilotAcpRuntimeModel", () => {
       );
 
       expect(detected).toEqual({
+        reason: "missing_tool_output",
         callId: "call_fpjPy4PyTryz3X74XdaOaR69",
         statusCode: "400",
         requestId: "F31F:7D36C:606E1:6EC73:69F04151",
@@ -327,9 +328,25 @@ describe("CopilotAcpRuntimeModel", () => {
       );
 
       expect(detected).toMatchObject({
+        reason: "missing_tool_output",
         callId: "call_abc",
         statusCode: "400",
         requestId: undefined,
+      });
+    });
+
+    it("parses a missing namespace error for an MCP function call", () => {
+      const detected = detectCopilotFatalToolCallError(
+        "Error: Execution failed: CAPIError: 400 Missing namespace for function_call 't3-tools-create_nested_thread'. It does not exist in the default namespace. Round-trip the model's function_call item with its namespace field included. (Request ID: 00000-dbd7f037-33c4-4668-853d-ea8f5ba1f202)",
+      );
+
+      expect(detected).toEqual({
+        reason: "missing_namespace",
+        callId: "t3-tools-create_nested_thread",
+        statusCode: "400",
+        requestId: "00000-dbd7f037-33c4-4668-853d-ea8f5ba1f202",
+        originalText:
+          "Error: Execution failed: CAPIError: 400 Missing namespace for function_call 't3-tools-create_nested_thread'. It does not exist in the default namespace. Round-trip the model's function_call item with its namespace field included. (Request ID: 00000-dbd7f037-33c4-4668-853d-ea8f5ba1f202)",
       });
     });
 

@@ -791,6 +791,17 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
           );
           const created = JSON.parse(createdOutput.output) as { readonly threadId: string };
 
+          yield* runCliWithRuntime([
+            "chat",
+            "create",
+            "--project",
+            workspaceRoot,
+            "--title",
+            "Unrelated Chat",
+            "--base-dir",
+            baseDir,
+          ]);
+
           const newChatOutput = yield* captureStdout(
             runCli([
               "chat",
@@ -807,6 +818,34 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
             ]),
           );
           const newChat = JSON.parse(newChatOutput.output) as { readonly threadId: string };
+
+          const allChatsOutput = yield* captureStdout(
+            runCli(["chat", "list", "--base-dir", baseDir]),
+          );
+          const allChats = JSON.parse(allChatsOutput.output) as ReadonlyArray<{
+            readonly title: string;
+          }>;
+          assert.isTrue(allChats.some((thread) => thread.title === "Turn Chat"));
+          assert.isTrue(allChats.some((thread) => thread.title === "Unrelated Chat"));
+
+          const childListOutput = yield* captureStdout(
+            runCli(["chat", "list", "--parent", created.threadId, "--base-dir", baseDir]),
+          );
+          const childList = JSON.parse(childListOutput.output) as ReadonlyArray<{
+            readonly id: string;
+            readonly parentThreadId: string | null;
+          }>;
+          assert.equal(childList.length, 1);
+          assert.equal(childList[0]?.id, newChat.threadId);
+          assert.equal(childList[0]?.parentThreadId, created.threadId);
+
+          const childShowOutput = yield* captureStdout(
+            runCli(["chat", "show", newChat.threadId, "--base-dir", baseDir]),
+          );
+          const shownChild = JSON.parse(childShowOutput.output) as {
+            readonly parentThreadId: string | null;
+          };
+          assert.equal(shownChild.parentThreadId, created.threadId);
 
           yield* runCliWithRuntime([
             "chat",

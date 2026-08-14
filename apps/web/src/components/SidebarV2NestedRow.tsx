@@ -15,7 +15,8 @@ import { Tooltip, TooltipTrigger } from "./ui/tooltip";
 // Nesting reads from indentation alone, and past a few levels the extra offset
 // costs more title width than the hierarchy it conveys.
 const MAX_NESTED_INDENT_DEPTH = 3;
-const NESTED_INDENT_PX = 14;
+const NESTED_INDENT_EM = 14 / 11;
+const NESTED_BASE_PADDING_EM = 10 / 11;
 
 export interface SidebarV2NestedRowProps {
   readonly thread: SidebarThreadSummary;
@@ -113,13 +114,16 @@ export const SidebarV2NestedRow = memo(function SidebarV2NestedRow({
         <TooltipTrigger
           render={
             <SidebarMenuButton
-              className="h-auto min-h-0 gap-1 px-2.5 py-[calc(var(--app-sidebar-row-padding-y)*0.6)] text-[length:var(--app-sidebar-font-size)] transition-none"
+              className="h-auto min-h-0 gap-[var(--app-sidebar-row-line-gap)] px-[var(--app-sidebar-row-padding-x)] py-[calc(var(--app-sidebar-row-padding-y)*0.6)] text-[length:var(--app-sidebar-font-size)] transition-none"
               isActive={active}
               onClick={handleOpen}
               onKeyDown={handleRowKeyDown}
               render={<div role="button" tabIndex={0} />}
               style={{
-                paddingLeft: Math.min(depth, MAX_NESTED_INDENT_DEPTH) * NESTED_INDENT_PX + 10,
+                paddingLeft: `${
+                  Math.min(depth, MAX_NESTED_INDENT_DEPTH) * NESTED_INDENT_EM +
+                  NESTED_BASE_PADDING_EM
+                }em`,
               }}
             />
           }

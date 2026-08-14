@@ -33,7 +33,7 @@ import { AuthControlPlaneRuntimeLive } from "../auth/Layers/AuthControlPlane.ts"
 import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { inspectPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
 export interface CliLiveTargetFlags {
   readonly url: Option.Option<string>;
@@ -187,16 +187,22 @@ export const resolveLiveTarget = (flags: CliLiveTargetFlags) =>
 
     const baseDir = yield* resolveCliBaseDir(flags.baseDir);
     const paths = yield* deriveServerPaths(baseDir, undefined);
-    const runtimeState = yield* readPersistedServerRuntimeState(paths.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
+    const runtimeState = yield* inspectPersistedServerRuntimeState(paths.serverRuntimeStatePath);
+    if (runtimeState._tag === "Missing") {
       return yield* new CliLiveTargetError({
         message:
           "No running T3 server found. Start one with `t3 serve`, or pass --url and --token.",
       });
     }
+    if (runtimeState._tag === "Invalid") {
+      return yield* new CliLiveTargetError({
+        message: `Invalid or unreadable T3 server runtime state at '${paths.serverRuntimeStatePath}'. Remove it and restart T3, or pass --url and --token.`,
+        cause: runtimeState.cause,
+      });
+    }
 
     return {
-      origin: yield* normalizeHttpOrigin(runtimeState.value.origin),
+      origin: yield* normalizeHttpOrigin(runtimeState.state.origin),
       token: Option.getOrUndefined(flags.token),
       baseDir,
     };

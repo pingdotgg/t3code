@@ -431,48 +431,64 @@ export function normalizeCopilotParsedSessionEvent(
 }
 
 /**
- * Detects the upstream Copilot CLI failure mode where the model API rejects a
- * request because a previous tool call's output was never delivered (CAPIError
- * 400 "No tool output found for function call …"). When this surfaces as an
- * `agent_message_chunk`, the Copilot CLI's per-session conversation state is
- * permanently broken — every subsequent prompt on the same session/thread will
- * fail with the same error until the CLI process is restarted with a fresh
- * session. The adapter uses this detector to abort the in-flight turn,
- * surface a clear error to the user, and reset the CLI process.
+ * Detects upstream Copilot CLI failures where the model API rejects replayed
+ * tool-call history because output or namespace metadata is missing. When this
+ * surfaces as an `agent_message_chunk`, every subsequent prompt on the same
+ * session fails until the CLI starts a fresh session. The adapter aborts the
+ * in-flight turn, surfaces a clear error, and resets the CLI process.
  */
 export interface CopilotFatalToolCallError {
+  readonly reason: "missing_tool_output" | "missing_namespace";
   readonly callId: string;
   readonly statusCode: string;
   readonly requestId: string | undefined;
   readonly originalText: string;
 }
 
-const COPILOT_FATAL_TOOL_CALL_ERROR_PATTERN =
-  /Execution failed:\s*CAPIError:\s*(?<status>\d+)\s+No tool output found for function call\s+(?<call>\S+?)\.\s*(?:\(Request ID:\s*(?<request>[^)]+)\))?/u;
+const COPILOT_FATAL_TOOL_CALL_ERROR_PATTERNS = [
+  {
+    reason: "missing_tool_output" as const,
+    pattern:
+      /Execution failed:\s*CAPIError:\s*(?<status>\d+)\s+No tool output found for function call\s+(?<call>\S+?)\./u,
+  },
+  {
+    reason: "missing_namespace" as const,
+    pattern:
+      /Execution failed:\s*CAPIError:\s*(?<status>\d+)\s+Missing namespace for function_call\s+['"](?<call>[^'"]+)['"]\./u,
+  },
+];
+
+const COPILOT_REQUEST_ID_PATTERN = /\(Request ID:\s*(?<request>[^)]+)\)/u;
 
 export function detectCopilotFatalToolCallError(
   text: string,
 ): CopilotFatalToolCallError | undefined {
-  const match = COPILOT_FATAL_TOOL_CALL_ERROR_PATTERN.exec(text);
-  if (!match?.groups) {
-    return undefined;
+  for (const { reason, pattern } of COPILOT_FATAL_TOOL_CALL_ERROR_PATTERNS) {
+    const match = pattern.exec(text);
+    const status = match?.groups?.status;
+    const call = match?.groups?.call;
+    if (!status || !call) {
+      continue;
+    }
+    return {
+      reason,
+      callId: call,
+      statusCode: status,
+      requestId: COPILOT_REQUEST_ID_PATTERN.exec(text)?.groups?.request?.trim() || undefined,
+      originalText: text,
+    };
   }
-  const { status, call, request } = match.groups;
-  if (!status || !call) {
-    return undefined;
-  }
-  return {
-    callId: call,
-    statusCode: status,
-    requestId: request?.trim() || undefined,
-    originalText: text,
-  };
+  return undefined;
 }
 
 export function copilotFatalToolCallErrorMessage(error: CopilotFatalToolCallError): string {
+  const detail =
+    error.reason === "missing_namespace"
+      ? `namespace missing for ${error.callId}`
+      : `missing tool output for ${error.callId}`;
   return (
     `Copilot CLI hit a fatal API error and the conversation can no longer continue. ` +
-    `(CAPIError ${error.statusCode}: missing tool output for ${error.callId}.) ` +
+    `(CAPIError ${error.statusCode}: ${detail}.) ` +
     `Start a new thread to continue working with Copilot.`
   );
 }

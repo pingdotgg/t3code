@@ -134,6 +134,23 @@ describe("CopilotAcpPermissions", () => {
     ).toEqual({ _tag: "select", optionId: "allow-always-id" });
   });
 
+  it("does not inspect nested-thread prompt text as a shell command", () => {
+    expect(
+      selectCopilotPermissionForRuntimeMode({
+        runtimeMode: "full-access",
+        params: request({
+          kind: "other",
+          title: "create_nested_thread",
+          rawInput: {
+            title: "Fix PR 200 review findings",
+            prompt: "Use the workspace handoff skill; do not use raw git worktree add/move/remove.",
+          },
+        }),
+        permissionRequest: mcpToolPermission(),
+      }),
+    ).toEqual({ _tag: "select", optionId: "allow-always-id" });
+  });
+
   it("asks for approval on MCP tool calls in non-full-access modes", () => {
     for (const runtimeMode of ["auto-accept-edits", "approval-required"] as const) {
       expect(

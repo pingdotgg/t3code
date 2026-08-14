@@ -1,11 +1,18 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import {
   CliRpcError,
   isDefinitiveCommandRejectionError,
   isDefinitiveCommandRejectionResponse,
+  resolveLiveTarget,
   wsRpcProtocolLayer,
 } from "./client.ts";
 
@@ -47,4 +54,26 @@ it("preserves definitive command rejection as structured CLI error state", () =>
       }),
     ),
   );
+});
+
+it("reports malformed persisted runtime state with actionable recovery", async () => {
+  const baseDir = await mkdtemp(join(tmpdir(), "t3-cli-invalid-runtime-state-"));
+  const runtimeStatePath = join(baseDir, "userdata", "server-runtime.json");
+  try {
+    await mkdir(join(baseDir, "userdata"), { recursive: true });
+    await writeFile(runtimeStatePath, "not-json\n", "utf8");
+
+    const error = await Effect.runPromise(
+      resolveLiveTarget({
+        url: Option.none(),
+        token: Option.none(),
+        baseDir: Option.some(baseDir),
+      }).pipe(Effect.flip, Effect.provide(NodeServices.layer)),
+    );
+
+    assert.include(error.message, runtimeStatePath);
+    assert.include(error.message, "Remove it and restart T3");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
 });

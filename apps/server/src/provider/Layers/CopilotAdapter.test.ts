@@ -199,6 +199,61 @@ copilotAdapterTestLayer("CopilotAdapterLive", (it) => {
     }),
   );
 
+  it.effect("fails fast when Copilot drops an MCP function-call namespace", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("copilot-missing-namespace-thread");
+
+      yield* isolateCopilotHome();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockCopilotWrapper({
+          T3_ACP_PROMPT_RESPONSE_TEXT:
+            "Error: Execution failed: CAPIError: 400 Missing namespace for function_call 't3-tools-create_nested_thread'. It does not exist in the default namespace. Round-trip the model's function_call item with its namespace field included. (Request ID: namespace-request-id)",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { copilot: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: COPILOT_DRIVER,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: COPILOT_INSTANCE_ID, model: "auto" },
+      });
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "content.delta" || event.type === "turn.completed"),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "create a nested thread",
+        attachments: [],
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const delta = events.find((event) => event.type === "content.delta");
+      assert.equal(delta?.type, "content.delta");
+      if (delta?.type === "content.delta") {
+        assert.include(delta.payload.delta, "namespace missing for t3-tools-create_nested_thread");
+        assert.include(delta.payload.delta, "Start a new thread");
+      }
+      const completed = events.find((event) => event.type === "turn.completed");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(completed.payload.state, "failed");
+        assert.equal(completed.payload.stopReason, "copilot_fatal_capi_error");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("keeps the turn active until a background agent settles", () =>
     Effect.gen(function* () {
       const adapter = yield* CopilotAdapter;

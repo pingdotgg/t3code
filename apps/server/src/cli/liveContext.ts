@@ -49,6 +49,7 @@ export const projectSummary = (project: ActiveProject) => ({
 export const threadSummary = (thread: CliThread) => ({
   id: thread.id,
   projectId: thread.projectId,
+  parentThreadId: thread.parentThreadId,
   title: thread.title,
   modelSelection: thread.modelSelection,
   runtimeMode: thread.runtimeMode,

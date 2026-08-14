@@ -1595,6 +1595,10 @@ const serverCommand = Command.make("server").pipe(
 const chatListCommand = Command.make("list", {
   ...liveTargetFlags,
   project: Flag.string("project").pipe(Flag.optional),
+  parent: Flag.string("parent").pipe(
+    Flag.optional,
+    Flag.withDescription("Parent thread id or title."),
+  ),
 }).pipe(
   Command.withDescription("List active chats."),
   Command.withHandler((flags) =>
@@ -1603,8 +1607,18 @@ const chatListCommand = Command.make("list", {
       const project = Option.isSome(flags.project)
         ? yield* findProjectForCli(snapshot, flags.project.value)
         : null;
-      const threads = activeThreadsOf(snapshot).filter((thread) =>
-        project === null ? true : thread.projectId === project.id,
+      const parent = Option.isSome(flags.parent)
+        ? yield* findThreadForCli(snapshot, flags.parent.value)
+        : null;
+      if (project !== null && parent !== null && parent.projectId !== project.id) {
+        return yield* Effect.fail(
+          new Error(`Parent thread '${parent.id}' belongs to a different project.`),
+        );
+      }
+      const threads = activeThreadsOf(snapshot).filter(
+        (thread) =>
+          (project === null || thread.projectId === project.id) &&
+          (parent === null || thread.parentThreadId === parent.id),
       );
       yield* printJson(threads.map(threadSummary));
     }),
