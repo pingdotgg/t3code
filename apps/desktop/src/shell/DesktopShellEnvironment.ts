@@ -406,12 +406,17 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     const checkProfileMentionsFnm = Effect.gen(function* () {
       const userProfile = config.env.USERPROFILE;
       if (!userProfile) return true; // unsafe to skip if we can't find the profile
-      const profilePaths = [
-        `${userProfile}\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`,
-        `${userProfile}\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1`,
-        `${userProfile}\\Documents\\WindowsPowerShell\\profile.ps1`,
-        `${userProfile}\\Documents\\PowerShell\\profile.ps1`,
-      ];
+      const documentsDirs = [`${userProfile}\\Documents`];
+      const oneDrive = trimNonEmpty(config.env.OneDrive);
+      if (Option.isSome(oneDrive)) {
+        documentsDirs.push(`${oneDrive.value}\\Documents`);
+      }
+      const profilePaths = documentsDirs.flatMap((documentsDir) => [
+        `${documentsDir}\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1`,
+        `${documentsDir}\\PowerShell\\Microsoft.PowerShell_profile.ps1`,
+        `${documentsDir}\\WindowsPowerShell\\profile.ps1`,
+        `${documentsDir}\\PowerShell\\profile.ps1`,
+      ]);
       for (const p of profilePaths) {
         const bytes = yield* fileSystem.readFile(p).pipe(
           Effect.catchIf(

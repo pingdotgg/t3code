@@ -410,6 +410,45 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("runs PowerShell probes when fnm is referenced only in an OneDrive-redirected profile", () =>
+    Effect.gen(function* () {
+      const mockDir = "C:\\mock\\temp";
+      const env: NodeJS.ProcessEnv = {
+        PATH: mockDir,
+        USERPROFILE: "C:\\Users\\test",
+        OneDrive: "C:\\Users\\test\\OneDrive",
+      };
+      const commands: ChildProcess.Command[] = [];
+
+      const mockFs = {
+        exists: (path: string) => Effect.succeed(path.includes("node.exe")),
+        readFile: (path: string) =>
+          path.includes("OneDrive")
+            ? Effect.succeed(textEncoder.encode('Invoke-Expression "fnm env"'))
+            : Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "readFile",
+                  pathOrDescriptor: "",
+                }),
+              ),
+      } as unknown as FileSystem.FileSystem;
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        fs: mockFs,
+        handler: (command) => {
+          commands.push(command);
+          return envOutput({ PATH: mockDir });
+        },
+      });
+
+      assert.equal(commands.length, 2);
+    }),
+  );
+
   it.effect("skips ALL PowerShell probes when node is available and profile exists without fnm", () =>
     Effect.gen(function* () {
       const mockDir = "C:\\mock\\temp";
