@@ -64,6 +64,7 @@ import {
   threadPullRequestKeyOf,
 } from "../sourceControl/threadPullRequests.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
 import {
@@ -89,6 +90,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 import {
@@ -168,6 +170,7 @@ export class GitManager extends Context.Service<
 >()("t3/git/GitManager") {}
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
+const AFTER_PUSH_TIMEOUT_MS = 30 * 60_000;
 const MAX_LOGICAL_COMMITS = 20;
 const MAX_LOGICAL_CHANGE_UNITS = 200;
 const MAX_LOGICAL_COMMIT_PATCH_BYTES = 2_000_000;
@@ -704,6 +707,8 @@ export const make = Effect.gen(function* () {
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const random = yield* SecureRandom.SecureRandom;
   const vcsProjectConfig = yield* VcsProjectConfig.VcsProjectConfig;
+  const vcsProcess = yield* VcsProcess.VcsProcess;
+  const hostPlatform = yield* HostProcess.Platform;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -915,6 +920,37 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+
+  const runAfterPushHook = Effect.fn("runAfterPushHook")(function* (cwd: string) {
+    const { afterPush } = yield* vcsProjectConfig.resolveHooks({ cwd });
+    if (afterPush === null) {
+      return;
+    }
+
+    const shell = hostPlatform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : "/bin/sh";
+    const args = hostPlatform === "win32" ? ["/d", "/s", "/c", afterPush] : ["-lc", afterPush];
+
+    yield* vcsProcess
+      .run({
+        operation: "GitManager.runAfterPushHook",
+        command: shell,
+        args,
+        cwd,
+        timeoutMs: AFTER_PUSH_TIMEOUT_MS,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "runAfterPushHook",
+              cwd,
+              detail: "The configured hooks.afterPush command failed.",
+              cause,
+            }),
+        ),
+        Effect.asVoid,
+      );
+  });
 
   const createProgressEmitter = (
     input: { cwd: string; action: GitStackedAction },
@@ -3545,26 +3581,42 @@ export const make = Effect.gen(function* () {
               )
           : { status: "skipped_not_requested" as const };
 
-        const pr = wantsPr
-          ? yield* progress
-              .emit({
-                kind: "phase_started",
-                phase: "pr",
-                label: `Preparing ${changeRequestTerms?.shortLabel ?? "PR"}...`,
-              })
-              .pipe(
-                Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
-                Effect.flatMap(() =>
-                  runPrStep(
-                    textGenerationSettings,
-                    input.cwd,
-                    currentBranch,
-                    input.threadId,
-                    progress.emit,
+        const afterPush = push.status === "pushed" ? runAfterPushHook(input.cwd) : Effect.void;
+        const runPr: Effect.Effect<GitRunStackedActionResult["pr"], GitManagerServiceError> =
+          wantsPr
+            ? progress
+                .emit({
+                  kind: "phase_started",
+                  phase: "pr",
+                  label: `Preparing ${changeRequestTerms?.shortLabel ?? "PR"}...`,
+                })
+                .pipe(
+                  Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
+                  Effect.flatMap(() =>
+                    runPrStep(
+                      textGenerationSettings,
+                      input.cwd,
+                      currentBranch,
+                      input.threadId,
+                      progress.emit,
+                    ),
                   ),
-                ),
-              )
-          : { status: "skipped_not_requested" as const };
+                )
+            : Effect.succeed({ status: "skipped_not_requested" as const });
+
+        // Wait for both operations even if one fails: an MR creation already in
+        // flight should not be interrupted because the local after-push hook failed.
+        const [afterPushExit, prExit] = yield* Effect.all(
+          [Effect.exit(afterPush), Effect.exit(runPr)],
+          { concurrency: "unbounded" },
+        );
+        if (Exit.isFailure(afterPushExit)) {
+          return yield* Effect.failCause(afterPushExit.cause);
+        }
+        if (Exit.isFailure(prExit)) {
+          return yield* Effect.failCause(prExit.cause);
+        }
+        const pr = prExit.value;
 
         const toast = yield* buildCompletionToast(input.cwd, {
           action: input.action,

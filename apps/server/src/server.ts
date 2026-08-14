@@ -427,6 +427,7 @@ const layerGitManager = GitManager.layer.pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectSetupScriptRunner),
   Layer.provideMerge(WorktreeSetupTracker.layer),
   Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(VcsProjectConfig.layer),
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(TextGeneration.layer.pipe(Layer.provide(layerSourceControlProviderRegistry))),

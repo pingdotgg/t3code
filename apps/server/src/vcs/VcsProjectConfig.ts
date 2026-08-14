@@ -18,6 +18,10 @@ const BranchNamingConfig = Schema.Struct({
   preserveNamespaces: Schema.optional(Schema.Boolean),
 });
 
+const HooksConfig = Schema.Struct({
+  afterPush: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+
 const ProjectVcsConfig = Schema.Struct({
   vcs: Schema.optional(
     Schema.Struct({
@@ -26,6 +30,7 @@ const ProjectVcsConfig = Schema.Struct({
   ),
   vcsKind: Schema.optional(VcsDriverKind),
   branchNaming: Schema.optional(BranchNamingConfig),
+  hooks: Schema.optional(HooksConfig),
 });
 const ProjectVcsConfigJson = fromLenientJson(ProjectVcsConfig);
 const decodeProjectVcsConfigJson = Schema.decodeUnknownEffect(ProjectVcsConfigJson);
@@ -42,9 +47,17 @@ export interface VcsBranchNamingConfig {
   readonly preserveNamespaces: boolean;
 }
 
+export interface VcsHooksConfig {
+  readonly afterPush: string | null;
+}
+
 export const defaultBranchNamingConfig: VcsBranchNamingConfig = {
   defaultPrefix: "feature",
   preserveNamespaces: false,
+};
+
+export const defaultHooksConfig: VcsHooksConfig = {
+  afterPush: null,
 };
 
 export class VcsProjectConfigError extends Schema.TaggedError<VcsProjectConfigError>()(
@@ -70,6 +83,7 @@ export class VcsProjectConfig extends Context.Service<
     readonly resolveBranchNaming: (input: {
       readonly cwd: string;
     }) => Effect.Effect<VcsBranchNamingConfig>;
+    readonly resolveHooks: (input: { readonly cwd: string }) => Effect.Effect<VcsHooksConfig>;
   }
 >()("t3/vcs/VcsProjectConfig") {}
 
@@ -84,6 +98,12 @@ function configuredBranchNaming(config: ProjectVcsConfigFile): VcsBranchNamingCo
       configuredPrefix === undefined ? defaultBranchNamingConfig.defaultPrefix : configuredPrefix,
     preserveNamespaces:
       config.branchNaming?.preserveNamespaces ?? defaultBranchNamingConfig.preserveNamespaces,
+  };
+}
+
+function configuredHooks(config: ProjectVcsConfigFile): VcsHooksConfig {
+  return {
+    afterPush: config.hooks?.afterPush ?? defaultHooksConfig.afterPush,
   };
 }
 
@@ -206,9 +226,23 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const resolveHooks: VcsProjectConfig["Service"]["resolveHooks"] = Effect.fn(
+    "VcsProjectConfig.resolveHooks",
+  )(function* (input) {
+    return yield* resolveConfig(input.cwd).pipe(
+      Effect.map(
+        Option.match({
+          onNone: () => defaultHooksConfig,
+          onSome: configuredHooks,
+        }),
+      ),
+    );
+  });
+
   return VcsProjectConfig.of({
     resolveKind,
     resolveBranchNaming,
+    resolveHooks,
   });
 });
 

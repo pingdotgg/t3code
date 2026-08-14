@@ -76,6 +76,7 @@ type FakeChangeRequest = Omit<ChangeRequest, "provider" | "state" | "updatedAt">
 };
 
 interface FakeProviderScenario {
+  onPrCreate?: Effect.Effect<void>;
   prListGate?: {
     readonly started: Deferred.Deferred<void>;
     readonly release: Deferred.Deferred<void>;
@@ -505,7 +506,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
           baseRefName: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
-        }),
+        }).pipe(Effect.andThen(scenario.onPrCreate ?? Effect.void)),
       getDefaultBranch: (input) =>
         record(input.cwd, { operation: "getDefaultBranch" }).pipe(
           Effect.map(() => {
@@ -625,6 +626,7 @@ function preparePullRequestThread(
 }
 
 function makeManager(input?: {
+  vcsProcess?: VcsProcess.VcsProcess["Service"];
   providerScenario?: FakeProviderScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
   resolvedSourceControlContext?: SourceControlProviderContext | null;
@@ -706,7 +708,9 @@ function makeManager(input?: {
     : GitVcsDriver.layer;
   const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
     Layer.provide(layerGitDriverSpawner),
-    Layer.provideMerge(VcsProcess.layer),
+    Layer.provideMerge(
+      input?.vcsProcess ? Layer.succeed(VcsProcess.VcsProcess, input.vcsProcess) : VcsProcess.layer,
+    ),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(layerServerConfig),
   );
@@ -782,6 +786,129 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("runs hooks.afterPush after pushing and concurrently with PR creation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/after-push-hook"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const prStarted = yield* Deferred.make<void>();
+      const realProcess = yield* VcsProcess.VcsProcess;
+      const hookFinishedMarker = NodePath.join(remoteDir, "hook-finished");
+      const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+      const hookCommand = [
+        `git --git-dir=${shellQuote(remoteDir)} rev-parse refs/heads/feature/after-push-hook >/dev/null`,
+        `printf '%s\\n' complete >${shellQuote(hookFinishedMarker)}`,
+      ].join(" && ");
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".t3code", "vcs.json"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({ hooks: { afterPush: hookCommand } }),
+      );
+      NodeFS.writeFileSync(NodePath.join(repoDir, "after-push.txt"), "after push\n");
+      yield* runGit(repoDir, ["add", ".t3code/vcs.json", "after-push.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Exercise after-push hook"]);
+
+      const { manager } = yield* makeManager({
+        vcsProcess: {
+          run: (input) =>
+            input.operation === "GitManager.runAfterPushHook"
+              ? Deferred.await(prStarted).pipe(Effect.andThen(realProcess.run(input)))
+              : realProcess.run(input),
+        },
+        providerScenario: {
+          onPrCreate: Deferred.succeed(prStarted, undefined).pipe(Effect.asVoid),
+          prListSequence: [
+            [],
+            [
+              {
+                number: 305,
+                title: "Exercise after-push hook",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/305",
+                baseRefName: "main",
+                headRefName: "feature/after-push-hook",
+              },
+            ],
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.push.status).toBe("pushed");
+      expect(result.pr.status).toBe("created");
+      expect(NodeFS.readFileSync(hookFinishedMarker, "utf8")).toBe("complete\n");
+    }),
+  );
+
+  it.effect("fails the action when hooks.afterPush fails after a successful push", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/failing-after-push-hook"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".t3code", "vcs.json"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({ hooks: { afterPush: "exit 7" } }),
+      );
+      yield* runGit(repoDir, ["add", ".t3code/vcs.json"]);
+      yield* runGit(repoDir, ["commit", "-m", "Configure failing after-push hook"]);
+
+      const { manager } = yield* makeManager();
+      const error = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("configured hooks.afterPush command failed");
+      expect(
+        yield* runGit(remoteDir, [
+          "show-ref",
+          "--verify",
+          "refs/heads/feature/failing-after-push-hook",
+        ]).pipe(Effect.map((output) => output.exitCode)),
+      ).toBe(0);
+    }),
+  );
+
+  it.effect("does not run hooks.afterPush when no push was needed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/skipped-after-push-hook"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const marker = NodePath.join(remoteDir, "unexpected-after-push");
+      const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".t3code", "vcs.json"),
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({ hooks: { afterPush: `touch ${shellQuote(marker)}` } }),
+      );
+      yield* runGit(repoDir, ["add", ".t3code/vcs.json"]);
+      yield* runGit(repoDir, ["commit", "-m", "Configure skipped after-push hook"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/skipped-after-push-hook"]);
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+      });
+
+      expect(result.push.status).toBe("skipped_up_to_date");
+      expect(NodeFS.existsSync(marker)).toBe(false);
+    }),
+  );
+
   it.effect("create_pr fetches the pushed branch from a single-branch clone", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -802,11 +929,20 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["commit", "-m", "Create single-branch PR"]);
 
       const { manager, providerCalls } = yield* makeManager({
-        providerScenario: { prListSequence: [[], [{
-          number: 304, title: "Create single-branch PR",
-          url: "https://github.com/pingdotgg/codething-mvp/pull/304",
-          baseRefName: "main", headRefName: "feature/single-branch-pr",
-        }]] },
+        providerScenario: {
+          prListSequence: [
+            [],
+            [
+              {
+                number: 304,
+                title: "Create single-branch PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/304",
+                baseRefName: "main",
+                headRefName: "feature/single-branch-pr",
+              },
+            ],
+          ],
+        },
       });
 
       const result = yield* runStackedAction(manager, {
@@ -821,7 +957,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
       expect(result.pr.status).toBe("created");
       expect(result.pr.number).toBe(304);
-      expect(created(providerCalls)).toEqual([{ baseRefName: "main", headSelector: "feature/single-branch-pr" }]);
+      expect(created(providerCalls)).toEqual([
+        { baseRefName: "main", headSelector: "feature/single-branch-pr" },
+      ]);
       expect(
         yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "@{upstream}"], true).pipe(
           Effect.map((output) => ({ exitCode: output.exitCode, upstream: output.stdout.trim() })),

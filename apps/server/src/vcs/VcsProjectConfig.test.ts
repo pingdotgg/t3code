@@ -110,6 +110,19 @@ describe("VcsProjectConfig", () => {
         });
       }),
     );
+
+    it.effect("returns no project hooks", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-test-",
+        });
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const hooks = yield* config.resolveHooks({ cwd: root });
+
+        assert.deepStrictEqual(hooks, { afterPush: null });
+      }),
+    );
   });
 
   it.layer(layerTest)("resolves project branch naming conventions", (it) => {
@@ -141,6 +154,32 @@ describe("VcsProjectConfig", () => {
           defaultPrefix: null,
           preserveNamespaces: true,
         });
+      }),
+    );
+  });
+
+  it.layer(layerTest)("resolves project hooks", (it) => {
+    it.effect("returns an after-push command from a parent config", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-test-",
+        });
+        const configDir = path.join(root, ".t3code");
+        const nested = path.join(root, "packages", "app");
+        yield* fileSystem.makeDirectory(configDir, { recursive: true });
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(configDir, "vcs.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.stringify({ hooks: { afterPush: "./scripts/populate-cache" } }),
+        );
+
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const hooks = yield* config.resolveHooks({ cwd: nested });
+
+        assert.deepStrictEqual(hooks, { afterPush: "./scripts/populate-cache" });
       }),
     );
   });
