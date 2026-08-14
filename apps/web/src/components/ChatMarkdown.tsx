@@ -110,6 +110,7 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  imageComponent?: Components["img"];
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -185,7 +186,12 @@ const CHAT_MARKDOWN_REHYPE_PLUGINS = [
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
   string,
-  { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
+  {
+    label: string;
+    Icon: typeof InfoIcon;
+    borderClassName: string;
+    titleClassName: string;
+  }
 > = {
   note: {
     label: "Note",
@@ -334,9 +340,11 @@ function extractCodeBlock(
 
   const onlyChild = childNodes[0];
   if (
-    !isValidElement<{ className?: string; children?: ReactNode; node?: { tagName?: string } }>(
-      onlyChild,
-    )
+    !isValidElement<{
+      className?: string;
+      children?: ReactNode;
+      node?: { tagName?: string };
+    }>(onlyChild)
   ) {
     return null;
   }
@@ -1200,7 +1208,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         },
         (error) => {
           reportMarkdownActionFailure(
-            { operation: "copy-file-path", target: targetPath, copyTarget: title },
+            {
+              operation: "copy-file-path",
+              target: targetPath,
+              copyTarget: title,
+            },
             error,
           );
           toastManager.add(
@@ -1229,7 +1241,12 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           [
             { id: "open", label: "Open in editor" },
             ...(onOpenInBrowser
-              ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
+              ? ([
+                  {
+                    id: "open-in-browser",
+                    label: "Open in integrated browser",
+                  },
+                ] as const)
               : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
@@ -1327,6 +1344,7 @@ function ChatMarkdown({
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
+  imageComponent,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1480,6 +1498,7 @@ function ChatMarkdown({
     };
 
     return {
+      ...(imageComponent ? { img: imageComponent } : {}),
       p({ node: _node, children, ...props }) {
         return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
       },
@@ -1537,7 +1556,10 @@ function ChatMarkdown({
                 event.currentTarget.closest("li")?.dataset.taskMarkerOffset,
               );
               if (!Number.isSafeInteger(markerOffset)) return;
-              onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
+              onTaskListChange({
+                markerOffset,
+                checked: event.currentTarget.checked,
+              });
             }}
           />
         );
@@ -1683,6 +1705,7 @@ function ChatMarkdown({
     diffThemeName,
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
+    imageComponent,
     isStreaming,
     markdownFileLinkMetaByHref,
     onTaskListChange,

@@ -81,6 +81,7 @@ function reviewStateLabel(state: string): string {
 
 /** What every remark in the conversation needs to be rewritten where it sits. */
 interface CommentEditing {
+  readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
@@ -107,6 +108,7 @@ function CommentBody({
       <PullRequestMarkdownEditor
         className={className}
         value={comment.body}
+        environmentId={editing.environmentId}
         cwd={editing.cwd}
         label="Edit comment"
         saving={editing.saving}
@@ -117,7 +119,12 @@ function CommentBody({
   }
   return (
     <div className={cn("flex items-start gap-1", className)}>
-      <PullRequestMarkdown className="min-w-0 flex-1" text={comment.body} cwd={editing.cwd} />
+      <PullRequestMarkdown
+        className="min-w-0 flex-1"
+        text={comment.body}
+        cwd={editing.cwd}
+        environmentId={editing.environmentId}
+      />
       {editing.canEdit(comment) ? (
         <Button
           size="icon-xs"
@@ -290,7 +297,9 @@ function CommentComposer({
 }) {
   const [body, setBody] = useState("");
   const [posting, setPosting] = useState(false);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const postComment = useAtomCommand(pullRequestEnvironment.comment, {
+    reportFailure: false,
+  });
 
   const submit = async () => {
     const trimmed = body.trim();
@@ -395,7 +404,9 @@ export function PullRequestSummaryTab({
     void readLocalApi()?.shell.openExternal(url);
   };
 
-  const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
+  const update = useAtomCommand(pullRequestEnvironment.update, {
+    reportFailure: false,
+  });
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
@@ -417,10 +428,16 @@ export function PullRequestSummaryTab({
   const saveBody = async (body: string) => {
     if (bodySaving) return;
     setBodySaving(true);
-    const result = await update({ environmentId, input: { ...reference, body } });
+    const result = await update({
+      environmentId,
+      input: { ...reference, body },
+    });
     setBodySaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the description" });
+      toastManager.add({
+        type: "error",
+        title: "Could not save the description",
+      });
       return;
     }
     setBodyScope(null);
@@ -428,6 +445,7 @@ export function PullRequestSummaryTab({
   };
 
   const commentEditing: CommentEditing = {
+    environmentId,
     cwd: detail.workspaceRoot,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
@@ -441,11 +459,19 @@ export function PullRequestSummaryTab({
       setCommentSaving(true);
       const result = await updateComment({
         environmentId,
-        input: { ...reference, commentId: comment.id, kind: comment.kind, body },
+        input: {
+          ...reference,
+          commentId: comment.id,
+          kind: comment.kind,
+          body,
+        },
       });
       setCommentSaving(false);
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: "Could not save the comment" });
+        toastManager.add({
+          type: "error",
+          title: "Could not save the comment",
+        });
         return;
       }
       setCommentScope(null);
@@ -544,6 +570,7 @@ export function PullRequestSummaryTab({
               // Empty is a real answer here: saving nothing is how a description is cleared.
               allowEmpty
               value={detail.body}
+              environmentId={environmentId}
               cwd={detail.workspaceRoot}
               label="Pull request description"
               placeholder="Describe this pull request"
@@ -557,6 +584,7 @@ export function PullRequestSummaryTab({
                 className="min-w-0 flex-1"
                 text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
                 cwd={detail.workspaceRoot}
+                environmentId={environmentId}
               />
               {canEditPullRequestChangeRequest(detail) ? (
                 <Button
@@ -682,7 +710,10 @@ export function PullRequestSummaryTab({
                     variant="outline"
                     className="w-full"
                     onClick={() =>
-                      setShown({ url: detail.url, count: shownComments + COMMENT_PAGE })
+                      setShown({
+                        url: detail.url,
+                        count: shownComments + COMMENT_PAGE,
+                      })
                     }
                   >
                     Show {Math.min(hiddenCommentCount, COMMENT_PAGE)} earlier{" "}

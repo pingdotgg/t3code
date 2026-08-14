@@ -16,6 +16,7 @@ import { cast } from "effect/Function";
 import {
   HttpBody,
   HttpClient,
+  HttpClientRequest,
   HttpClientResponse,
   HttpMiddleware,
   HttpRouter,
@@ -38,6 +39,7 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as ProcessRunner from "./processRunner.ts";
 import { browserApiCorsAllowedHeaders, browserApiCorsAllowedMethods } from "./httpCors.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
@@ -45,15 +47,60 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"];
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-export function assetResponseHeaders(filePath: string): Record<string, string> {
+export function assetResponseHeaders(
+  filePath: string,
+  contentType?: string,
+): Record<string, string> {
   return {
     "Cache-Control": "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
-    ...(filePath.toLowerCase().endsWith(".svg")
+    ...(contentType === "image/svg+xml" || filePath.toLowerCase().endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
   };
 }
+
+export const proxyGitHubUserAttachment = Effect.fn("proxyGitHubUserAttachment")(function* (
+  url: string,
+) {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const token = yield* processRunner
+    .run({
+      command: "gh",
+      args: ["auth", "token", "--hostname", "github.com"],
+      timeout: "10 seconds",
+      maxOutputBytes: 4096,
+    })
+    .pipe(
+      Effect.map((result) => (result.code === 0 ? result.stdout.trim() : "")),
+      Effect.orElseSucceed(() => ""),
+    );
+  if (token.length === 0) return HttpServerResponse.text("Not Found", { status: 404 });
+
+  const httpClient = yield* HttpClient.HttpClient;
+  const response = yield* httpClient
+    .execute(
+      HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeader("accept", "image/*"),
+        HttpClientRequest.bearerToken(token),
+      ),
+    )
+    .pipe(Effect.orElseSucceed(() => null));
+  if (!response || response.status < 200 || response.status >= 300) {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+  const contentType = response.headers["content-type"]?.split(";", 1)[0] ?? "";
+  if (!contentType.startsWith("image/")) {
+    return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+  return HttpServerResponse.stream(response.stream, {
+    status: 200,
+    headers: {
+      ...assetResponseHeaders(url, contentType),
+      "Content-Type": contentType,
+    },
+  });
+});
 
 export const httpCompressionLayer = HttpRouter.middleware(HttpMiddleware.compression(), {
   global: true,
@@ -217,6 +264,9 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
+    if (asset.kind === "github-user-attachment") {
+      return yield* proxyGitHubUserAttachment(asset.url).pipe(Effect.provide(ProcessRunner.layer));
+    }
     return yield* HttpServerResponse.file(asset.path, {
       status: 200,
       headers: assetResponseHeaders(asset.path),
@@ -270,7 +320,9 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       hasPathTraversalSegment ||
       staticRelativePath.includes("\0")
     ) {
-      return HttpServerResponse.text("Invalid static file path", { status: 400 });
+      return HttpServerResponse.text("Invalid static file path", {
+        status: 400,
+      });
     }
 
     const isWithinStaticRoot = (candidate: string) =>
@@ -279,14 +331,18 @@ export const staticAndDevRouteLayer = HttpRouter.add(
 
     let filePath = path.resolve(staticRoot, staticRelativePath);
     if (!isWithinStaticRoot(filePath)) {
-      return HttpServerResponse.text("Invalid static file path", { status: 400 });
+      return HttpServerResponse.text("Invalid static file path", {
+        status: 400,
+      });
     }
 
     const ext = path.extname(filePath);
     if (!ext) {
       filePath = path.resolve(filePath, "index.html");
       if (!isWithinStaticRoot(filePath)) {
-        return HttpServerResponse.text("Invalid static file path", { status: 400 });
+        return HttpServerResponse.text("Invalid static file path", {
+          status: 400,
+        });
       }
     }
 

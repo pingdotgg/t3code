@@ -1,9 +1,27 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useMemo, type ComponentProps } from "react";
 
+import { useAssetUrl } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
+
+const GITHUB_USER_ATTACHMENT_PREFIX = "https://github.com/user-attachments/assets/";
+
+function PullRequestImage({
+  environmentId,
+  src,
+  ...props
+}: ComponentProps<"img"> & { environmentId: EnvironmentId }) {
+  const resource = useMemo(
+    () => ({ _tag: "github-user-attachment" as const, url: src ?? "" }),
+    [src],
+  );
+  const authenticatedSrc = useAssetUrl(environmentId, resource);
+  return <img {...props} src={authenticatedSrc ?? src} />;
+}
 
 /**
  * A pull request body, rendered with the app's markdown renderer plus a card for each upload
@@ -19,18 +37,33 @@ import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
 export function PullRequestMarkdown({
   text,
   cwd,
+  environmentId,
   className,
 }: {
   text: string;
   cwd: string;
+  environmentId: EnvironmentId;
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
+  const Image = useMemo(
+    () =>
+      function PullRequestMarkdownImage({ src, ...props }: ComponentProps<"img">) {
+        return src?.startsWith(GITHUB_USER_ATTACHMENT_PREFIX) ? (
+          <PullRequestImage {...props} src={src} environmentId={environmentId} />
+        ) : (
+          <img {...props} src={src} />
+        );
+      },
+    [environmentId],
+  );
   return (
     <div className={cn("space-y-3", className)}>
       {segments.map((segment) => {
         if (segment.kind === "markdown") {
-          return <ChatMarkdown key={segment.id} text={segment.text} cwd={cwd} />;
+          return (
+            <ChatMarkdown key={segment.id} text={segment.text} cwd={cwd} imageComponent={Image} />
+          );
         }
         const isVideo = segment.media === "video";
         const Icon = isVideo ? PlayIcon : PaperclipIcon;
