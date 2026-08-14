@@ -94,19 +94,22 @@ it.effect("launches the default browser through the platform command", () => {
   );
 });
 
-it.effect("reveals files with the linux file manager", () =>
+it.effect("opens the nearest existing folder for a missing Linux target", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-file-manager-" });
     const commandPath = path.join(binDir, "xdg-open");
+    const workspacePath = path.join(binDir, "project with spaces");
+    const targetPath = path.join(workspacePath, "missing", "src", "index.ts");
     yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
     yield* fileSystem.chmod(commandPath, 0o755);
+    yield* fileSystem.makeDirectory(workspacePath);
 
     let spawned: ChildProcess.StandardCommand | undefined;
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
-      yield* launcher.revealInFileManager({ path: "/tmp/project with spaces/src/index.ts" });
+      yield* launcher.revealInFileManager({ path: targetPath });
     }).pipe(
       Effect.provide(
         testLayer({
@@ -121,23 +124,26 @@ it.effect("reveals files with the linux file manager", () =>
 
     assert.ok(spawned);
     assert.equal(spawned.command, "xdg-open");
-    assert.deepEqual(spawned.args, ["/tmp/project with spaces/src"]);
+    assert.deepEqual(spawned.args, [workspacePath]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("opens the containing folder when the Finder target is missing", () =>
+it.effect("opens the nearest existing folder when the Finder target is missing", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-file-manager-" });
     const commandPath = path.join(binDir, "open");
+    const workspacePath = path.join(binDir, "project with spaces");
+    const targetPath = path.join(workspacePath, "missing", "src", "index.ts");
     yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
     yield* fileSystem.chmod(commandPath, 0o755);
+    yield* fileSystem.makeDirectory(workspacePath);
 
     let spawned: ChildProcess.StandardCommand | undefined;
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
-      yield* launcher.revealInFileManager({ path: "/tmp/project with spaces/src/index.ts" });
+      yield* launcher.revealInFileManager({ path: targetPath });
     }).pipe(
       Effect.provide(
         testLayer({
@@ -152,7 +158,40 @@ it.effect("opens the containing folder when the Finder target is missing", () =>
 
     assert.ok(spawned);
     assert.equal(spawned.command, "open");
-    assert.deepEqual(spawned.args, ["/tmp/project with spaces/src"]);
+    assert.deepEqual(spawned.args, [workspacePath]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("opens an existing directory in Finder", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-file-manager-" });
+    const commandPath = path.join(binDir, "open");
+    const targetPath = path.join(binDir, "project with spaces");
+    yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+    yield* fileSystem.chmod(commandPath, 0o755);
+    yield* fileSystem.makeDirectory(targetPath);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.revealInFileManager({ path: targetPath });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "darwin",
+          env: { PATH: binDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "open");
+    assert.deepEqual(spawned.args, [targetPath]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

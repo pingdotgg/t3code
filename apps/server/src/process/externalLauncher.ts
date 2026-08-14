@@ -60,6 +60,11 @@ interface ProcessLaunch {
   readonly options: ChildProcess.CommandOptions;
 }
 
+interface FileManagerRevealTarget {
+  readonly path: string;
+  readonly isDirectory: boolean;
+}
+
 interface TargetPathAndPosition {
   readonly path: string;
   readonly line: string;
@@ -280,19 +285,45 @@ function fileManagerFolderPath(platform: NodeJS.Platform, target: string, path: 
   return normalized.slice(0, separatorIndex) || "\\";
 }
 
+const resolveFileManagerRevealTarget = Effect.fn("externalLauncher.resolveFileManagerRevealTarget")(
+  function* (
+    platform: NodeJS.Platform,
+    target: string,
+  ): Effect.fn.Return<FileManagerRevealTarget, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const fallbackPath = fileManagerFolderPath(platform, target, path);
+    let candidate = target;
+
+    while (true) {
+      const info = yield* fileSystem.stat(candidate).pipe(Effect.orElseSucceed(() => null));
+      if (info) {
+        return { path: candidate, isDirectory: info.type === "Directory" };
+      }
+
+      const parent = fileManagerFolderPath(platform, candidate, path);
+      if (parent === candidate) {
+        return { path: fallbackPath, isDirectory: true };
+      }
+      candidate = parent;
+    }
+  },
+);
+
 function fileManagerRevealArgs(
   platform: NodeJS.Platform,
-  target: string,
-  targetExists: boolean,
+  revealTarget: FileManagerRevealTarget,
   path: Path.Path,
   env: NodeJS.ProcessEnv,
 ): ReadonlyArray<string> {
+  const target = revealTarget.path;
   if (shouldUseWindowsFileManagerFromWsl(platform, env)) {
-    const revealTarget = targetExists ? target : fileManagerFolderPath(platform, target, path);
-    const windowsTarget = resolveWslFileManagerPath(revealTarget, env);
-    return targetExists ? ["/select,", windowsTarget] : [windowsTarget];
+    const windowsTarget = resolveWslFileManagerPath(target, env);
+    return revealTarget.isDirectory ? [windowsTarget] : ["/select,", windowsTarget];
   }
-  if (!targetExists) return [fileManagerFolderPath(platform, target, path)];
+  if (revealTarget.isDirectory) {
+    return [platform === "win32" ? normalizeWindowsFileManagerPath(target) : target];
+  }
   if (platform === "darwin") return ["-R", target];
   if (platform === "win32") return ["/select,", normalizeWindowsFileManagerPath(target)];
   return [fileManagerFolderPath(platform, target, path)];
@@ -482,13 +513,12 @@ const resolveFileManagerRevealLaunch = Effect.fn("externalLauncher.resolveFileMa
     if (!hasGraphicalFileManagerSession(platform, env)) {
       return yield* new ExternalLauncherUnsupportedEditorError({ editor: "file-manager" });
     }
-    const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const target = shouldUseWindowsFileManagerFromWsl(platform, env)
       ? path.resolve(input.path)
       : input.path;
-    const targetExists = yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
-    const args = fileManagerRevealArgs(platform, target, targetExists, path, env);
+    const revealTarget = yield* resolveFileManagerRevealTarget(platform, target);
+    const args = fileManagerRevealArgs(platform, revealTarget, path, env);
 
     yield* Effect.annotateCurrentSpan({
       "externalLauncher.target": target,
