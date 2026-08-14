@@ -101,7 +101,7 @@ import * as CliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import { connectHttpApiLayer } from "./cloud/http.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
-import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
+import { pullRequestHttpApiRoutesLayer } from "./pullRequest/http.ts";
 import { layer as PullRequestProviderRegistryLive } from "./pullRequest/PullRequestProviderRegistry.ts";
 import { layer as PullRequestServiceLive } from "./pullRequest/PullRequestService.ts";
 
@@ -392,7 +392,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   orchestrationShellSnapshotRouteLayer,
   orchestrationSnapshotRouteLayer,
   orchestrationThreadSnapshotRouteLayer,
-  pullRequestHttpApiLayer,
+  pullRequestHttpApiRoutesLayer,
   ConnectHttpApiLayerLive,
   mobileRouteLayer,
   otlpTracesProxyRouteLayer,

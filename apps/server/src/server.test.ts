@@ -1160,6 +1160,31 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("mounts the authenticated pull request diff endpoint", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const url = yield* getHttpServerUrl("/api/pull-requests/diff");
+      const token = yield* getAuthenticatedBearerSessionToken();
+      const response = yield* Effect.promise(() =>
+        fetch(url, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            projectId: "8a6e4bef-ef2f-4853-9e26-88bc09e81e66",
+            repository: "owner/repository",
+            number: 1,
+          }),
+        }),
+      );
+
+      assert.equal(response.status, 503);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("includes CORS headers on public environment descriptor responses", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();

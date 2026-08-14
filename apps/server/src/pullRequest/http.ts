@@ -2,21 +2,25 @@ import { gzip } from "node:zlib";
 
 import {
   AuthOrchestrationReadScope,
-  EnvironmentHttpApi,
   EnvironmentInternalError,
+  EnvironmentPullRequestsHttpApi,
   PullRequestUnavailableError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpServerResponse } from "effect/unstable/http";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 
+const PullRequestHttpApi = HttpApi.make("pullRequests").add(EnvironmentPullRequestsHttpApi);
+
 /** The patch is often the largest PR payload and benefits from HTTP compression and flow control. */
 export const pullRequestHttpApiLayer = HttpApiBuilder.group(
-  EnvironmentHttpApi,
+  PullRequestHttpApi,
   "pullRequests",
   Effect.fnUntraced(function* (handlers) {
     const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
@@ -58,4 +62,8 @@ export const pullRequestHttpApiLayer = HttpApiBuilder.group(
       }),
     );
   }),
+);
+
+export const pullRequestHttpApiRoutesLayer = HttpApiBuilder.layer(PullRequestHttpApi).pipe(
+  Layer.provideMerge(pullRequestHttpApiLayer),
 );
