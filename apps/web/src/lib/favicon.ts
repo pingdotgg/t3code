@@ -1,3 +1,5 @@
+import { isPublicFaviconHost } from "~/browser/browserTargetResolver";
+
 /**
  * Favicon helpers for the preview tab strip.
  *
@@ -13,6 +15,7 @@ export function faviconUrlForOrigin(rawUrl: string | null | undefined, size = 32
     const url = new URL(rawUrl);
     if (!url.host) return null;
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!isPublicFaviconHost(url.hostname)) return null;
     return `${FAVICON_PROVIDER}?domain=${encodeURIComponent(url.host)}&sz=${size}`;
   } catch {
     return null;
