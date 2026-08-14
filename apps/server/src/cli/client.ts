@@ -33,7 +33,7 @@ import { AuthControlPlaneRuntimeLive } from "../auth/Layers/AuthControlPlane.ts"
 import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
-import { inspectPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { inspectPersistedServerRuntimeState, runtimePidIsAlive } from "../serverRuntimeState.ts";
 
 export interface CliLiveTargetFlags {
   readonly url: Option.Option<string>;
@@ -173,7 +173,7 @@ const parseJsonPayload = (raw: string, source: string) =>
   });
 
 const resolveCliBaseDir = (baseDir: Option.Option<string>) =>
-  resolveBaseDir(Option.getOrUndefined(baseDir));
+  resolveBaseDir(Option.getOrUndefined(baseDir) ?? process.env.T3CODE_HOME);
 
 export const resolveLiveTarget = (flags: CliLiveTargetFlags) =>
   Effect.gen(function* () {
@@ -198,6 +198,11 @@ export const resolveLiveTarget = (flags: CliLiveTargetFlags) =>
       return yield* new CliLiveTargetError({
         message: `Invalid or unreadable T3 server runtime state at '${paths.serverRuntimeStatePath}'. Remove it and restart T3, or pass --url and --token.`,
         cause: runtimeState.cause,
+      });
+    }
+    if (!runtimePidIsAlive(runtimeState.state.pid)) {
+      return yield* new CliLiveTargetError({
+        message: `Stale T3 server runtime state at '${paths.serverRuntimeStatePath}' belongs to stopped process ${String(runtimeState.state.pid)}. Remove it and restart T3, or pass --url and --token.`,
       });
     }
 

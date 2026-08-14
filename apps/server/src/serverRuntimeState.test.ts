@@ -10,7 +10,14 @@ import {
   clearPersistedServerRuntimeState,
   persistServerRuntimeState,
   readPersistedServerRuntimeState,
+  runtimePidIsAlive,
 } from "./serverRuntimeState.ts";
+
+it("rejects invalid process identifiers before probing liveness", () => {
+  assert.isFalse(runtimePidIsAlive(0));
+  assert.isFalse(runtimePidIsAlive(-1));
+  assert.isFalse(runtimePidIsAlive(2_147_483_648));
+});
 
 it("only clears persisted runtime state owned by the expected pid", async () => {
   const root = await mkdtemp(join(process.cwd(), ".server-runtime-state-"));

@@ -66,6 +66,7 @@ describe("buildCopilotAcpSpawnInput", () => {
     expect(
       buildCopilotAcpSpawnInput(undefined, "/tmp/project", "full-access", "/tmp/t3-instructions", {
         COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "/tmp/user-instructions,/tmp/t3-instructions",
+        T3CODE_HOME: "/tmp/t3-dev",
       }),
     ).toEqual({
       command: "copilot",
@@ -73,6 +74,7 @@ describe("buildCopilotAcpSpawnInput", () => {
       cwd: "/tmp/project",
       env: {
         COPILOT_CUSTOM_INSTRUCTIONS_DIRS: "/tmp/user-instructions,/tmp/t3-instructions",
+        T3CODE_HOME: "/tmp/t3-dev",
       },
     });
   });

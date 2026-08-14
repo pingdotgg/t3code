@@ -131,18 +131,19 @@ export function buildCopilotAcpSpawnInput(
   const instructionsDirs = customInstructionsDir
     ? Array.from(new Set([...(configuredInstructionsDirs ?? []), customInstructionsDir]))
     : configuredInstructionsDirs;
+  const t3Home = environment.T3CODE_HOME?.trim();
+  const spawnEnvironment = {
+    ...(instructionsDirs && instructionsDirs.length > 0
+      ? { COPILOT_CUSTOM_INSTRUCTIONS_DIRS: instructionsDirs.join(",") }
+      : {}),
+    ...(t3Home ? { T3CODE_HOME: t3Home } : {}),
+  };
 
   return {
     command: copilotSettings?.binaryPath || "copilot",
     args: ["--acp", ...buildCopilotRuntimeModeArgs(runtimeMode)],
     cwd,
-    ...(instructionsDirs && instructionsDirs.length > 0
-      ? {
-          env: {
-            COPILOT_CUSTOM_INSTRUCTIONS_DIRS: instructionsDirs.join(","),
-          },
-        }
-      : {}),
+    ...(Object.keys(spawnEnvironment).length > 0 ? { env: spawnEnvironment } : {}),
   };
 }
 
