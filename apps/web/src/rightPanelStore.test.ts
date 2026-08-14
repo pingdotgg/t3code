@@ -683,6 +683,37 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("reorders surfaces without changing the active surface", () => {
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+
+    useRightPanelStore.getState().reorderSurface(refA, "file:src/index.ts", "browser:tab-a");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "file:src/index.ts",
+      "browser:tab-a",
+      "terminal:term-1",
+    ]);
+    expect(state.activeSurfaceId).toBe("file:src/index.ts");
+  });
+
+  it("keeps a custom surface order while reconciling browser sessions", () => {
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().openBrowser(refA, "tab-b");
+    useRightPanelStore.getState().reorderSurface(refA, "browser:tab-b", "terminal:term-1");
+
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, ["tab-a", "tab-b", "tab-c"]);
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["browser:tab-b", "terminal:term-1", "browser:tab-a", "browser:tab-c"]);
+  });
+
   it("reconciles browser surfaces without deleting other surface kinds", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
