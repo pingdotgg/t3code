@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopDeepLinkTarget,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -8,8 +9,18 @@ import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+import {
+  createDesktopDeepLinkBuffer,
+  decodeDesktopDeepLinkTarget,
+} from "./ipc/DesktopDeepLinkBuffer.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+const deepLinkBuffer = createDesktopDeepLinkBuffer();
+ipcRenderer.on(IpcChannels.DEEP_LINK_CHANNEL, (_event, value: unknown) => {
+  const target = decodeDesktopDeepLinkTarget(value);
+  if (target !== null) deepLinkBuffer.publish(target);
+});
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -105,6 +116,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  onDeepLink: (listener: (target: DesktopDeepLinkTarget) => void) =>
+    deepLinkBuffer.subscribe(listener),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;
