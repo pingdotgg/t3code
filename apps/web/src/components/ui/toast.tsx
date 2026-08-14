@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "~/lib/utils";
-import { buttonVariants } from "~/components/ui/button";
+import { Button, buttonVariants } from "~/components/ui/button";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { resolveThreadRouteTarget } from "~/threadRoutes";
@@ -124,11 +124,12 @@ function CopyErrorButton({ text }: { text: string }) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <button
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
             aria-label={label}
-            className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md p-0 text-muted-foreground/80 transition-colors hover:text-muted-foreground"
+            className="[--control-icon-color:currentColor] rounded-md text-muted-foreground/80 hover:bg-transparent hover:text-muted-foreground"
             onClick={() => copyToClipboard(text)}
-            type="button"
           />
         }
       >
@@ -381,24 +382,22 @@ function ToastBodyContent({
         >
           {copyErrorText !== null ? <CopyErrorButton text={copyErrorText} /> : null}
           {additionalActions.map(({ id, props: { className, ...props } }) => (
-            <button
+            <Button
               {...props}
-              className={cn(
-                buttonVariants({ size: "xs", variant: secondaryActionVariant }),
-                className,
-              )}
+              className={className}
               key={id}
+              size="xs"
               type="button"
+              variant={secondaryActionVariant}
             />
           ))}
           {secondaryActionProps ? (
-            <button
+            <Button
               {...secondaryActionRest}
-              className={cn(
-                buttonVariants({ size: "xs", variant: secondaryActionVariant }),
-                secondaryActionClassName,
-              )}
+              className={secondaryActionClassName}
+              size="xs"
               type="button"
+              variant={secondaryActionVariant}
             />
           ) : null}
           {actionProps ? (

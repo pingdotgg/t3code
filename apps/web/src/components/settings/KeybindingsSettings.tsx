@@ -125,9 +125,8 @@ function ExpandableHeaderSearch({
             render={
               <Button
                 type="button"
-                size="icon-xs"
-                variant="ghost"
-                className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                size="icon-micro"
+                variant="ghost-muted"
                 onClick={() => onOpenChange(true)}
                 aria-label="Search keybindings"
               >
@@ -144,10 +143,10 @@ function ExpandableHeaderSearch({
   return (
     <div className="relative">
       <SearchIcon className="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground" />
-      <input
+      <Input
         ref={inputRef}
         autoFocus
-        type="text"
+        type="search"
         value={query}
         onChange={(event) => onChange(event.currentTarget.value)}
         onBlur={() => {
@@ -162,7 +161,8 @@ function ExpandableHeaderSearch({
         }}
         placeholder="Search keybindings"
         aria-label="Search keybindings"
-        className="h-6 w-44 rounded-md border border-input bg-background pl-7 pr-2 text-[11px] text-foreground outline-none placeholder:text-muted-foreground/72 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24"
+        className="w-44 [&_[data-slot=input]]:pl-7"
+        size="compact"
       />
     </div>
   );
@@ -309,10 +309,7 @@ function WhenVariableSelect({
 
   return (
     <Select value={value} onValueChange={(nextValue) => nextValue && onChange(nextValue)}>
-      <SelectTrigger
-        size="xs"
-        className="h-7 min-h-7 min-w-0 flex-1 rounded-md font-mono text-xs sm:h-7"
-      >
+      <SelectTrigger size="compact" className="min-w-0 flex-1 font-mono">
         <SelectValue placeholder="Condition" className="leading-7" />
         {unknownIdentifiers && unknownIdentifiers.length > 0 ? (
           <UnknownWhenVariableWarning identifiers={unknownIdentifiers} focusable={false} />
@@ -365,8 +362,8 @@ function WhenExpressionNodeEditor({
           onPressedChange={(pressed) => onChange(setConditionNegated(node, pressed))}
           aria-label={`Negate ${condition.identifier}`}
           variant="outline"
-          size="xs"
-          className="h-7 min-w-10 px-2 text-[11px] sm:h-7"
+          size="compact"
+          className="min-w-10"
         >
           Not
         </Toggle>
@@ -381,7 +378,7 @@ function WhenExpressionNodeEditor({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-7 sm:size-7"
+            className="size-7"
             aria-label="Remove condition"
             onClick={onRemove}
           >
@@ -406,8 +403,8 @@ function WhenExpressionNodeEditor({
             onPressedChange={(pressed) => onChange(pressed ? node : node.node)}
             aria-label="Negate group"
             variant="outline"
-            size="xs"
-            className="h-7 min-w-10 px-2 text-[11px] sm:h-7"
+            size="compact"
+            className="min-w-10"
           >
             Not
           </Toggle>
@@ -416,7 +413,7 @@ function WhenExpressionNodeEditor({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="ml-auto size-7 sm:size-7"
+              className="ml-auto size-7"
               aria-label="Remove negated group"
               onClick={onRemove}
             >
@@ -509,7 +506,7 @@ function WhenExpressionNodeEditor({
     >
       <div className="flex flex-wrap items-center gap-2">
         <Select value={operator} onValueChange={(value) => setOperator(value as BooleanOperator)}>
-          <SelectTrigger size="xs" className="h-7 min-h-7 w-24 rounded-md text-xs sm:h-7">
+          <SelectTrigger size="compact" className="w-24">
             <SelectValue />
           </SelectTrigger>
           <SelectContent
@@ -526,17 +523,11 @@ function WhenExpressionNodeEditor({
             </SelectItem>
           </SelectContent>
         </Select>
-        <Button
-          type="button"
-          variant="outline"
-          size="xs"
-          className="h-7 sm:h-7"
-          onClick={addCondition}
-        >
+        <Button type="button" variant="outline" size="compact" onClick={addCondition}>
           <PlusIcon className="size-3.5" />
           Condition
         </Button>
-        <Button type="button" variant="outline" size="xs" className="h-7 sm:h-7" onClick={addGroup}>
+        <Button type="button" variant="outline" size="compact" onClick={addGroup}>
           <PlusIcon className="size-3.5" />
           Group
         </Button>
@@ -545,7 +536,7 @@ function WhenExpressionNodeEditor({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="ml-auto size-7 sm:size-7"
+            className="ml-auto size-7"
             aria-label="Remove group"
             onClick={onRemove}
           >
@@ -640,23 +631,11 @@ function WhenExpressionBuilder({
           <div className="text-sm font-medium text-foreground">When</div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            className="h-7 sm:h-7"
-            onClick={addRootCondition}
-          >
+          <Button type="button" variant="outline" size="compact" onClick={addRootCondition}>
             <PlusIcon className="size-3.5" />
             Condition
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            className="h-7 sm:h-7"
-            onClick={addRootGroup}
-          >
+          <Button type="button" variant="outline" size="compact" onClick={addRootGroup}>
             <PlusIcon className="size-3.5" />
             Group
           </Button>
@@ -702,17 +681,11 @@ function WhenExpressionBuilder({
         ) : (
           <div className="rounded-md border border-dashed border-border/80 bg-muted/15 p-3">
             <div className="flex flex-wrap gap-2">
-              <Button type="button" size="xs" className="h-7 sm:h-7" onClick={addRootCondition}>
+              <Button type="button" size="compact" onClick={addRootCondition}>
                 <PlusIcon className="size-3.5" />
                 Condition
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                className="h-7 sm:h-7"
-                onClick={addRootGroup}
-              >
+              <Button type="button" variant="outline" size="compact" onClick={addRootGroup}>
                 <PlusIcon className="size-3.5" />
                 Group
               </Button>
@@ -864,8 +837,7 @@ function KeybindingTableRow({
         )}
         {isDirty ? (
           <Button
-            size="xs"
-            className="h-7 sm:h-7"
+            size="compact"
             disabled={isSaving || keyDraft.trim().length === 0 || !isWhenDraftValid}
             onClick={save}
           >
@@ -992,10 +964,7 @@ function NewKeybindingTableRow({
           value={commandDraft}
           onValueChange={(value) => setCommandDraft(value as KeybindingCommand)}
         >
-          <SelectTrigger
-            size="xs"
-            className="h-7 min-h-7 w-full max-w-60 rounded-md text-xs sm:h-7"
-          >
+          <SelectTrigger size="compact" className="w-full max-w-60">
             <SelectValue placeholder="Command" />
           </SelectTrigger>
           <SelectContent
@@ -1017,18 +986,15 @@ function NewKeybindingTableRow({
           aria-label={`Keybinding for ${commandLabelText}`}
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? "Press shortcut" : "Unassigned"}
-          className={cn(
-            "h-7 w-44 rounded-md font-mono text-[12px] sm:h-7",
-            isRecording && "border-primary/70 bg-primary/5",
-          )}
+          size="compact"
+          className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
           onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
           onKeyDown={captureKeybinding}
         />
         <Button
-          size="xs"
-          className="h-7 sm:h-7"
+          size="compact"
           disabled={isSaving || !commandDraft || keyDraft.trim().length === 0 || !isWhenDraftValid}
           onClick={save}
         >
@@ -1066,7 +1032,7 @@ function NewKeybindingTableRow({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                className="size-7 text-muted-foreground hover:text-foreground sm:size-7"
+                className="size-7 text-muted-foreground hover:text-foreground"
                 disabled={isSaving}
                 aria-label="Cancel new keybinding"
                 onClick={onCancel}
@@ -1247,9 +1213,8 @@ export function KeybindingsSettingsPanel() {
                 render={
                   <Button
                     type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    size="icon-micro"
+                    variant="ghost-muted"
                     onClick={() => setIsAddingBinding(true)}
                     aria-label="Add keybinding"
                   >
@@ -1264,9 +1229,8 @@ export function KeybindingsSettingsPanel() {
                 render={
                   <Button
                     type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    size="icon-micro"
+                    variant="ghost-muted"
                     disabled={!keybindingsConfigPath}
                     onClick={openKeybindingsFile}
                     aria-label="Open keybindings.json"
