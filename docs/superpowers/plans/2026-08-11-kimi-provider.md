@@ -26,6 +26,7 @@
 ### Task 1: Contract, settings, and provider naming
 
 **Files:**
+
 - Modify: `packages/contracts/src/settings.ts`
 - Modify: `packages/contracts/src/settings.test.ts`
 - Modify: `packages/contracts/src/model.ts`
@@ -33,6 +34,7 @@
 - Modify: `apps/server/src/textGeneration/TextGeneration.ts`
 
 **Interfaces:**
+
 - Produces: `KimiSettings` with `{ enabled, binaryPath, homePath, launchArgs, customModels }`.
 - Produces: legacy `ServerSettings.providers.kimi` and `ServerSettingsPatch.providers.kimi` compatibility fields.
 - Produces: `PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make("kimi")] === "Kimi"`.
@@ -154,6 +156,7 @@ git commit -m "feat(contracts): add Kimi provider settings"
 ### Task 2: Kimi home, process environment, skills, and ACP launch
 
 **Files:**
+
 - Create: `apps/server/src/provider/Drivers/KimiHome.ts`
 - Create: `apps/server/src/provider/Drivers/KimiHome.test.ts`
 - Create: `apps/server/src/provider/Drivers/KimiSkills.ts`
@@ -162,6 +165,7 @@ git commit -m "feat(contracts): add Kimi provider settings"
 - Create: `apps/server/src/provider/acp/KimiAcpSupport.test.ts`
 
 **Interfaces:**
+
 - Produces: `resolveKimiHomePath(config): Effect<string, never, Path.Path>`.
 - Produces: `makeKimiEnvironment(config, baseEnv): Effect<NodeJS.ProcessEnv, never, Path.Path>`.
 - Produces: `makeKimiContinuationGroupKey(config): Effect<string, never, Path.Path>`.
@@ -174,16 +178,18 @@ git commit -m "feat(contracts): add Kimi provider settings"
 Test empty and explicit homes:
 
 ```ts
-expect(yield* resolveKimiHomePath({ homePath: "" })).toBe(
+expect(yield * resolveKimiHomePath({ homePath: "" })).toBe(
   path.resolve(NodeOS.homedir(), ".kimi-code"),
 );
-expect(yield* resolveKimiHomePath({ homePath: "~/.kimi-work" })).toBe(
+expect(yield * resolveKimiHomePath({ homePath: "~/.kimi-work" })).toBe(
   path.resolve(NodeOS.homedir(), ".kimi-work"),
 );
-expect((yield* makeKimiEnvironment({ homePath: "~/.kimi-work" }, { PATH: "bin" })).KIMI_CODE_HOME)
-  .toBe(path.resolve(NodeOS.homedir(), ".kimi-work"));
-expect(yield* makeKimiContinuationGroupKey({ homePath: "~/.kimi-work" }))
-  .toBe(`kimi:home:${path.resolve(NodeOS.homedir(), ".kimi-work")}`);
+expect(
+  (yield * makeKimiEnvironment({ homePath: "~/.kimi-work" }, { PATH: "bin" })).KIMI_CODE_HOME,
+).toBe(path.resolve(NodeOS.homedir(), ".kimi-work"));
+expect(yield * makeKimiContinuationGroupKey({ homePath: "~/.kimi-work" })).toBe(
+  `kimi:home:${path.resolve(NodeOS.homedir(), ".kimi-work")}`,
+);
 ```
 
 - [ ] **Step 2: Run the home tests to verify they fail, then implement the helpers**
@@ -197,11 +203,13 @@ Implement with `expandHomePath`, `node:os.homedir`, and `Path.resolve`. `makeKim
 Cover binary, argument order, env, auth method, and option ordering:
 
 ```ts
-expect(buildKimiAcpSpawnInput(
-  { binaryPath: "/opt/kimi", launchArgs: "--agent coder --skills-dir 'team skills'" },
-  "/repo",
-  { KIMI_CODE_HOME: "/homes/work" },
-)).toEqual({
+expect(
+  buildKimiAcpSpawnInput(
+    { binaryPath: "/opt/kimi", launchArgs: "--agent coder --skills-dir 'team skills'" },
+    "/repo",
+    { KIMI_CODE_HOME: "/homes/work" },
+  ),
+).toEqual({
   command: "/opt/kimi",
   args: ["--agent", "coder", "--skills-dir", "team skills", "acp"],
   cwd: "/repo",
@@ -259,12 +267,14 @@ git commit -m "feat(server): add Kimi ACP launch support"
 ### Task 3: Shared ACP resume and available-command state
 
 **Files:**
+
 - Modify: `apps/server/src/provider/acp/AcpRuntimeModel.ts`
 - Modify: `apps/server/src/provider/acp/AcpRuntimeModel.test.ts`
 - Modify: `apps/server/src/provider/acp/AcpSessionRuntime.ts`
 - Modify: `apps/server/src/provider/acp/AcpSessionRuntime.test.ts`
 
 **Interfaces:**
+
 - Produces: `AcpParsedSessionEvent` variant `{ _tag: "AvailableCommandsChanged"; commands }`.
 - Produces: `AcpSessionRuntime.getAvailableCommands`.
 - Produces: optional `AcpSessionRuntimeOptions.resumeStrategy: "load" | "resume-first"`, defaulting to `"load"`.
@@ -284,12 +294,14 @@ const parsed = parseSessionUpdateEvent({
     ],
   },
 });
-expect(parsed.events).toEqual([{
-  _tag: "AvailableCommandsChanged",
-  commands: [
-    { name: "skill:review", description: "Review the current change", input: { hint: "scope" } },
-  ],
-}]);
+expect(parsed.events).toEqual([
+  {
+    _tag: "AvailableCommandsChanged",
+    commands: [
+      { name: "skill:review", description: "Review the current change", input: { hint: "scope" } },
+    ],
+  },
+]);
 ```
 
 - [ ] **Step 2: Implement parsing and retained command state**
@@ -307,12 +319,7 @@ expect(methods).toEqual(["initialize", "authenticate", "session/resume"]);
 for `resumeStrategy: "resume-first"`, and assert a `methodNotFound` response produces:
 
 ```ts
-expect(methods).toEqual([
-  "initialize",
-  "authenticate",
-  "session/resume",
-  "session/load",
-]);
+expect(methods).toEqual(["initialize", "authenticate", "session/resume", "session/load"]);
 ```
 
 Also retain the existing default assertion that Cursor/Grok-style options call only `session/load`.
@@ -322,9 +329,10 @@ Also retain the existing default assertion that Cursor/Grok-style options call o
 Add a helper inside `startOnce`:
 
 ```ts
-const resumeExistingSession = options.resumeStrategy === "resume-first"
-  ? runResumeThenFallbackToLoad(options.resumeSessionId)
-  : runLoadSession(options.resumeSessionId);
+const resumeExistingSession =
+  options.resumeStrategy === "resume-first"
+    ? runResumeThenFallbackToLoad(options.resumeSessionId)
+    : runLoadSession(options.resumeSessionId);
 ```
 
 Fallback only for ACP method-not-found/unsupported errors. Authentication, invalid-session, timeout, and transport errors must propagate unchanged. Update mode/config state from either response.
@@ -347,11 +355,13 @@ git commit -m "feat(server): retain ACP commands and resume sessions"
 ### Task 4: Kimi provider health, model/options discovery, and commands
 
 **Files:**
+
 - Create: `apps/server/src/provider/Layers/KimiProvider.ts`
 - Create: `apps/server/src/provider/Layers/KimiProvider.test.ts`
 - Create: `apps/server/src/provider/acp/KimiAcpCliProbe.test.ts`
 
 **Interfaces:**
+
 - Produces: `buildInitialKimiProviderSnapshot(settings)`.
 - Produces: `checkKimiProviderStatus(settings, environment, cwd?)`.
 - Produces: `enrichKimiSnapshot(input)`.
@@ -363,7 +373,7 @@ git commit -m "feat(server): retain ACP commands and resume sessions"
 Cover all status branches with deterministic child-process fixtures:
 
 ```ts
-expect((yield* buildInitialKimiProviderSnapshot(disabled)).status).toBe("disabled");
+expect((yield * buildInitialKimiProviderSnapshot(disabled)).status).toBe("disabled");
 expect(missing.installed).toBe(false);
 expect(missing.message).toContain("not installed");
 expect(unsupported.message).toContain("ACP");
@@ -432,12 +442,14 @@ git commit -m "feat(server): probe Kimi models and capabilities"
 ### Task 5: Kimi adapter session and turn lifecycle
 
 **Files:**
+
 - Create: `apps/server/src/provider/Services/KimiAdapter.ts`
 - Create: `apps/server/src/provider/Layers/KimiAdapter.ts`
 - Create: `apps/server/src/provider/Layers/KimiAdapter.test.ts`
 - Create: `apps/server/src/provider/testFixtures/kimiAcpMockPeer.mjs`
 
 **Interfaces:**
+
 - Produces: `KimiAdapterShape extends ProviderAdapterShape<ProviderAdapterError>`.
 - Produces: `makeKimiAdapter(settings, options)` implementing every `ProviderAdapterShape` method.
 - Produces: resume cursor `{ schemaVersion: 1, sessionId: string }`.
@@ -452,16 +464,18 @@ The peer must implement newline-delimited ACP JSON-RPC for initialize/authentica
 Cover:
 
 ```ts
-const session = yield* adapter.startSession({
-  threadId,
-  cwd,
-  modelSelection: { instanceId: ProviderInstanceId.make("kimi"), model: "kimi-code/k3" },
-  runtimeMode: "approval-required",
-});
+const session =
+  yield *
+  adapter.startSession({
+    threadId,
+    cwd,
+    modelSelection: { instanceId: ProviderInstanceId.make("kimi"), model: "kimi-code/k3" },
+    runtimeMode: "approval-required",
+  });
 expect(session.provider).toBe(ProviderDriverKind.make("kimi"));
 expect(session.resumeCursor).toEqual({ schemaVersion: 1, sessionId: "kimi-session-1" });
 
-const turn = yield* adapter.sendTurn({ threadId, input: "Inspect this repository" });
+const turn = yield * adapter.sendTurn({ threadId, input: "Inspect this repository" });
 expect(turn.threadId).toBe(threadId);
 ```
 
@@ -518,12 +532,14 @@ git commit -m "feat(server): add Kimi ACP sessions"
 ### Task 6: Kimi permissions, questions, modes, steering, and option changes
 
 **Files:**
+
 - Modify: `apps/server/src/provider/Layers/KimiAdapter.ts`
 - Modify: `apps/server/src/provider/Layers/KimiAdapter.test.ts`
 - Create: `apps/server/src/provider/acp/KimiUserInput.ts`
 - Create: `apps/server/src/provider/acp/KimiUserInput.test.ts`
 
 **Interfaces:**
+
 - Produces: `extractKimiUserQuestions(request): ReadonlyArray<UserInputQuestion> | undefined`.
 - Produces: exact runtime-mode permission policy at the adapter boundary.
 - Produces: plan/default mode resolution from advertised ACP modes.
@@ -558,12 +574,12 @@ Run `vp test run apps/server/src/provider/acp/KimiUserInput.test.ts`, observe th
 
 For the same ACP request stream, assert:
 
-| T3 mode | File edit | Command | Kimi question |
-| --- | --- | --- | --- |
-| `approval-required` | opens approval | opens approval | opens user input |
-| `auto-accept-edits` | auto allows | opens approval | opens user input |
-| `auto` | selects advertised Kimi auto mode; otherwise opens approval | same | opens user input |
-| `full-access` | auto allows | auto allows | opens user input |
+| T3 mode             | File edit                                                   | Command        | Kimi question    |
+| ------------------- | ----------------------------------------------------------- | -------------- | ---------------- |
+| `approval-required` | opens approval                                              | opens approval | opens user input |
+| `auto-accept-edits` | auto allows                                                 | opens approval | opens user input |
+| `auto`              | selects advertised Kimi auto mode; otherwise opens approval | same           | opens user input |
+| `full-access`       | auto allows                                                 | auto allows    | opens user input |
 
 Assert `acceptForSession`, `accept`, and `decline` choose permission options by semantic kind, never array position. Missing semantic options return a typed request error.
 
@@ -597,6 +613,7 @@ git commit -m "feat(server): support Kimi interactions and modes"
 ### Task 7: Kimi auxiliary generation and built-in driver registration
 
 **Files:**
+
 - Create: `apps/server/src/textGeneration/KimiTextGeneration.ts`
 - Create: `apps/server/src/textGeneration/KimiTextGeneration.test.ts`
 - Create: `apps/server/src/provider/Drivers/KimiDriver.ts`
@@ -606,6 +623,7 @@ git commit -m "feat(server): support Kimi interactions and modes"
 - Modify: `apps/server/src/provider/Layers/ProviderInstanceRegistryLive.test.ts`
 
 **Interfaces:**
+
 - Produces: all four `TextGeneration` methods backed by a scoped Kimi ACP session.
 - Produces: `KimiDriver: ProviderDriver<KimiSettings, KimiDriverEnv>`.
 - Registers: Kimi in `BUILT_IN_DRIVERS` and `BuiltInDriversEnv`.
@@ -615,11 +633,14 @@ git commit -m "feat(server): support Kimi interactions and modes"
 Use the mock peer to return JSON for thread title, branch, commit, and change request. Assert selected model application, sanitization, invalid JSON, empty response, cancelled response, timeout, and process cleanup. A representative assertion is:
 
 ```ts
-expect(yield* textGeneration.generateThreadTitle({
-  cwd,
-  message: "Add Kimi support",
-  modelSelection: { instanceId: ProviderInstanceId.make("kimi"), model: "kimi-code/k3" },
-})).toEqual({ title: "Add Kimi support" });
+expect(
+  yield *
+    textGeneration.generateThreadTitle({
+      cwd,
+      message: "Add Kimi support",
+      modelSelection: { instanceId: ProviderInstanceId.make("kimi"), model: "kimi-code/k3" },
+    }),
+).toEqual({ title: "Add Kimi support" });
 ```
 
 - [ ] **Step 2: Run the generation test red, then implement `KimiTextGeneration`**
@@ -664,6 +685,7 @@ git commit -m "feat(server): register Kimi provider driver"
 ### Task 8: Web and desktop presentation
 
 **Files:**
+
 - Modify: `apps/web/src/components/Icons.tsx`
 - Modify: `apps/web/src/components/settings/providerDriverMeta.ts`
 - Create: `apps/web/src/components/settings/providerDriverMeta.test.ts`
@@ -674,6 +696,7 @@ git commit -m "feat(server): register Kimi provider driver"
 - Modify: `apps/web/src/lib/contextWindow.test.ts`
 
 **Interfaces:**
+
 - Produces: `KimiIcon` and Kimi icon lookup.
 - Produces: Kimi provider settings definition with Early Access badge and `KimiSettings` form.
 - Produces: available Kimi model-picker entry with `pickerSidebarBadge: "new"`.
@@ -738,6 +761,7 @@ git commit -m "feat(web): expose Kimi provider controls"
 ### Task 9: Mobile presentation and Early Access status
 
 **Files:**
+
 - Modify: `apps/mobile/src/components/ProviderIcon.tsx`
 - Create: `apps/mobile/src/components/ProviderIcon.test.tsx`
 - Modify: `apps/mobile/src/lib/modelOptions.ts`
@@ -746,6 +770,7 @@ git commit -m "feat(web): expose Kimi provider controls"
 - Modify: `apps/mobile/src/features/threads/thread-settings-sheet-state.test.ts`
 
 **Interfaces:**
+
 - Produces: Kimi icon and canonical label on mobile.
 - Produces: Early Access badge text from `ServerProvider.badgeLabel` in the provider group/header where mobile shows provider metadata.
 - Preserves: Kimi stays outside `PRIMARY_PROVIDER_DRIVERS` while Early Access, so it appears in the existing secondary provider grouping rather than displacing Codex/Claude.
@@ -790,6 +815,7 @@ git commit -m "feat(mobile): show Kimi provider models"
 ### Task 10: Orchestration integration, documentation, and complete focused verification
 
 **Files:**
+
 - Create: `apps/server/integration/kimiProvider.integration.test.ts`
 - Modify: `docs/user/install.md`
 - Create: `docs/user/providers-kimi.md`
@@ -800,6 +826,7 @@ git commit -m "feat(mobile): show Kimi provider models"
 - Create: `apps/marketing/public/harnesses/kimi.svg`
 
 **Interfaces:**
+
 - Produces: one end-to-end server proof from orchestration command through Kimi canonical events and checkpoint receipt.
 - Produces: user installation/login/multi-instance/permissions/troubleshooting documentation.
 - Updates: every explicit five-provider list to six providers without implying General Availability.

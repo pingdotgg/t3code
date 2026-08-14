@@ -39,19 +39,19 @@ when the CLI does not advertise an optional feature.
 
 Use these names consistently:
 
-| Concept | Value |
-| --- | --- |
-| Driver kind | `kimi` |
-| Default instance ID | `kimi` |
-| Product label | Kimi |
-| CLI label in diagnostics and documentation | Kimi Code CLI |
-| Settings schema | `KimiSettings` |
-| Driver | `KimiDriver` |
-| Provider snapshot module | `KimiProvider` |
-| Runtime adapter | `KimiAdapter` |
-| ACP integration helpers | `KimiAcpSupport` |
-| Auxiliary generation service | `KimiTextGeneration` |
-| Home environment variable | `KIMI_CODE_HOME` |
+| Concept                                    | Value                |
+| ------------------------------------------ | -------------------- |
+| Driver kind                                | `kimi`               |
+| Default instance ID                        | `kimi`               |
+| Product label                              | Kimi                 |
+| CLI label in diagnostics and documentation | Kimi Code CLI        |
+| Settings schema                            | `KimiSettings`       |
+| Driver                                     | `KimiDriver`         |
+| Provider snapshot module                   | `KimiProvider`       |
+| Runtime adapter                            | `KimiAdapter`        |
+| ACP integration helpers                    | `KimiAcpSupport`     |
+| Auxiliary generation service               | `KimiTextGeneration` |
+| Home environment variable                  | `KIMI_CODE_HOME`     |
 
 Kimi receives a dedicated `KimiIcon` based on the official mark and is present in provider settings,
 model pickers, thread settings, new-thread flows, and mobile provider grouping. Its provider client
