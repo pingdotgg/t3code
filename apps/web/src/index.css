@@ -1631,6 +1631,18 @@ body {
 
 .electron-windows {
   --desktop-window-right-resize-inset: 6px;
+  /* Matches DesktopWindow TITLEBAR_HEIGHT; WCO height can be transitional during restore. */
+  --workspace-topbar-height: 40px;
+  --workspace-controls-top: 0px;
+  --workspace-controls-left: 0.75rem;
+  --workspace-native-controls-width: calc(
+    100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)
+  );
+}
+
+.electron-windows.wco {
+  --workspace-controls-right: calc(var(--workspace-native-controls-width) + 0.75rem);
+  --workspace-native-controls-inset: var(--workspace-controls-right);
 }
 
 /* App-chrome grain. Baked into each surface's own background (behind
