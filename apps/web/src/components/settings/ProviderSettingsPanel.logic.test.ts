@@ -174,6 +174,20 @@ describe("provider settings row ordering", () => {
     expect(rows.map((row) => row.instanceId)).toEqual(["codex", "future_second", "future_first"]);
   });
 
+  it("recognizes the canonical default instance of a discovered future driver", () => {
+    const futureDefaultId = defaultInstanceIdForDriver(unknown);
+    const rows = rowsFor({
+      driverOrder: [codex],
+      providerInstances: {
+        [futureDefaultId]: instance(unknown),
+      },
+    });
+
+    expect(rows).toContainEqual(
+      expect.objectContaining({ instanceId: futureDefaultId, driver: unknown, isDefault: true }),
+    );
+  });
+
   it("retains disabled provider rows", () => {
     const rows = rowsFor({
       driverOrder: [codex],

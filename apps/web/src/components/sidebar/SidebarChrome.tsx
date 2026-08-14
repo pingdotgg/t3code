@@ -175,7 +175,9 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <ProviderUsageStrip onSelect={handleProviderUsageClick} />
+      <SidebarMenu>
+        <ProviderUsageStrip onSelect={handleProviderUsageClick} />
+      </SidebarMenu>
       <SidebarMenu className="flex-row items-center">
         {currentFooterPage ? (
           <SidebarMenuItem className="min-w-0 flex-1">

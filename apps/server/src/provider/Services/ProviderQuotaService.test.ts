@@ -8,6 +8,7 @@ import {
   type ProviderQuotaSnapshot,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -202,6 +203,49 @@ describe("ProviderQuotaService", () => {
       yield* service.readSummary;
       expect(reads).toBe(2);
     }).pipe(provideService(() => instances));
+  });
+
+  it.effect("expires cached snapshots on monotonic time when wall time moves backward", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    let wallTimeMs = 60_000;
+    let monotonicTimeNanos = 0n;
+    return Effect.gen(function* () {
+      const baseClock = yield* Clock.Clock;
+      const clock: Clock.Clock = {
+        currentTimeMillisUnsafe: () => wallTimeMs,
+        currentTimeMillis: Effect.sync(() => wallTimeMs),
+        currentTimeNanosUnsafe: () => BigInt(wallTimeMs) * 1_000_000n,
+        currentTimeNanos: Effect.sync(() => BigInt(wallTimeMs) * 1_000_000n),
+        monotonicTimeNanosUnsafe: () => monotonicTimeNanos,
+        monotonicTimeNanos: Effect.sync(() => monotonicTimeNanos),
+        sleep: baseClock.sleep,
+      };
+      return yield* Effect.gen(function* () {
+        let reads = 0;
+        const instance = makeInstance({
+          id: "codex-clock-rollback",
+          quota: {
+            read: Effect.sync(() => {
+              reads += 1;
+              return snapshot("codex-clock-rollback");
+            }),
+            revision: Effect.succeed(0),
+          },
+        });
+        instances = [instance];
+        const service = yield* ProviderQuotaService;
+
+        yield* service.readSummary;
+        wallTimeMs = 0;
+        monotonicTimeNanos = 30_000_000_000n;
+        yield* service.readSummary;
+
+        expect(reads).toBe(2);
+      }).pipe(
+        provideService(() => instances),
+        Effect.provideService(Clock.Clock, clock),
+      );
+    });
   });
 
   it.effect("shares one in-flight provider read across concurrent summaries", () => {
@@ -477,7 +521,7 @@ describe("ProviderQuotaService", () => {
 
       expect(result).toMatchObject({
         _tag: "Failure",
-        failure: { reason: "registryUnavailable" },
+        failure: { reason: "instancesUnstable" },
       });
       expect(reads).toBeLessThanOrEqual(4);
     }).pipe(provideService(() => instances));
@@ -794,6 +838,98 @@ describe("ProviderQuotaService", () => {
 
       expect(error.reason).toBe("providerFailed");
       expect(consumes).toBe(0);
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("does not consume through an instance replaced during eligibility refresh", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      let oldConsumes = 0;
+      let newConsumes = 0;
+      const replacement = makeInstance({
+        id: "codex-reset",
+        quota: {
+          read: Effect.succeed(snapshot("codex-reset")),
+          revision: Effect.succeed(0),
+          consumeBankedReset: () => Effect.sync(() => newConsumes++).pipe(Effect.as("reset")),
+        },
+      });
+      const original = makeInstance({
+        id: "codex-reset",
+        quota: {
+          read: Effect.sync(() => {
+            instances = [replacement];
+            return {
+              ...snapshot("codex-reset"),
+              bankedResets: { availableCount: 1, resets: [], detailsComplete: false },
+            };
+          }),
+          revision: Effect.succeed(0),
+          consumeBankedReset: () => Effect.sync(() => oldConsumes++).pipe(Effect.as("reset")),
+        },
+      });
+      instances = [original];
+      const service = yield* ProviderQuotaService;
+
+      const error = yield* service
+        .consumeBankedReset({
+          instanceId: original.instanceId,
+          creditId: null,
+          idempotencyKey: "request-replaced",
+        })
+        .pipe(Effect.flip);
+
+      expect(error.reason).toBe("providerFailed");
+      expect(oldConsumes).toBe(0);
+      expect(newConsumes).toBe(0);
+    }).pipe(provideService(() => instances));
+  });
+
+  it.effect("retries the same idempotent mutation after an ambiguous provider failure", () => {
+    let instances: ReadonlyArray<ProviderInstance> = [];
+    return Effect.gen(function* () {
+      let inventoryAvailable = true;
+      let consumes = 0;
+      const instance = makeInstance({
+        id: "codex-reset",
+        quota: {
+          read: Effect.sync(() => ({
+            ...snapshot("codex-reset"),
+            bankedResets: {
+              availableCount: inventoryAvailable ? 1 : 0,
+              resets: [],
+              detailsComplete: false,
+            },
+          })),
+          revision: Effect.succeed(0),
+          consumeBankedReset: () =>
+            Effect.suspend(() => {
+              consumes += 1;
+              inventoryAvailable = false;
+              return consumes === 1
+                ? Effect.fail(
+                    new ProviderQuotaAdapterError({
+                      reason: "providerFailed",
+                      detail: "The response was lost after the provider accepted the request.",
+                    }),
+                  )
+                : Effect.succeed("alreadyRedeemed");
+            }),
+        },
+      });
+      instances = [instance];
+      const service = yield* ProviderQuotaService;
+      const input = {
+        instanceId: instance.instanceId,
+        creditId: null,
+        idempotencyKey: "request-ambiguous",
+      } as const;
+
+      yield* service.consumeBankedReset(input).pipe(Effect.flip);
+      const outcome = yield* service.consumeBankedReset(input);
+
+      expect(outcome).toBe("alreadyRedeemed");
+      expect(consumes).toBe(2);
     }).pipe(provideService(() => instances));
   });
 });

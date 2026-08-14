@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  type ProviderQuotaConsumeResetInput,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -43,6 +44,16 @@ import {
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type ServerUpdateStage = "downloading" | "installing" | "resuming";
+
+export function providerQuotaResetSingleFlightKey({
+  environmentId,
+  input,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly input: ProviderQuotaConsumeResetInput;
+}): string {
+  return `${environmentId}:${input.instanceId}:${input.idempotencyKey}`;
+}
 
 export type ServerUpdateState =
   | { readonly status: "idle" }
@@ -741,7 +752,7 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverConsumeProviderQuotaReset,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => `${environmentId}:${input.instanceId}`,
+        key: providerQuotaResetSingleFlightKey,
       },
     }),
     updateProvider: createEnvironmentRpcCommand(runtime, {

@@ -49,9 +49,10 @@ export function deriveOrderedProviderSettingsRows(input: {
     instancesByDriver.set(driver, list);
   }
 
-  const defaultSlotIdsBySource = new Set<string>(
-    input.driverOrder.map((driver) => String(defaultInstanceIdForDriver(driver))),
-  );
+  const defaultSlotIdsBySource = new Set<string>([
+    ...input.driverOrder.map((driver) => String(defaultInstanceIdForDriver(driver))),
+    ...Array.from(instancesByDriver.keys(), (driver) => String(defaultInstanceIdForDriver(driver))),
+  ]);
   const knownDrivers = new Set(input.driverOrder);
   const rows: OrderedProviderSettingsRow[] = [];
   type LegacyProviderSettings =

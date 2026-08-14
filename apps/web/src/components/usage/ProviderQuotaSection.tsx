@@ -66,6 +66,14 @@ export function prepareProviderResetConsumption(input: {
   };
 }
 
+export async function consumeProviderResetSafely<T>(consume: () => Promise<T>): Promise<T | null> {
+  try {
+    return await consume();
+  } catch {
+    return null;
+  }
+}
+
 function ProviderQuotaSelector({
   item,
   onSelect,
@@ -157,7 +165,7 @@ const ProviderQuotaSelectedSurface = memo(function ProviderQuotaSelectedSurface(
     });
     const confirmed = prepared.attempt;
     updateAttempt(confirmed);
-    const result = await onConsumeReset(prepared.input);
+    const result = await consumeProviderResetSafely(() => onConsumeReset(prepared.input));
 
     if (result?._tag === "Success") {
       const settled = settleProviderResetAttempt(confirmed, {

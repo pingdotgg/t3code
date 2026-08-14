@@ -7,7 +7,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import type { ProviderUsageStripItem } from "../sidebar/ProviderUsageStrip.logic";
-import { prepareProviderResetConsumption, ProviderQuotaSectionView } from "./ProviderQuotaSection";
+import {
+  consumeProviderResetSafely,
+  prepareProviderResetConsumption,
+  ProviderQuotaSectionView,
+} from "./ProviderQuotaSection";
 
 function item(input: {
   readonly id: string;
@@ -174,5 +178,13 @@ describe("prepareProviderResetConsumption", () => {
 
     expect(sameCredit.input.idempotencyKey).toBe(first.input.idempotencyKey);
     expect(otherCredit.input.idempotencyKey).not.toBe(first.input.idempotencyKey);
+  });
+});
+
+describe("consumeProviderResetSafely", () => {
+  it("settles a rejected command as a transport failure", async () => {
+    await expect(
+      consumeProviderResetSafely(() => Promise.reject(new Error("connection closed"))),
+    ).resolves.toBeNull();
   });
 });

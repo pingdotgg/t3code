@@ -84,6 +84,29 @@ describe("ProviderQuotaDetails", () => {
     expect(markup).toContain(">Use reset<");
   });
 
+  it("uses the clamped percentage in progressbar values and labels", () => {
+    const extremeItem = {
+      ...item,
+      snapshot: {
+        ...snapshot,
+        metrics: [{ ...snapshot.metrics[0]!, remainingPercent: 140 }],
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <ProviderQuotaDetails
+        canOperate={false}
+        feedback={null}
+        item={extremeItem}
+        pendingReset={false}
+        onRequestReset={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Weekly limit: 100% remaining"');
+    expect(markup).toContain('aria-valuenow="100"');
+    expect(markup).not.toContain("140% remaining");
+  });
+
   it("keeps reset controls hidden without operate access", () => {
     const markup = renderToStaticMarkup(
       <ProviderQuotaDetails

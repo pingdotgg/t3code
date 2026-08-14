@@ -136,10 +136,16 @@ export type ProviderQuotaConsumeResetOutcome = typeof ProviderQuotaConsumeResetO
 export class ProviderQuotaReadError extends Schema.TaggedErrorClass<ProviderQuotaReadError>()(
   "ProviderQuotaReadError",
   {
-    reason: Schema.Literal("registryUnavailable"),
-    detail: ProviderQuotaErrorDetail,
+    reason: Schema.Literals(["registryUnavailable", "instancesUnstable"]),
+    cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  override get message(): string {
+    return this.reason === "registryUnavailable"
+      ? "Provider instances could not be listed."
+      : "Provider instances did not stabilize while quota was read.";
+  }
+}
 
 export const ProviderQuotaConsumeResetErrorReason = Schema.Literals([
   "unsupported",

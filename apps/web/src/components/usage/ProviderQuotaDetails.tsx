@@ -58,7 +58,7 @@ function ProviderQuotaMetricDetails({ metric }: { readonly metric: ProviderQuota
       </div>
       {remainingPercent === null ? null : (
         <div
-          aria-label={`${metric.label}: ${formatPercentage(metric.remainingPercent ?? 0)} remaining`}
+          aria-label={`${metric.label}: ${formatPercentage(remainingPercent)} remaining`}
           aria-valuemax={100}
           aria-valuemin={0}
           aria-valuenow={remainingPercent}
@@ -72,10 +72,10 @@ function ProviderQuotaMetricDetails({ metric }: { readonly metric: ProviderQuota
         </div>
       )}
       <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-        {metric.remainingPercent === null ? null : (
+        {remainingPercent === null ? null : (
           <>
             <dt className="text-muted-foreground">Remaining</dt>
-            <dd>{formatPercentage(metric.remainingPercent)} remaining</dd>
+            <dd>{formatPercentage(remainingPercent)} remaining</dd>
           </>
         )}
         {metric.usedPercent === null ? null : (
