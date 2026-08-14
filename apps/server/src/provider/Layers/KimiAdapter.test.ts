@@ -413,8 +413,47 @@ it.layer(kimiAdapterTestLayer)("KimiAdapter", (it) => {
         relevantTypes.indexOf("turn.completed"),
         relevantTypes.indexOf("session.exited"),
       );
+      assert.equal(relevantTypes.filter((type) => type === "turn.completed").length, 1);
       assert.isFalse(yield* adapter.hasSession(threadId));
       yield* Fiber.interrupt(eventsFiber);
+    }),
+  );
+
+  it.effect("rejects an empty turn before changing session configuration", () =>
+    Effect.gen(function* () {
+      const directory = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "kimi-acp-empty-turn-")),
+      );
+      const requestLogPath = NodePath.join(directory, "requests.ndjson");
+      const adapter = yield* makeTestAdapter(
+        yield* makeKimiWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const threadId = ThreadId.make("kimi-empty-turn");
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("kimi"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const methodsBefore = yield* Effect.promise(() => readRequestMethods(requestLogPath));
+      const events: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => events.push(event)),
+      ).pipe(Effect.forkChild);
+
+      const error = yield* adapter
+        .sendTurn({ threadId, input: "   ", attachments: [] })
+        .pipe(Effect.flip);
+      const methodsAfter = yield* Effect.promise(() => readRequestMethods(requestLogPath));
+
+      assert.equal(error._tag, "ProviderAdapterValidationError");
+      assert.deepEqual(methodsAfter, methodsBefore);
+      assert.notInclude(
+        events.map((event) => event.type),
+        "turn.started",
+      );
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
     }),
   );
 

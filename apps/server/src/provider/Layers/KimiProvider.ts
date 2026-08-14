@@ -19,10 +19,12 @@ import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import { makeKimiEnvironment } from "../Drivers/KimiHome.ts";
 import { discoverKimiSkills } from "../Drivers/KimiSkills.ts";
@@ -355,23 +357,7 @@ function classifyKimiAcpFailure(
   return "failure";
 }
 
-function isAcpRequestError(error: unknown): error is {
-  readonly _tag: "AcpRequestError";
-  readonly code: number;
-  readonly errorMessage: string;
-  readonly method?: string;
-} {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    error._tag === "AcpRequestError" &&
-    "code" in error &&
-    typeof error.code === "number" &&
-    "errorMessage" in error &&
-    typeof error.errorMessage === "string"
-  );
-}
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 export const checkKimiProviderStatus = Effect.fn("checkKimiProviderStatus")(function* (
   settings: KimiSettings,

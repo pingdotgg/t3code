@@ -114,6 +114,7 @@ interface KimiSessionContext {
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   readonly stoppedSignal: Deferred.Deferred<void>;
+  readonly turnCompletionLock: Semaphore.Semaphore;
   readonly supportsImages: boolean;
   stopped: boolean;
 }
@@ -278,6 +279,44 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
 
     const publish = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEvents, event).pipe(Effect.asVoid);
+    const completeTurn = (input: {
+      readonly context: KimiSessionContext;
+      readonly turnId: TurnId;
+      readonly state: "cancelled" | "completed" | "failed";
+      readonly stopReason: string | null;
+      readonly finalizeSession: boolean;
+      readonly model?: string;
+    }) =>
+      input.context.turnCompletionLock.withPermit(
+        Effect.gen(function* () {
+          if (input.context.activeTurnId !== input.turnId || input.context.stopped) {
+            return false;
+          }
+          const updatedAt = yield* nowIso;
+          if (input.context.activeTurnId !== input.turnId || input.context.stopped) {
+            return false;
+          }
+          input.context.activeTurnId = undefined;
+          if (input.finalizeSession) {
+            input.context.session = {
+              ...input.context.session,
+              status: "ready",
+              activeTurnId: undefined,
+              updatedAt,
+              ...(input.model ? { model: input.model } : {}),
+            };
+          }
+          yield* publish({
+            type: "turn.completed",
+            ...(yield* nextEventStamp()),
+            provider: PROVIDER,
+            threadId: input.context.threadId,
+            turnId: input.turnId,
+            payload: { state: input.state, stopReason: input.stopReason },
+          });
+          return true;
+        }),
+      );
     const getThreadLock = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocks, (current) => {
         const existing = current.get(threadId);
@@ -358,21 +397,24 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
         if (context.stopped) return;
         context.stopped = true;
         yield* Deferred.succeed(context.stoppedSignal, undefined);
-        const activeTurnId = context.activeTurnId;
-        context.activeTurnId = undefined;
-        if (activeTurnId !== undefined) {
-          yield* publish({
-            type: "turn.completed",
-            ...(yield* nextEventStamp()),
-            provider: PROVIDER,
-            threadId: context.threadId,
-            turnId: activeTurnId,
-            payload: {
-              state: options?.exitKind === "error" ? "failed" : "cancelled",
-              stopReason: null,
-            },
-          });
-        }
+        yield* context.turnCompletionLock.withPermit(
+          Effect.gen(function* () {
+            const activeTurnId = context.activeTurnId;
+            if (activeTurnId === undefined) return;
+            context.activeTurnId = undefined;
+            yield* publish({
+              type: "turn.completed",
+              ...(yield* nextEventStamp()),
+              provider: PROVIDER,
+              threadId: context.threadId,
+              turnId: activeTurnId,
+              payload: {
+                state: options?.exitKind === "error" ? "failed" : "cancelled",
+                stopReason: null,
+              },
+            });
+          }),
+        );
         yield* settleApprovals(context.pendingApprovals);
         yield* settleUserInputs(context.pendingUserInputs);
         if (context.notificationFiber) yield* Fiber.interrupt(context.notificationFiber);
@@ -619,6 +661,7 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
             pendingUserInputs,
             notificationFiber: undefined,
             stoppedSignal: yield* Deferred.make<void>(),
+            turnCompletionLock: yield* Semaphore.make(1),
             supportsImages: initializedPromptSupportsImages(started.initializeResult),
             stopped: false,
           };
@@ -754,43 +797,6 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
           const selection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const model = selection?.model ?? context.session.model;
-          context.activeTurnId = turnId;
-          context.session = {
-            ...context.session,
-            status: "running",
-            activeTurnId: turnId,
-            updatedAt: yield* nowIso,
-          };
-          if (!steeringTurnId) {
-            yield* publish({
-              type: "turn.started",
-              ...(yield* nextEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: { model },
-            });
-          }
-          yield* applyKimiAcpModelSelection({
-            runtime: context.acp,
-            model,
-            selections: selection?.options,
-          }).pipe(
-            Effect.mapError((cause) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_config_option", cause),
-            ),
-          );
-          yield* applyKimiMode({
-            runtime: context.acp,
-            runtimeMode: context.session.runtimeMode,
-            interactionMode: input.interactionMode,
-            threadId: input.threadId,
-          });
-          context.session = {
-            ...context.session,
-            updatedAt: yield* nowIso,
-            model,
-          };
           const prompt: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) prompt.push({ type: "text", text: input.input.trim() });
           for (const attachment of input.attachments ?? []) {
@@ -833,23 +839,52 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
               issue: "Turn requires non-empty text or attachments.",
             });
           }
+          context.activeTurnId = turnId;
+          context.session = {
+            ...context.session,
+            status: "running",
+            activeTurnId: turnId,
+            updatedAt: yield* nowIso,
+          };
+          if (!steeringTurnId) {
+            yield* publish({
+              type: "turn.started",
+              ...(yield* nextEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              turnId,
+              payload: { model },
+            });
+          }
+          yield* applyKimiAcpModelSelection({
+            runtime: context.acp,
+            model,
+            selections: selection?.options,
+          }).pipe(
+            Effect.mapError((cause) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_config_option", cause),
+            ),
+          );
+          yield* applyKimiMode({
+            runtime: context.acp,
+            runtimeMode: context.session.runtimeMode,
+            interactionMode: input.interactionMode,
+            threadId: input.threadId,
+          });
+          context.session = {
+            ...context.session,
+            updatedAt: yield* nowIso,
+            model,
+          };
           if (context.interruptedTurnIds.has(turnId)) {
             if (context.promptsInFlight === 1) {
               context.interruptedTurnIds.delete(turnId);
-              context.session = {
-                ...context.session,
-                status: "ready",
-                activeTurnId: undefined,
-                updatedAt: yield* nowIso,
-              };
-              context.activeTurnId = undefined;
-              yield* publish({
-                type: "turn.completed",
-                ...(yield* nextEventStamp()),
-                provider: PROVIDER,
-                threadId: input.threadId,
+              yield* completeTurn({
+                context,
                 turnId,
-                payload: { state: "cancelled", stopReason: null },
+                state: "cancelled",
+                stopReason: null,
+                finalizeSession: true,
               });
             }
             return { threadId: input.threadId, turnId, resumeCursor: context.session.resumeCursor };
@@ -874,46 +909,27 @@ export function makeKimiAdapter(kimiSettings: KimiSettings, options?: KimiAdapte
           else context.turns.push({ id: turnId, items: [{ prompt, result }] });
           if (context.promptsInFlight === 1) {
             const interrupted = context.interruptedTurnIds.delete(turnId);
-            context.session = {
-              ...context.session,
-              status: "ready",
-              activeTurnId: undefined,
-              updatedAt: yield* nowIso,
-              model,
-            };
-            context.activeTurnId = undefined;
-            yield* publish({
-              type: "turn.completed",
-              ...(yield* nextEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
+            yield* completeTurn({
+              context,
               turnId,
-              payload: {
-                state: interrupted || result.stopReason === "cancelled" ? "cancelled" : "completed",
-                stopReason: result.stopReason ?? null,
-              },
+              state: interrupted || result.stopReason === "cancelled" ? "cancelled" : "completed",
+              stopReason: result.stopReason ?? null,
+              finalizeSession: true,
+              ...(model ? { model } : {}),
             });
           }
           return { threadId: input.threadId, turnId, resumeCursor: context.session.resumeCursor };
         }).pipe(
           Effect.onError(() =>
-            (context.promptsInFlight === 1 && context.activeTurnId === turnId
+            (context.promptsInFlight === 1
               ? Effect.gen(function* () {
                   context.interruptedTurnIds.delete(turnId);
-                  context.session = {
-                    ...context.session,
-                    status: "ready",
-                    activeTurnId: undefined,
-                    updatedAt: yield* nowIso,
-                  };
-                  context.activeTurnId = undefined;
-                  yield* publish({
-                    type: "turn.completed",
-                    ...(yield* nextEventStamp()),
-                    provider: PROVIDER,
-                    threadId: input.threadId,
+                  yield* completeTurn({
+                    context,
                     turnId,
-                    payload: { state: "failed", stopReason: null },
+                    state: "failed",
+                    stopReason: null,
+                    finalizeSession: true,
                   });
                 })
               : Effect.void
