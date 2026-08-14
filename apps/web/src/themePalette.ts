@@ -902,7 +902,11 @@ function mapThemeOklchToSrgbGamut(color: ThemeOklch): ThemeOklch {
 
   let low = 0;
   let high = color.C;
-  const steps = Math.max(1, Math.ceil(Math.log2(Math.max(color.C, 0.000001) / 0.000001)));
+  const chromaResolution = 0.000001;
+  const steps = Math.max(
+    1,
+    Math.ceil(Math.log2(Math.max(color.C, chromaResolution)) - Math.log2(chromaResolution)),
+  );
   for (let step = 0; step < steps; step += 1) {
     const mid = (low + high) / 2;
     if (isInGamut(mid)) low = mid;

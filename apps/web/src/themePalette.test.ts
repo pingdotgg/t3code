@@ -246,6 +246,18 @@ describe("theme files", () => {
     }
   });
 
+  it("gamut maps extreme finite OKLCH chroma from theme files", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Extreme chroma",
+      appearance: "light",
+      colors: { accent: "oklch(0.5 1e303 0)" },
+    });
+
+    expect(theme.colors.accent).toBe("oklch(0.5 1e+303 0)");
+    expect(themeColorToHex(theme.colors.accent)).toBe("#b5005e");
+  });
+
   it("rejects unknown roles and invalid color values", () => {
     expect(() =>
       parseThemeFile({
