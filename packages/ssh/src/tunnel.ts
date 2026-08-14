@@ -6,6 +6,7 @@ import {
   describeReadinessCause,
   waitForHttpReady as waitForHttpReadyShared,
 } from "@t3tools/shared/httpReadiness";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
@@ -56,6 +57,38 @@ const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 15_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+const FORWARDING_CONFIG_KEYS = new Set([
+  "clearallforwardings",
+  "dynamicforward",
+  "localforward",
+  "remoteforward",
+]);
+const SINGLE_ARGUMENT_CONFIG_KEYS = new Set([
+  "bindaddress",
+  "bindinterface",
+  "certificatefile",
+  "controlpath",
+  "forwardagent",
+  "hostkeyalias",
+  "identityagent",
+  "identityfile",
+  "knownhostscommand",
+  "localcommand",
+  "pkcs11provider",
+  "proxycommand",
+  "proxyjump",
+  "remotecommand",
+  "securitykeyprovider",
+  "sendenv",
+  "setenv",
+  "tag",
+  "versionaddendum",
+  "xauthlocation",
+]);
+
+function quoteSshConfigArgument(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
 
 export interface RemoteT3RunnerOptions {
   readonly packageSpec?: string;
@@ -917,6 +950,103 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
   return yield* net.reserveLoopbackPort();
 });
 
+function buildManagedTunnelSshConfig(
+  resolvedConfig: string,
+  platform: NodeJS.Platform,
+  originalHost: string,
+  environment: NodeJS.ProcessEnv,
+): string {
+  const resolvedOptions = resolvedConfig
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => {
+      const key = line.split(/\s+/u, 1)[0]?.toLowerCase();
+      return (
+        key !== undefined && key.length > 0 && key !== "host" && !FORWARDING_CONFIG_KEYS.has(key)
+      );
+    })
+    .map((line) => {
+      const separatorIndex = line.search(/\s/u);
+      if (separatorIndex < 0) {
+        return `  ${line}`;
+      }
+      const key = line.slice(0, separatorIndex);
+      const value = line.slice(separatorIndex + 1).trim();
+      if (!SINGLE_ARGUMENT_CONFIG_KEYS.has(key.toLowerCase())) {
+        return `  ${line}`;
+      }
+      return `  ${key} ${quoteSshConfigArgument(value)}`;
+    });
+  const systemConfig =
+    platform === "win32"
+      ? `${(environment.PROGRAMDATA ?? "C:/ProgramData").replaceAll("\\", "/")}/ssh/ssh_config`
+      : "/etc/ssh/ssh_config";
+  const quotedHost = quoteSshConfigArgument(originalHost);
+
+  // ProxyJump re-invokes ssh with this -F file. Non-managed hosts fall back to
+  // normal config so jump aliases and authentication keep working; its -W mode
+  // clears forwarding requests on the proxy connection.
+  return [
+    `Host ${quotedHost}`,
+    "  ClearAllForwardings no",
+    ...resolvedOptions,
+    `Host !${quotedHost} *`,
+    "  Include ~/.ssh/config",
+    `  Include "${systemConfig.replaceAll('"', '\\"')}"`,
+    "",
+  ].join("\n");
+}
+
+const makeManagedTunnelSshConfig = Effect.fn("ssh/tunnel.makeManagedTunnelSshConfig")(function* (
+  target: DesktopSshEnvironmentTarget,
+): Effect.fn.Return<
+  string,
+  SshCommandError | SshInvalidTargetError,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
+> {
+  const resolved = yield* runSshCommand(target, { preHostArgs: ["-G"] });
+  const fs = yield* FileSystem.FileSystem;
+  const platform = yield* HostProcessPlatform;
+  const environment = yield* HostProcessEnvironment;
+  const configPath = yield* fs
+    .makeTempFileScoped({ prefix: "t3-ssh-tunnel-", suffix: ".conf" })
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new SshCommandError({
+            command: ["ssh", "-G", target.alias],
+            exitCode: null,
+            stderr: "",
+            message: "Failed to create isolated SSH tunnel configuration.",
+            cause,
+          }),
+      ),
+    );
+  yield* fs
+    .writeFileString(
+      configPath,
+      buildManagedTunnelSshConfig(
+        resolved.stdout,
+        platform,
+        target.alias.trim() || target.hostname.trim(),
+        environment,
+      ),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new SshCommandError({
+            command: ["ssh", "-G", target.alias],
+            exitCode: null,
+            stderr: "",
+            message: "Failed to write isolated SSH tunnel configuration.",
+            cause,
+          }),
+      ),
+    );
+  return configPath;
+});
+
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
   readonly key: string;
   readonly resolvedTarget: DesktopSshEnvironmentTarget;
@@ -936,6 +1066,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   | NetService.NetService
   | Scope.Scope
 > {
+  const tunnelConfigPath = yield* makeManagedTunnelSshConfig(input.resolvedTarget);
   const hostSpec = yield* buildSshHostSpecEffect(input.resolvedTarget);
   const childEnvironment = yield* buildSshChildEnvironment({
     ...(input.authOptions.authSecret === undefined
@@ -957,6 +1088,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     ),
   );
   const args = [
+    "-F",
+    tunnelConfigPath,
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
     }),

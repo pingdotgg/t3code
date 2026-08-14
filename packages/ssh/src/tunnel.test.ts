@@ -4,6 +4,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
@@ -346,6 +347,26 @@ describe("ssh tunnel scripts", () => {
       Effect.sync(() => {
         const args = commandArgs(command);
         spawnedCommands.push(args);
+        if (args.includes("-G")) {
+          return makeSuccessfulProcess(
+            [
+              "host devbox",
+              "hostname devbox.example.com",
+              "user julius",
+              "port 2222",
+              "identityfile /tmp/key with spaces",
+              "identityfile ~/.ssh/id-%n-%h-%r",
+              "certificatefile /tmp/cert #1.pub",
+              "proxyjump bastion",
+              "userknownhostsfile ~/.ssh/known_hosts_t3",
+              "localforward 127.0.0.1:41000 127.0.0.1:41001",
+              "remoteforward /home/david/.local/state/fleet-open/client.sock 127.0.0.1:48991",
+              "dynamicforward 127.0.0.1:41002",
+              "clearallforwardings no",
+              "",
+            ].join("\n"),
+          );
+        }
         if (args.includes("-N")) {
           return makeRunningProcess(() => {
             tunnelKillCount += 1;
@@ -378,18 +399,46 @@ describe("ssh tunnel scripts", () => {
 
     return Effect.gen(function* () {
       const manager = yield* SshEnvironmentManager;
+      const fs = yield* FileSystem.FileSystem;
 
       const first = yield* manager.ensureEnvironment(target);
       assert.equal(first.httpBaseUrl, "http://127.0.0.1:41773/");
       const firstTunnelArgs = spawnedCommands.find((args) => args.includes("-N"));
       assert.isDefined(firstTunnelArgs);
+      const configResolveArgs = spawnedCommands.findLast((args) => args.includes("-G"));
+      assert.isDefined(configResolveArgs);
+      assert.equal(configResolveArgs.at(-1), "julius@devbox");
       assert.include(firstTunnelArgs, "ControlMaster=no");
       assert.include(firstTunnelArgs, "ControlPath=none");
       assert.include(firstTunnelArgs, "ControlPersist=no");
+      assert.include(firstTunnelArgs, "-L");
+      assert.include(firstTunnelArgs, "41773:127.0.0.1:3773");
+      assert.equal(firstTunnelArgs.filter((arg) => arg === "-L").length, 1);
+      assert.notInclude(firstTunnelArgs, "-R");
+      assert.notInclude(firstTunnelArgs, "-D");
+      assert.notInclude(firstTunnelArgs, "ClearAllForwardings=yes");
+      assert.equal(firstTunnelArgs.at(-1), "julius@devbox");
+      const configFlagIndex = firstTunnelArgs.indexOf("-F");
+      assert.isAtLeast(configFlagIndex, 0);
+      const tunnelConfigPath = firstTunnelArgs[configFlagIndex + 1];
+      assert.isDefined(tunnelConfigPath);
+      const tunnelConfig = yield* fs.readFileString(tunnelConfigPath);
+      assert.notMatch(tunnelConfig, /^\s*(?:local|remote|dynamic)forward\b/imu);
+      assert.match(tunnelConfig, /^\s*hostname devbox\.example\.com$/imu);
+      assert.match(tunnelConfig, /^\s*user julius$/imu);
+      assert.match(tunnelConfig, /^\s*port 2222$/imu);
+      assert.match(tunnelConfig, /^\s*identityfile "\/tmp\/key with spaces"$/imu);
+      assert.match(tunnelConfig, /^\s*identityfile "~\/\.ssh\/id-%n-%h-%r"$/imu);
+      assert.match(tunnelConfig, /^\s*certificatefile "\/tmp\/cert #1\.pub"$/imu);
+      assert.match(tunnelConfig, /^\s*proxyjump "bastion"$/imu);
+      assert.match(tunnelConfig, /^\s*userknownhostsfile ~\/\.ssh\/known_hosts_t3$/imu);
+      assert.include(tunnelConfig, 'Host "devbox"');
+      assert.include(tunnelConfig, 'Host !"devbox" *');
 
       yield* manager.disconnectEnvironment(target);
       assert.equal(tunnelKillCount, 1);
       assert.equal(stopCommandCount, 1);
+      assert.isFalse(yield* fs.exists(tunnelConfigPath));
 
       yield* manager.ensureEnvironment(target);
 
