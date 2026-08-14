@@ -36,3 +36,17 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# Machine-local credentials. Project configuration under .codex, .claude, and
+# .cursor may be tracked, but provider login state must never enter the repo.
+/.codex/auth.json
+/.codex/*.sqlite
+/.codex/*.sqlite-*
+/.codex/*.db
+/.codex/*.db-*
+/.claude.json
+/.claude/.credentials.json
+/.cursor/cli-config.json
+/.config/opencode/
+/.local/share/opencode/
+/.ssh/

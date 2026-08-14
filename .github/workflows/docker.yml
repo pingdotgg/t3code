@@ -1,0 +1,59 @@
+name: Docker E2E
+
+on:
+  pull_request:
+    paths:
+      - .dockerignore
+      - .gitignore
+      - Dockerfile
+      - compose.yaml
+      - package.json
+      - pnpm-lock.yaml
+      - apps/server/**
+      - apps/web/**
+      - packages/**
+      - scripts/docker-config.test.ts
+      - scripts/docker-e2e.ts
+      - .github/workflows/docker.yml
+  push:
+    branches:
+      - main
+    paths:
+      - .dockerignore
+      - .gitignore
+      - Dockerfile
+      - compose.yaml
+      - package.json
+      - pnpm-lock.yaml
+      - apps/server/**
+      - apps/web/**
+      - packages/**
+      - scripts/docker-config.test.ts
+      - scripts/docker-e2e.ts
+      - .github/workflows/docker.yml
+
+concurrency:
+  group: docker-e2e-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docker_e2e:
+    name: Build and exercise image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Run Docker end-to-end test
+        run: node scripts/docker-e2e.ts

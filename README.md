@@ -70,6 +70,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Keyboard shortcuts](./docs/user/keybindings.md)
 - [Customize a project icon](./docs/user/project-settings.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
+- [Run T3 Code with Docker](./docs/user/docker.md)
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)

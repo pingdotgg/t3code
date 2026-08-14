@@ -17,6 +17,12 @@ npx t3@latest
 This starts the T3 Code server on your machine and opens the local web app. Use
 `npx t3@latest --help` for the full CLI reference.
 
+## Docker
+
+For an isolated, headless environment, use the [Docker setup](./docker.md). It keeps T3 Code
+and provider credentials in a persistent volume while exposing only the workspace you mount into
+the container.
+
 ## Desktop App
 
 Download the latest release from
@@ -50,12 +56,11 @@ to use, then authenticate it.
 | ---------- | ----------------------------------------------------- | -------------- | --------------------- |
 | Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
 | Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `cursor-agent login`  |
 | Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
 | OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
 
-Cursor is the one to watch: install Cursor CLI, which provides the `cursor-agent` binary that
-T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`.
+Cursor CLI provides both `cursor-agent`, which T3 Code looks for, and the shorter `agent` alias.
 
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.

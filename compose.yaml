@@ -1,0 +1,29 @@
+services:
+  t3:
+    build:
+      context: .
+      args:
+        T3CODE_INSTALL_CURSOR: ${T3CODE_INSTALL_CURSOR:-1}
+        T3CODE_INSTALL_PROVIDERS: ${T3CODE_INSTALL_PROVIDERS:-1}
+        T3CODE_PROVIDER_PACKAGES: ${T3CODE_PROVIDER_PACKAGES-@openai/codex@latest @anthropic-ai/claude-code@latest opencode-ai@latest}
+    image: ${T3_IMAGE:-t3-code:local}
+    hostname: ${T3_HOSTNAME:-t3-code}
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${T3_BIND_ADDRESS:-127.0.0.1}:${T3_PORT:-3773}:3773"
+    environment:
+      T3CODE_HOME: /home/node/.t3
+      T3CODE_HOST: 0.0.0.0
+      T3CODE_NO_BROWSER: "true"
+      T3CODE_PORT: 3773
+    volumes:
+      - type: volume
+        source: t3-home
+        target: /home/node
+      - type: bind
+        source: ${T3_WORKSPACE_PATH:-.}
+        target: /workspace
+
+volumes:
+  t3-home:
