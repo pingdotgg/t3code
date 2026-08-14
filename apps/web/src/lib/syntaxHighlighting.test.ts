@@ -41,6 +41,17 @@ it("evicts rejected text highlighters so initialization can retry", async () => 
   await expect(second).rejects.toThrow("initialization failed");
 });
 
+it("evicts a language entry when its text fallback also fails", async () => {
+  getSharedHighlighter.mockRejectedValue(new Error("initialization failed"));
+
+  const first = getSyntaxHighlighterPromise("typescript", "t3-syntax-fallback-retry");
+  await expect(first).rejects.toThrow("initialization failed");
+  const second = getSyntaxHighlighterPromise("typescript", "t3-syntax-fallback-retry");
+
+  expect(second).not.toBe(first);
+  await expect(second).rejects.toThrow("initialization failed");
+});
+
 it("loads and caches each custom syntax theme independently", async () => {
   getSharedHighlighter.mockImplementation(({ themes }: { themes: string[] }) =>
     Promise.resolve({ theme: themes[0] }),

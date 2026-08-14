@@ -3,11 +3,11 @@ import type { ChangeEvent, DragEvent, UIEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
 import {
+  createThemeDefinition,
   getCustomThemes,
   installCustomTheme,
   parseThemeFile,
   removeCustomTheme,
-  THEME_FILE_VERSION,
   updateCustomTheme,
   type ThemeDefinition,
 } from "../../themePalette";
@@ -345,28 +345,20 @@ export function ThemeImportDialog({
     theme: ThemeDefinition,
     preferredName?: string | null,
   ): ThemeDefinition => {
-    if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
-      const candidate = parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: preferredName.slice(0, 48),
+    const copyWithName = (name: string) =>
+      createThemeDefinition({
+        name,
         appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.syntax ? { syntax: theme.syntax } : {}),
+        modes: theme.modes,
         ...(theme.managed ? { managed: true } : {}),
       });
+
+    if (preferredName && preferredName.toLowerCase() !== theme.label.toLowerCase()) {
+      const candidate = copyWithName(preferredName.slice(0, 48));
       if (!getCustomThemes().some((existing) => existing.id === candidate.id)) return candidate;
     }
     for (let copy = 1; copy < 100; copy += 1) {
-      const candidate = parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: `${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`,
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.syntax ? { syntax: theme.syntax } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
+      const candidate = copyWithName(`${theme.label.slice(0, 48 - ` (${copy})`.length)} (${copy})`);
       if (getCustomThemes().some((existing) => existing.id === candidate.id)) continue;
       return candidate;
     }

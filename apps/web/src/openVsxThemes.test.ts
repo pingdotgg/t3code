@@ -411,11 +411,11 @@ describe("Open VSX themes", () => {
         getThemeColorsForMode(theme, "dark") !== null,
     )!;
     expect(paired.label).toBe("Demo");
-    expect(themeColorToHex(paired.colors.canvas)).toBe("#fafafa");
+    expect(themeColorToHex(paired.modes.light!.colors.canvas)).toBe("#fafafa");
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.canvas)).toBe("#111111");
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.text)).toBe("#eeeeee");
-    expect(paired.syntax?.light?.tokenColors[0]?.settings.foreground).toBe("#907aa9");
-    expect(paired.syntax?.dark?.tokenColors).toMatchObject([
+    expect(paired.modes.light!.syntax?.tokenColors[0]?.settings.foreground).toBe("#907aa9");
+    expect(paired.modes.dark!.syntax?.tokenColors).toMatchObject([
       { scope: "keyword", settings: { foreground: "#c4a7e7" } },
       { scope: "variable", settings: { foreground: "#ebbcba" } },
     ]);

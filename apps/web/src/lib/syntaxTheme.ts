@@ -5,7 +5,8 @@ import {
   type ThemeRegistrationResolved,
 } from "@pierre/diffs";
 
-import type { ThemeAppearance, ThemeSyntax } from "../themePalette";
+import type { ThemeAppearance } from "../themePalette";
+import type { ThemeSyntax } from "../themeSyntax";
 import { resolveDiffThemeName } from "./diffRendering";
 
 const registeredSyntaxThemes = new Set<string>();
@@ -45,7 +46,7 @@ function syntaxThemeName(input: {
   return name;
 }
 
-export function resolveSyntaxThemeName(input: {
+export function activateSyntaxTheme(input: {
   appearance: ThemeAppearance;
   background: string;
   foreground: string;

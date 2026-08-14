@@ -9,21 +9,22 @@ import {
 import {
   applyThemeColorPreview,
   THEME_COLOR_ROLES,
-  THEME_FILE_VERSION,
+  createThemeDefinition,
   createVividThemeColors,
   getCustomThemes,
   getStandardThemeColors,
   getThemeColorsForMode,
+  getThemeMode,
   getThemeModes,
   installCustomTheme,
   isThemeColor,
-  parseThemeFile,
   removeCustomTheme,
   themeIdFromName,
   updateCustomTheme,
   type ThemeAppearance,
   type ThemeColorRole,
   type ThemeDefinition,
+  type ThemeModes,
 } from "../../themePalette";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -249,10 +250,8 @@ export function ThemeEditorPanel({
           : sourceTheme.appearance
         : initialAppearance;
       if (sourceTheme) {
-        nextColors[sourceTheme.appearance] = { ...sourceTheme.colors };
-        for (const appearance of ["light", "dark"] as const) {
-          const variantColors = sourceTheme.variants?.[appearance];
-          if (variantColors) nextColors[appearance] = { ...variantColors };
+        for (const appearance of getThemeModes(sourceTheme)) {
+          nextColors[appearance] = { ...getThemeMode(sourceTheme, appearance)!.colors };
         }
       }
 
@@ -630,6 +629,18 @@ export function ThemeEditorPanel({
           }
         : colorsByAppearance;
 
+      const sourceTheme = editingTheme ?? seedTheme ?? null;
+      const appearancesForSave = editingTheme ? getThemeModes(editingTheme) : [activeAppearance];
+      const modesForSave: ThemeModes = Object.fromEntries(
+        appearancesForSave.map((appearance) => [
+          appearance,
+          {
+            ...(sourceTheme ? getThemeMode(sourceTheme, appearance) : null),
+            colors: colorsForSave[appearance],
+          },
+        ]),
+      );
+
       let savedTheme: ThemeDefinition;
       let mergedAppearance: ThemeAppearance | null = null;
       let retiredTheme: ThemeDefinition | null = null;
@@ -645,24 +656,16 @@ export function ThemeEditorPanel({
           return;
         }
         mergedAppearance = editedModes[0] ?? null;
-        savedTheme = updateCustomTheme({
-          ...parseThemeFile({
-            version: THEME_FILE_VERSION,
+        savedTheme = updateCustomTheme(
+          createThemeDefinition({
             id: mergeTarget.id,
             name: mergeTarget.label,
             appearance: mergeTarget.appearance,
-            colors: mergeTarget.colors,
-            variants: {
-              ...mergeTarget.variants,
-              ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
-            },
-            ...(mergeTarget.syntax || editingTheme.syntax
-              ? { syntax: { ...mergeTarget.syntax, ...editingTheme.syntax } }
-              : {}),
+            modes: { ...mergeTarget.modes, ...modesForSave },
+            ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
-        });
+        );
         retiredTheme = editingTheme;
         try {
           removeCustomTheme(editingTheme.id);
@@ -678,23 +681,16 @@ export function ThemeEditorPanel({
           throw cause;
         }
       } else if (editingTheme) {
-        const baseAppearance = editingTheme.appearance;
-        const variantAppearance = baseAppearance === "light" ? "dark" : "light";
-        savedTheme = updateCustomTheme({
-          ...parseThemeFile({
-            version: THEME_FILE_VERSION,
+        savedTheme = updateCustomTheme(
+          createThemeDefinition({
             id: editingTheme.id,
             name,
-            appearance: baseAppearance,
-            colors: colorsForSave[baseAppearance],
-            ...(getThemeModes(editingTheme).length > 1
-              ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
-              : {}),
-            ...(editingTheme.syntax ? { syntax: editingTheme.syntax } : {}),
-            ...(isAdvanced ? {} : { managed: true }),
+            appearance: editingTheme.appearance,
+            modes: modesForSave,
+            ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
+            ...(!isAdvanced ? { managed: true } : {}),
           }),
-          ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
-        });
+        );
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
           setError(
@@ -707,42 +703,23 @@ export function ThemeEditorPanel({
         // survives when every palette in the theme came from the guided
         // editor.
         mergedAppearance = activeAppearance;
-        savedTheme = updateCustomTheme({
-          ...parseThemeFile({
-            version: THEME_FILE_VERSION,
+        savedTheme = updateCustomTheme(
+          createThemeDefinition({
             id: mergeTarget.id,
             name: mergeTarget.label,
             appearance: mergeTarget.appearance,
-            colors: mergeTarget.colors,
-            variants: {
-              ...mergeTarget.variants,
-              [activeAppearance]: colorsForSave[activeAppearance],
-            },
-            ...(mergeTarget.syntax || seedTheme?.syntax?.[activeAppearance]
-              ? {
-                  syntax: {
-                    ...mergeTarget.syntax,
-                    ...(seedTheme?.syntax?.[activeAppearance]
-                      ? { [activeAppearance]: seedTheme.syntax[activeAppearance] }
-                      : {}),
-                  },
-                }
-              : {}),
+            modes: { ...mergeTarget.modes, ...modesForSave },
+            ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
-        });
+        );
       } else {
         savedTheme = installCustomTheme(
-          parseThemeFile({
-            version: THEME_FILE_VERSION,
+          createThemeDefinition({
             name,
             appearance: activeAppearance,
-            colors: colorsForSave[activeAppearance],
-            ...(seedTheme?.syntax?.[activeAppearance]
-              ? { syntax: { [activeAppearance]: seedTheme.syntax[activeAppearance] } }
-              : {}),
-            ...(isAdvanced ? {} : { managed: true }),
+            modes: modesForSave,
+            ...(!isAdvanced ? { managed: true } : {}),
           }),
         );
       }

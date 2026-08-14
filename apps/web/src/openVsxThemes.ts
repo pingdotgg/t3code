@@ -2,11 +2,8 @@ import { sha256 } from "@noble/hashes/sha2";
 import JSZip from "jszip";
 import { parse, type ParseError } from "jsonc-parser";
 
-import {
-  MAX_THEME_TOKEN_COLOR_RULES,
-  normalizeThemeTokenColors,
-  type ThemeDefinition,
-} from "./themePalette";
+import { getThemeMode, type ThemeDefinition } from "./themePalette";
+import { normalizeThemeTokenColors } from "./themeSyntax";
 import {
   isVsCodeThemeFile,
   pairVsCodeThemes,
@@ -346,14 +343,16 @@ function sanitizeThemeObject(value: Record<string, unknown>): Record<string, unk
       }
     }
   }
-  if (Array.isArray(value.tokenColors) && value.tokenColors.length > MAX_THEME_TOKEN_COLOR_RULES) {
+  const normalizedSyntax = normalizeThemeTokenColors(value.tokenColors);
+  if (normalizedSyntax.status === "too-many") {
     throw new Error("That extension theme contains too many syntax rules.");
   }
-  const syntax = normalizeThemeTokenColors(value.tokenColors);
   return {
     ...(typeof value.include === "string" ? { include: value.include } : {}),
     colors,
-    ...(syntax ? { tokenColors: syntax.tokenColors } : {}),
+    ...(normalizedSyntax.status === "valid"
+      ? { tokenColors: normalizedSyntax.syntax.tokenColors }
+      : {}),
   };
 }
 
@@ -574,8 +573,10 @@ async function loadThemeObject(
     ...(Array.isArray(base.tokenColors) ? base.tokenColors : []),
     ...(Array.isArray(value.tokenColors) ? value.tokenColors : []),
   ];
-  const syntax = hasTokenColors ? normalizeThemeTokenColors(tokenColors) : undefined;
-  if (tokenColors.length > 0 && !syntax) {
+  const normalizedSyntax = hasTokenColors
+    ? normalizeThemeTokenColors(tokenColors)
+    : { status: "absent" as const };
+  if (tokenColors.length > 0 && normalizedSyntax.status !== "valid") {
     throw new Error("Theme includes contain too many syntax rules.");
   }
   const resolved = {
@@ -585,7 +586,8 @@ async function loadThemeObject(
       ...(isRecord(base.colors) ? base.colors : {}),
       ...(isRecord(value.colors) ? value.colors : {}),
     },
-    tokenColors: syntax?.tokenColors,
+    tokenColors:
+      normalizedSyntax.status === "valid" ? normalizedSyntax.syntax.tokenColors : undefined,
   };
   cache.set(path, resolved);
   return resolved;
@@ -755,7 +757,7 @@ export async function importOpenVsxThemeExtension(
       if (!isVsCodeThemeFile(decorated)) throw new Error("not a VS Code color theme");
       const theme = parseVsCodeThemeFile(decorated);
       importedSyntaxBytes += new TextEncoder().encode(
-        JSON.stringify(theme.syntax ?? {}),
+        JSON.stringify(getThemeMode(theme, theme.appearance)?.syntax ?? {}),
       ).byteLength;
       if (importedSyntaxBytes > MAX_IMPORTED_SYNTAX_BYTES) {
         throw new Error("That extension contains too many syntax rules to import safely.");

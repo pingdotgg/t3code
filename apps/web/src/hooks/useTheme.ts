@@ -6,8 +6,8 @@ import {
   applyThemePalette,
   canonicalThemePreference,
   isKnownThemePreference,
-  getThemeColorsForMode,
   getThemeDefinition,
+  getThemeMode,
   getThemePreferenceMode,
   subscribeToCustomThemes,
   parseThemeHalves,
@@ -22,7 +22,8 @@ import {
   type ThemeHalves,
   type ThemePreferenceMode,
 } from "../themePalette";
-import { resolveSyntaxThemeName } from "../lib/syntaxTheme";
+import type { DiffThemeName } from "../lib/diffRendering";
+import { activateSyntaxTheme } from "../lib/syntaxTheme";
 
 type Theme = ThemePreference;
 type ThemeSnapshot = {
@@ -31,6 +32,8 @@ type ThemeSnapshot = {
   followSystem: boolean;
   appearanceMode: ThemePreferenceMode;
   themeHalves: ThemeHalves | null;
+  resolvedTheme: ThemeAppearance;
+  syntaxThemeName: DiffThemeName;
 };
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
@@ -43,6 +46,8 @@ const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   followSystem: true,
   appearanceMode: "system",
   themeHalves: null,
+  resolvedTheme: "light",
+  syntaxThemeName: "pierre-light",
 };
 
 /** Live read of the stored appearance mix, for callers that must not rely on
@@ -311,10 +316,29 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
     appearanceMode,
     themeHalves,
   );
-  applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
+  const resolvedThemeId = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
+  const definition = getThemeDefinition(resolvedThemeId);
+  const mode = definition ? getThemeMode(definition, resolvedAppearance) : null;
+  applyThemePalette(resolvedThemeId, resolvedAppearance);
+  const syntaxThemeName = activateSyntaxTheme({
+    appearance: resolvedAppearance,
+    background: mode?.colors.codeBackground ?? "#000000",
+    foreground: mode?.colors.codeForeground ?? "#ffffff",
+    ...(definition ? { label: definition.label } : {}),
+    ...(mode?.syntax ? { syntax: mode.syntax } : {}),
+  });
   const isDark = resolvedAppearance === "dark";
   document.documentElement.classList.toggle("dark", isDark);
-  lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  lastAppliedTheme = {
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+    resolvedTheme: resolvedAppearance,
+    syntaxThemeName,
+  };
+  lastSnapshot = lastAppliedTheme;
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
   if (suppressTransitions) {
@@ -399,7 +423,27 @@ function getSnapshot(): ThemeSnapshot {
     return lastSnapshot;
   }
 
-  lastSnapshot = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  const resolvedTheme = resolveThemeAppearance(
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+  );
+  lastSnapshot = {
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+    resolvedTheme,
+    syntaxThemeName:
+      lastAppliedTheme?.resolvedTheme === resolvedTheme
+        ? lastAppliedTheme.syntaxThemeName
+        : resolvedTheme === "dark"
+          ? "pierre-dark"
+          : "pierre-light",
+  };
   return lastSnapshot;
 }
 
@@ -469,24 +513,8 @@ export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const theme = snapshot.theme;
 
-  const resolvedTheme: "light" | "dark" = resolveThemeAppearance(
-    theme,
-    snapshot.systemDark,
-    snapshot.followSystem,
-    snapshot.appearanceMode,
-    snapshot.themeHalves,
-  );
-  const syntaxTheme = getThemeDefinition(
-    resolveThemeHalf(theme, snapshot.themeHalves, resolvedTheme),
-  );
-  const syntaxThemeColors = syntaxTheme ? getThemeColorsForMode(syntaxTheme, resolvedTheme) : null;
-  const syntaxThemeName = resolveSyntaxThemeName({
-    appearance: resolvedTheme,
-    background: syntaxThemeColors?.codeBackground ?? "#000000",
-    foreground: syntaxThemeColors?.codeForeground ?? "#ffffff",
-    ...(syntaxTheme ? { label: syntaxTheme.label } : {}),
-    ...(syntaxTheme?.syntax?.[resolvedTheme] ? { syntax: syntaxTheme.syntax[resolvedTheme] } : {}),
-  });
+  const resolvedTheme = snapshot.resolvedTheme;
+  const syntaxThemeName = snapshot.syntaxThemeName;
 
   const setTheme = useCallback((next: Theme): boolean => {
     if (typeof window === "undefined") return false;

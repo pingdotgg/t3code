@@ -192,10 +192,22 @@ describe("theme failure handling", () => {
       }),
       removeEventListener: () => undefined,
     });
+    vi.stubGlobal("document", {
+      documentElement: {
+        classList: { add: vi.fn(), remove: vi.fn(), toggle: vi.fn() },
+        dataset: {},
+        offsetHeight: 0,
+        style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+      },
+      querySelectorAll: () => [],
+    });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => callback(0));
 
     const { useTheme } = await import("./useTheme");
     const { installCustomTheme, parseThemeFile, THEME_FILE_VERSION, updateCustomTheme } =
       await import("../themePalette");
+    storage.setItem("t3code:theme", "syntax-refresh");
+    useTheme();
     const theme = installCustomTheme(
       parseThemeFile({
         version: THEME_FILE_VERSION,
@@ -209,15 +221,18 @@ describe("theme failure handling", () => {
         },
       }),
     );
-    storage.setItem("t3code:theme", theme.id);
 
     const firstThemeName = useTheme().syntaxThemeName;
     onStoreChange = vi.fn();
     updateCustomTheme({
       ...theme,
-      syntax: {
+      modes: {
+        ...theme.modes,
         dark: {
-          tokenColors: [{ scope: "keyword", settings: { foreground: "#eb6f92" } }],
+          ...theme.modes.dark!,
+          syntax: {
+            tokenColors: [{ scope: "keyword", settings: { foreground: "#eb6f92" } }],
+          },
         },
       },
     });

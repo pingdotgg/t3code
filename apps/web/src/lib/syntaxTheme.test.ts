@@ -7,7 +7,7 @@ const { registerCustomTheme } = vi.hoisted(() => ({
 
 vi.mock("@pierre/diffs", () => ({ registerCustomTheme }));
 
-import { resolveSyntaxThemeName } from "./syntaxTheme";
+import { activateSyntaxTheme } from "./syntaxTheme";
 
 const syntax = {
   tokenColors: [
@@ -26,7 +26,7 @@ describe("syntax theme resolution", () => {
 
   it("uses the bundled fallback when the active app theme has no syntax rules", () => {
     expect(
-      resolveSyntaxThemeName({
+      activateSyntaxTheme({
         appearance: "dark",
         background: "#191724",
         foreground: "#e0def4",
@@ -43,8 +43,8 @@ describe("syntax theme resolution", () => {
       label: "Rosé Pine",
       syntax,
     };
-    const first = resolveSyntaxThemeName(input);
-    const second = resolveSyntaxThemeName({ ...input, label: "Renamed" });
+    const first = activateSyntaxTheme(input);
+    const second = activateSyntaxTheme({ ...input, label: "Renamed" });
 
     expect(first).toBe(second);
     expect(first).toMatch(/^t3-syntax-v1-dark-[\da-f]{64}$/);
@@ -64,7 +64,7 @@ describe("syntax theme resolution", () => {
   });
 
   it("registers empty token colors instead of restoring Pierre rules", async () => {
-    const name = resolveSyntaxThemeName({
+    const name = activateSyntaxTheme({
       appearance: "light",
       background: "#faf4ed",
       foreground: "#575279",
@@ -78,13 +78,13 @@ describe("syntax theme resolution", () => {
   });
 
   it("uses a new registration when token colors change", () => {
-    const first = resolveSyntaxThemeName({
+    const first = activateSyntaxTheme({
       appearance: "dark",
       background: "#1a1725",
       foreground: "#e0def4",
       syntax,
     });
-    const second = resolveSyntaxThemeName({
+    const second = activateSyntaxTheme({
       appearance: "dark",
       background: "#1a1725",
       foreground: "#e0def4",

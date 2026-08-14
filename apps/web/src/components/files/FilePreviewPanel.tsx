@@ -1043,7 +1043,7 @@ export default function FilePreviewPanel({
               </Virtualizer>
             ) : (
               <EditableFileSurface
-                key={`${relativePath}:${syntaxThemeName}`}
+                key={`${environmentId}:${cwd}:${relativePath}`}
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}

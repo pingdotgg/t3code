@@ -1,15 +1,15 @@
 import {
+  createThemeDefinition,
   createVividThemeColors,
+  getThemeMode,
   getThemeModes,
-  MAX_THEME_TOKEN_COLOR_RULES,
-  normalizeThemeTokenColors,
-  parseThemeFile,
   themeColorToHex,
   THEME_FILE_VERSION,
   type ThemeAppearance,
   type ThemeColorRole,
   type ThemeDefinition,
 } from "./themePalette";
+import { normalizeThemeTokenColors } from "./themeSyntax";
 
 /**
  * Best-effort import of a VS Code color theme (`*-color-theme.json`).
@@ -323,16 +323,20 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
 
   // Reuse the theme-file parser so ids, names, and color values go through the
   // same validation as a hand-written file.
-  if (Array.isArray(value.tokenColors) && value.tokenColors.length > MAX_THEME_TOKEN_COLOR_RULES) {
+  const normalizedSyntax = normalizeThemeTokenColors(value.tokenColors);
+  if (normalizedSyntax.status === "too-many") {
     throw new Error("VS Code themes may contain at most 4,096 syntax rules.");
   }
-  const syntax = normalizeThemeTokenColors(value.tokenColors);
-  return parseThemeFile({
-    version: THEME_FILE_VERSION,
+  const syntax = normalizedSyntax.status === "valid" ? normalizedSyntax.syntax : undefined;
+  return createThemeDefinition({
     name: resolveName(value),
     appearance,
-    colors: { ...derived, ...overrides },
-    ...(syntax ? { syntax: { [appearance]: syntax } } : {}),
+    modes: {
+      [appearance]: {
+        colors: { ...derived, ...overrides },
+        ...(syntax ? { syntax } : {}),
+      },
+    },
   });
 }
 
@@ -380,14 +384,14 @@ export function pairVsCodeThemes(
       try {
         paired.push({
           order: group.order,
-          theme: parseThemeFile({
-            version: THEME_FILE_VERSION,
+          theme: createThemeDefinition({
             ...(options?.pairedId ? { id: options.pairedId(group.light[0]!, group.dark[0]!) } : {}),
             name: key,
             appearance: "light",
-            colors: group.light[0]!.colors,
-            variants: { dark: group.dark[0]!.colors },
-            syntax: { ...group.light[0]!.syntax, ...group.dark[0]!.syntax },
+            modes: {
+              light: getThemeMode(group.light[0]!, "light")!,
+              dark: getThemeMode(group.dark[0]!, "dark")!,
+            },
           }),
         });
         continue;
@@ -416,13 +420,10 @@ export function resolveThemeLabelCollisions(
   // Null when the new name is unusable (reserved id, invalid characters).
   const rename = (theme: ThemeDefinition, name: string): ThemeDefinition | null => {
     try {
-      return parseThemeFile({
-        version: THEME_FILE_VERSION,
+      return createThemeDefinition({
         name: name.slice(0, 48),
         appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.syntax ? { syntax: theme.syntax } : {}),
+        modes: theme.modes,
         ...(theme.managed ? { managed: true } : {}),
       });
     } catch {

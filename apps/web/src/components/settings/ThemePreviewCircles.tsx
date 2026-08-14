@@ -78,7 +78,7 @@ export function getThemeCardDefinition(theme: ThemeDefinition): ThemeCardDefinit
     id: theme.id,
     label: theme.label,
     previews: getThemeModes(theme).map((mode) => {
-      const colors = getThemeColorsForMode(theme, mode) ?? theme.colors;
+      const colors = getThemeColorsForMode(theme, mode) ?? theme.modes[theme.appearance]!.colors;
       return {
         mode,
         colors: {

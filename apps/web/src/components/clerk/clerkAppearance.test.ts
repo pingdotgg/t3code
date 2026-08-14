@@ -7,7 +7,6 @@ import {
   OCEAN_THEME,
   T3_CHAT_THEME,
   themeColorToHex,
-  type ThemeColors,
 } from "../../themePalette";
 import { clerkAppearance } from "./clerkAppearance";
 
@@ -46,9 +45,7 @@ const builtInThemeModes = [
   OCEAN_THEME,
   EMBER_THEME,
   IRIS_THEME,
-].flatMap((theme) =>
-  [theme.colors, theme.variants?.dark].filter((colors): colors is ThemeColors => !!colors),
-);
+].flatMap((theme) => Object.values(theme.modes).map((mode) => mode.colors));
 
 describe("clerkAppearance", () => {
   it("maps theme colors without overriding Clerk's component structure", () => {
