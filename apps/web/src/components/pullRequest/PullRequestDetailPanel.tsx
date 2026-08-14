@@ -1579,7 +1579,7 @@ export function PullRequestDetailPanel({
                     />
                     <button
                       type="button"
-                      className="grid min-w-0 flex-1 cursor-pointer rounded px-1 py-0.5 text-left outline-none transition-colors hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      className="grid w-fit min-w-0 max-w-full shrink cursor-pointer rounded px-1 py-0.5 text-left outline-none transition-colors hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                       aria-label={
                         isBranchCopied ? "Branch name copied" : "Copy pull request branch"
                       }

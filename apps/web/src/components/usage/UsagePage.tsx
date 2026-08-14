@@ -180,12 +180,21 @@ export function UsagePage() {
                       const totals = merged.providers.find((entry) => entry.provider === provider);
                       const share =
                         metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
+                      const providerSessions = totals?.sessions ?? 0;
+                      const sessionLabel = `${formatCount(providerSessions)} ${
+                        providerSessions === 1 ? "session" : "sessions"
+                      }`;
                       return (
                         <div key={provider} className="flex flex-col gap-1">
                           <div className="flex items-baseline justify-between gap-4">
                             <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
                               <ProviderMark provider={provider} className="size-4" />
-                              <span className="truncate">{PROVIDER_LABEL[provider]}</span>
+                              <span className="flex min-w-0 items-baseline gap-1.5">
+                                <span className="truncate">{PROVIDER_LABEL[provider]}</span>
+                                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+                                  {sessionLabel}
+                                </span>
+                              </span>
                             </span>
                             <span
                               className="shrink-0 text-sm font-medium tabular-nums"

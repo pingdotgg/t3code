@@ -248,6 +248,42 @@ describe("mergeUsage", () => {
     );
 
     expect(merged.sessions).toBe(1);
+    expect(merged.providers[0]?.sessions).toBe(1);
+  });
+
+  it("keeps distinct session totals with their providers", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket(), bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 4 })],
+            [
+              {
+                provider: "claude",
+                hostId: "mac",
+                homePath: "/a/.claude",
+                distinctSessions: 7,
+              },
+              {
+                provider: "codex",
+                hostId: "mac",
+                homePath: "/a/.codex",
+                distinctSessions: 3,
+              },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.sessions).toBe(10);
+    expect(
+      Object.fromEntries(
+        merged.providers.map((provider) => [provider.provider, provider.sessions]),
+      ),
+    ).toEqual({ claude: 7, codex: 3 });
   });
 
   it("returns empty totals with no environments", () => {

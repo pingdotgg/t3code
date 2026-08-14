@@ -113,6 +113,36 @@ describe("ElectronMenu", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("honors explicit separators without duplicating destructive separators", () =>
+    Effect.gen(function* () {
+      let template: Electron.MenuItemConstructorOptions[] | undefined;
+      buildFromTemplateMock.mockImplementation(
+        (nextTemplate: Electron.MenuItemConstructorOptions[]) => ({
+          popup: (options: Electron.PopupOptions) => {
+            template = nextTemplate;
+            options.callback?.();
+          },
+        }),
+      );
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [
+          { id: "copy", label: "Copy" },
+          { id: "rename", label: "Rename", separatorBefore: true },
+          { id: "delete", label: "Delete", destructive: true, separatorBefore: true },
+        ],
+        position: Option.none(),
+      });
+
+      assert.deepEqual(
+        template?.map((item) => item.type ?? item.label),
+        ["Copy", "separator", "Rename", "separator", "Delete"],
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("defers popupTemplate side effects until the returned Effect runs", () =>
     Effect.gen(function* () {
       const popupMock = vi.fn();

@@ -29,7 +29,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useResizableWidth } from "~/hooks/useResizableWidth";
@@ -73,7 +72,6 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../appearanceFonts";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { RightPanelResizeHandle } from "./preview/RightPanelResizeHandle";
 
 const MIN_DRAWER_HEIGHT = 180;
