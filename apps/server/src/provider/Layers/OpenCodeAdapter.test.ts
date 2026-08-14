@@ -39,6 +39,7 @@ import {
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
   rememberCompletedTurnWithoutModel,
+  rememberMessageTurn,
 } from "./OpenCodeAdapter.ts";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
@@ -1077,6 +1078,16 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-3")), false);
     NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-4")), true);
     NodeAssert.equal(pendingTurns.has(TurnId.make("turn-pending-model-19")), true);
+  });
+
+  it("does not rebind a message to a newer active turn", () => {
+    const messageTurns = new Map<string, ReturnType<typeof TurnId.make>>();
+    const originalTurnId = TurnId.make("turn-original-message");
+    rememberMessageTurn(messageTurns, "msg-late-role", originalTurnId);
+    rememberMessageTurn(messageTurns, "msg-late-role", TurnId.make("turn-new-active"));
+
+    NodeAssert.equal(messageTurns.size, 1);
+    NodeAssert.equal(messageTurns.get("msg-late-role"), originalTurnId);
   });
 
   it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>

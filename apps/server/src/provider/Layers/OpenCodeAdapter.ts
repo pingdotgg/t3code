@@ -265,6 +265,16 @@ export function rememberCompletedTurnWithoutModel(
   }
 }
 
+export function rememberMessageTurn(
+  messageTurns: Map<string, TurnId>,
+  messageId: string,
+  turnId: TurnId,
+): void {
+  if (!messageTurns.has(messageId)) {
+    messageTurns.set(messageId, turnId);
+  }
+}
+
 export interface OpenCodeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
@@ -890,7 +900,7 @@ export function makeOpenCodeAdapter(
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
           if (event.properties.info.role === "assistant") {
             if (turnId) {
-              context.turnIdByMessageId.set(event.properties.info.id, turnId);
+              rememberMessageTurn(context.turnIdByMessageId, event.properties.info.id, turnId);
             }
             for (const part of context.partById.values()) {
               if (part.messageID !== event.properties.info.id) {
@@ -957,8 +967,8 @@ export function makeOpenCodeAdapter(
         case "message.part.updated": {
           const part = event.properties.part;
           context.partById.set(part.id, part);
-          if (turnId && !context.turnIdByMessageId.has(part.messageID)) {
-            context.turnIdByMessageId.set(part.messageID, turnId);
+          if (turnId) {
+            rememberMessageTurn(context.turnIdByMessageId, part.messageID, turnId);
           }
           const messageRole = messageRoleForPart(context, part);
 
