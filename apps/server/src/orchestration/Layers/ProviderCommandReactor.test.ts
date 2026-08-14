@@ -148,6 +148,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly currentBranch?: string;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly startSessionEffect?: (
@@ -160,6 +161,10 @@ describe("ProviderCommandReactor", () => {
     createdBaseDirs.add(baseDir);
     const { stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
+    const workspaceRoot = NodePath.join(baseDir, "provider-project");
+    const worktreePath = NodePath.join(baseDir, "provider-project-worktree");
+    NodeFS.mkdirSync(workspaceRoot, { recursive: true });
+    NodeFS.mkdirSync(worktreePath, { recursive: true });
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
     const runtimeSessions: Array<ProviderSession> = [];
@@ -282,6 +287,20 @@ describe("ProviderCommandReactor", () => {
         pr: null,
       }),
     );
+    const refreshLocalStatus = vi.fn((_: string) =>
+      Effect.succeed({
+        isRepo: true,
+        hasPrimaryRemote: true,
+        isDefaultRef: false,
+        refName: input?.currentBranch ?? "main",
+        hasWorkingTreeChanges: false,
+        workingTree: {
+          files: [],
+          insertions: 0,
+          deletions: 0,
+        },
+      }),
+    );
     const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>((_) =>
       Effect.fail(
         new TextGenerationError({
@@ -400,8 +419,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(
         Layer.succeed(VcsStatusBroadcaster, {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
-          refreshLocalStatus: () =>
-            Effect.die("refreshLocalStatus should not be called in this test"),
+          refreshLocalStatus,
           refreshStatus,
           streamStatus: () => Stream.die("streamStatus should not be called in this test"),
         }),
@@ -429,7 +447,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-project-create"),
         projectId: asProjectId("project-1"),
         title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
+        workspaceRoot,
         defaultModelSelection: modelSelection,
         createdAt: now,
       }),
@@ -500,9 +518,12 @@ describe("ProviderCommandReactor", () => {
       stopSession,
       renameBranch,
       refreshStatus,
+      refreshLocalStatus,
       generateBranchName,
       generateThreadTitle,
       runtimeSessions,
+      workspaceRoot,
+      worktreePath,
       stateDir,
       drain,
       runEffect,
@@ -537,7 +558,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.make("thread-1"));
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      cwd: "/tmp/provider-project",
+      cwd: harness.workspaceRoot,
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
@@ -550,6 +571,96 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.status).toBe("starting");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("repairs a deleted worktree when the project checkout is on the same branch", async () => {
+    const harness = await createHarness({ currentBranch: "main" });
+    const missingWorktreePath = NodePath.join(harness.workspaceRoot, "deleted-worktree");
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-deleted-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "main",
+        worktreePath: missingWorktreePath,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-deleted-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-deleted-worktree"),
+          role: "user",
+          text: "continue from the project checkout",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.refreshLocalStatus).toHaveBeenCalledWith(harness.workspaceRoot);
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      cwd: harness.workspaceRoot,
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.branch).toBe("main");
+    expect(thread?.worktreePath).toBeNull();
+  });
+
+  it("refuses to repair a deleted worktree onto a different branch", async () => {
+    const harness = await createHarness({ currentBranch: "main" });
+    const missingWorktreePath = NodePath.join(harness.workspaceRoot, "deleted-worktree");
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-deleted-worktree-wrong-branch"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "feature/original-worktree",
+        worktreePath: missingWorktreePath,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-deleted-worktree-wrong-branch"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-deleted-worktree-wrong-branch"),
+          role: "user",
+          text: "do not run on the wrong branch",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      if (harness.startSession.mock.calls.length > 0) return true;
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+          ?.status === "error"
+      );
+    });
+    expect(harness.startSession).not.toHaveBeenCalled();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.lastError).toContain(missingWorktreePath);
+    expect(thread?.session?.lastError).toContain("feature/original-worktree");
+    expect(thread?.session?.lastError).toContain("main");
   });
 
   effectIt.effect("projects starting before a slow provider session finishes", () =>
@@ -775,7 +886,7 @@ describe("ProviderCommandReactor", () => {
 
     expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
     expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
-      cwd: "/tmp/provider-project",
+      cwd: harness.workspaceRoot,
       previousTitle: "Investigate reconnect regressions",
       message: [
         "USER:",
@@ -1466,7 +1577,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-thread-branch"),
         threadId: ThreadId.make("thread-1"),
         branch: "t3code/1234abcd",
-        worktreePath: "/tmp/provider-project-worktree",
+        worktreePath: harness.worktreePath,
       }),
     );
 
@@ -1507,7 +1618,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
       message: "Add a safer reconnect backoff.",
     });
-    expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+    expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe(harness.worktreePath);
   });
 
   it("forwards codex model options through session start and turn send", async () => {
@@ -2000,7 +2111,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      cwd: "/tmp/provider-project",
+      cwd: harness.workspaceRoot,
     });
 
     await Effect.runPromise(
@@ -2008,7 +2119,7 @@ describe("ProviderCommandReactor", () => {
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-worktree-change"),
         threadId: ThreadId.make("thread-1"),
-        worktreePath: "/tmp/provider-project-worktree",
+        worktreePath: harness.worktreePath,
       }),
     );
 
@@ -2034,7 +2145,7 @@ describe("ProviderCommandReactor", () => {
     expect(harness.stopSession.mock.calls.length).toBe(0);
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
-      cwd: "/tmp/provider-project-worktree",
+      cwd: harness.worktreePath,
       resumeCursor: { opaque: "resume-1" },
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -2567,7 +2678,7 @@ describe("ProviderCommandReactor", () => {
       status: "ready",
       runtimeMode: "approval-required",
       threadId: ThreadId.make("thread-1"),
-      cwd: "/tmp/provider-project",
+      cwd: harness.workspaceRoot,
       resumeCursor: { opaque: "resume-without-instance" },
       createdAt: now,
       updatedAt: now,

@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -316,6 +317,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
+  const fileSystem = yield* FileSystem.FileSystem;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
@@ -612,9 +614,87 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
-    const effectiveCwd = resolveThreadWorkspaceCwd({
-      thread,
-      projects: project ? [project] : [],
+    const effectiveCwd = yield* Effect.gen(function* () {
+      const resolvedCwd = resolveThreadWorkspaceCwd({
+        thread,
+        projects: project ? [project] : [],
+      });
+      if (!thread.worktreePath) {
+        return resolvedCwd;
+      }
+
+      const worktreeExists = yield* fileSystem.exists(thread.worktreePath).pipe(
+        Effect.mapError(
+          () =>
+            new ProviderAdapterRequestError({
+              provider: providerErrorLabel(String(desiredInstanceId)),
+              method: "thread.turn.start",
+              detail: `T3 Code could not check whether thread '${threadId}' worktree '${thread.worktreePath}' still exists.`,
+            }),
+        ),
+      );
+      if (worktreeExists) {
+        return thread.worktreePath;
+      }
+
+      if (!project) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}', and its project checkout could not be found.`,
+        });
+      }
+
+      const projectCheckoutExists = yield* fileSystem.exists(project.workspaceRoot).pipe(
+        Effect.mapError(
+          () =>
+            new ProviderAdapterRequestError({
+              provider: providerErrorLabel(String(desiredInstanceId)),
+              method: "thread.turn.start",
+              detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}', and T3 Code could not check its project checkout '${project.workspaceRoot}'.`,
+            }),
+        ),
+      );
+      if (!projectCheckoutExists) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}', and its project checkout '${project.workspaceRoot}' is also missing.`,
+        });
+      }
+
+      const localStatus = yield* vcsStatusBroadcaster
+        .refreshLocalStatus(project.workspaceRoot)
+        .pipe(
+          Effect.mapError(
+            () =>
+              new ProviderAdapterRequestError({
+                provider: providerErrorLabel(String(desiredInstanceId)),
+                method: "thread.turn.start",
+                detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}', and T3 Code could not verify the branch in project checkout '${project.workspaceRoot}'.`,
+              }),
+          ),
+        );
+      const expectedBranch = thread.branch;
+      const currentBranch = localStatus.isRepo ? localStatus.refName : null;
+      if (!expectedBranch || currentBranch !== expectedBranch) {
+        const currentBranchLabel = localStatus.isRepo
+          ? (currentBranch ?? "detached HEAD")
+          : "not a Git repository";
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabel(String(desiredInstanceId)),
+          method: "thread.turn.start",
+          detail: `Thread '${threadId}' points to deleted worktree '${thread.worktreePath}' for branch '${expectedBranch ?? "unknown"}'. The project checkout '${project.workspaceRoot}' is on '${currentBranchLabel}', so T3 Code refused to run the turn in the wrong checkout. Restore the worktree or check out '${expectedBranch ?? "the thread branch"}' in the project checkout and retry.`,
+        });
+      }
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("deleted-worktree-repair"),
+        threadId,
+        worktreePath: null,
+      });
+      return project.workspaceRoot;
     });
 
     const startProviderSession = (input?: {
