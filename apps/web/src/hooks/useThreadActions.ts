@@ -34,7 +34,11 @@ import {
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  getOrphanedWorktreePathsForThreads,
+} from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -269,8 +273,55 @@ export function useThreadActions() {
     [unarchiveThreadMutation],
   );
 
+  /** How many worktrees deleting `targets` as one batch would orphan. Callers
+      use it to ask the worktree question once up front and hand the answer to
+      every `deleteThread` call via `worktreeDecision`. */
+  const countOrphanedWorktreesForThreads = useCallback(
+    (targets: ReadonlyArray<ScopedThreadRef>) => {
+      const threadIdsByEnvironment = new Map<EnvironmentId, Set<ThreadId>>();
+      for (const target of targets) {
+        const threadIds = threadIdsByEnvironment.get(target.environmentId);
+        if (threadIds) {
+          threadIds.add(target.threadId);
+        } else {
+          threadIdsByEnvironment.set(target.environmentId, new Set([target.threadId]));
+        }
+      }
+
+      let count = 0;
+      for (const [environmentId, threadIds] of threadIdsByEnvironment) {
+        const threads = readEnvironmentThreadRefs(environmentId).flatMap((ref) => {
+          const shell = readThreadShell(ref);
+          return shell === null ? [] : [shell];
+        });
+        // Removal needs the owning project to resolve, so threads without one
+        // must not inflate the count the confirmation prompt quotes.
+        const removableThreadIds = new Set(
+          threads.flatMap((shell) =>
+            threadIds.has(shell.id) &&
+            readProject({ environmentId, projectId: shell.projectId }) !== null
+              ? [shell.id]
+              : [],
+          ),
+        );
+        count += getOrphanedWorktreePathsForThreads(threads, removableThreadIds).length;
+      }
+      return count;
+    },
+    [],
+  );
+
   const deleteThread = useCallback(
-    async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
+    async (
+      target: ScopedThreadRef,
+      opts: {
+        deletedThreadKeys?: ReadonlySet<string>;
+        /** Pre-answer for the orphaned-worktree prompt. Batch callers set it
+            so a multi-thread delete opens one dialog instead of one per
+            thread; the default asks, leaving single deletes untouched. */
+        worktreeDecision?: "ask" | "delete" | "keep";
+      } = {},
+    ) => {
       const resolved = resolveThreadTarget(target);
       if (!resolved) {
         // Thread not in main store (e.g. archived thread) — dispatch delete directly.
@@ -314,8 +365,11 @@ export function useThreadActions() {
         : null;
       const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
       const localApi = readLocalApi();
+      const worktreeDecision = opts.worktreeDecision ?? "ask";
       let shouldDeleteWorktree = false;
-      if (canDeleteWorktree && localApi) {
+      if (canDeleteWorktree && worktreeDecision !== "ask") {
+        shouldDeleteWorktree = worktreeDecision === "delete";
+      } else if (canDeleteWorktree && localApi) {
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
             [
@@ -699,6 +753,7 @@ export function useThreadActions() {
     () => ({
       archiveThread,
       unarchiveThread,
+      countOrphanedWorktreesForThreads,
       deleteThread,
       confirmAndDeleteThread,
       settleThread,
@@ -712,6 +767,7 @@ export function useThreadActions() {
     [
       archiveThread,
       confirmAndDeleteThread,
+      countOrphanedWorktreesForThreads,
       deleteThread,
       pinThread,
       reorderPinnedThread,

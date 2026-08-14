@@ -1612,6 +1612,7 @@ export default function Sidebar() {
     unpinThread,
     reorderPinnedThread,
     deleteThread,
+    countOrphanedWorktreesForThreads,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -2872,16 +2873,43 @@ export default function Sidebar() {
         );
         if (confirmed._tag === "Failure" || !confirmed.value) return;
       }
+      const deleteTargets = threadKeys.flatMap((threadKey) => {
+        const thread = threadByKeyRef.current.get(threadKey);
+        return thread
+          ? [{ threadKey, threadRef: scopeThreadRef(thread.environmentId, thread.id) }]
+          : [];
+      });
+      // Asked once for the whole batch. Left to itself each deleteThread call
+      // opens its own worktree confirmation, so a ten-row selection meant ten
+      // prompts with a round trip of deletion work between them.
+      const orphanedWorktreeCount = countOrphanedWorktreesForThreads(
+        deleteTargets.map(({ threadRef }) => threadRef),
+      );
+      let worktreeDecision: "delete" | "keep" = "keep";
+      if (orphanedWorktreeCount > 0) {
+        const confirmedWorktrees = await settlePromise(() =>
+          api.dialogs.confirm(
+            [
+              "Delete the worktrees too?",
+              orphanedWorktreeCount === 1
+                ? "There is 1 worktree linked only to the threads you're deleting."
+                : `There are ${orphanedWorktreeCount} worktrees linked only to the threads you're deleting.`,
+            ].join("\n"),
+            { variant: "destructive" },
+          ),
+        );
+        if (confirmedWorktrees._tag === "Failure") return;
+        worktreeDecision = confirmedWorktrees.value ? "delete" : "keep";
+      }
       // Grown as deletions actually land, never seeded with the whole batch:
       // orphaned-worktree detection must only discount threads that are
       // really gone, or the first delete would treat still-alive batch mates
       // as deleted and remove a worktree they still point at.
       const deletedThreadKeys = new Set<string>();
-      for (const threadKey of threadKeys) {
-        const thread = threadByKeyRef.current.get(threadKey);
-        if (!thread) continue;
-        const result = await deleteThread(scopeThreadRef(thread.environmentId, thread.id), {
+      for (const { threadKey, threadRef } of deleteTargets) {
+        const result = await deleteThread(threadRef, {
           deletedThreadKeys,
+          worktreeDecision,
         });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
@@ -2905,6 +2933,7 @@ export default function Sidebar() {
       attemptSnooze,
       clearSelection,
       confirmThreadDelete,
+      countOrphanedWorktreesForThreads,
       deleteThread,
       markThreadUnread,
       performSnooze,
